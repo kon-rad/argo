@@ -3,7 +3,7 @@ import { query, withTransaction } from './db.js';
 
 /**
  * Ultrahuman ring data, as the cyberdeck Pi pushes it to the droplet's
- * ring-ingest service (ops/ring-ingest in this repo). The server's
+ * ring-ingest service (reference client and server: the argo-exo repo, deck/ring/). The server's
  * tables are the source of truth; the Mac keeps a mirror via pullRing().
  */
 

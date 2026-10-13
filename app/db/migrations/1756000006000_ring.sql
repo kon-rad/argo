@@ -1,7 +1,7 @@
 -- Up Migration
 
 -- Ultrahuman ring data from the cyberdeck Pi. On the droplet, ring-ingest
--- (ops/ring-ingest/ring_ingest.py) creates and fills these
+-- (reference implementation: argo-exo, deck/ring/) creates and fills these
 -- same tables from the Pi's hourly push; IF NOT EXISTS lets this migration run
 -- there after it. On the Mac they are a mirror, replaced wholesale by
 -- `secondbrain ring-pull` from the droplet. Keep the columns identical to

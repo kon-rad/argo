@@ -1,0 +1,14 @@
+# Add to Hermes's config.yaml (replace /path/to/vault). Hermes asks for consent
+# to each exact hook command once per machine (~/.hermes/shell-hooks-allowlist.json).
+hooks:
+  pre_tool_call:
+    - matcher: "terminal|read_file|write_file|patch|search_files"
+      command: "python3 /path/to/vault/.secondbrain/harness/hooks/guard.py"
+      timeout: 5
+  pre_verify:
+    - command: "python3 /path/to/vault/.secondbrain/harness/hooks/devlog_gate.py"
+      timeout: 10
+
+skills:
+  external_dirs:
+    - /path/to/vault/.agents/skills   # shared with Claude Code (.claude/skills -> ../.agents/skills)
