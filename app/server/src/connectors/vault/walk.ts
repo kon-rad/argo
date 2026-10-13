@@ -32,7 +32,7 @@ export interface WalkResult {
  *   that hides notes without saying so is worse than no rule.
  */
 export const DEFAULT_SKIP_DIRS: readonly string[] = [
-  '/app', 'node_modules', '.git', '.venv', 'venv', '.obsidian',
+  '/app', '/.secondbrain', 'node_modules', '.git', '.venv', 'venv', '.obsidian',
   '.parked-agent', '__pycache__', '.next', 'dist', 'build', '.cache',
 ];
 

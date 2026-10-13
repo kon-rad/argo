@@ -28,6 +28,9 @@ beforeAll(async () => {
   await writeFile(join(root, 'Areas/deploy.pem'), '-----BEGIN PRIVATE KEY-----');
   await writeFile(join(root, 'image.png'), Buffer.from([0x89, 0x50]));
   await symlink(join(root, 'notes'), join(root, 'link-to-notes')).catch(() => {});
+  await mkdir(join(root, '.secondbrain/app/server'), { recursive: true });
+  await writeFile(join(root, '.secondbrain/README.md'), '# the engine, not a note');
+  await writeFile(join(root, '.secondbrain/app/server/x.ts'), 'export {}');
 });
 
 afterAll(() => rm(root, { recursive: true, force: true }));
@@ -44,7 +47,7 @@ describe('walkVault', () => {
   it('reports what it pruned, without counting inside it', async () => {
     const { skippedDirs } = await walkVault(root);
     expect(skippedDirs.map((d) => d.path).sort()).toEqual([
-      '.obsidian', 'app', 'notes/repo/.git', 'notes/repo/node_modules',
+      '.obsidian', '.secondbrain', 'app', 'notes/repo/.git', 'notes/repo/node_modules',
     ]);
     for (const d of skippedDirs) {
       expect(d).toHaveProperty('rule');
@@ -71,7 +74,7 @@ describe('walkVault', () => {
 
   it('honours a caller-supplied skip list, REPLACING the defaults', async () => {
     // Replacement, not union: sources.config.skip_dirs is the whole list.
-    const { files } = await walkVault(root, { skipDirs: ['notes', '.obsidian', 'app'] });
+    const { files } = await walkVault(root, { skipDirs: ['notes', '.obsidian', 'app', '.secondbrain'] });
     expect(files.map((f) => f.path).sort()).toEqual(['image.png', 'top.md']);
   });
 });
@@ -83,6 +86,12 @@ describe('the app rule is anchored to the vault root', () => {
     expect(files.map((f) => f.path)).toContain('Areas/video-editor/app/notes.md');
     expect(skippedDirs.map((d) => d.path)).toContain('app');
     expect(skippedDirs.map((d) => d.path)).not.toContain('Areas/video-editor/app');
+  });
+
+  it('prunes the engine checkout at .secondbrain/', async () => {
+    const { files, skippedDirs } = await walkVault(root);
+    expect(files.some((f) => f.path.startsWith('.secondbrain/'))).toBe(false);
+    expect(skippedDirs.map((d) => d.path)).toContain('.secondbrain');
   });
 
   it('still prunes a name rule at any depth', async () => {
