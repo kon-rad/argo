@@ -58,7 +58,7 @@ Before writing, **read a neighbouring file in the target folder** and match it. 
 
 **`.env` in the vault root holds the keys.** It is gitignored, and its values never belong in a note, a commit, or terminal output.
 
-- Load it in a shell, never into context: `set -a; . ./.env; set +a`. To check a key exists, test the variable after sourcing: `[ -n "$SOME_KEY" ] && echo set`.
+- Load it in a shell, never into context: `set -a; . ./.env; set +a` (or `python-dotenv` inside a script). To check a key exists, test the variable after sourcing: `[ -n "$SOME_KEY" ] && echo set`.
 - The guard hook blocks reading `.env` with file tools or `cat`/`grep`/`head` (see "Guardrails").
 
 ---
@@ -95,7 +95,13 @@ A task that takes more than a few steps gets a completion contract before it sta
 | **Boundaries** | Folders, machines and tools in scope |
 | **Stop when** | A turn budget, or a blocker. When blocked, report `BLOCKED: <reason>` and stop; never present a partial result as done |
 
-Finish by printing the output paths and the verification results in the conversation.
+Finish by printing the output paths and the verification results in the conversation. Both `/goal` judges only see the conversation, not the disk.
+
+```
+/goal Outcome: Projects/x/dev-log/2026-10-12_y.md and Projects/x/x-design.md exist and the feature runs.
+Verification: `python3 test_y.py` passes; paste its output. Constraints: don't touch prod config.
+Boundaries: Projects/x/, .agents/skills/x/. Stop when: 20 turns, or BLOCKED: <reason>.
+```
 
 ---
 
@@ -128,7 +134,7 @@ For each project, under `Projects/<project>/`:
 | `dev-log/README.md` | Starts with the `## Resume` block, then live status and an index of entries |
 | `dev-log/YYYY-MM-DD_<slug>.md` | One entry per session: what changed and why, what broke and the cause, how it was tested (real results), commits, open questions. Never rewrite old entries |
 
-**The Resume block** is the handoff between sessions and agents, right under the README's title:
+**The Resume block** is the handoff between sessions and agents. Exactly these six fields, right under the README's title:
 
 ```markdown
 ## Resume
