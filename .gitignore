@@ -1,0 +1,13 @@
+node_modules/
+dist/
+app/data/
+.env
+.env.*
+!.env.example
+*.log
+*.db
+*.db-*
+__pycache__/
+.pytest_cache/
+.DS_Store
+*.icns

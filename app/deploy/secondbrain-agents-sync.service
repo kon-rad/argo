@@ -1,0 +1,20 @@
+[Unit]
+Description=Second Brain: copy Hermes chats and cron history into Postgres
+After=network-online.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# Only installed with the `agents` module. As the Hermes user, outside the web
+# app's sandbox: it reads Hermes's home (SQLite files Hermes holds open,
+# snapshotted with the backup API) and writes Postgres. Rendered by deploy.sh.
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+Environment=HERMES_HOME=@HERMES_HOME@
+Environment=AGENTS_SYNC_HOST=droplet
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-agents-sync.js
+Nice=10
+PrivateTmp=true
+NoNewPrivileges=true

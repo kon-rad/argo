@@ -1,0 +1,397 @@
+#!/usr/bin/env bash
+# The single implementation of every launcher path. SecondBrain.app execs this;
+# so does the CLI on $PATH. Two front doors, one script.
+set -euo pipefail
+
+# Resolve through symlinks: the install puts a link at ~/.local/bin/secondbrain,
+# and taking dirname of the LINK would make APP_ROOT ~/.local — every path
+# below it silently wrong.
+SELF="${BASH_SOURCE[0]}"
+while [[ -L "$SELF" ]]; do
+  LINK_TARGET="$(readlink "$SELF")"
+  if [[ "$LINK_TARGET" == /* ]]; then
+    SELF="$LINK_TARGET"
+  else
+    SELF="$(cd "$(dirname "$SELF")" && pwd)/$LINK_TARGET"
+  fi
+done
+APP_ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
+DATA_DIR="$APP_ROOT/data"
+PID_FILE="$DATA_DIR/secondbrain.pid"
+LOG_FILE="$DATA_DIR/secondbrain.log"
+PORT="${PORT:-5123}"
+URL="http://127.0.0.1:$PORT"
+PG_FORMULA="${PG_FORMULA:-postgresql@15}"
+DB_NAME="${DB_NAME:-secondbrain}"
+DATABASE_URL="${DATABASE_URL:-postgres://localhost:5432/$DB_NAME}"
+export DATABASE_URL
+
+# A process launched from Finder inherits none of the shell's PATH work: no
+# Homebrew, and — the one that actually breaks things — no nvm, because nvm is
+# a shell function sourced from .zshrc that a double-click never runs.
+for dir in /opt/homebrew/bin /usr/local/bin; do
+  [[ ":$PATH:" == *":$dir:"* ]] || PATH="$dir:$PATH"
+done
+export PATH
+
+ensure_node() {
+  command -v node >/dev/null 2>&1 && return
+
+  local candidates=()
+  local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  if [[ -d "$nvm_dir/versions/node" ]]; then
+    # The default alias first — it is the version the user actually chose.
+    local want=""
+    [[ -f "$nvm_dir/alias/default" ]] && want="$(cat "$nvm_dir/alias/default" 2>/dev/null)"
+    if [[ -n "$want" ]]; then
+      for prefix in "" v; do
+        [[ -d "$nvm_dir/versions/node/${prefix}${want}/bin" ]] &&
+          candidates+=("$nvm_dir/versions/node/${prefix}${want}/bin")
+      done
+      # `default -> 22` is a major-version alias, not a directory.
+      local newest_major
+      newest_major="$(ls -d "$nvm_dir"/versions/node/v"${want}".*/ 2>/dev/null |
+                      sort -V 2>/dev/null | tail -1 || true)"
+      [[ -n "$newest_major" ]] && candidates+=("${newest_major%/}/bin")
+    fi
+    local dir
+    while IFS= read -r dir; do
+      [[ -n "$dir" ]] && candidates+=("${dir%/}/bin")
+    done < <(ls -d "$nvm_dir"/versions/node/*/ 2>/dev/null | sort -V 2>/dev/null | tail -r)
+  fi
+  candidates+=("$HOME/.volta/bin" "$HOME/.asdf/shims" /opt/homebrew/bin /usr/local/bin)
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "$candidate/node" ]]; then
+      PATH="$candidate:$PATH"
+      export PATH
+      return
+    fi
+  done
+  die "node not found. Install it, or launch from a shell where \`node\` is on PATH."
+}
+ensure_node
+
+mkdir -p "$DATA_DIR"
+# Every path below is absolute, so this is only about npm/npx resolving the
+# workspace root the same way whether the script was run from Finder or a shell.
+cd "$APP_ROOT"
+
+say()  { printf '%s\n' "$*"; }
+warn() { printf '%s\n' "$*" >&2; }
+die()  { warn "error: $*"; exit 1; }
+
+# ---------------------------------------------------------------- process state
+
+# A pid file outlives the process that wrote it, and pids get reused. Checking
+# that the pid is alive AND is ours is what makes `secondbrain` idempotent
+# rather than merely usually-idempotent.
+running_pid() {
+  [[ -f "$PID_FILE" ]] || return 1
+  local pid
+  pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  ps -p "$pid" -o command= 2>/dev/null | grep -q 'server/dist/index.js' || return 1
+  printf '%s' "$pid"
+}
+
+port_pid() {
+  lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -1
+}
+
+healthy() {
+  curl -sf --max-time 2 "$URL/api/health" >/dev/null 2>&1
+}
+
+# ------------------------------------------------------------------ cold start
+
+ensure_postgres() {
+  if pg_isready -q -h localhost -p 5432 2>/dev/null; then return; fi
+  say "starting ${PG_FORMULA}…"
+  brew services start "$PG_FORMULA" >/dev/null 2>&1 || die "could not start $PG_FORMULA"
+  for _ in $(seq 1 30); do
+    pg_isready -q -h localhost -p 5432 2>/dev/null && return
+    sleep 1
+  done
+  die "postgres did not come up on localhost:5432"
+}
+
+ensure_database() {
+  psql -tAq -d postgres -c "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" 2>/dev/null \
+    | grep -q 1 && return
+  say "creating database ${DB_NAME}…"
+  createdb "$DB_NAME"
+}
+
+ensure_deps() {
+  [[ -d "$APP_ROOT/node_modules" ]] && return
+  say "installing dependencies (first run only)…"
+  npm install --silent
+}
+
+apply_migrations() {
+  npx --yes node-pg-migrate -m db/migrations -j sql up >/dev/null || die "migrations failed"
+}
+
+# Rebuilt when any source is newer than the artifact. `find -newer` beats a
+# hash here: it is one syscall per file and cannot be wrong in the direction
+# that matters (a stale build served silently).
+needs_build() {
+  local artifact="$1"; shift
+  [[ -e "$artifact" ]] || return 0
+  for dir in "$@"; do
+    [[ -d "$dir" ]] || continue
+    if [[ -n "$(find "$dir" -type f -newer "$artifact" -print -quit 2>/dev/null)" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_build() {
+  if needs_build "$APP_ROOT/server/dist/index.js" "$APP_ROOT/server/src"; then
+    say "building server…"
+    npm -w server run build >/dev/null || die "server build failed"
+  fi
+  if needs_build "$APP_ROOT/web/dist/index.html" "$APP_ROOT/web/src" "$APP_ROOT/web/index.html"; then
+    say "building web…"
+    npm -w web run build >/dev/null || die "web build failed"
+  fi
+}
+
+start_detached() {
+  ensure_postgres
+  ensure_database
+  ensure_deps
+  apply_migrations
+  ensure_build
+
+  say "starting server on ${URL}…"
+  # No subshell: `$!` inside one is the subshell's pid, not the server's, and
+  # a pid file pointing at the wrong process makes `stop` and `status` lie.
+  # `</dev/null` matters too — an inherited stdin keeps a calling pipeline open.
+  PORT="$PORT" nohup node server/dist/index.js >>"$LOG_FILE" 2>&1 </dev/null &
+  local pid=$!
+  printf '%s' "$pid" > "$PID_FILE"
+  disown "$pid" 2>/dev/null || true
+
+  for _ in $(seq 1 40); do
+    healthy && return 0
+    # A server that died on boot will never become healthy; fail fast and show
+    # the reason rather than spinning for twenty seconds.
+    running_pid >/dev/null || { tail -20 "$LOG_FILE" >&2; die "server exited on startup"; }
+    sleep 0.5
+  done
+  tail -20 "$LOG_FILE" >&2
+  die "server did not answer /api/health within 20s"
+}
+
+# ------------------------------------------------------------------- commands
+
+cmd_start() {
+  if healthy; then
+    say "already running on $URL"
+  else
+    local stray
+    stray="$(port_pid || true)"
+    if [[ -n "$stray" ]]; then
+      die "port $PORT is held by pid $stray but does not answer /api/health. Stop it first."
+    fi
+    start_detached
+  fi
+  open "$URL" 2>/dev/null || say "open $URL"
+}
+
+cmd_stop() {
+  local pid
+  pid="$(running_pid || true)"
+  if [[ -z "$pid" ]]; then
+    rm -f "$PID_FILE"
+    say "not running"
+    return
+  fi
+  kill "$pid" 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.25
+  done
+  kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+  rm -f "$PID_FILE"
+  say "stopped (pid $pid)"
+}
+
+cmd_status() {
+  local pid
+  pid="$(running_pid || true)"
+  if [[ -n "$pid" ]]; then
+    say "running   pid $pid on $URL"
+  elif healthy; then
+    say "running   on $URL (started outside this script — no pid file)"
+  else
+    say "stopped"
+    return
+  fi
+
+  local system runs
+  system="$(curl -sf --max-time 2 "$URL/api/system" || true)"
+  runs="$(curl -sf --max-time 2 "$URL/api/runs?limit=1" || true)"
+  [[ -n "$system" ]] && say "index     $(printf '%s' "$system" | node -e '
+    let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
+      const j=JSON.parse(s);
+      console.log(`${j.counts.files} files, ${j.counts.markdown} notes, ${j.counts.links} links`);
+    });')"
+  [[ -n "$system" ]] && say "vectors   $(printf '%s' "$system" | node -e '
+    let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
+      const e=JSON.parse(s).embeddings;
+      if(!e||!e.chunks){console.log("none — run: secondbrain embed");return;}
+      console.log(`${e.chunks} chunks over ${e.files_embedded}/${e.files_embeddable} notes (${e.model})`);
+    });')"
+  [[ -n "$runs" ]] && say "last scan $(printf '%s' "$runs" | node -e '
+    let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
+      const r=JSON.parse(s).runs[0];
+      console.log(r ? `${r.status} at ${new Date(r.started_at).toLocaleString()}` : "never");
+    });')"
+}
+
+cmd_logs() {
+  [[ -f "$LOG_FILE" ]] || die "no log yet at $LOG_FILE"
+  tail -f "$LOG_FILE"
+}
+
+cmd_dev() {
+  ensure_postgres
+  ensure_database
+  ensure_deps
+  apply_migrations
+  say "vite on http://localhost:5173, express on $URL — ctrl-c to stop"
+  npm run dev
+}
+
+cmd_scan() {
+  if healthy; then
+    # Through the API so the running server's queue enforces one scan at a
+    # time; a second scanner writing the same tables is the one thing the
+    # 409 rule exists to prevent.
+    local id
+    id="$(curl -sf "$URL/api/sources" | node -e '
+      let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
+        const v=JSON.parse(s).sources.find(x=>x.kind==="vault");
+        if(!v){process.exit(1);} console.log(v.id);
+      });')"
+    curl -sf -X POST "$URL/api/sources/$id/sync" | node -e '
+      let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
+        const j=JSON.parse(s); console.log(`run ${j.run_id}: ${j.status}`);
+      });'
+    say "watch it with: secondbrain logs"
+  else
+    ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
+    node -e '
+      import("./server/dist/connectors/vault/scan.js").then(async (m) => {
+        const { pool } = await import("./server/dist/db.js");
+        const { rows } = await pool.query("SELECT id, config FROM sources WHERE kind=$1", ["vault"]);
+        const stats = await m.scanVault({ root: rows[0].config.root ?? process.cwd() + "/..",
+                                          sourceId: rows[0].id,
+                                          skipDirs: rows[0].config.skip_dirs });
+        console.log(JSON.stringify({ scanned: stats.scanned, inserted: stats.inserted,
+                                     updated: stats.updated, deleted: stats.deleted }));
+        await pool.end();
+      });'
+  fi
+}
+
+cmd_embed() {
+  if healthy; then
+    # Same reasoning as cmd_scan: through the API so the serial queue owns it.
+    local id
+    id="$(curl -sf "$URL/api/sources" | node -e '
+      let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
+        const v=JSON.parse(s).sources.find(x=>x.kind==="embeddings");
+        if(!v){process.exit(1);} console.log(v.id);
+      });')" || die "no embeddings source — apply migrations first"
+    curl -sf -X POST "$URL/api/sources/$id/sync" | node -e '
+      let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
+        const j=JSON.parse(s); console.log(`run ${j.run_id}: ${j.status}`);
+      });'
+    say "watch it with: secondbrain logs"
+  else
+    ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
+    node -e '
+      Promise.all([
+        import("./server/dist/embeddings/embed.js"),
+        import("./server/dist/db.js"),
+      ]).then(async ([m, db]) => {
+        const { rows } = await db.pool.query("SELECT config FROM sources WHERE kind=$1", ["embeddings"]);
+        if (!rows[0]) { console.error("no embeddings source"); process.exit(1); }
+        const c = rows[0].config;
+        const stats = await m.embedVault({
+          provider: m.providerFromConfig(c),
+          maxChunkTokens: c.max_chunk_tokens ?? 450,
+          overlapTokens: c.overlap_tokens ?? 60,
+          batchSize: c.batch_size ?? 32,
+          onProgress: (p) => process.stderr.write(`\r  ${p.filesDone}/${p.filesTotal} ${p.currentPath.slice(0, 60)}          `),
+        });
+        process.stderr.write("\n");
+        console.log(JSON.stringify(stats, null, 2));
+        await db.pool.end();
+      }).catch((e) => { console.error(e.message); process.exit(1); });'
+  fi
+}
+
+cmd_auth_setup() {
+  # Needs only node and the built server — no Postgres, no running server — so
+  # it can be run on the Mac and the output pasted into the server's env file.
+  ensure_node; ensure_deps; ensure_build
+  node "$APP_ROOT/server/dist/cli-auth.js"
+}
+
+cmd_ring_pull() {
+  # Mirrors the droplet's ring_* tables (filled by the Pi's hourly push) into local Postgres.
+  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-ring.js"
+}
+cmd_agents_sync() {
+  # Hermes conversations + cron jobs/runs/outputs from $HERMES_HOME (default ~/.hermes) into Postgres.
+  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-agents-sync.js"
+}
+cmd_archive() {
+  # Writes only archive_* tables, which nothing else touches, so it runs
+  # directly rather than through the server's scan queue.
+  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-archive.js" "$@"
+}
+
+cmd_help() {
+  cat <<'USAGE'
+secondbrain          start if down, then open the browser
+secondbrain dev      vite + express in the foreground, with HMR
+secondbrain stop     stop the detached server
+secondbrain status   running? which port? how big is the index?
+secondbrain logs     tail the server log
+secondbrain scan     rescan the vault
+secondbrain embed    embed new and changed notes for semantic search
+secondbrain archive  archive Claude Code + Hermes conversations to B2 and Postgres
+secondbrain agents-sync  copy Hermes chats and cron history into Postgres
+secondbrain ring-pull  copy the ring data from the droplet into local Postgres
+secondbrain auth-setup  create the password + authenticator login for the server
+USAGE
+}
+
+case "${1:-start}" in
+  start|"")      cmd_start ;;
+  stop)          cmd_stop ;;
+  restart)       cmd_stop; cmd_start ;;
+  status)        cmd_status ;;
+  logs)          cmd_logs ;;
+  dev)           cmd_dev ;;
+  scan)          cmd_scan ;;
+  embed)         cmd_embed ;;
+  archive)       cmd_archive "${@:2}" ;;
+  ring-pull)     cmd_ring_pull ;;
+  agents-sync)   cmd_agents_sync ;;
+  auth-setup)    cmd_auth_setup ;;
+  help|-h|--help) cmd_help ;;
+  *)             warn "unknown command: $1"; cmd_help; exit 1 ;;
+esac

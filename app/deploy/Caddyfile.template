@@ -1,0 +1,31 @@
+# Second Brain behind Caddy. deploy.sh renders this to /etc/caddy/Caddyfile,
+# filling in the public host (a domain or a bare IP), the global options (only
+# for a bare IP) and an extra import line (only when EXTRA_CADDY_IMPORT is set).
+#
+# For a bare IP, Let's Encrypt issues IP certificates only under the
+# `shortlived` profile (~6-day certs); Caddy >= 2.11.4 requests and renews them.
+# Port 80 must stay open for the ACME challenge and the HTTP->HTTPS redirect.
+@GLOBAL_OPTIONS@
+
+https://@PUBLIC_HOST@ {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# Matches the app's 6 MB limit for saving a note, with headroom.
+	request_body {
+		max_size 8MB
+	}
+
+	# The app listens on loopback only; this is the one way in.
+	reverse_proxy 127.0.0.1:5123
+
+	log {
+		output file /var/log/caddy/secondbrain.log
+	}
+}
+
+@EXTRA_IMPORT@

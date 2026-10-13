@@ -1,0 +1,23 @@
+{
+  "name": "secondbrain-app",
+  "private": true,
+  "type": "module",
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm -w server run dev",
+    "dev:web": "npm -w web run dev",
+    "build": "npm -w server run build && npm -w web run build",
+    "start": "node server/dist/index.js",
+    "test": "vitest run",
+    "migrate": "node-pg-migrate -m db/migrations -j sql",
+    "migrate:up": "npm run migrate -- up",
+    "scan": "npm -w server run scan"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "node-pg-migrate": "^9.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

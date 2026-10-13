@@ -1,0 +1,105 @@
+@import "tailwindcss";
+
+/* Dense and quiet: this is a reading tool for a 16 GB vault of plain text,
+   so the chrome stays out of the way and the prose gets the contrast. */
+@theme {
+  --font-sans: ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", monospace;
+}
+
+:root {
+  --ink: #16181d;
+  --ink-dim: #5d636e;
+  --ink-faint: #939aa6;
+  --paper: #ffffff;
+  --paper-sunk: #f6f7f9;
+  --rule: #e3e6ea;
+  --accent: #2f6ee0;
+  /* Charts (Ring page). One blue ramp, validated with dataviz validate_palette.js --ordinal. */
+  --chart-bar: #2a78d6;
+  --chart-line: #2a78d6;
+  --stage-awake: #86b6ef;
+  --stage-rem: #3987e5;
+  --stage-light: #1c5cab;
+  --stage-deep: #0d366b;
+  /* Agent families on the Agents page: Claude Code lanes vs Hermes profiles. */
+  --claude: #b4532a;
+  --hermes: #1d7a6b;
+  --warn: #a8660b;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e7e9ee;
+    --ink-dim: #99a0ac;
+    --ink-faint: #6b727e;
+    --paper: #14161a;
+    --paper-sunk: #1a1d22;
+    --rule: #282c33;
+    --accent: #6ea1ff;
+    --claude: #e08a5f;
+    --hermes: #4cc2ad;
+    --warn: #e0a347;
+    --chart-bar: #5598e7;
+    --chart-line: #6da7ec;
+    --stage-awake: #184f95;
+    --stage-rem: #2a78d6;
+    --stage-light: #6da7ec;
+    --stage-deep: #cde2fb;
+    color-scheme: dark;
+  }
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Markdown body. Scoped so Tailwind's reset stays in force everywhere else. */
+.prose { line-height: 1.65; }
+.prose > * + * { margin-top: 0.85em; }
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  font-weight: 600; line-height: 1.25; margin-top: 1.8em; margin-bottom: 0.6em;
+}
+.prose h1 { font-size: 1.6rem; }
+.prose h2 { font-size: 1.28rem; border-bottom: 1px solid var(--rule); padding-bottom: 0.3em; }
+.prose h3 { font-size: 1.08rem; }
+.prose h4 { font-size: 0.98rem; color: var(--ink-dim); }
+.prose a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.prose ul, .prose ol { padding-left: 1.4em; }
+.prose ul { list-style: disc; }
+.prose ol { list-style: decimal; }
+.prose li + li { margin-top: 0.25em; }
+.prose blockquote {
+  border-left: 3px solid var(--rule); padding-left: 1em; color: var(--ink-dim);
+}
+.prose code {
+  font-family: var(--font-mono); font-size: 0.86em;
+  background: var(--paper-sunk); border: 1px solid var(--rule);
+  border-radius: 4px; padding: 0.1em 0.35em;
+}
+.prose pre {
+  background: var(--paper-sunk); border: 1px solid var(--rule); border-radius: 6px;
+  padding: 0.85em 1em; overflow-x: auto;
+}
+.prose pre code { background: none; border: none; padding: 0; font-size: 0.84em; }
+.prose table { border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%; }
+.prose th, .prose td {
+  border: 1px solid var(--rule); padding: 0.4em 0.7em; text-align: left; vertical-align: top;
+}
+.prose th { background: var(--paper-sunk); font-weight: 600; }
+.prose hr { border: none; border-top: 1px solid var(--rule); margin: 2em 0; }
+.prose img, .prose video { max-width: 100%; border-radius: 6px; }
+.prose input[type="checkbox"] { margin-right: 0.4em; }
+
+/* An unresolved wikilink. Visible as a gap, never as working navigation. */
+.wikilink-dead {
+  color: var(--ink-faint); border-bottom: 1px dotted currentColor; cursor: help;
+}

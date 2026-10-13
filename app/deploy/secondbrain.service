@@ -1,0 +1,37 @@
+[Unit]
+Description=Second Brain vault app
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+# Rendered by deploy.sh: @APP_USER@, @APP_DIR@ and @VAULT_DIR@ come from the deploy settings.
+# Run it as the user that owns the vault checkout (and its git sync), so files
+# saved from the browser keep the ownership the sync expects.
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+ExecStart=/usr/bin/node server/dist/index.js
+Restart=on-failure
+RestartSec=5
+
+# Sandboxing: the process can write the vault and its own data dir, nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@VAULT_DIR@ @APP_DIR@/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target
