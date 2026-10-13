@@ -15,7 +15,7 @@ const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 describe('together provider', () => {
-  const KEY = 'abcdef0123456789abcdef0123456789';
+  const KEY = 'abcdef0123456789abcdef0123456789'; // gitleaks:allow (fake key for tests)
   const cfg = { provider: 'together' as const, model: 'BAAI/bge-large-en-v1.5', dimensions: 4, apiKey: KEY };
 
   it('posts the batch and returns vectors in request order', async () => {

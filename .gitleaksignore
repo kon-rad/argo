@@ -1,0 +1,2 @@
+# Fake test key in app/server/test/provider.test.ts (first commit, before its gitleaks:allow comment).
+c8e67d9e8745c5b4118dd431283c5101eb87cb3c:app/server/test/provider.test.ts:generic-api-key:18
