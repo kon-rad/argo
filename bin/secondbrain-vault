@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Vault CLI: init, rules, link-skills. See tools/sbvault.py.
+ENGINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec python3 "$ENGINE/tools/sbvault.py" "$@"

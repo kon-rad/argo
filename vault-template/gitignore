@@ -1,0 +1,22 @@
+# Secrets
+.env
+.env.*
+!.env.example
+CLAUDE.local.md
+
+# Databases and caches
+*.db
+*.db-*
+node_modules/
+__pycache__/
+.DS_Store
+
+# Obsidian's per-device state
+.obsidian/workspace*
+
+# Media lives in a backup bucket, not git
+*.mp4
+*.mov
+*.MOV
+*.wav
+*.mp3
