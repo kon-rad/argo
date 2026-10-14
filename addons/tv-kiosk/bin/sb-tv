@@ -20,7 +20,7 @@ pages(){
   awk -v d="$DEFAULT_SECONDS" '/^[[:space:]]*(#|$)/{next} {print $1 "\t" ($2 ~ /^[0-9]+$/ ? $2 : d)}' "$PAGES"
 }
 browser_running(){ pgrep -u "$(id -u)" -f -- "--user-data-dir=$PROFILE" >/dev/null; }
-rotator_running(){ pgrep -u "$(id -u)" -f -- "sb-tv _rotate" >/dev/null; }
+rotator_running(){ pgrep -u "$(id -u)" -f -- "sb-tv [_]rotate" >/dev/null; }
 key(){ command -v wtype >/dev/null && wtype "$@" 2>/dev/null; }
 
 start(){
@@ -35,7 +35,7 @@ start(){
   rotator_running || nohup "$0" _rotate >/dev/null 2>&1 &
 }
 stop(){
-  pkill -u "$(id -u)" -f -- "sb-tv _rotate" || true
+  pkill -u "$(id -u)" -f -- "sb-tv [_]rotate" || true
   pkill -u "$(id -u)" -f -- "--user-data-dir=$PROFILE" || true
   sleep 1
 }
