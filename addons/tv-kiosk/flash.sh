@@ -1,5 +1,5 @@
 #!/bin/bash
-# Flash an SD card for the TV kiosk: Raspberry Pi OS (cloud-init image, Trixie or newer)
+# Flash an SD card for the TV kiosk (needs root and xz): Raspberry Pi OS (cloud-init image, Trixie or newer)
 # plus first-boot config that joins Wi-Fi and Tailscale and starts the kiosk.
 #
 #   flash.sh --image <raspios.img.xz> --device /dev/diskN   write the card (erases it)
@@ -13,7 +13,6 @@
 #   TV_HOSTNAME (sb-tv)  TV_USER (tv)  TV_SSH_PUBKEY (~/.ssh/id_ed25519.pub)
 #   WIFI_COUNTRY (US)    TV_TIMEZONE (UTC)  TV_KEYBOARD (us)
 #   TS_AUTHKEY      Tailscale pre-auth key; the Pi joins your tailnet on first boot
-#   RPI_IMAGER      path to the rpi-imager binary (auto-detected)
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 IMAGE="" DEVICE="" RENDER=""
@@ -46,7 +45,8 @@ render(){
   local out="$1"
   mkdir -p "$out/tv-kiosk"
   chmod 700 "$out"
-  local hash; hash=$(printf '%s' "$TV_PASSWORD" | openssl passwd -6 -stdin)
+  local hash; hash=$(printf '%s' "$TV_PASSWORD" | openssl passwd -6 -stdin 2>/dev/null || true)
+  [[ "$hash" == '$6$'* ]] || { echo "flash.sh: 'openssl passwd -6' failed; needs OpenSSL, not LibreSSL (put Homebrew's openssl first in PATH)" >&2; exit 1; }
   local key; key=$(head -n1 "$TV_SSH_PUBKEY")
   cat > "$out/user-data" <<EOF
 #cloud-config
@@ -99,13 +99,7 @@ if [ -n "$RENDER" ]; then render "$RENDER"; echo "rendered to $RENDER"; exit 0; 
 
 [ -n "$IMAGE" ] && [ -n "$DEVICE" ] || { echo "flash.sh: need --image and --device (or --render)" >&2; exit 1; }
 [ -r "$IMAGE" ] || { echo "flash.sh: cannot read $IMAGE" >&2; exit 1; }
-IMAGER="${RPI_IMAGER:-}"
-if [ -z "$IMAGER" ]; then
-  for c in "/Applications/Raspberry Pi Imager.app/Contents/MacOS/rpi-imager" "$(command -v rpi-imager || true)"; do
-    [ -x "$c" ] && IMAGER="$c" && break
-  done
-fi
-[ -n "$IMAGER" ] || { echo "flash.sh: rpi-imager not found; set RPI_IMAGER" >&2; exit 1; }
+command -v xz >/dev/null || { echo "flash.sh: needs xz (brew install xz / apt install xz-utils)" >&2; exit 1; }
 
 # Refuse anything that isn't a removable external disk.
 if [ "$(uname)" = Darwin ]; then
@@ -117,6 +111,8 @@ else
   [ "$(lsblk -dno RM "$DEVICE")" = 1 ] || { echo "flash.sh: $DEVICE is not removable" >&2; exit 1; }
   size=$(lsblk -dno SIZE "$DEVICE")
 fi
+raw="$DEVICE"; [ "$(uname)" = Darwin ] && raw="/dev/r${DEVICE#/dev/}"
+[ -w "$raw" ] || { echo "flash.sh: can't write $raw; run with sudo" >&2; exit 1; }
 echo "About to ERASE $DEVICE ($size) and write $(basename "$IMAGE")."
 if [ "${TV_FLASH_YES:-}" != 1 ]; then
   read -r -p "Type the device path again to confirm: " ok
@@ -128,10 +124,14 @@ trap 'rm -rf "$WORK"' EXIT
 render "$WORK/cfg"
 
 [ "$(uname)" = Darwin ] && diskutil unmountDisk "$DEVICE" >/dev/null
-"$IMAGER" --cli --disable-eject \
-  --cloudinit-userdata "$WORK/cfg/user-data" \
-  --cloudinit-networkconfig "$WORK/cfg/network-config" \
-  "$IMAGE" "$DEVICE"
+# Plain xz | dd. Raspberry Pi Imager's CLI hung at "Unmounting drive" on macOS
+# (even as root), and it drops --cloudinit-* for a local image file anyway.
+echo "Writing... (about 5-10 minutes)"
+case "$IMAGE" in
+  *.xz) xz -dc "$IMAGE" ;;
+  *)    cat "$IMAGE" ;;
+esac | dd of="$raw" bs=4194304 2>&1 | tail -1
+sync
 
 # Copy the installer onto the boot partition (FAT, first partition).
 if [ "$(uname)" = Darwin ]; then
@@ -140,7 +140,10 @@ if [ "$(uname)" = Darwin ]; then
 else
   BOOT=$(mktemp -d); mount "${DEVICE}1" "$BOOT"
 fi
-[ -f "$BOOT/user-data" ] || { echo "flash.sh: user-data missing on $BOOT; imager did not apply cloud-init" >&2; exit 1; }
+[ -f "$BOOT/cmdline.txt" ] || { echo "flash.sh: $BOOT does not look like a Pi boot partition" >&2; exit 1; }
+# Replace the image's default cloud-init files (Pi OS reads them from the boot partition).
+cp "$WORK/cfg/user-data" "$BOOT/user-data"
+cp "$WORK/cfg/network-config" "$BOOT/network-config"
 rm -rf "$BOOT/tv-kiosk"
 cp -R "$WORK/cfg/tv-kiosk" "$BOOT/tv-kiosk"
 sync

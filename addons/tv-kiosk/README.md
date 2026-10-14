@@ -8,21 +8,21 @@ Tested target: Raspberry Pi 4, Raspberry Pi OS (64-bit, with desktop) Trixie, wh
 
 | File | Runs on | Does |
 |---|---|---|
-| `flash.sh` | Your computer (macOS or Linux) | Writes the OS with Raspberry Pi Imager's CLI, adds cloud-init `user-data` and `network-config`, and copies the installer onto the boot partition |
+| `flash.sh` | Your computer (macOS or Linux) | Writes the OS with `xz | dd`, then puts cloud-init `user-data`, `network-config` and the installer on the boot partition |
 | `install.sh` | The Pi, once, at first boot (cloud-init `runcmd`) | Enables SSH, waits for Wi-Fi, installs `wtype` and `grim`, installs Tailscale and joins with your auth key (then deletes the key), turns on desktop autologin, turns off screen blanking, installs `sb-tv` and its autostart entry, reboots |
 | `bin/sb-tv` | The Pi | Starts, stops and rotates the kiosk |
 | `tests/` | CI | `python3 -m pytest addons` |
 
 ## Flash a card
 
-You need Raspberry Pi Imager 2.x installed and the OS image downloaded (`.img.xz` from raspberrypi.com/software/operating-systems).
+You need `xz` and the OS image downloaded (`.img.xz` from raspberrypi.com/software/operating-systems).
 
 ```bash
 set -a; . ./.env; set +a          # your settings, see below
 addons/tv-kiosk/flash.sh --image 2026-10-06-raspios-trixie-arm64.img.xz --device /dev/disk4
 ```
 
-It refuses non-removable disks and asks you to type the device path again before erasing. On macOS, writing a raw disk may need `sudo -E`.
+It refuses non-removable disks and asks you to type the device path again before erasing. Writing a raw disk needs root: run it with `sudo` (it says so and stops if not).
 
 | Variable | Required | Default | What |
 |---|---|---|---|
