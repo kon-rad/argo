@@ -1,0 +1,79 @@
+#!/bin/bash
+# Show Second Brain pages full screen on a TV: one Chromium kiosk, one tab per page.
+# With more than one page it rotates through them, reloading each as it comes up
+# so the data is fresh. Pages live in ~/.config/sb-tv/pages, one per line:
+#   <url> [seconds]        (seconds defaults to SB_TV_SECONDS, 60)
+# Usage: sb-tv [start|stop|reload|status|pages|url <url>...|add <url> [seconds]|autostart]
+set -u
+CONF="${SB_TV_CONF:-$HOME/.config/sb-tv}"
+PAGES="$CONF/pages"
+PROFILE="$CONF/chromium-profile"   # its own profile, so the app login survives reboots
+DEFAULT_SECONDS="${SB_TV_SECONDS:-60}"
+# A single page is still reloaded this often (seconds) so it never goes stale. 0 = never.
+REFRESH="${SB_TV_REFRESH:-300}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+
+# Print the pages file as "url<TAB>seconds", skipping blanks and comments.
+pages(){
+  [ -r "$PAGES" ] || return 0
+  awk -v d="$DEFAULT_SECONDS" '/^[[:space:]]*(#|$)/{next} {print $1 "\t" ($2 ~ /^[0-9]+$/ ? $2 : d)}' "$PAGES"
+}
+browser_running(){ pgrep -u "$(id -u)" -f -- "--user-data-dir=$PROFILE" >/dev/null; }
+rotator_running(){ pgrep -u "$(id -u)" -f -- "sb-tv _rotate" >/dev/null; }
+key(){ command -v wtype >/dev/null && wtype "$@" 2>/dev/null; }
+
+start(){
+  browser_running && return 0
+  mapfile -t urls < <(pages | cut -f1)
+  if [ "${#urls[@]}" -eq 0 ]; then echo "no pages in $PAGES (sb-tv add <url>)"; return 1; fi
+  chromium_bin=$(command -v chromium || command -v chromium-browser)
+  nohup "$chromium_bin" --user-data-dir="$PROFILE" --ozone-platform=wayland --kiosk \
+    --noerrdialogs --disable-infobars --disable-session-crashed-bubble \
+    --no-first-run --password-store=basic --check-for-update-interval=31536000 \
+    ${SB_TV_CHROMIUM_FLAGS:-} "${urls[@]}" >/dev/null 2>&1 &
+  rotator_running || nohup "$0" _rotate >/dev/null 2>&1 &
+}
+stop(){
+  pkill -u "$(id -u)" -f -- "sb-tv _rotate" || true
+  pkill -u "$(id -u)" -f -- "--user-data-dir=$PROFILE" || true
+  sleep 1
+}
+
+# Wait the current page's time, then Ctrl+Tab to the next tab and reload it.
+# One page: just reload it every REFRESH seconds.
+rotate(){
+  sleep 15   # let Chromium open its tabs
+  local i=0
+  while browser_running; do
+    mapfile -t secs < <(pages | cut -f2)
+    local n=${#secs[@]}
+    [ "$n" -eq 0 ] && { sleep 30; continue; }
+    if [ "$n" -eq 1 ]; then
+      [ "$REFRESH" -gt 0 ] || { sleep 60; continue; }
+      sleep "$REFRESH"; key -k F5
+    else
+      sleep "${secs[$((i % n))]}"
+      key -M ctrl -k Tab -m ctrl
+      i=$(( (i + 1) % n ))
+      sleep 1; key -k F5
+    fi
+  done
+}
+
+case "${1:-start}" in
+  start)     start ;;
+  stop)      stop ;;
+  reload)    stop; start ;;
+  autostart) sleep 5; start ;;
+  _rotate)   rotate ;;
+  status)    browser_running && echo running || echo stopped
+             rotator_running && echo "rotator: on" || echo "rotator: off"
+             pages | sed 's/^/page: /' ;;
+  pages)     pages ;;
+  url)       shift; [ $# -gt 0 ] || { echo "usage: sb-tv url <url> [<url>...]"; exit 1; }
+             mkdir -p "$CONF"; printf '%s\n' "$@" > "$PAGES"; stop; start ;;
+  add)       [ $# -ge 2 ] || { echo "usage: sb-tv add <url> [seconds]"; exit 1; }
+             mkdir -p "$CONF"; echo "$2 ${3:-}" >> "$PAGES"; stop; start ;;
+  *) echo "usage: sb-tv [start|stop|reload|status|pages|url <url>...|add <url> [seconds]]"; exit 1 ;;
+esac

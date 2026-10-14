@@ -13,6 +13,7 @@ TODO(konrad): one paragraph on what this is and who it's for.
 | `harness/` | Hooks that Claude Code and Hermes both run: a guard that blocks dangerous tool calls, and a gate that asks for a dev log before an agent finishes |
 | `skills/` | Shared agent skills (`SKILL.md` format, used by Claude Code and Hermes) |
 | `bin/secondbrain-vault` | Starts a vault, compiles its `AGENTS.md`, links the skills |
+| `addons/tv-kiosk/` | Optional: flash a Raspberry Pi that shows the app full screen on a TV, rotating pages, reachable over SSH and Tailscale |
 
 ## How it fits together
 
