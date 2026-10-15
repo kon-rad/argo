@@ -5,7 +5,8 @@
 #   <url> [seconds]        (seconds defaults to SB_TV_SECONDS, 60; 0 = stay, never reload)
 # TV mode (`sb-tv tv <url>`) shows one page, such as a video channel, and never touches it:
 # no rotation, no F5, so playback is never cut. `sb-tv dashboard` restores the rotation.
-# Usage: sb-tv [start|stop|reload|status|pages|url <url>...|add <url> [seconds]|tv <url>|dashboard|autostart]
+# Ctrl+Alt+M (labwc keybind, written by install.sh) runs `sb-tv toggle`: open the kiosk, or close it.
+# Usage: sb-tv [start|stop|toggle|reload|status|pages|url <url>...|add <url> [seconds]|tv <url>|dashboard|autostart]
 set -u
 CONF="${SB_TV_CONF:-$HOME/.config/sb-tv}"
 PAGES="$CONF/pages"
@@ -82,6 +83,7 @@ rotate(){
 case "${1:-start}" in
   start)     start ;;
   stop)      stop ;;
+  toggle)    if browser_running; then stop; else start; fi ;;
   reload)    stop; start ;;
   autostart) sleep 5; start ;;
   _rotate)   rotate ;;
@@ -101,5 +103,5 @@ case "${1:-start}" in
              mkdir -p "$CONF"; printf '%s\n' "$@" > "$PAGES"; stop; start ;;
   add)       [ $# -ge 2 ] || { echo "usage: sb-tv add <url> [seconds]"; exit 1; }
              mkdir -p "$CONF"; echo "$2 ${3:-}" >> "$PAGES"; stop; start ;;
-  *) echo "usage: sb-tv [start|stop|reload|status|pages|url <url>...|add <url> [seconds]|tv <url>|dashboard]"; exit 1 ;;
+  *) echo "usage: sb-tv [start|stop|toggle|reload|status|pages|url <url>...|add <url> [seconds]|tv <url>|dashboard]"; exit 1 ;;
 esac

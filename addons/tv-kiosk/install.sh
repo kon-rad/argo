@@ -54,6 +54,24 @@ X-GNOME-Autostart-enabled=true
 EOF
 chown "$TV_USER:$TV_USER" "$HOME_DIR/.config/autostart/sb-tv.desktop"
 
+# Ctrl+Alt+M opens or closes the kiosk. Pi OS binds it to the magnifier; labwc runs with
+# -m (merge config), so this small user rc.xml adds to /etc/xdg/labwc/rc.xml and wins for
+# that key. Written only if the user has no rc.xml of their own.
+install -d -o "$TV_USER" -g "$TV_USER" "$HOME_DIR/.config/labwc"
+if [ ! -e "$HOME_DIR/.config/labwc/rc.xml" ]; then
+  cat > "$HOME_DIR/.config/labwc/rc.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <keyboard>
+    <keybind key="C-A-m">
+      <action name="Execute" command="/usr/local/bin/sb-tv toggle" />
+    </keybind>
+  </keyboard>
+</openbox_config>
+EOF
+  chown "$TV_USER:$TV_USER" "$HOME_DIR/.config/labwc/rc.xml"
+fi
+
 touch "$SRC/installed"
 echo "== tv-kiosk install done $(date -Is), rebooting"
 # Reboot once so autologin takes effect; cloud-init does not rerun runcmd.

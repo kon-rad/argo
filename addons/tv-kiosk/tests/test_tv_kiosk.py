@@ -144,3 +144,14 @@ def test_tv_needs_a_url(tmp_path):
     conf.mkdir()
     r = sbtv(tmp_path, conf, "tv")
     assert r.returncode == 1 and "usage" in r.stdout
+
+
+def test_install_writes_a_valid_toggle_keybind():
+    import re
+    import xml.etree.ElementTree as ET
+    text = (ADDON / "install.sh").read_text()
+    xml = re.search(r'rc\.xml" <<\'EOF\'\n(.*?)\nEOF', text, re.S).group(1)
+    ns = {"o": "http://openbox.org/3.4/rc"}
+    bind = ET.fromstring(xml).find("o:keyboard/o:keybind", ns)
+    assert bind.get("key") == "C-A-m"
+    assert bind.find("o:action", ns).get("command") == "/usr/local/bin/sb-tv toggle"
