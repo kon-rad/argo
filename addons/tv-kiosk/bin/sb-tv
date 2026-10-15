@@ -2,11 +2,14 @@
 # Show Second Brain pages full screen on a TV: one Chromium kiosk, one tab per page.
 # With more than one page it rotates through them, reloading each as it comes up
 # so the data is fresh. Pages live in ~/.config/sb-tv/pages, one per line:
-#   <url> [seconds]        (seconds defaults to SB_TV_SECONDS, 60)
-# Usage: sb-tv [start|stop|reload|status|pages|url <url>...|add <url> [seconds]|autostart]
+#   <url> [seconds]        (seconds defaults to SB_TV_SECONDS, 60; 0 = stay, never reload)
+# TV mode (`sb-tv tv <url>`) shows one page, such as a video channel, and never touches it:
+# no rotation, no F5, so playback is never cut. `sb-tv dashboard` restores the rotation.
+# Usage: sb-tv [start|stop|reload|status|pages|url <url>...|add <url> [seconds]|tv <url>|dashboard|autostart]
 set -u
 CONF="${SB_TV_CONF:-$HOME/.config/sb-tv}"
 PAGES="$CONF/pages"
+SAVED="$CONF/pages.dashboard"   # the rotation, kept while TV mode is on
 PROFILE="$CONF/chromium-profile"   # its own profile, so the app login survives reboots
 DEFAULT_SECONDS="${SB_TV_SECONDS:-60}"
 # A single page is still reloaded this often (seconds) so it never goes stale. 0 = never.
@@ -22,13 +25,24 @@ pages(){
 browser_running(){ pgrep -u "$(id -u)" -f -- "--user-data-dir=$PROFILE" >/dev/null; }
 rotator_running(){ pgrep -u "$(id -u)" -f -- "sb-tv [_]rotate" >/dev/null; }
 key(){ command -v wtype >/dev/null && wtype "$@" 2>/dev/null; }
+# Send sound to the TV: the Pi defaults to its headphone jack, so pick the HDMI sink if there is one.
+hdmi_audio(){
+  command -v wpctl >/dev/null || return 0
+  local id
+  id=$(wpctl status 2>/dev/null | sed -n '/Sinks:/,/Sources:/p' | grep -i hdmi | grep -oE '[0-9]+\.' | head -1 | tr -d .)
+  [ -n "$id" ] && wpctl set-default "$id" && wpctl set-volume "$id" 1.0
+}
+in_tv_mode(){ [ -r "$SAVED" ]; }
 
 start(){
   browser_running && return 0
   mapfile -t urls < <(pages | cut -f1)
   if [ "${#urls[@]}" -eq 0 ]; then echo "no pages in $PAGES (sb-tv add <url>)"; return 1; fi
+  hdmi_audio || true
   chromium_bin=$(command -v chromium || command -v chromium-browser)
+  # Autoplay with sound: a kiosk has no mouse, so nobody can click to unmute a video.
   nohup "$chromium_bin" --user-data-dir="$PROFILE" --ozone-platform=wayland --kiosk \
+    --autoplay-policy=no-user-gesture-required \
     --noerrdialogs --disable-infobars --disable-session-crashed-bubble \
     --no-first-run --password-store=basic --check-for-update-interval=31536000 \
     ${SB_TV_CHROMIUM_FLAGS:-} "${urls[@]}" >/dev/null 2>&1 &
@@ -41,7 +55,8 @@ stop(){
 }
 
 # Wait the current page's time, then Ctrl+Tab to the next tab and reload it.
-# One page: just reload it every REFRESH seconds.
+# One page: just reload it every REFRESH seconds. A page whose time is 0 is never
+# left or reloaded (TV mode), so a video on it plays through.
 rotate(){
   sleep 15   # let Chromium open its tabs
   local i=0
@@ -49,6 +64,9 @@ rotate(){
     mapfile -t secs < <(pages | cut -f2)
     local n=${#secs[@]}
     [ "$n" -eq 0 ] && { sleep 30; continue; }
+    if [ "${secs[$((i % n))]}" = 0 ]; then
+      sleep 60; continue
+    fi
     if [ "$n" -eq 1 ]; then
       [ "$REFRESH" -gt 0 ] || { sleep 60; continue; }
       sleep "$REFRESH"; key -k F5
@@ -69,11 +87,19 @@ case "${1:-start}" in
   _rotate)   rotate ;;
   status)    browser_running && echo running || echo stopped
              rotator_running && echo "rotator: on" || echo "rotator: off"
+             in_tv_mode && echo "mode: tv" || echo "mode: dashboard"
              pages | sed 's/^/page: /' ;;
+  tv)        [ $# -ge 2 ] || { echo "usage: sb-tv tv <url>"; exit 1; }
+             mkdir -p "$CONF"
+             in_tv_mode || { [ -r "$PAGES" ] && cp "$PAGES" "$SAVED" || : > "$SAVED"; }
+             echo "$2 0" > "$PAGES"; stop; start ;;
+  dashboard) in_tv_mode || { echo "already in dashboard mode"; exit 0; }
+             if [ -s "$SAVED" ]; then mv "$SAVED" "$PAGES"; else rm -f "$SAVED"; fi
+             stop; start ;;
   pages)     pages ;;
   url)       shift; [ $# -gt 0 ] || { echo "usage: sb-tv url <url> [<url>...]"; exit 1; }
              mkdir -p "$CONF"; printf '%s\n' "$@" > "$PAGES"; stop; start ;;
   add)       [ $# -ge 2 ] || { echo "usage: sb-tv add <url> [seconds]"; exit 1; }
              mkdir -p "$CONF"; echo "$2 ${3:-}" >> "$PAGES"; stop; start ;;
-  *) echo "usage: sb-tv [start|stop|reload|status|pages|url <url>...|add <url> [seconds]]"; exit 1 ;;
+  *) echo "usage: sb-tv [start|stop|reload|status|pages|url <url>...|add <url> [seconds]|tv <url>|dashboard]"; exit 1 ;;
 esac

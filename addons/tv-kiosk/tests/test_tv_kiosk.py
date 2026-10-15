@@ -90,3 +90,57 @@ def test_sb_tv_pages_parsing(tmp_path):
                        "HOME": str(tmp_path), "SB_TV_CONF": str(conf), "SB_TV_SECONDS": "20"},
                        capture_output=True, text=True, check=True)
     assert r.stdout == "https://a.example/\t45\nhttps://b.example/\t20\n"
+
+
+def bash4():
+    """sb-tv uses mapfile (bash 4+, as on the Pi); macOS ships bash 3.2."""
+    import shutil
+    import pytest
+    for b in (shutil.which("bash"), "/opt/homebrew/bin/bash", "/usr/local/bin/bash"):
+        if b and os.path.exists(b) and subprocess.run([b, "-c", "mapfile -t x < /dev/null"], capture_output=True).returncode == 0:
+            return b
+    pytest.skip("needs bash 4+")
+
+
+def sbtv(tmp_path, conf, *args):
+    # A stub nohup keeps the test from launching Chromium or the rotator loop.
+    stubs = tmp_path / "stubs"
+    stubs.mkdir(exist_ok=True)
+    (stubs / "nohup").write_text("#!/bin/sh\nexit 0\n")
+    (stubs / "nohup").chmod(0o755)
+    return subprocess.run([bash4(), str(SBTV), *args], env={"PATH": f"{stubs}:{os.environ['PATH']}",
+                          "HOME": str(tmp_path), "SB_TV_CONF": str(conf)},
+                          capture_output=True, text=True)
+
+
+def test_tv_mode_keeps_and_restores_the_rotation(tmp_path):
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    rotation = "https://a.example/ 45\nhttps://b.example/ 30\n"
+    (conf / "pages").write_text(rotation)
+    assert sbtv(tmp_path, conf, "tv", "https://a.example/tv?kiosk=1").returncode == 0
+    assert (conf / "pages").read_text() == "https://a.example/tv?kiosk=1 0\n"
+    assert (conf / "pages.dashboard").read_text() == rotation
+    # A second tv call must not overwrite the saved rotation with the tv page.
+    assert sbtv(tmp_path, conf, "tv", "https://a.example/other").returncode == 0
+    assert (conf / "pages.dashboard").read_text() == rotation
+    assert "mode: tv" in sbtv(tmp_path, conf, "status").stdout
+    assert sbtv(tmp_path, conf, "dashboard").returncode == 0
+    assert (conf / "pages").read_text() == rotation
+    assert not (conf / "pages.dashboard").exists()
+    assert "mode: dashboard" in sbtv(tmp_path, conf, "status").stdout
+
+
+def test_zero_seconds_means_stay(tmp_path):
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    (conf / "pages").write_text("https://a.example/tv 0\n")
+    r = sbtv(tmp_path, conf, "pages")
+    assert r.stdout == "https://a.example/tv\t0\n"
+
+
+def test_tv_needs_a_url(tmp_path):
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    r = sbtv(tmp_path, conf, "tv")
+    assert r.returncode == 1 and "usage" in r.stdout
