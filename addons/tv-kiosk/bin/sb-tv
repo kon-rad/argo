@@ -6,11 +6,14 @@
 # TV mode (`sb-tv tv <url>`) shows one page, such as a video channel, and never touches it:
 # no rotation, no F5, so playback is never cut. `sb-tv dashboard` restores the rotation.
 # Ctrl+Alt+M (labwc keybind, written by install.sh) runs `sb-tv toggle`: open the kiosk, or close it.
-# Usage: sb-tv [start|stop|toggle|reload|status|pages|url <url>...|add <url> [seconds]|tv <url>|dashboard|autostart]
+# Ctrl+Alt+N runs `sb-tv browse`: swap the kiosk for a normal full-screen Chromium on the same
+# profile (logged in, F11 shows the URL bar, the app's navigation works), and back again.
+# Usage: sb-tv [start|stop|toggle|browse|reload|status|pages|url <url>...|add <url> [seconds]|tv <url>|dashboard|autostart]
 set -u
 CONF="${SB_TV_CONF:-$HOME/.config/sb-tv}"
 PAGES="$CONF/pages"
 SAVED="$CONF/pages.dashboard"   # the rotation, kept while TV mode is on
+BROWSE="$CONF/browse"            # present while browse mode is on
 PROFILE="$CONF/chromium-profile"   # its own profile, so the app login survives reboots
 DEFAULT_SECONDS="${SB_TV_SECONDS:-60}"
 # A single page is still reloaded this often (seconds) so it never goes stale. 0 = never.
@@ -34,25 +37,49 @@ hdmi_audio(){
   [ -n "$id" ] && wpctl set-default "$id" && wpctl set-volume "$id" 1.0
 }
 in_tv_mode(){ [ -r "$SAVED" ]; }
+in_browse(){ [ -e "$BROWSE" ]; }
+# Where browse mode opens: the first page without its kiosk=1, so the app shows its navigation.
+browse_url(){ pages | head -1 | cut -f1 | sed -E 's/([?&])kiosk=1(&|$)/\1/; s/[?&]$//'; }
 
-start(){
-  browser_running && return 0
-  mapfile -t urls < <(pages | cut -f1)
-  if [ "${#urls[@]}" -eq 0 ]; then echo "no pages in $PAGES (sb-tv add <url>)"; return 1; fi
-  hdmi_audio || true
+# launch <--kiosk|--start-fullscreen> <url>...
+launch(){
+  local mode=$1; shift
   chromium_bin=$(command -v chromium || command -v chromium-browser)
+  # stop() kills Chromium, which then offers "Restore pages?"; mark the last exit as clean.
+  sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/; s/"exited_cleanly":false/"exited_cleanly":true/' \
+    "$PROFILE/Default/Preferences" 2>/dev/null || true
   # Autoplay with sound: a kiosk has no mouse, so nobody can click to unmute a video.
-  nohup "$chromium_bin" --user-data-dir="$PROFILE" --ozone-platform=wayland --kiosk \
+  nohup "$chromium_bin" --user-data-dir="$PROFILE" --ozone-platform=wayland "$mode" \
     --autoplay-policy=no-user-gesture-required \
     --noerrdialogs --disable-infobars --disable-session-crashed-bubble \
     --no-first-run --password-store=basic --check-for-update-interval=31536000 \
-    ${SB_TV_CHROMIUM_FLAGS:-} "${urls[@]}" >/dev/null 2>&1 &
+    ${SB_TV_CHROMIUM_FLAGS:-} "$@" >/dev/null 2>&1 &
+}
+
+start(){
+  browser_running && return 0
+  rm -f "$BROWSE"
+  mapfile -t urls < <(pages | cut -f1)
+  if [ "${#urls[@]}" -eq 0 ]; then echo "no pages in $PAGES (sb-tv add <url>)"; return 1; fi
+  hdmi_audio || true
+  launch --kiosk "${urls[@]}"
   rotator_running || nohup "$0" _rotate >/dev/null 2>&1 &
 }
 stop(){
   pkill -u "$(id -u)" -f -- "sb-tv [_]rotate" || true
   pkill -u "$(id -u)" -f -- "--user-data-dir=$PROFILE" || true
+  rm -f "$BROWSE"
   sleep 1
+}
+# Browse mode: the same profile as a normal browser, full screen, no rotator.
+browse(){
+  local url
+  url=$(browse_url)
+  [ -n "$url" ] || { echo "no pages in $PAGES (sb-tv add <url>)"; return 1; }
+  stop
+  mkdir -p "$CONF"; touch "$BROWSE"
+  hdmi_audio || true
+  launch --start-fullscreen "$url"
 }
 
 # Wait the current page's time, then Ctrl+Tab to the next tab and reload it.
@@ -84,12 +111,13 @@ case "${1:-start}" in
   start)     start ;;
   stop)      stop ;;
   toggle)    if browser_running; then stop; else start; fi ;;
+  browse)    if in_browse; then stop; start; else browse; fi ;;
   reload)    stop; start ;;
   autostart) sleep 5; start ;;
   _rotate)   rotate ;;
   status)    browser_running && echo running || echo stopped
              rotator_running && echo "rotator: on" || echo "rotator: off"
-             in_tv_mode && echo "mode: tv" || echo "mode: dashboard"
+             if in_browse; then echo "mode: browse"; elif in_tv_mode; then echo "mode: tv"; else echo "mode: dashboard"; fi
              pages | sed 's/^/page: /' ;;
   tv)        [ $# -ge 2 ] || { echo "usage: sb-tv tv <url>"; exit 1; }
              mkdir -p "$CONF"
@@ -103,5 +131,5 @@ case "${1:-start}" in
              mkdir -p "$CONF"; printf '%s\n' "$@" > "$PAGES"; stop; start ;;
   add)       [ $# -ge 2 ] || { echo "usage: sb-tv add <url> [seconds]"; exit 1; }
              mkdir -p "$CONF"; echo "$2 ${3:-}" >> "$PAGES"; stop; start ;;
-  *) echo "usage: sb-tv [start|stop|toggle|reload|status|pages|url <url>...|add <url> [seconds]|tv <url>|dashboard]"; exit 1 ;;
+  *) echo "usage: sb-tv [start|stop|toggle|browse|reload|status|pages|url <url>...|add <url> [seconds]|tv <url>|dashboard]"; exit 1 ;;
 esac

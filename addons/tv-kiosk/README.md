@@ -63,6 +63,7 @@ If your app needs a login, plug in a keyboard once and sign in. The kiosk's Chro
 | TV mode: one page, never rotated or reloaded (a video channel) | `sb-tv tv https://your-app/argo-tv?kiosk=1` |
 | Back to the rotation | `sb-tv dashboard` |
 | Open or close the kiosk at the TV | **Ctrl+Alt+M** (Ctrl+Option+M on a Mac keyboard), or `sb-tv toggle` |
+| Browse the app at the TV: swap the kiosk for a normal full-screen browser (same login, app navigation, F11 shows the URL bar) and back | **Ctrl+Alt+N**, or `sb-tv browse` |
 | A page that stays put inside a rotation | give it time `0` |
 | Restart the browser | `sb-tv reload` |
 | Turn it off | `sb-tv stop` |

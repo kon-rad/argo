@@ -152,6 +152,35 @@ def test_install_writes_a_valid_toggle_keybind():
     text = (ADDON / "install.sh").read_text()
     xml = re.search(r'rc\.xml" <<\'EOF\'\n(.*?)\nEOF', text, re.S).group(1)
     ns = {"o": "http://openbox.org/3.4/rc"}
-    bind = ET.fromstring(xml).find("o:keyboard/o:keybind", ns)
-    assert bind.get("key") == "C-A-m"
-    assert bind.find("o:action", ns).get("command") == "/usr/local/bin/sb-tv toggle"
+    binds = {b.get("key"): b.find("o:action", ns).get("command")
+             for b in ET.fromstring(xml).findall("o:keyboard/o:keybind", ns)}
+    assert binds == {"C-A-m": "/usr/local/bin/sb-tv toggle",
+                     "C-A-n": "/usr/local/bin/sb-tv browse"}
+
+
+def test_browse_toggles_and_drops_kiosk_param(tmp_path):
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    (conf / "pages").write_text("https://a.example/argo-tv?kiosk=1 0\n")
+    assert sbtv(tmp_path, conf, "browse").returncode == 0
+    assert (conf / "browse").exists()
+    assert "mode: browse" in sbtv(tmp_path, conf, "status").stdout
+    # The pages file is untouched, so the second press restores the same kiosk.
+    assert (conf / "pages").read_text() == "https://a.example/argo-tv?kiosk=1 0\n"
+    assert sbtv(tmp_path, conf, "browse").returncode == 0
+    assert not (conf / "browse").exists()
+
+
+def test_browse_url_strips_only_kiosk(tmp_path):
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    cases = {"https://a.example/tv?kiosk=1": "https://a.example/tv",
+             "https://a.example/tv?kiosk=1&ep=3": "https://a.example/tv?ep=3",
+             "https://a.example/tv?ep=3&kiosk=1": "https://a.example/tv?ep=3",
+             "https://a.example/": "https://a.example/"}
+    for page, want in cases.items():
+        (conf / "pages").write_text(page + "\n")
+        r = subprocess.run([bash4(), "-c", f'source <(sed "/^case /,\\$d" "{SBTV}"); browse_url'],
+                           env={"PATH": os.environ["PATH"], "HOME": str(tmp_path), "SB_TV_CONF": str(conf)},
+                           capture_output=True, text=True)
+        assert r.stdout.strip() == want, (page, r.stdout, r.stderr)
