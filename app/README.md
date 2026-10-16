@@ -189,7 +189,7 @@ app/deploy/deploy.sh          # ships source, installs Node/Postgres+pgvector/Ca
 ssh <your server> 'nano /etc/secondbrain/env && systemctl restart secondbrain'   # first time only: paste the lines + TOGETHER_API_KEY
 ```
 
-`deploy.sh` reads its settings from your vault `.env` (or the environment): `DEPLOY_HOST` (ssh destination with root), `DEPLOY_PUBLIC_HOST` (domain or IP), `DEPLOY_VAULT_DIR` (vault checkout on the server), and optionally `DEPLOY_APP_USER`, `DEPLOY_APP_DIR`, `DEPLOY_HERMES_HOME`, `EXTRA_CADDY_IMPORT` (comma separated), `DEPLOY_REDIRECT_FROM` (e.g. the bare IP, redirected to the public host), `DEPLOY_PAUSE_FILE`, `DEPLOY_EMBED=1` and `DEPLOY_DB_BACKUP=1`. `MODULES` decides which timers it installs. See the header of `deploy/deploy.sh`.
+`deploy.sh` reads its settings from your vault `.env` (or the environment): `DEPLOY_HOST` (ssh destination with root), `DEPLOY_PUBLIC_HOST` (domain or IP), `DEPLOY_VAULT_DIR` (vault checkout on the server), and optionally `DEPLOY_APP_USER`, `DEPLOY_APP_DIR`, `DEPLOY_HERMES_HOME`, `EXTRA_CADDY_IMPORT` (comma separated), `DEPLOY_REDIRECT_FROM` (e.g. the bare IP, redirected to the public host), `DEPLOY_PAUSE_FILE`, `DEPLOY_EMBED=1` and `DEPLOY_DB_BACKUP=1`. `DEPLOY_MODULES` (else `MODULES`) decides which timers it installs; keep it the same as `MODULES` in the server's env file. See the header of `deploy/deploy.sh`.
 
 ```
 ```

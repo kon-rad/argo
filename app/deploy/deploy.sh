@@ -22,7 +22,8 @@
 #   DEPLOY_PAUSE_FILE    a file that holds an agent dispatcher off while the build runs (org module)
 #   DEPLOY_EMBED=1       install the nightly embed timer (needs a local Ollama service)
 #   DEPLOY_DB_BACKUP=1   install the nightly pg_dump-to-B2 timer (needs b2store for the app user)
-#   MODULES              the same list the app uses. Each module installs its own timers:
+#   DEPLOY_MODULES       the server's module list, when it differs from this machine's MODULES
+#                        (e.g. voice here, livestream there); else MODULES. Each module installs its own timers:
 #                        agents: agents-sync · usage: usage-sync, credits-sync, the usage importer
 #                        projects: projects-render, the kiosk feed token, cli-projects on PATH
 #                        org: the sb_org role, cli-org on PATH · map: map-build, metrics
@@ -48,7 +49,7 @@ PAUSE_FILE="${DEPLOY_PAUSE_FILE:-}"
 WITH_EMBED="${DEPLOY_EMBED:-0}"
 WITH_BACKUP="${DEPLOY_DB_BACKUP:-0}"
 # The module list without spaces, so it travels to the server as one safe word.
-MODS="$(printf '%s' "${MODULES:-}" | tr -d ' ')"
+MODS="$(printf '%s' "${DEPLOY_MODULES:-${MODULES:-}}" | tr -d ' ')"
 for v in "$APP_USER" "$APP_DIR" "$VAULT_DIR" "$PUBLIC_HOST" "$HERMES_HOME_REMOTE" "$EXTRA_IMPORT" "$REDIRECT_FROM" "$PAUSE_FILE" "$MODS" "$WITH_EMBED" "$WITH_BACKUP"; do
   [[ "$v" =~ ^[A-Za-z0-9._/@:,-]*$ ]] || { echo "unsafe character in setting: $v"; exit 1; }
 done
