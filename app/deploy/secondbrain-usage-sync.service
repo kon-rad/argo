@@ -1,0 +1,20 @@
+[Unit]
+Description=Second Brain: Claude Code usage, cc-runs logs and plan readings into the ledger
+After=network-online.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# As the app user: it reads its ~/.claude/projects and ~/cc-runs.
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+Environment=USAGE_SYNC_HOST=droplet
+Environment=CLAUDE_PROJECTS_DIR=@APP_HOME@/.claude/projects
+Environment=CC_RUNS_DIR=@APP_HOME@/cc-runs
+Environment=PLAN_USAGE_LOG=@APP_HOME@/.local/share/secondbrain/plan-usage.ndjson
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-usage-sync.js
+Nice=10
+PrivateTmp=true
+NoNewPrivileges=true

@@ -23,6 +23,21 @@ PORT="${PORT:-5123}"
 URL="http://127.0.0.1:$PORT"
 PG_FORMULA="${PG_FORMULA:-postgresql@15}"
 DB_NAME="${DB_NAME:-secondbrain}"
+# After the 2026-10-14 cutover the master database is the droplet's, reached
+# over Tailscale. SECONDBRAIN_DB_URL (vault-root .env, role sb_app) switches
+# this launcher into client mode: no local Postgres, no migrations (the droplet
+# app owns the schema), and no scan/embed/ring-pull/agents-sync from the Mac.
+# SECONDBRAIN_DB=local forces the old local database (e.g. offline, read-only use).
+VAULT_ENV="$APP_ROOT/../.env"
+if [[ -z "${SECONDBRAIN_DB_URL:-}" && -f "$VAULT_ENV" ]]; then
+  SECONDBRAIN_DB_URL="$(sed -n 's/^SECONDBRAIN_DB_URL=//p' "$VAULT_ENV" | tail -1)"
+fi
+REMOTE_DB=0
+if [[ -n "${SECONDBRAIN_DB_URL:-}" && "${SECONDBRAIN_DB:-}" != "local" ]]; then
+  REMOTE_DB=1
+  DATABASE_URL="$SECONDBRAIN_DB_URL"
+  export INDEXER=off
+fi
 DATABASE_URL="${DATABASE_URL:-postgres://localhost:5432/$DB_NAME}"
 export DATABASE_URL
 
@@ -76,6 +91,7 @@ ensure_node
 mkdir -p "$DATA_DIR"
 # Every path below is absolute, so this is only about npm/npx resolving the
 # workspace root the same way whether the script was run from Finder or a shell.
+CALLER_PWD="$PWD"  # `inventory photo` resolves relative image paths against it
 cd "$APP_ROOT"
 
 say()  { printf '%s\n' "$*"; }
@@ -108,6 +124,7 @@ healthy() {
 # ------------------------------------------------------------------ cold start
 
 ensure_postgres() {
+  [[ "$REMOTE_DB" == 1 ]] && return
   if pg_isready -q -h localhost -p 5432 2>/dev/null; then return; fi
   say "starting ${PG_FORMULA}…"
   brew services start "$PG_FORMULA" >/dev/null 2>&1 || die "could not start $PG_FORMULA"
@@ -119,6 +136,7 @@ ensure_postgres() {
 }
 
 ensure_database() {
+  [[ "$REMOTE_DB" == 1 ]] && return
   psql -tAq -d postgres -c "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" 2>/dev/null \
     | grep -q 1 && return
   say "creating database ${DB_NAME}…"
@@ -132,6 +150,8 @@ ensure_deps() {
 }
 
 apply_migrations() {
+  # The droplet app (role hermes, the schema owner) runs migrations on deploy.
+  [[ "$REMOTE_DB" == 1 ]] && return
   npx --yes node-pg-migrate -m db/migrations -j sql up >/dev/null || die "migrations failed"
 }
 
@@ -189,6 +209,13 @@ start_detached() {
 }
 
 # ------------------------------------------------------------------- commands
+
+# Scans, embeds, the Ring pull and agents-sync write tables only the droplet
+# writes now (see the client-mode note at the top).
+refuse_if_remote() {
+  [[ "$REMOTE_DB" == 1 ]] || return 0
+  die "$1 runs on the droplet now (single-database cutover 2026-10-14). Use SECONDBRAIN_DB=local to run it against the old local database."
+}
 
 cmd_start() {
   if healthy; then
@@ -270,6 +297,7 @@ cmd_dev() {
 }
 
 cmd_scan() {
+  refuse_if_remote scan
   if healthy; then
     # Through the API so the running server's queue enforces one scan at a
     # time; a second scanner writing the same tables is the one thing the
@@ -302,6 +330,7 @@ cmd_scan() {
 }
 
 cmd_embed() {
+  refuse_if_remote embed
   if healthy; then
     # Same reasoning as cmd_scan: through the API so the serial queue owns it.
     local id
@@ -347,20 +376,75 @@ cmd_auth_setup() {
 }
 
 cmd_ring_pull() {
+  refuse_if_remote ring-pull
   # Mirrors the droplet's ring_* tables (filled by the Pi's hourly push) into local Postgres.
   ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-ring.js"
 }
 cmd_agents_sync() {
+  refuse_if_remote agents-sync
   # Hermes conversations + cron jobs/runs/outputs from $HERMES_HOME (default ~/.hermes) into Postgres.
   ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-agents-sync.js"
+}
+cmd_usage_sync() {
+  # This machine's Claude Code transcripts, cc-runs logs and plan readings into the usage ledger.
+  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-usage-sync.js"
+}
+cmd_usage_push() {
+  # Mac -> droplet: new Claude Code transcript bytes and plan readings over one SSH call.
+  ensure_node; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-usage-push.js"
+}
+cmd_usage_backfill() {
+  # One-off wire lines for the Mac sessions already in the archive:
+  #   secondbrain usage-backfill | ssh <server> '/usr/local/bin/secondbrain-usage-import mac'
+  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-usage-backfill.js"
+}
+cmd_credits() {
+  # Prepaid API balances (OpenRouter, fal, Gemini) in provider_credit_snapshots.
+  # No local Postgres or migrations: on the Mac SECONDBRAIN_DB_URL is the droplet.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-credits.js" "$@"
 }
 cmd_archive() {
   # Writes only archive_* tables, which nothing else touches, so it runs
   # directly rather than through the server's scan queue.
   ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-archive.js" "$@"
+}
+
+cmd_org() {
+  # The agent company's message board (org_* tables). Identity from ORG_AGENT.
+  (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-org.js" "$@")
+}
+
+cmd_inventory() {
+  # Gear rows in inventory_items (agent write helper). No Postgres start or
+  # migrations here: after the cutover SECONDBRAIN_DB_URL points at the
+  # droplet, where this connects as sb_agent and can't migrate anything.
+  ensure_deps; ensure_build
+  (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-inventory.js" "$@")
+}
+
+cmd_backlinks() {
+  # Related-links block in every note (dry run unless --write). Files only, no database.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-backlinks.js" "$@"
+}
+
+cmd_map_build() {
+  # Brain map layout (map_* tables). Refused in client mode, like scan.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-map.js" "$@"
+}
+
+cmd_metrics() {
+  # Brain map numbers: collect (daily timer on the droplet), set, list.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-metrics.js" "$@"
 }
 
 cmd_help() {
@@ -374,6 +458,15 @@ secondbrain scan     rescan the vault
 secondbrain embed    embed new and changed notes for semantic search
 secondbrain archive  archive Claude Code + Hermes conversations to B2 and Postgres
 secondbrain agents-sync  copy Hermes chats and cron history into Postgres
+secondbrain usage-sync   this machine's Claude Code usage into the ledger
+secondbrain usage-push   send new Claude Code usage to the droplet ledger (Mac)
+secondbrain usage-backfill  wire lines for archived Mac sessions (pipe to the droplet importer)
+secondbrain credits    show | set <provider> <balance> | sync  prepaid API credit balances
+secondbrain inventory  list/show/add/update gear rows and file their photos (inventory help)
+secondbrain org        the agent company message board: whoami/read/post/dm/handoff/ask-owner/standup (org help)
+secondbrain backlinks  add a Related links block to each note (dry run; --write applies, --path limits)
+secondbrain map-build  rebuild the brain map's stored layout (droplet)
+secondbrain metrics    collect | set <metric> <value> | list  the brain map's numbers
 secondbrain ring-pull  copy the ring data from the droplet into local Postgres
 secondbrain auth-setup  create the password + authenticator login for the server
 USAGE
@@ -389,8 +482,17 @@ case "${1:-start}" in
   scan)          cmd_scan ;;
   embed)         cmd_embed ;;
   archive)       cmd_archive "${@:2}" ;;
+  inventory)     cmd_inventory "${@:2}" ;;
+  org)           cmd_org "${@:2}" ;;
+  backlinks)     cmd_backlinks "${@:2}" ;;
+  map-build)     cmd_map_build "${@:2}" ;;
+  metrics)       cmd_metrics "${@:2}" ;;
+  credits)       cmd_credits "${@:2}" ;;
   ring-pull)     cmd_ring_pull ;;
   agents-sync)   cmd_agents_sync ;;
+  usage-sync)    cmd_usage_sync ;;
+  usage-push)    cmd_usage_push ;;
+  usage-backfill) cmd_usage_backfill ;;
   auth-setup)    cmd_auth_setup ;;
   help|-h|--help) cmd_help ;;
   *)             warn "unknown command: $1"; cmd_help; exit 1 ;;

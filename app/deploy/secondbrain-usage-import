@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# app/deploy/secondbrain-usage-import - installed to /usr/local/bin by deploy.sh.
+# A laptop's usage-push runs this over SSH: wire lines on stdin -> the ledger, as the app user.
+set -euo pipefail
+# Read only DATABASE_URL, the way systemd's EnvironmentFile does: no shell expansion.
+# Sourcing the whole file breaks on values with a literal '$' (the auth hash).
+db_url=$(sed -n 's/^DATABASE_URL=//p' /etc/secondbrain/env | head -n 1)
+db_url=${db_url%\"}; db_url=${db_url#\"}; db_url=${db_url%\'}; db_url=${db_url#\'}
+db_url=${db_url:-postgres:///secondbrain?host=/var/run/postgresql}
+cd @APP_DIR@
+exec runuser -u @APP_USER@ -- env DATABASE_URL="$db_url" /usr/bin/node --no-warnings server/dist/cli-usage-import.js "${1:-mac}"

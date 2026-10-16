@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# cli-org on the app user's PATH (installed to ~/.local/bin by deploy.sh), so an agent's
+# `Bash(cli-org *)` tool rule matches. Identity comes from ORG_AGENT in the caller's environment.
+set -eo pipefail   # no -u: the env file holds bcrypt hashes with $-sequences the shell would flag
+set -a; . /etc/secondbrain/env; set +a
+exec node --no-warnings @APP_DIR@/server/dist/cli-org.js "$@"

@@ -1,0 +1,10 @@
+[Unit]
+Description=Second Brain embeddings, nightly 02:30 UTC (before the 03:30 backup)
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 UTC
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=Second Brain: rebuild the brain map layout (map_* tables) from the index and tracker
+After=network-online.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-map.js
+TimeoutStartSec=300
+PrivateTmp=true
+NoNewPrivileges=true

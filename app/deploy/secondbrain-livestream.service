@@ -1,0 +1,24 @@
+[Unit]
+Description=Second Brain: sample YouTube live viewers into Postgres, write the public livestream.json
+After=network-online.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# As the app user (owns the database), outside the web app. It only fetches
+# public channel pages; no key, no login.
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+# /var/lib/secondbrain-public, served read-only by Caddy at /public/.
+# Only public numbers go in it.
+StateDirectory=secondbrain-public
+StateDirectoryMode=0755
+Environment=LIVESTREAM_PUBLIC_DIR=/var/lib/secondbrain-public
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-livestream.js
+# Exit 2 = the poll failed but the summary was rewritten; not a unit failure.
+SuccessExitStatus=2
+TimeoutStartSec=50
+PrivateTmp=true
+NoNewPrivileges=true

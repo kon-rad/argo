@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { lazy, Suspense, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import Browse from './routes/Browse.js';
@@ -8,13 +8,23 @@ import Database from './routes/Database.js';
 import Sources from './routes/Sources.js';
 import Ring from './routes/Ring.js';
 import Agents from './routes/agents/Agents.js';
+import Usage from './routes/usage/Usage.js';
+import UsageSession from './routes/usage/UsageSession.js';
 import Cron from './routes/Cron.js';
+import NavMenu, { type NavItem } from './components/NavMenu.js';
+import Projects from './routes/Projects.js';
+import Tv from './routes/Tv.js';
+// three.js is large: the map loads only when it's opened.
+const MapPage = lazy(() => import('./routes/Map.js'));
+import Org from './routes/org/Org.js';
 import Login from './routes/Login.js';
-import { api, AUTH_EXPIRED_EVENT } from './lib/api.js';
+import { api, AUTH_EXPIRED_EVENT, type AppMeta } from './lib/api.js';
 import SearchBox from './components/SearchBox.js';
 import IndexStatus from './components/IndexStatus.js';
+import UsageChip from './components/UsageChip.js';
 import FriendlyButton from './components/FriendlyButton.js';
 import AgentToggle from './components/AgentToggle.js';
+import VoiceToggle from './components/VoiceToggle.js';
 
 const navClass = ({ isActive }: { isActive: boolean }): string =>
   `px-2 py-1 rounded ${isActive ? 'text-[var(--ink)] bg-[var(--paper-sunk)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
@@ -93,41 +103,13 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         />
 
         <nav className="flex items-center gap-1">
-          <NavLink to="/" className={navClass} end>
-            Browse
-          </NavLink>
-          <NavLink to="/vector-search" className={navClass}>
-            Vector Search
-          </NavLink>
-          <NavLink to="/database" className={navClass}>
-            Database
-          </NavLink>
-          {modules.has('agents') && (
-            <>
-              <NavLink to="/agents" className={navClass}>
-                Agents
-              </NavLink>
-              <NavLink to="/cron" className={navClass}>
-                Cron
-              </NavLink>
-            </>
-          )}
-          {modules.has('ring') && (
-            <NavLink to="/ring" className={navClass}>
-              Ring
-            </NavLink>
-          )}
-          <NavLink to="/sources" className={navClass}>
-            Sources
-          </NavLink>
-          {meta.data?.devLogPath && (
-            <NavLink to={`/file/${meta.data.devLogPath}`} className={navClass}>
-              Devlog
-            </NavLink>
-          )}
-          {meta.data?.docsPath && (
-            <NavLink to={`/file/${meta.data.docsPath}`} className={navClass}>
-              Docs
+          {/* Menus list only the pages this install has; an empty menu is not shown. */}
+          {menus(modules, meta.data).map(([label, items]) => (
+            <NavMenu key={label} label={label} items={items} />
+          ))}
+          {modules.has('tv') && (
+            <NavLink to="/tv" className={navClass}>
+              TV
             </NavLink>
           )}
           {/* Only where a launch script is configured; the server never mounts the route. */}
@@ -139,9 +121,22 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           )}
         </nav>
 
+        {modules.has('usage') && (
+          <div className="shrink-0 border-l border-[var(--rule)] pl-3">
+            <UsageChip />
+          </div>
+        )}
+
         {modules.has('agents') && (
           <div className="shrink-0 border-l border-[var(--rule)] pl-3">
             <AgentToggle />
+          </div>
+        )}
+
+        {/* This machine's voice: the Claude Code spoken-alert switch. Never on a server. */}
+        {!loginRequired && modules.has('voice') && (
+          <div className="shrink-0 border-l border-[var(--rule)] pl-3">
+            <VoiceToggle />
           </div>
         )}
 
@@ -161,7 +156,15 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           <Route path="/agents/*" element={<Agents />} />
           <Route path="/cron" element={<Cron />} />
           <Route path="/cron/:profile/:jobId" element={<Cron />} />
+          {modules.has('usage') && <Route path="/usage" element={<Usage />} />}
+          {modules.has('usage') && <Route path="/usage/session/:host/:externalId" element={<UsageSession />} />}
           <Route path="/ring" element={<Ring />} />
+          {modules.has('projects') && <Route path="/projects" element={<Projects />} />}
+          {modules.has('org') && <Route path="/org/*" element={<Org />} />}
+          {modules.has('tv') && <Route path="/tv" element={<Tv />} />}
+          {modules.has('map') && (
+            <Route path="/map" element={<Suspense fallback={null}><MapPage /></Suspense>} />
+          )}
           <Route
             path="*"
             element={
@@ -173,5 +176,32 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         </Routes>
       </main>
     </div>
+  );
+}
+
+/** The header menus for this install: core pages plus whichever modules are on. */
+function menus(modules: Set<string>, meta: AppMeta | undefined): [string, NavItem[]][] {
+  const on = (m: string, item: NavItem): NavItem[] => (modules.has(m) ? [item] : []);
+  const vault: NavItem[] = [
+    { to: '/', label: 'Browse', end: true },
+    ...on('map', { to: '/map', label: 'Brain map' }),
+    { to: '/vector-search', label: 'Vector Search' },
+    { to: '/database', label: 'Database' },
+    { to: '/sources', label: 'Sources' },
+  ];
+  const work: NavItem[] = [
+    ...on('projects', { to: '/projects', label: 'Projects' }),
+    ...on('org', { to: '/org', label: 'Org' }),
+    ...on('agents', { to: '/agents', label: 'Agents' }),
+    ...on('usage', { to: '/usage', label: 'Usage' }),
+    ...on('agents', { to: '/cron', label: 'Cron' }),
+  ];
+  const life: NavItem[] = on('ring', { to: '/ring', label: 'Ring' });
+  const docs: NavItem[] = [
+    ...(meta?.devLogPath ? [{ to: `/file/${meta.devLogPath}`, label: 'Devlog' }] : []),
+    ...(meta?.docsPath ? [{ to: `/file/${meta.docsPath}`, label: 'Docs' }] : []),
+  ];
+  return ([['Vault', vault], ['Work', work], ['Life', life], ['Docs', docs]] as [string, NavItem[]][]).filter(
+    ([, items]) => items.length > 0,
   );
 }

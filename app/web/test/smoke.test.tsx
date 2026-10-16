@@ -72,7 +72,12 @@ function stubFetch(auth = { required: false, authenticated: true }): void {
               ? { sources: [] }
               : url.startsWith('/api/runs')
                 ? { runs: [] }
-                : {};
+                : url.startsWith('/api/voice/settings')
+                  ? {
+                      settings: { autoSpeak: false, voice: 'af_heart', minTaskSeconds: 120 },
+                      server: { url: 'http://127.0.0.1:8880', model: 'kokoro', up: true },
+                    }
+                  : {};
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -105,20 +110,25 @@ describe('nav follows /api/meta', () => {
   it('hides optional pages and note links when nothing is enabled', async () => {
     renderAt('/');
     await screen.findByLabelText('Search the vault');
-    await waitFor(() => expect(screen.getByRole('link', { name: 'Browse' })).toBeDefined());
-    for (const name of ['Ring', 'Agents', 'Cron', 'Wallets', 'Devlog', 'Docs']) {
-      expect(screen.queryByRole('link', { name }), name).toBeNull();
-    }
+    fireEvent.click(await screen.findByRole('button', { name: /Vault/ }));
+    expect(screen.getByRole('menuitem', { name: 'Browse' })).toBeDefined();
+    // Menus with no enabled page are left out entirely.
+    for (const menu of [/Work/, /Life/, /Docs/]) expect(screen.queryByRole('button', { name: menu })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Brain map' })).toBeNull();
   });
 
   it('shows enabled modules and configured note links', async () => {
     META = { modules: ['ring', 'agents'], owner: 'owner', devLogPath: 'Projects/dev-log.md', docsPath: null, robot: false };
     renderAt('/');
-    await waitFor(() => expect(screen.getByRole('link', { name: 'Ring' })).toBeDefined());
-    expect(screen.getByRole('link', { name: 'Agents' })).toBeDefined();
-    expect(screen.getByRole('link', { name: 'Cron' })).toBeDefined();
-    expect(screen.getByRole('link', { name: 'Devlog' }).getAttribute('href')).toBe('/file/Projects/dev-log.md');
-    expect(screen.queryByRole('link', { name: 'Docs' })).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: /Life/ }));
+    expect(screen.getByRole('menuitem', { name: 'Ring' })).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: /Work/ }));
+    expect(screen.getByRole('menuitem', { name: 'Agents' })).toBeDefined();
+    expect(screen.getByRole('menuitem', { name: 'Cron' })).toBeDefined();
+    expect(screen.queryByRole('menuitem', { name: 'Usage' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Docs/ }));
+    expect(screen.getByRole('menuitem', { name: 'Devlog' }).getAttribute('href')).toBe('/file/Projects/dev-log.md');
+    expect(screen.queryByRole('menuitem', { name: 'Docs' })).toBeNull();
   });
 });
 
@@ -166,10 +176,14 @@ describe('App', () => {
   });
 
   it('offers Download and Edit on a note', async () => {
+    META = { modules: ['voice'], owner: 'owner', devLogPath: null, docsPath: null, robot: false };
     renderAt('/file/CLAUDE.md');
     const download = (await screen.findByText('Download')) as HTMLAnchorElement;
     expect(download.getAttribute('href')).toBe('/api/raw?path=CLAUDE.md&download=1');
     expect(screen.getByRole('button', { name: 'Edit' })).toBeDefined();
+    // The voice module is on and its server answers, so the note can be read aloud and the switch shows.
+    expect(await screen.findByRole('button', { name: 'Listen' })).toBeDefined();
+    expect(screen.getByRole('switch')).toBeDefined();
   });
 
   it('shows only the login screen when the server requires a session', async () => {

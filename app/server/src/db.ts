@@ -6,7 +6,18 @@ import { config } from './config.js';
 // contract says number, so parse it rather than leaking strings to JSON.
 pg.types.setTypeParser(pg.types.builtins.INT8, (v: string) => Number(v));
 
-export const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 8 });
+export let pool = new pg.Pool({ connectionString: config.databaseUrl, max: 8 });
+
+/**
+ * Connects everything that follows to another database URL. cli-org calls it
+ * before its first query when it runs as an agent (SB_ORG_DB_URL, the
+ * row-level-security role); nothing else should. The previous pool is closed.
+ */
+export function setDatabaseUrl(url: string): void {
+  const old = pool;
+  pool = new pg.Pool({ connectionString: url, max: 4 });
+  void old.end().catch(() => {});
+}
 
 /**
  * Write instrumentation. The spec requires that a re-scan with no changes

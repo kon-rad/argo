@@ -162,7 +162,7 @@ export interface RingNight {
 
 /** What this install has turned on (server: GET /api/meta). */
 export interface AppMeta {
-  modules: ('ring' | 'agents')[];
+  modules: ('ring' | 'agents' | 'projects' | 'org' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream')[];
   owner: string;
   devLogPath: string | null;
   docsPath: string | null;
@@ -251,9 +251,27 @@ export interface TelegramStatus {
 
 export interface HubAgent {
   name: string;
-  family: 'claude' | 'hermes';
+  family: 'claude' | 'hermes' | 'org';
   description?: string;
   model?: string;
+  team?: string | null;
+}
+
+/** A card for a bot with its tracker project and feature (task_links); status lives on the kanban. */
+export interface TaskLink {
+  task_id: string;
+  board: string;
+  title: string;
+  project_slug: string | null;
+  feature_slug: string | null;
+  assignee: string;
+  created_by: string;
+  rounds: number;
+  graph?: string | null;
+  node?: string | null;
+  kind?: string;
+  work_type?: string | null;
+  created_at: string;
 }
 
 export interface KanbanTask {
@@ -301,6 +319,67 @@ export interface ClaudeChat {
   live: boolean;
 }
 
+export type PlanWindowName = 'five_hour' | 'seven_day';
+export interface PlanCurrent {
+  used_pct: number | null; left_pct: number | null; resets_at: string | null; observed_at: string;
+  host: string; origin: string; reset_since_reading: boolean; last_pct: number;
+}
+export interface UsagePlan {
+  current: Record<PlanWindowName, PlanCurrent | null>;
+  history: { observed_at: string; window: PlanWindowName; used_pct: number }[];
+}
+export type CreditProvider = 'openrouter' | 'fal' | 'gemini';
+export interface CreditRow {
+  provider: CreditProvider; origin: 'api' | 'manual'; status: 'ok' | 'error' | 'unsupported'; observed_at: string;
+  balance: number | null; total_credits: number | null; total_usage: number | null; currency: string; error: string | null; note: string | null;
+}
+export interface UsageCredits {
+  providers: { provider: CreditProvider; latest: CreditRow | null; last_ok: CreditRow | null }[];
+  history: { provider: CreditProvider; observed_at: string; balance: number; currency: string }[];
+}
+export interface UsageSeriesRow { bucket: string; key: string; input: number; cache_write: number; cache_read: number; output: number; calls: number }
+/** The labels every call carries (usage_facts); a filter is `dimension=a,b` and a group is one dimension. */
+export const USAGE_DIMENSIONS = ['agent', 'team', 'reason', 'action', 'work_type', 'project', 'feature', 'task', 'host', 'headless', 'surface', 'lane', 'model', 'source'] as const;
+export type UsageDimension = (typeof USAGE_DIMENSIONS)[number];
+export type UsageFilters = Partial<Record<UsageDimension, string[]>>;
+export const USAGE_DIMENSION_LABELS: Record<UsageDimension, string> = {
+  agent: 'bot', team: 'team', reason: 'woken by', action: 'action', work_type: 'work', project: 'project', feature: 'feature', task: 'card',
+  host: 'host', headless: 'headless', surface: 'surface', lane: 'lane', model: 'model', source: 'runtime',
+};
+export function usageFilterParams(f: UsageFilters): Record<string, string> {
+  return Object.fromEntries(USAGE_DIMENSIONS.filter((d) => f[d]?.length).map((d) => [d, f[d]!.join(',')]));
+}
+export interface UsageFacetValue { value: string; calls: number; tokens: number; output: number }
+export interface UsageFacets { from: string; to: string; total: { calls: number; tokens: number }; facets: Record<UsageDimension, UsageFacetValue[]> }
+/** surface, started_at and ended_at are null for archive-only sessions. */
+export interface UsageSessionRow {
+  source: string; host: string; external_id: string; title: string | null; surface: string | null;
+  started_at: string | null; ended_at: string | null;
+  calls: number; input: number; cache_write: number; cache_read: number; output: number; cost_usd: number | null;
+  task_id: string | null; lane: string | null; archive_id: number | null;
+  agent_name?: string | null; project_slug?: string | null; work_type?: string | null; runs?: number;
+}
+/** One `claude -p` run: a bot's wake or a lane's card, with its labels and token sums (tokens null when its calls are not in yet). */
+export interface UsageRun {
+  host: string; run_id?: string; session_id: string; task_id: string | null; lane: string | null; board: string | null; model: string | null;
+  started_at: string | null; ended_at: string | null; duration_ms: number | null; num_turns: number | null; subtype: string | null;
+  is_error: boolean | null; verify_name: string | null; verify_passed: boolean | null;
+  verify_exit: number | null; verify_metric: number | null; verify_output: string | null;
+  agent_name?: string | null; team_slug?: string | null; reason?: string | null; reasons?: { reason: string | null; ref: string | null }[];
+  work_type?: string | null; project_slug?: string | null; feature_slug?: string | null; card_title?: string | null; resumed?: boolean | null;
+  surface?: string; calls?: number | null; input?: number | null; cache_write?: number | null; cache_read?: number | null; output?: number | null;
+}
+export interface OrgWakeRow {
+  agent_name: string; team_slug: string | null; role: string; wakes: number; done: number; open: number; routine: number;
+  dm?: number; mention?: number; task?: number; tokens?: number; output?: number;
+  avg_minutes: number | null; last_wake: string | null;
+}
+export interface UsageHost { slug: string; display: string; kind: 'laptop' | 'server' | 'pi'; chip: string | null; notes: string | null }
+export interface UsageMessage {
+  id: number; seq: number; role: string; kind: string; ts: string | null; text: string; truncated: boolean; length: number;
+  is_sidechain: boolean; call: { model: string; input: number; cache_write: number; cache_read: number; output: number; action?: string | null; tool?: string | null; run_id?: string | null } | null;
+}
+
 type Params = Record<string, string | number | boolean | undefined>;
 
 function url(path: string, params?: Params): string {
@@ -313,9 +392,118 @@ function url(path: string, params?: Params): string {
 }
 
 /** Fired when any call answers 401, so the shell can swap to the login screen. */
+export type Stage = 'idea' | 'designing' | 'building' | 'testing' | 'live' | 'parked' | 'done';
+export const STAGES: Stage[] = ['idea', 'designing', 'building', 'testing', 'live', 'parked', 'done'];
+
+export interface TrackerVerification {
+  kind: string;
+  check: string;
+  result: 'pass' | 'fail';
+  evidence: string | null;
+  at: string;
+  by: string | null;
+}
+
+export interface TrackerFeature {
+  id: number;
+  slug: string;
+  title: string;
+  stage: Stage;
+  health: string | null;
+  owner: string | null;
+  goals: string[];
+  needs_owner: string | null;
+  blocked_on: string | null;
+  due: string | null;
+  shipped_at: string | null;
+  notes_path: string | null;
+  updated_at: string;
+  updated_by: string | null;
+  days_in_stage: number;
+  verification: TrackerVerification | null;
+  verifications_total: number;
+}
+
+export interface TrackerProject {
+  slug: string;
+  title: string;
+  team: string | null;
+  division: string | null;
+  area: string | null;
+  stage: Stage;
+  health: string | null;
+  priority: number | null;
+  goals: string[];
+  needs_owner: string | null;
+  blocked_on: string | null;
+  due: string | null;
+  devlog_path: string | null;
+  design_path: string | null;
+  updated_at: string;
+  days_in_stage: number;
+  next_action: string | null;
+  features: TrackerFeature[];
+  counts: Record<Stage, number>;
+  progress: number | null;
+}
+
+export interface TrackerItem {
+  project: string;
+  feature: string | null;
+  title: string;
+  detail: string;
+}
+
+export interface TrackerGoal {
+  code: string;
+  horizon: string;
+  goal: string;
+  due: string | null;
+  status: string;
+  projects: string[];
+  features: string[];
+}
+
+export interface TrackerRollup {
+  slug: string;
+  name: string;
+  projects: string[];
+  in_flight: number;
+  shipped_7d: number;
+  needs_owner: number;
+  stages: Record<Stage, number>;
+}
+
+export interface TrackerReport {
+  as_of: string | null;
+  generated_at: string;
+  totals: { projects: Record<Stage, number>; features: Record<Stage, number> };
+  needs_owner: (TrackerItem & { priority: number | null; due: string | null })[];
+  divisions: TrackerRollup[];
+  teams: (TrackerRollup & { lead: string | null })[];
+  goals: TrackerGoal[];
+  gaps: {
+    goals_uncovered: TrackerGoal[];
+    unverified_shipped: TrackerItem[];
+    failing: TrackerItem[];
+    testing_unverified: TrackerItem[];
+    stale: TrackerItem[];
+    overdue: TrackerItem[];
+    no_team: string[];
+    no_division: string[];
+    no_features: string[];
+  };
+  oldest: TrackerItem[];
+  backlog: { total: number; by_project: { project: string; count: number; oldest_days: number }[] };
+  moved_7d: { project: string; feature: string | null; title: string; from: string | null; to: string; at: string; by: string | null; note: string | null }[];
+  shipped_7d: TrackerItem[];
+  verified_7d: { pass: number; fail: number };
+  projects: TrackerProject[];
+}
+
 export const AUTH_EXPIRED_EVENT = 'secondbrain:auth-expired';
 
-async function request<T>(path: string, params?: Params, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, params?: Params, init?: RequestInit): Promise<T> {
   const res = await fetch(url(path, params), { credentials: 'same-origin', ...init });
   if (res.status === 401 && !path.startsWith('/auth/')) {
     window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
@@ -354,6 +542,31 @@ export interface FriendlyStatus {
   port: number;
 }
 
+export interface VoiceSettings {
+  /** Claude Code on this Mac speaks a one-line summary when a long task finishes. */
+  autoSpeak: boolean;
+  voice: string;
+  minTaskSeconds: number;
+}
+
+export interface VoiceStatus {
+  settings: VoiceSettings;
+  server: { url: string; model: string; up: boolean };
+}
+
+/** A note read aloud by the Kokoro server on this Mac, as an MP3 blob. */
+async function speakNote(path: string): Promise<{ audio: Blob; truncated: boolean }> {
+  const res = await fetch(url('/voice/speak'), {
+    credentials: 'same-origin',
+    ...json('POST', { path }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new ApiError(res.status, body?.error?.message ?? `${res.status} ${res.statusText}`);
+  }
+  return { audio: await res.blob(), truncated: res.headers.get('X-Speech-Truncated') === '1' };
+}
+
 export interface DbColumn {
   name: string;
   type: string;
@@ -380,6 +593,106 @@ export interface DbQueryResult {
   ms: number;
 }
 
+// ---- the agent company (/org) ----
+
+export type OrgKind = 'message' | 'status' | 'decision' | 'handoff' | 'question-for-owner' | 'standup' | 'reflection' | 'reply';
+
+export interface OrgMessage {
+  id: number;
+  channel_slug: string;
+  thread_id: number | null;
+  author: string;
+  kind: OrgKind;
+  body: string;
+  mentions: string[];
+  urgent: boolean;
+  task_id: string | null;
+  project_slug: string | null;
+  feature_slug: string | null;
+  run_id: string | null;
+  created_at: string;
+}
+
+export interface OrgChannel {
+  slug: string;
+  kind: 'team' | 'shared' | 'dm';
+  purpose: string | null;
+  members: number;
+  unread: number;
+}
+
+export interface OrgMember {
+  agent_name: string;
+  can_post: boolean;
+  role: string;
+  team_slug: string | null;
+  runtime: string;
+}
+
+export interface OrgCaps {
+  wakes_per_day: number;
+  cooldown_minutes: number;
+  max_runtime_minutes: number;
+  lane: string | null;
+  routines: { name: string; at?: string; on?: string; kind?: string }[];
+}
+
+export interface OrgActivity {
+  last_wake: string | null;
+  wakes_today: number;
+  open_wakeups: number;
+  unread: number;
+  last_post: string | null;
+}
+
+export interface OrgChartAgent {
+  name: string;
+  team_slug: string | null;
+  team_name: string | null;
+  runtime: string;
+  role: string;
+  reports_to: string | null;
+  model: string | null;
+  expertise: string | null;
+  is_lead: boolean;
+  session_id: string | null;
+  session_started: string | null;
+  activity: OrgActivity | null;
+  caps: OrgCaps | null;
+}
+
+export interface OrgChart {
+  teams: { slug: string; name: string; lead: string | null }[];
+  agents: OrgChartAgent[];
+}
+
+export interface OrgWakeup {
+  id: number;
+  agent_name: string;
+  reason: string;
+  ref: string | null;
+  created_at: string;
+  claimed_at: string | null;
+  done_at: string | null;
+  claimed_by?: string | null;
+  result?: string | null;
+}
+
+export interface OrgAgentPage {
+  agent: { name: string; team_slug: string | null; runtime: string; role: string; reports_to: string | null; model: string | null; expertise: string | null };
+  team: { slug: string; name: string; lead: string | null } | null;
+  is_lead: boolean;
+  reports: string[];
+  channels: { slug: string; kind: string; unread: number }[];
+  open_wakeups: OrgWakeup[];
+  runs: OrgWakeup[];
+  posts: OrgMessage[];
+  caps: OrgCaps | null;
+  prompt: string | null;
+  memory: string | null;
+  memory_path: string;
+}
+
 export const api = {
   tree: (path: string, offset = 0, limit = 200) =>
     request<TreeResponse>('/tree', { path, offset, limit }),
@@ -399,6 +712,10 @@ export const api = {
     }),
   system: () => request<SystemInfo>('/system'),
   friendlyStatus: () => request<FriendlyStatus>('/friendly/status'),
+  voiceStatus: () => request<VoiceStatus>('/voice/settings'),
+  setVoiceSettings: (patch: Partial<VoiceSettings>) =>
+    request<{ settings: VoiceSettings }>('/voice/settings', undefined, json('PUT', patch)),
+  speakNote,
   friendlyStart: () =>
     request<FriendlyStatus>('/friendly/start', undefined, { method: 'POST' }),
   shutdown: () => request<{ status: string }>('/shutdown', undefined, { method: 'POST' }),
@@ -433,15 +750,18 @@ export const api = {
   telegram: () => request<TelegramStatus>('/hub/telegram'),
   setTelegram: (change: { default: 'claude' | 'hermes' } | { claude: 'on' | 'off' }) =>
     request<TelegramStatus>('/hub/telegram', undefined, json('POST', change)),
-  hubAgents: () => request<{ lanes: HubAgent[]; profiles: HubAgent[] }>('/hub/agents'),
+  hubAgents: () => request<{ lanes: HubAgent[]; profiles: HubAgent[]; bots?: HubAgent[] }>('/hub/agents'),
   boards: () => request<{ boards: { slug: string; name: string }[] }>('/hub/boards'),
   board: (board: string) => request<{ board: string; tasks: KanbanTask[] }>('/hub/board', { board }),
   task: (id: string, board: string) => request<KanbanTaskDetail>(`/hub/tasks/${id}`, { board }),
   taskLog: (id: string, offset: number) => request<EventPage>(`/hub/tasks/${id}/log`, { offset }),
-  createTask: (t: { board: string; title: string; body: string; assignee: string }) =>
-    request<KanbanTask>('/hub/tasks', undefined, json('POST', t)),
+  createTask: (t: { board: string; title: string; body: string; assignee: string; project?: string; feature?: string }) =>
+    request<KanbanTask & { link?: TaskLink }>('/hub/tasks', undefined, json('POST', t)),
   commentTask: (id: string, board: string, text: string) =>
     request<{ ok: true }>(`/hub/tasks/${id}/comment`, undefined, json('POST', { board, text })),
+  /** Moves a card to a lane, a Hermes profile or a bot (a bot needs the tracker project; "none" unassigns). */
+  assignTask: (id: string, t: { board: string; assignee: string; project?: string; feature?: string }) =>
+    request<KanbanTask & { link?: TaskLink }>(`/hub/tasks/${id}/assign`, undefined, json('POST', t)),
   claudeChats: () => request<{ chats: ClaudeChat[] }>('/hub/chats'),
   newClaudeChat: (model?: string) => request<ClaudeChat>('/hub/chats', undefined, json('POST', model ? { model } : {})),
   claudeChatEvents: (id: string, offset: number) =>
@@ -450,6 +770,27 @@ export const api = {
     request<ClaudeChat>(`/hub/chats/${id}/messages`, undefined, json('POST', { text })),
   stopClaudeChat: (id: string) => request<{ ok: true }>(`/hub/chats/${id}/interrupt`, undefined, { method: 'POST' }),
   meta: () => request<AppMeta>('/meta'),
+  projectsReport: () => request<TrackerReport>('/projects/report'),
+  projectsMarkdown: () => request<{ text: string; as_of: string | null }>('/projects/report', { format: 'markdown' }),
+  orgChart: () => request<OrgChart>('/org/chart'),
+  orgChannels: () => request<{ channels: OrgChannel[] }>('/org/channels'),
+  orgMembers: (slug: string) => request<{ members: OrgMember[] }>(`/org/channels/${encodeURIComponent(slug)}/members`),
+  orgMarkRead: (slug: string) => request<{ ok: true }>(`/org/channels/${encodeURIComponent(slug)}/read`, undefined, { method: 'POST' }),
+  orgMessages: (opts: { channel?: string; after?: number; before?: number; limit?: number }) =>
+    request<{ messages: OrgMessage[]; cursor: number }>('/org/messages', opts),
+  orgThread: (id: number) => request<{ messages: OrgMessage[] }>(`/org/thread/${id}`),
+  orgSearch: (q: string) => request<{ messages: OrgMessage[] }>('/org/search', { q }),
+  orgAgent: (name: string) => request<OrgAgentPage>(`/org/agents/${encodeURIComponent(name)}`),
+  orgPost: (body: { channel: string; body: string; thread?: number; kind?: 'message' | 'status' | 'decision' }) =>
+    request<OrgMessage>('/org/post', undefined, json('POST', body)),
+  orgDm: (body: { to: string; body: string }) => request<OrgMessage>('/org/dm', undefined, json('POST', body)),
+  orgTasks: (f: { project?: string; feature?: string; agent?: string } = {}) => request<{ tasks: TaskLink[] }>('/org/tasks', f),
+  setProject: (slug: string, patch: Record<string, unknown>) =>
+    request<{ stage_changed: boolean }>(`/projects/${slug}`, undefined, json('PATCH', patch)),
+  setFeature: (slug: string, feature: string, patch: Record<string, unknown>) =>
+    request<{ stage_changed: boolean }>(`/projects/${slug}/features/${feature}`, undefined, json('PATCH', patch)),
+  verifyFeature: (slug: string, feature: string, v: { kind: string; check: string; result: 'pass' | 'fail'; evidence?: string }) =>
+    request<{ id: number }>(`/projects/${slug}/features/${feature}/verifications`, undefined, json('POST', v)),
   source: (path: string) => request<FileSource>('/file/source', { path }),
   save: (path: string, content: string, baseHash: string) =>
     request<{ path: string; hash: string; mtime: string; size_bytes: number }>(
@@ -457,6 +798,19 @@ export const api = {
       undefined,
       json('PUT', { path, content, base_hash: baseHash }),
     ),
+  usagePlan: (from?: string, to?: string) => request<UsagePlan>('/usage/plan', { from, to }),
+  usageCredits: (from?: string, to?: string) => request<UsageCredits>('/usage/credits', { from, to }),
+  usageSeries: (p: { from: string; to: string; bucket: 'hour' | 'day'; tz: string; group: 'type' | UsageDimension }, f: UsageFilters = {}) =>
+    request<{ bucket: string; tz: string; rows: UsageSeriesRow[] }>('/usage/series', { ...p, ...usageFilterParams(f) }),
+  usageFacets: (from: string, to: string, f: UsageFilters = {}) => request<UsageFacets>('/usage/facets', { from, to, ...usageFilterParams(f) }),
+  usageHosts: () => request<{ hosts: UsageHost[] }>('/usage/hosts'),
+  usageSessions: (from: string, to: string, f: UsageFilters = {}) => request<{ sessions: UsageSessionRow[] }>('/usage/sessions', { from, to, ...usageFilterParams(f) }),
+  usageSession: (host: string, externalId: string, source: string) =>
+    request<{ session: UsageSessionRow; run: UsageRun | null; runs?: UsageRun[]; messages: UsageMessage[] }>(
+      `/usage/sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}`, { source }),
+  usageMessage: (id: number) => request<{ id: number; raw: unknown }>(`/usage/messages/${id}`),
+  usageRuns: (from: string, to: string, f: UsageFilters = {}) => request<{ runs: UsageRun[] }>('/usage/runs', { from, to, ...usageFilterParams(f) }),
+  usageOrgWakes: (from: string, to: string) => request<{ agents: OrgWakeRow[] }>('/usage/org-wakes', { from, to }),
 };
 
 export const rawUrl = (path: string): string => url('/raw', { path });
@@ -474,6 +828,24 @@ export const EDITABLE_EXTS = new Set([
 /** Vault paths are slash-separated and go straight into the route. */
 export const fileHref = (path: string): string =>
   `/file/${path.split('/').map(encodeURIComponent).join('/')}`;
+
+/** One tv module episode, as /api/tv/episodes lists it from the vault's episode notes. */
+export interface TvEpisode {
+  id: string;
+  title: string;
+  show: string;
+  generated_at: string | null;
+  duration_s: number | null;
+  voice: string | null;
+  note: string;
+  video: string | null;
+  source: 'local' | 'b2' | null;
+}
+
+export const tvApi = {
+  episodes: () =>
+    request<{ episodes: TvEpisode[]; shows: Record<string, string>; episodesDir: string }>('/tv/episodes'),
+};
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

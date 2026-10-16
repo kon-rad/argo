@@ -13,7 +13,7 @@ let code = 1;
 try {
   const c = await syncAgents(root, host);
   console.log(`agents-sync ${host} ${root}: ${c.homes} homes, ${c.sessions} sessions, ${c.messages} messages, ` +
-    `${c.jobs} jobs, ${c.runs} runs, ${c.outputs} outputs changed`);
+    `${c.jobs} jobs, ${c.runs} runs, ${c.outputs} outputs, ${c.usage} usage snapshots changed`);
   for (const e of c.errors) console.error(`  ! ${e}`);
   code = c.errors.length ? 2 : 0;
 } catch (err) {

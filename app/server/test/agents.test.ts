@@ -87,7 +87,7 @@ describe('agents sync', () => {
   it('copies chats, jobs, runs and outputs, and a second run changes nothing', async () => {
     const first = await syncAgents(root, 'droplet');
     expect(first.errors).toEqual([]);
-    expect(first).toMatchObject({ homes: 2, sessions: 3, messages: 6, jobs: 2, runs: 1, outputs: 2 });
+    expect(first).toMatchObject({ homes: 2, sessions: 3, messages: 6, jobs: 2, runs: 1, outputs: 2, usage: 3 });
     const second = await syncAgents(root, 'droplet');
     expect(second).toMatchObject({ sessions: 0, messages: 0, jobs: 0, runs: 0, outputs: 0 });
     const runsLogged = await query<{ n: number }>(`SELECT count(*)::int AS n FROM agents_sync_runs`);

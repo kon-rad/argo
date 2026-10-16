@@ -1,0 +1,21 @@
+[Unit]
+Description=Second Brain: prepaid API credit balances (OpenRouter, fal) into Postgres
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# As the app user: the keys live in @HERMES_HOME@/.env. The CLI takes only
+# OPENROUTER_API_KEY and FAL_BILLING_KEY from that file, nothing else.
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+Environment=CREDITS_KEYS_FILE=@HERMES_HOME@/.env
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-credits.js sync
+# Exit 2 = a provider answered with an error; the error row is already stored.
+SuccessExitStatus=2
+Nice=10
+PrivateTmp=true
+NoNewPrivileges=true

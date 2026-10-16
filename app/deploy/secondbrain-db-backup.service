@@ -1,0 +1,22 @@
+[Unit]
+Description=Second Brain: pg_dump the secondbrain database to B2 (db-backups/secondbrain/droplet/)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# As the app user: owns the database, and b2store reads its B2 keys from
+# @APP_HOME@/.config/b2store/env. DATABASE_URL comes from the env file.
+User=@APP_USER@
+Group=@APP_USER@
+Environment=HOME=@APP_HOME@
+EnvironmentFile=/etc/secondbrain/env
+Environment=DB_BACKUP_HOST=droplet
+Environment=B2STORE=/usr/local/bin/b2store
+ExecStart=/bin/bash @APP_DIR@/deploy/secondbrain-db-backup.sh
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=1h
+PrivateTmp=true
+NoNewPrivileges=true

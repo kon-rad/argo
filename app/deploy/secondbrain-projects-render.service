@@ -1,0 +1,17 @@
+[Unit]
+Description=Second Brain: render the project tracker report into the vault (projects.reportFile in secondbrain.json)
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# As the app user: owns the database and the vault checkout. Writes the file only
+# when the report changed, so git auto-sync commits it only on real changes.
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-projects.js render
+TimeoutStartSec=60
+PrivateTmp=true
+NoNewPrivileges=true

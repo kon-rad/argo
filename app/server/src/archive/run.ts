@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { ingest, type Counts, type Item } from './ingest.js';
+import { walkFiles as walk } from '../usage/walkFiles.js';
 import * as stage from './stage.js';
 import * as store from './store.js';
 import type { Host } from './types.js';
@@ -38,20 +39,7 @@ function listFiles(dir: string, filter: (name: string) => boolean): string[] {
   return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile() && filter(e.name)).map((e) => join(dir, e.name));
 }
 
-/** Lists files under dir; a directory that vanishes mid-walk (live session dirs) is skipped. */
-export function walk(dir: string, out: string[] = []): string[] {
-  let entries;
-  try { entries = readdirSync(dir, { withFileTypes: true }); } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT' || code === 'ENOTDIR') return out;
-    throw err;
-  }
-  for (const e of entries) {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) walk(p, out); else if (e.isFile()) out.push(p);
-  }
-  return out;
-}
+export { walkFiles as walk } from '../usage/walkFiles.js';
 
 
 function acquireLock(dir: string): boolean {
