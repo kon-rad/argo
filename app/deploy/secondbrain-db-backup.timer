@@ -1,0 +1,10 @@
+[Unit]
+Description=Second Brain database backup to B2, nightly 03:30 UTC
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

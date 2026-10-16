@@ -1,0 +1,18 @@
+[Unit]
+Description=Second Brain: collect the brain map's numbers (followers, fund Safe) into metric_samples
+After=network-online.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# Public pages only, no API keys.
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-metrics.js collect
+# Exit 2 = some sources failed, the rest were written; not a unit failure.
+SuccessExitStatus=2
+TimeoutStartSec=180
+PrivateTmp=true
+NoNewPrivileges=true

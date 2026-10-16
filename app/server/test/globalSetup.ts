@@ -2,8 +2,11 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 const APP_ROOT = resolve(import.meta.dirname, '..', '..');
-const TEST_DB = 'secondbrain_test';
-const TEST_URL = `postgres://localhost:5432/${TEST_DB}`;
+// SB_TEST_DB lets a session use its own scratch database (e.g. sb_inventory_test) and drop it after.
+const TEST_DB = process.env.SB_TEST_DB ?? 'secondbrain_test';
+if (!/^[a-z_][a-z0-9_]*_test$/.test(TEST_DB)) throw new Error(`SB_TEST_DB must be a lowercase name ending in _test, got "${TEST_DB}"`);
+// PGHOST/PGPORT (also read by psql and createdb below) point the run at any server.
+const TEST_URL = `postgres://${process.env.PGHOST ?? "localhost"}:${process.env.PGPORT ?? "5432"}/${TEST_DB}`;
 
 function psql(db: string, sql: string): string {
   return execFileSync('psql', ['-tA', '-d', db, '-c', sql], { encoding: 'utf8' }).trim();

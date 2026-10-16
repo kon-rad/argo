@@ -5,6 +5,7 @@ import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { remarkWikilink } from '../lib/wikilink.js';
 import Editor from './Editor.js';
+import ListenButton from './ListenButton.js';
 import {
   api,
   b2Url,
@@ -56,6 +57,7 @@ export default function FileView({ path }: Props) {
               Edit
             </button>
           )}
+          {file.is_markdown && !editing && <ListenButton path={file.path} />}
         </div>
         {tags.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">

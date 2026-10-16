@@ -6,19 +6,25 @@ import { config, type ModuleName } from './config.js';
 import { connectors as defaultConnectors, type ConnectorRegistry } from './connectors/index.js';
 import { defaultEmbeddingProvider } from './embeddings/factory.js';
 import { agentsRouter } from './routes/agents.js';
+import { tvRouter } from './routes/tv.js';
+import { usageRouter } from './routes/usage.js';
 import { b2Router, type B2Options } from './routes/b2.js';
 import { errorHandlerFor } from './routes/http.js';
 import { databaseRouter } from './routes/database.js';
 import { fileRouter } from './routes/file.js';
 import { hubRouter, type HubOptions } from './routes/hub.js';
+import { mapRouter } from './routes/map.js';
+import { orgRouter } from './routes/org.js';
 import { friendlyRouter, type FriendlyOptions } from './routes/friendly.js';
 import { rawRouter } from './routes/raw.js';
+import { projectsFeedRouter, projectsRouter } from './routes/projects.js';
 import { ringRouter, type RingRouterOptions } from './routes/ring.js';
 import { runsRouter } from './routes/runs.js';
 import { searchRouter, type ProviderFactory } from './routes/search.js';
 import { sourcesRouter } from './routes/sources.js';
 import { systemRouter } from './routes/system.js';
 import { treeRouter } from './routes/tree.js';
+import { voiceRouter, type VoiceOptions } from './routes/voice.js';
 import { togetherSqlGenerator, type SqlGenerator } from './sqlgen.js';
 
 export interface AppOptions {
@@ -48,6 +54,10 @@ export interface AppOptions {
   modules?: ReadonlySet<ModuleName>;
   /** Overridden in tests with a fake agent-hub. */
   hub?: HubOptions;
+  /** Overridden in tests; otherwise PROJECTS_FEED_TOKEN. */
+  projectsFeedToken?: string;
+  /** Overridden in tests: temp settings and cache, and a fake speech server. */
+  voice?: Partial<VoiceOptions>;
 }
 
 function defaultSqlGenerator(): SqlGenerator {
@@ -84,6 +94,11 @@ export function createApp(opts: AppOptions = {}): express.Express {
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true });
   });
+
+  // A kiosk's read-only projects summary: a bearer token, no session.
+  if (modules.has('projects')) {
+    app.use('/api/feed', projectsFeedRouter(vaultRoot, opts.projectsFeedToken ?? config.projectsFeedToken));
+  }
 
   if (remote) {
     const auth = createAuth(
@@ -126,13 +141,23 @@ export function createApp(opts: AppOptions = {}): express.Express {
     const host = config.ringPullHost;
     app.use(
       '/api/ring',
-      ringRouter({ allowPull: !remote && Boolean(host), host: host ?? '', db: config.ringPullDb, ...opts.ring }),
+      ringRouter({
+        allowPull: !remote && config.indexer && Boolean(host),
+        host: host ?? '',
+        db: config.ringPullDb,
+        ...opts.ring,
+      }),
     );
   }
   if (modules.has('agents')) {
     app.use('/api/agents', agentsRouter(opts.timers));
     app.use('/api/hub', hubRouter(opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }));
   }
+  if (modules.has('usage')) app.use('/api/usage', usageRouter());
+  if (modules.has('projects')) app.use('/api/projects', projectsRouter(vaultRoot));
+  if (modules.has('org')) app.use('/api/org', orgRouter(vaultRoot));
+  if (modules.has('map')) app.use('/api/map', mapRouter());
+  if (modules.has('tv')) app.use('/api/tv', tvRouter(vaultRoot));
   // Local-only: one spawns a shell script, the other stops the process. Neither
   // belongs on an internet-facing box, logged in or not.
   const robotScript = opts.friendly?.script ?? config.robotLaunchScript;
@@ -143,6 +168,21 @@ export function createApp(opts: AppOptions = {}): express.Express {
         script: robotScript,
         logFile: join(config.dataDir, 'friendly-launch.log'),
         ...opts.friendly,
+      }),
+    );
+  }
+  // Read-aloud through a local speech server (Kokoro). Its settings can also
+  // drive a Claude Code Stop hook on the same machine. Never on a server.
+  if (!remote && modules.has('voice')) {
+    app.use(
+      '/api/voice',
+      voiceRouter({
+        vaultRoot,
+        settingsFile: join(config.dataDir, 'voice-settings.json'),
+        cacheDir: join(config.dataDir, 'tts'),
+        ttsUrl: config.ttsUrl,
+        ttsModel: config.ttsModel,
+        ...opts.voice,
       }),
     );
   }

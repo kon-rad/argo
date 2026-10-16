@@ -1,4 +1,5 @@
 import { query } from '../src/db.js';
+import { MODULE_NAMES } from '../src/config.js';
 
 /** Truncates every data table between tests. Migrations stay applied. */
 export async function truncateAll(): Promise<void> {
@@ -9,7 +10,12 @@ export async function truncateAll(): Promise<void> {
                archive_log_lines, archive_memory_versions, archive_files, ingest_runs,
                auth_sessions, auth_totp_state,
                ring_raw, ring_daily, ring_samples, ring_sleep_stages, wallets,
-               cron_jobs, cron_runs, cron_outputs, agents_sync_runs
+               cron_jobs, cron_runs, cron_outputs, agents_sync_runs,
+               livestream_sessions, livestream_viewer_samples, livestream_x_broadcasts, livestream_notices,
+               task_links, org_wakeups, org_reads, org_messages, org_channel_members, org_channels, org_agents,
+               verifications, stage_changes, features, projects, teams, divisions,
+               usage_calls, usage_runs, plan_usage_snapshots, hermes_usage_snapshots, usage_files, provider_credit_snapshots,
+               metric_samples, map_edges, map_nodes, map_layouts
                RESTART IDENTITY CASCADE`);
 }
 
@@ -18,3 +24,6 @@ export async function vaultSourceId(): Promise<number> {
   if (!rows[0]) throw new Error('vault source not seeded');
   return rows[0].id;
 }
+
+/** Every optional module on: feature tests exercise routes a default install doesn't mount. */
+export const ALL_MODULES = new Set(MODULE_NAMES);

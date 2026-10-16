@@ -8,6 +8,8 @@ import { snapshotSqlite } from '../archive/collect.js';
 import { readHermes } from '../archive/hermes.js';
 import * as store from '../archive/store.js';
 import type { Host } from '../archive/types.js';
+import { readHermesCounters } from '../usage/hermesCounters.js';
+import { recordHermesCounters } from '../usage/store.js';
 
 /**
  * Copies what Hermes knows about its conversations and cron jobs into
@@ -31,6 +33,7 @@ export interface SyncCounts {
   jobs: number;
   runs: number;
   outputs: number;
+  usage: number;
   errors: string[];
 }
 
@@ -92,6 +95,7 @@ async function syncSessions(home: HermesHome, host: Host, tz: string | null, tmp
   const copy = join(tmp, `${home.profile}-state.db`);
   await snapshotSqlite(src, copy);
   const { sessions, messages } = readHermes(copy, host);
+  const counters = readHermesCounters(copy, host, home.profile);
   // The main home keeps the archive's source name, so its rows line up with `secondbrain archive`.
   const source = home.profile === 'main' ? ('hermes' as const) : (`hermes:${home.profile}` as const);
   await withTransaction(async (tx) => {
@@ -109,6 +113,7 @@ async function syncSessions(home: HermesHome, host: Host, tz: string | null, tmp
       (bySession.get(m.sessionExternalId) ?? bySession.set(m.sessionExternalId, []).get(m.sessionExternalId)!).push(m);
     }
     for (const [sid, msgs] of bySession) c.messages += await store.upsertMessages(tx, ids.get(sid)!, msgs);
+    c.usage += await recordHermesCounters(tx, counters, new Date());
   });
 }
 
@@ -202,7 +207,7 @@ async function syncCron(home: HermesHome, tz: string | null, tmp: string, c: Syn
 }
 
 export async function syncAgents(root: string, host: Host): Promise<SyncCounts> {
-  const counts: SyncCounts = { homes: 0, sessions: 0, messages: 0, jobs: 0, runs: 0, outputs: 0, errors: [] };
+  const counts: SyncCounts = { homes: 0, sessions: 0, messages: 0, jobs: 0, runs: 0, outputs: 0, usage: 0, errors: [] };
   const tz = hermesTimezone(root);
   const tmp = mkdtempSync(join(tmpdir(), 'agents-sync-'));
   try {

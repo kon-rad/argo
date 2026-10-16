@@ -47,10 +47,12 @@ const Schema = z.object({
   B2_SERVE_URL: z.string().url().optional(),
   // 0 = never (the Mac, where rescans are a button). The server sets 30.
   SCAN_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(0),
-  // Optional features, comma separated: ring, agents. Off unless listed.
+  // Optional features, comma separated (MODULE_NAMES below). Off unless listed.
   MODULES: z.string().default(''),
   // Shown in the TOTP app and as the comment author on the Agents board.
   OWNER_NAME: z.string().trim().min(1).default('owner'),
+  // org module: the name of the human agent in the org (org_agents, runtime human).
+  ORG_OWNER: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default('owner'),
   // Vault-relative notes the nav links to; unset hides the link.
   DEV_LOG_PATH: z.string().optional(),
   DOCS_PATH: z.string().optional(),
@@ -63,14 +65,27 @@ const Schema = z.object({
   ARCHIVE_SSH_HOST: z.string().optional(),
   // A local copy mirrors the server's ring_* tables over ssh. Unset: "Pull from server" is off.
   RING_PULL_SSH_HOST: z.string().optional(),
+  // `off` when this process is a client of another machine's master database
+  // (bin/secondbrain sets it whenever it uses SECONDBRAIN_DB_URL). Only the
+  // master scans, embeds and receives Ring data: a second scanner with a
+  // different checkout would rewrite the index and cascade-delete embeddings,
+  // and a Ring pull would replace the master's rows.
+  INDEXER: z.enum(['on', 'off']).default('on'),
   RING_PULL_DB: z.string().regex(/^[a-z_][a-z0-9_]*$/).default('secondbrain'),
   // agent-hub (argo-exo/agents/agent-hub) on the droplet: the kanban board, Claude chats and the Telegram toggle.
   // Unset on the Mac, where the Agents page's live tabs say so.
   AGENT_HUB_URL: z.string().url().optional(),
   AGENT_HUB_TOKEN: z.string().min(32).optional(),
+  // Read-only bearer token for a kiosk's Projects panel (GET /api/feed/projects).
+  // Unset = the feed route does not exist.
+  PROJECTS_FEED_TOKEN: z.string().min(32).optional(),
+  // A local OpenAI-compatible speech server (e.g. mlx-audio running Kokoro),
+  // localhost only. Used by the voice module's Listen button; never on a server.
+  TTS_URL: z.string().url().default('http://127.0.0.1:8880'),
+  TTS_MODEL: z.string().default('mlx-community/Kokoro-82M-bf16'),
 });
 
-export const MODULE_NAMES = ['ring', 'agents'] as const;
+export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream'] as const;
 export type ModuleName = (typeof MODULE_NAMES)[number];
 
 /** `"ring, agents"` → {'ring', 'agents'}; unknown names are ignored. */
@@ -114,10 +129,12 @@ export const config = {
   authPasswordHash: parsed.data.AUTH_PASSWORD_HASH,
   authTotpSecret: parsed.data.AUTH_TOTP_SECRET,
   scanIntervalMinutes: parsed.data.SCAN_INTERVAL_MINUTES,
+  indexer: parsed.data.INDEXER === 'on',
   b2ServeUrl: parsed.data.B2_SERVE_URL,
   dataDir: resolve(appRoot, 'data'),
   modules: parseModules(parsed.data.MODULES),
   ownerName: parsed.data.OWNER_NAME,
+  orgOwner: parsed.data.ORG_OWNER,
   devLogPath: parsed.data.DEV_LOG_PATH ?? null,
   docsPath: parsed.data.DOCS_PATH ?? null,
   robotLaunchScript: parsed.data.ROBOT_LAUNCH_SCRIPT,
@@ -128,5 +145,8 @@ export const config = {
   ringPullDb: parsed.data.RING_PULL_DB,
   agentHubUrl: parsed.data.AGENT_HUB_URL,
   agentHubToken: parsed.data.AGENT_HUB_TOKEN,
+  projectsFeedToken: parsed.data.PROJECTS_FEED_TOKEN,
+  ttsUrl: parsed.data.TTS_URL.replace(/\/+$/, ''),
+  ttsModel: parsed.data.TTS_MODEL,
   webDist: resolve(appRoot, 'web', 'dist'),
 } as const;

@@ -1,0 +1,26 @@
+[Unit]
+Description=Second Brain: embed new and changed notes (vault_chunks) with the local Ollama model
+After=network-online.target postgresql.service ollama.service
+Wants=network-online.target
+Requires=postgresql.service ollama.service
+
+[Service]
+Type=oneshot
+# The provider comes from the embeddings row in `sources` (provider ollama, model
+# intfloat/multilingual-e5-large-instruct). OLLAMA_URL is unset, so it is this server's
+# own Ollama on 127.0.0.1:11434 (~0.4 chunks/s on 2 vCPU). For a big backfill, run the
+# same script with OLLAMA_URL pointing at a faster machine's Ollama instead.
+User=@APP_USER@
+Group=@APP_USER@
+Environment=HOME=@APP_HOME@
+# ~0.25-0.4 chunks/s on a 2 vCPU server: 4 per request stays well inside the 60 s timeout.
+Environment=EMBED_BATCH_SIZE=4
+EnvironmentFile=/etc/secondbrain/env
+WorkingDirectory=@APP_DIR@
+ExecStart=/usr/bin/node @APP_DIR@/deploy/secondbrain-embed.mjs
+Nice=15
+CPUQuota=100%
+IOSchedulingClass=idle
+TimeoutStartSec=3h
+PrivateTmp=true
+NoNewPrivileges=true

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { config } from '../config.js';
 import type { ConnectorRegistry } from '../connectors/index.js';
 import { query } from '../db.js';
 import { invalidateEmbeddingProvider, loadEmbeddingConfig } from '../embeddings/factory.js';
@@ -83,6 +84,11 @@ export function sourcesRouter(connectors: ConnectorRegistry): Router {
       const id = intParam(req.params.id, 'source id');
       const source = await getSource(id);
       if (!source.enabled) throw new HttpError(409, `source ${id} is disabled`);
+      // A client of the droplet's master database never indexes: the droplet
+      // scans and embeds its own checkout (config.ts, INDEXER).
+      if (!config.indexer && (source.kind === 'vault' || source.kind === 'embeddings')) {
+        throw new HttpError(409, `${source.kind} runs on the droplet (INDEXER=off): this app is a client of the master database`);
+      }
 
       const connector = connectors[source.kind];
       if (!connector) throw new HttpError(400, `no connector for kind '${source.kind}'`);

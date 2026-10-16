@@ -1,9 +1,10 @@
-import { readFileSync, openSync, readSync, closeSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { withTransaction } from '../db.js';
 import { parseClaudeJsonl } from './claude.js';
 import { readHermes } from './hermes.js';
 import { splitLog } from './logs.js';
+import { readFrom } from '../usage/readFrom.js';
 import * as stage from './stage.js';
 import * as store from './store.js';
 import type { Host } from './types.js';
@@ -18,12 +19,7 @@ export interface Item {
   daily?: boolean; // hermes state: one upload per UTC day
 }
 
-export function readFrom(path: string, offset: number): Buffer {
-  const size = statSync(path).size;
-  if (offset >= size) return Buffer.alloc(0);
-  const fd = openSync(path, 'r');
-  try { const buf = Buffer.alloc(size - offset); readSync(fd, buf, 0, buf.length, offset); return buf; } finally { closeSync(fd); }
-}
+export { readFrom } from '../usage/readFrom.js';
 
 export async function ingest(item: Item, errors: string[], bump: Bump): Promise<void> {
   const row = (await store.getFile(item.source, item.host, item.logical))!;

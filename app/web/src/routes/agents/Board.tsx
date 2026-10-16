@@ -115,13 +115,19 @@ function NewTask({ board, onCreated }: { board: string; onCreated: (id: string) 
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [assignee, setAssignee] = useState('');
+  const [project, setProject] = useState('');
+  const [feature, setFeature] = useState('');
   const lanes = agents.data?.lanes ?? [];
+  const bots = agents.data?.bots ?? [];
+  const isBot = bots.some((b) => b.name === assignee);
+  const projects = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, enabled: isBot });
+  const features = projects.data?.projects.find((p) => p.slug === project)?.features ?? [];
   const profiles = (agents.data?.profiles ?? []).filter((p) => !MONEY.has(p.name) && p.name !== 'default');
   // Default agent from the nav toggle: the Claude writer or the Hermes researcher.
   const fallback = tg.data?.default === 'hermes' ? 'researcher' : 'cc-writer';
   const chosen = assignee || fallback;
   const create = useMutation({
-    mutationFn: () => api.createTask({ board, title, body, assignee: chosen }),
+    mutationFn: () => api.createTask({ board, title, body, assignee: chosen, ...(isBot ? { project, feature: feature || undefined } : {}) }),
     onSuccess: (t) => {
       void queryClient.invalidateQueries({ queryKey: ['hub-board', board] });
       onCreated(t.id);
@@ -142,8 +148,23 @@ function NewTask({ board, onCreated }: { board: string; onCreated: (id: string) 
           className="max-w-full rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
           <optgroup label="Claude Code">{lanes.map(option)}</optgroup>
           <optgroup label="Hermes">{profiles.map(option)}</optgroup>
+          {bots.length > 0 && <optgroup label="Bots (the org)">{bots.map((a) => <option key={a.name} value={a.name}>{a.name}{a.team ? ` · ${a.team}` : ''}{a.description ? ` — ${a.description.slice(0, 40)}` : ''}</option>)}</optgroup>}
         </select>
-        <button type="submit" disabled={!title.trim() || create.isPending}
+        {isBot && (
+          <>
+            <select aria-label="Project" value={project} onChange={(e) => { setProject(e.target.value); setFeature(''); }}
+              className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
+              <option value="">project (required for a bot)…</option>
+              {(projects.data?.projects ?? []).map((p) => <option key={p.slug} value={p.slug}>{p.slug}</option>)}
+            </select>
+            <select aria-label="Feature" value={feature} onChange={(e) => setFeature(e.target.value)} disabled={!project}
+              className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
+              <option value="">feature (optional)</option>
+              {features.map((f) => <option key={f.slug} value={f.slug}>{f.slug}</option>)}
+            </select>
+          </>
+        )}
+        <button type="submit" disabled={!title.trim() || create.isPending || (isBot && !project)}
           className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white disabled:opacity-50">
           {create.isPending ? 'Creating…' : `Give it to ${chosen}`}
         </button>
@@ -192,6 +213,7 @@ function TaskPanel({ id, board, onClose }: { id: string; board: string; onClose:
                 )}
               </section>
             )}
+            {t.status !== 'done' && t.status !== 'archived' && t.status !== 'running' && <AssignForm id={id} board={board} current={t.assignee} />}
             {(detail.data?.children.length ?? 0) > 0 && (
               <p className="text-xs">Child tasks: {detail.data!.children.map((c) => (
                 <Link key={c} to={`/agents/board/${c}`} className="mr-2 text-[var(--accent)] underline">{c}</Link>
@@ -231,5 +253,64 @@ function TaskPanel({ id, board, onClose }: { id: string; board: string; onClose:
         )}
       </div>
     </aside>
+  );
+}
+
+/**
+ * Moves an open card to a lane, a Hermes profile or a bot. A bot's card needs the tracker project (and
+ * optionally a feature): the hub runs `cli-org task assign`, which writes the link row, sets the feature's
+ * owner, comments the closing commands on the card and mentions the bot in its team channel.
+ */
+function AssignForm({ id, board, current }: { id: string; board: string; current: string | null }) {
+  const queryClient = useQueryClient();
+  const agents = useQuery({ queryKey: ['hub-agents'], queryFn: api.hubAgents, staleTime: 60_000 });
+  const [assignee, setAssignee] = useState('');
+  const [project, setProject] = useState('');
+  const [feature, setFeature] = useState('');
+  const bots = agents.data?.bots ?? [];
+  const isBot = bots.some((b) => b.name === assignee);
+  const projects = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, enabled: isBot });
+  const features = projects.data?.projects.find((p) => p.slug === project)?.features ?? [];
+  const assign = useMutation({
+    mutationFn: () => api.assignTask(id, { board, assignee, ...(isBot ? { project, feature: feature || undefined } : {}) }),
+    onSuccess: () => {
+      setAssignee('');
+      void queryClient.invalidateQueries({ queryKey: ['hub-task', board, id] });
+      void queryClient.invalidateQueries({ queryKey: ['hub-board', board] });
+    },
+  });
+  return (
+    <form className="flex flex-wrap items-center gap-2 rounded border border-[var(--rule)] p-2 text-xs"
+      onSubmit={(e) => { e.preventDefault(); if (assignee && (!isBot || project)) assign.mutate(); }}>
+      <label className="text-[var(--ink-dim)]" htmlFor={`assign-${id}`}>Give to</label>
+      <select id={`assign-${id}`} value={assignee} onChange={(e) => { setAssignee(e.target.value); setProject(''); setFeature(''); }}
+        className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1">
+        <option value="">{current ? `now ${current}…` : 'unassigned…'}</option>
+        {bots.length > 0 && <optgroup label="Bots (the org)">{bots.map((a) => <option key={a.name} value={a.name}>{a.name}{a.team ? ` · ${a.team}` : ''}</option>)}</optgroup>}
+        <optgroup label="Claude Code lanes">{(agents.data?.lanes ?? []).map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}</optgroup>
+        <optgroup label="Hermes profiles">{(agents.data?.profiles ?? []).filter((a) => !MONEY.has(a.name)).map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}</optgroup>
+        {current && <option value="none">nobody (unassign)</option>}
+      </select>
+      {isBot && (
+        <>
+          <select aria-label="Project" value={project} onChange={(e) => { setProject(e.target.value); setFeature(''); }}
+            className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1">
+            <option value="">project (required)…</option>
+            {(projects.data?.projects ?? []).map((p) => <option key={p.slug} value={p.slug}>{p.slug}</option>)}
+          </select>
+          <select aria-label="Feature" value={feature} onChange={(e) => setFeature(e.target.value)} disabled={!project}
+            className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1">
+            <option value="">feature (optional)…</option>
+            {features.map((f) => <option key={f.slug} value={f.slug}>{f.slug}</option>)}
+          </select>
+        </>
+      )}
+      <button type="submit" disabled={!assignee || assign.isPending || (isBot && !project)}
+        className="rounded bg-[var(--accent)] px-2 py-1 font-medium text-white disabled:opacity-50">
+        {assign.isPending ? 'Giving…' : 'Give'}
+      </button>
+      {assign.isError && <span className="text-[var(--danger,#b00)]">{(assign.error as Error).message}</span>}
+      {assign.isSuccess && <span className="text-[var(--ink-dim)]">done</span>}
+    </form>
   );
 }

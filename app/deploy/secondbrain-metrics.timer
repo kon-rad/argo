@@ -1,0 +1,10 @@
+[Unit]
+Description=Brain map metrics, once a day
+
+[Timer]
+OnCalendar=*-*-* 00:30:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

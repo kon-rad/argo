@@ -6,12 +6,17 @@ import { parseModules } from '../src/config.js';
 describe('optional modules', () => {
   it('parses a comma list and drops unknown names', () => {
     expect([...parseModules('ring, agents ,bogus,')]).toEqual(['ring', 'agents']);
+    expect([...parseModules('tv,map,org,projects,usage,voice,livestream')]).toEqual(['projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream']);
     expect(parseModules('').size).toBe(0);
   });
 
   it('a module that is off mounts no API routes', async () => {
     const app = createApp({ modules: new Set() });
-    for (const path of ['/api/ring', '/api/agents/chats', '/api/hub/telegram']) {
+    const paths = [
+      '/api/ring', '/api/agents/chats', '/api/hub/telegram', '/api/usage/plan', '/api/projects/report',
+      '/api/feed/projects', '/api/org/channels', '/api/map/graph', '/api/tv/episodes', '/api/voice/status',
+    ];
+    for (const path of paths) {
       const res = await request(app).get(path);
       expect(res.status, path).toBe(404);
       expect(res.body.error?.message, path).toBe('no such endpoint');

@@ -17,8 +17,16 @@
 #   DEPLOY_APP_USER      Unix user that owns the vault and runs the app (default: secondbrain)
 #   DEPLOY_APP_DIR       where the app is installed (default: /opt/secondbrain-app)
 #   DEPLOY_HERMES_HOME   Hermes home on the server, for the agents module (default: ~APP_USER/.hermes)
-#   EXTRA_CADDY_IMPORT   a Caddyfile snippet for other sites on the same box
-#   MODULES              the same list the app uses; `agents` also installs the agents-sync timer
+#   EXTRA_CADDY_IMPORT   Caddyfile snippets for other sites on the same box, comma separated
+#   DEPLOY_REDIRECT_FROM another host (e.g. the bare IP) that 308-redirects to DEPLOY_PUBLIC_HOST
+#   DEPLOY_PAUSE_FILE    a file that holds an agent dispatcher off while the build runs (org module)
+#   DEPLOY_EMBED=1       install the nightly embed timer (needs a local Ollama service)
+#   DEPLOY_DB_BACKUP=1   install the nightly pg_dump-to-B2 timer (needs b2store for the app user)
+#   MODULES              the same list the app uses. Each module installs its own timers:
+#                        agents: agents-sync · usage: usage-sync, credits-sync, the usage importer
+#                        projects: projects-render, the kiosk feed token, cli-projects on PATH
+#                        org: the sb_org role, cli-org on PATH · map: map-build, metrics
+#                        livestream: the minute poller and Caddy's /public/ files
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,9 +43,14 @@ APP_USER="${DEPLOY_APP_USER:-secondbrain}"
 APP_DIR="${DEPLOY_APP_DIR:-/opt/secondbrain-app}"
 HERMES_HOME_REMOTE="${DEPLOY_HERMES_HOME:-}"
 EXTRA_IMPORT="${EXTRA_CADDY_IMPORT:-}"
-WITH_AGENTS=0; [[ ",${MODULES:-}," == *",agents,"* || ",${MODULES:-}," == *", agents,"* ]] && WITH_AGENTS=1
-for v in "$APP_USER" "$APP_DIR" "$VAULT_DIR" "$PUBLIC_HOST" "$HERMES_HOME_REMOTE" "$EXTRA_IMPORT"; do
-  [[ "$v" =~ ^[A-Za-z0-9._/@:-]*$ ]] || { echo "unsafe character in setting: $v"; exit 1; }
+REDIRECT_FROM="${DEPLOY_REDIRECT_FROM:-}"
+PAUSE_FILE="${DEPLOY_PAUSE_FILE:-}"
+WITH_EMBED="${DEPLOY_EMBED:-0}"
+WITH_BACKUP="${DEPLOY_DB_BACKUP:-0}"
+# The module list without spaces, so it travels to the server as one safe word.
+MODS="$(printf '%s' "${MODULES:-}" | tr -d ' ')"
+for v in "$APP_USER" "$APP_DIR" "$VAULT_DIR" "$PUBLIC_HOST" "$HERMES_HOME_REMOTE" "$EXTRA_IMPORT" "$REDIRECT_FROM" "$PAUSE_FILE" "$MODS" "$WITH_EMBED" "$WITH_BACKUP"; do
+  [[ "$v" =~ ^[A-Za-z0-9._/@:,-]*$ ]] || { echo "unsafe character in setting: $v"; exit 1; }
 done
 
 echo "→ shipping source to $HOST:$APP_DIR"
@@ -48,13 +61,22 @@ rsync -az --delete \
   "$APP_ROOT/" "$HOST:$APP_DIR/"
 
 echo "→ provisioning and restarting"
-ssh "$HOST" "APP_DIR=$APP_DIR VAULT=$VAULT_DIR APP_USER=$APP_USER PUBLIC_HOST=$PUBLIC_HOST HERMES_HOME_REMOTE=$HERMES_HOME_REMOTE EXTRA_IMPORT=$EXTRA_IMPORT WITH_AGENTS=$WITH_AGENTS bash -s" <<'REMOTE'
+ssh "$HOST" "APP_DIR=$APP_DIR VAULT=$VAULT_DIR APP_USER=$APP_USER PUBLIC_HOST=$PUBLIC_HOST HERMES_HOME_REMOTE=$HERMES_HOME_REMOTE EXTRA_IMPORT=$EXTRA_IMPORT REDIRECT_FROM=$REDIRECT_FROM PAUSE_FILE=$PAUSE_FILE MODS=$MODS WITH_EMBED=$WITH_EMBED WITH_BACKUP=$WITH_BACKUP bash -s" <<'REMOTE'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 id "$APP_USER" >/dev/null || { echo "user $APP_USER missing: create it and give it the vault checkout"; exit 1; }
 [ -d "$VAULT" ] || { echo "vault missing at $VAULT"; exit 1; }
-HERMES_HOME_REMOTE="${HERMES_HOME_REMOTE:-$(getent passwd "$APP_USER" | cut -d: -f6)/.hermes}"
-render() { sed -e "s#@APP_USER@#$APP_USER#g" -e "s#@APP_DIR@#$APP_DIR#g" -e "s#@VAULT_DIR@#$VAULT#g" -e "s#@HERMES_HOME@#$HERMES_HOME_REMOTE#g" "$1"; }
+APP_HOME="$(getent passwd "$APP_USER" | cut -d: -f6)"
+HERMES_HOME_REMOTE="${HERMES_HOME_REMOTE:-$APP_HOME/.hermes}"
+render() { sed -e "s#@APP_USER@#$APP_USER#g" -e "s#@APP_DIR@#$APP_DIR#g" -e "s#@VAULT_DIR@#$VAULT#g" -e "s#@HERMES_HOME@#$HERMES_HOME_REMOTE#g" -e "s#@APP_HOME@#$APP_HOME#g" "$1"; }
+has() { [[ ",$MODS," == *",$1,"* ]]; }
+# A unit pair: the .service rendered, the .timer copied as is.
+unit() {
+  render "$APP_DIR/deploy/$1.service" > "/etc/systemd/system/$1.service"
+  install -m 644 "$APP_DIR/deploy/$1.timer" /etc/systemd/system/
+  TIMERS+=("$1.timer")
+}
+TIMERS=()
 
 # ---- packages (first run only) ----
 # Wait out unattended-upgrades instead of failing on its lock. NodeSource's
@@ -101,36 +123,108 @@ if [ ! -f /etc/secondbrain/env ]; then
   install -m 640 -o root -g "$APP_USER" "$APP_DIR/deploy/env.example" /etc/secondbrain/env
 fi
 
+# projects module: a kiosk's read-only feed token, generated here once and never printed.
+if has projects; then
+  grep -qE '^PROJECTS_FEED_TOKEN=.{32,}' /etc/secondbrain/env \
+    || echo "PROJECTS_FEED_TOKEN=$(openssl rand -hex 32)" >> /etc/secondbrain/env
+fi
+
+# org module: the row-level-security role its migration grants. The app user may not
+# CREATE ROLE, so it is made here; its password lands only in the env file.
+if has org; then
+  sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='sb_org'" | grep -q 1 \
+    || sudo -u postgres psql -qc "CREATE ROLE sb_org LOGIN"
+  if ! grep -qE '^SB_ORG_DB_URL=' /etc/secondbrain/env; then
+    SB_ORG_PW=$(openssl rand -hex 24)
+    sudo -u postgres psql -qc "ALTER ROLE sb_org PASSWORD '$SB_ORG_PW'"
+    echo "SB_ORG_DB_URL=postgres://sb_org:$SB_ORG_PW@127.0.0.1:5432/secondbrain" >> /etc/secondbrain/env
+    unset SB_ORG_PW
+  fi
+fi
+
+# ---- hold an agent dispatcher off while node_modules and dist are rebuilt: an agent
+# woken in that window finds no CLI. Removed after the migration, and on any exit.
+PAUSED_BY_DEPLOY=
+if [ -n "$PAUSE_FILE" ] && [ ! -e "$PAUSE_FILE" ]; then
+  install -d -o "$APP_USER" -g "$APP_USER" "$(dirname "$PAUSE_FILE")"
+  echo "deploy in progress ($(date -u +%FT%TZ))" > "$PAUSE_FILE"; chown "$APP_USER:$APP_USER" "$PAUSE_FILE"
+  PAUSED_BY_DEPLOY=1
+  trap 'rm -f "$PAUSE_FILE"' EXIT
+  for _ in $(seq 1 24); do pgrep -u "$APP_USER" -f 'claude -p' >/dev/null || break; echo "  waiting for a running agent to finish"; sleep 5; done
+fi
+
 # ---- build ----
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/data"
 sudo -u "$APP_USER" bash -c "cd $APP_DIR && npm ci --no-audit --no-fund && npm run build"
 sudo -u "$APP_USER" bash -c "cd $APP_DIR && DATABASE_URL='postgres:///secondbrain?host=/var/run/postgresql' npm run migrate:up"
+# node_modules, dist and the schema are whole again: let the dispatcher spawn.
+if [ -n "$PAUSED_BY_DEPLOY" ]; then rm -f "$PAUSE_FILE"; echo "→ dispatcher unpaused"; fi
 # The vault is a git checkout: tell git to ignore the editor's atomic-write
 # temp files in case the sync runs in the instant one exists.
 grep -qxF '.*.sb-*.tmp' "$VAULT/.git/info/exclude" 2>/dev/null \
   || echo '.*.sb-*.tmp' >> "$VAULT/.git/info/exclude"
 
+# ---- CLI wrappers on the app user's PATH, so an agent's `Bash(cli-org *)` rule matches ----
+WRAPPERS=()
+has org && WRAPPERS+=(cli-org)
+has projects && WRAPPERS+=(cli-projects)
+if [ "${#WRAPPERS[@]}" -gt 0 ]; then
+  install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.local/bin"
+  for w in "${WRAPPERS[@]}"; do
+    render "$APP_DIR/deploy/bin/$w" > "$APP_HOME/.local/bin/$w"
+    chown "$APP_USER:$APP_USER" "$APP_HOME/.local/bin/$w"; chmod 755 "$APP_HOME/.local/bin/$w"
+  done
+fi
+
 # ---- services ----
 render "$APP_DIR/deploy/secondbrain.service" > /etc/systemd/system/secondbrain.service
-if [ "$WITH_AGENTS" = 1 ]; then
-  render "$APP_DIR/deploy/secondbrain-agents-sync.service" > /etc/systemd/system/secondbrain-agents-sync.service
-  install -m 644 "$APP_DIR/deploy/secondbrain-agents-sync.timer" /etc/systemd/system/
+has agents && unit secondbrain-agents-sync
+if has usage; then
+  unit secondbrain-usage-sync
+  unit secondbrain-credits-sync
+  # A laptop's usage-push runs this over ssh as root and pipes its wire lines in.
+  render "$APP_DIR/deploy/secondbrain-usage-import" > /usr/local/bin/secondbrain-usage-import
+  chmod 755 /usr/local/bin/secondbrain-usage-import
 fi
+has projects && unit secondbrain-projects-render
+if has map; then unit secondbrain-map-build; unit secondbrain-metrics; fi
+has livestream && unit secondbrain-livestream
+[ "$WITH_EMBED" = 1 ] && unit secondbrain-embed
+[ "$WITH_BACKUP" = 1 ] && unit secondbrain-db-backup
+
 install -d -o caddy -g caddy /var/log/caddy
+ip_host() { [[ "$1" =~ ^[0-9.]+$ ]]; }
 GLOBAL=""
-if [[ "$PUBLIC_HOST" =~ ^[0-9.]+$ ]]; then
-  GLOBAL=$'{\n\tcert_issuer acme {\n\t\tprofile shortlived\n\t}\n\t# Clients connecting by IP send no SNI; tell Caddy which cert to serve them.\n\tdefault_sni '"$PUBLIC_HOST"$'\n}'
+SNI=""
+if ip_host "$PUBLIC_HOST"; then SNI="$PUBLIC_HOST"; elif [ -n "$REDIRECT_FROM" ] && ip_host "$REDIRECT_FROM"; then SNI="$REDIRECT_FROM"; fi
+if [ -n "$SNI" ]; then
+  GLOBAL=$'{\n\tcert_issuer acme {\n\t\tprofile shortlived\n\t}\n\t# Clients connecting by IP send no SNI; tell Caddy which cert to serve them.\n\tdefault_sni '"$SNI"$'\n}'
 fi
-IMPORT_LINE=""
-if [ -n "$EXTRA_IMPORT" ]; then
-  [ -f "$EXTRA_IMPORT" ] || touch "$EXTRA_IMPORT"   # keep the import valid before that site exists
-  IMPORT_LINE="import $EXTRA_IMPORT"
+PUBLIC_FILES=""
+if has livestream; then
+  PUBLIC_FILES=$'\n\t# Public, no login: summaries a timer writes for a public page (no private data).\n\thandle_path /public/* {\n\t\troot * /var/lib/secondbrain-public\n\t\theader Access-Control-Allow-Origin *\n\t\theader Cache-Control "public, max-age=20"\n\t\tfile_server\n\t}\n'
 fi
-python3 - "$APP_DIR/deploy/Caddyfile.template" "$PUBLIC_HOST" "$GLOBAL" "$IMPORT_LINE" > /etc/caddy/Caddyfile <<'PY'
+REDIRECT=""
+if [ -n "$REDIRECT_FROM" ]; then
+  # PUBLIC_ORIGIN names the public host, so a login posted from another host would
+  # fail the origin check. Send it there; 308 keeps the method.
+  REDIRECT=$'\nhttps://'"$REDIRECT_FROM"$' {\n\tredir https://'"$PUBLIC_HOST"$'{uri} 308\n}\n'
+fi
+IMPORT_LINES=""
+IFS=',' read -r -a IMPORTS <<< "$EXTRA_IMPORT"
+for f in "${IMPORTS[@]}"; do
+  [ -n "$f" ] || continue
+  [ -f "$f" ] || touch "$f"   # keep the import valid before that site exists
+  IMPORT_LINES+="import $f"$'\n'
+done
+python3 - "$APP_DIR/deploy/Caddyfile.template" "$PUBLIC_HOST" "$GLOBAL" "$IMPORT_LINES" "$PUBLIC_FILES" "$REDIRECT" > /etc/caddy/Caddyfile <<'PY'
 import sys
 t = open(sys.argv[1]).read()
-print(t.replace('@GLOBAL_OPTIONS@', sys.argv[3]).replace('@PUBLIC_HOST@', sys.argv[2]).replace('@EXTRA_IMPORT@', sys.argv[4]), end='')
+for key, value in (('@GLOBAL_OPTIONS@', sys.argv[3]), ('@PUBLIC_HOST@', sys.argv[2]), ('@EXTRA_IMPORT@', sys.argv[4]),
+                   ('@PUBLIC_FILES@', sys.argv[5]), ('@REDIRECT@', sys.argv[6])):
+    t = t.replace(key, value)
+print(t, end='')
 PY
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 # validate runs as root and opens the log file, leaving it root-owned; the
@@ -138,7 +232,7 @@ caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 chown -R caddy:caddy /var/log/caddy
 systemctl daemon-reload
 systemctl enable caddy secondbrain >/dev/null
-if [ "$WITH_AGENTS" = 1 ]; then systemctl enable --now secondbrain-agents-sync.timer >/dev/null; fi
+for t in "${TIMERS[@]}"; do systemctl enable --now "$t" >/dev/null; done
 systemctl reload-or-restart caddy
 
 if grep -qE '^AUTH_PASSWORD_HASH=.+' /etc/secondbrain/env && grep -qE '^AUTH_TOTP_SECRET=.+' /etc/secondbrain/env; then

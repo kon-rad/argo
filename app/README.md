@@ -118,7 +118,7 @@ Configuration comes from the **vault-root** `.env`, never a copy inside the engi
 | Variable | Default | Purpose |
 |---|---|---|
 | `VAULT_ROOT` | the vault around `.secondbrain/` | Which vault to index |
-| `MODULES` | empty | Optional pages, comma separated: `ring` (wearable ring data), `agents` (Agents and Cron pages over an agent-hub) |
+| `MODULES` | empty | Optional features, comma separated; see the table below |
 | `OWNER_NAME` | `owner` | Your name in the authenticator app and on the Agents board |
 | `DEV_LOG_PATH`, `DOCS_PATH` | unset | Vault-relative notes the nav links to; unset hides the link |
 | `ROBOT_LAUNCH_SCRIPT` | unset | Local only: a script the robot button runs |
@@ -129,6 +129,39 @@ Configuration comes from the **vault-root** `.env`, never a copy inside the engi
 | `PORT` | `5123` | |
 | `TOGETHER_API_KEY` | — | Optional. Without it, semantic search reports 503 and everything else works |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | For the local embedding provider |
+| `ORG_OWNER` | `owner` | org module: your name on the agent message board (the human agent) |
+| `TTS_URL`, `TTS_MODEL` | `http://127.0.0.1:8880`, Kokoro | voice module: the local OpenAI-compatible speech server |
+| `INDEXER` | `on` | `off` on a machine that uses another machine's database: it then never scans or embeds |
+| `SECONDBRAIN_SETTINGS` | `<vault>/secondbrain.json` | Where the structured settings below live |
+
+### Modules
+
+Everything beyond browse, search and the database page is a module. A module that is off mounts no API routes and shows no nav link.
+
+| Module | What it adds |
+|---|---|
+| `ring` | The Ring page: wearable ring data a client pushes in |
+| `agents` | Agents and Cron pages over an agent-hub (kanban, Claude chats, Hermes history) |
+| `projects` | A project tracker (divisions, projects, features, verifications) on `/projects`, `cli-projects`, a kiosk feed and a rendered markdown report |
+| `org` | An agent company's message board on `/org` (`cli-org`): channels, DMs, wakeups for a dispatcher, row-level security per agent |
+| `usage` | A ledger of Claude Code and Hermes usage on `/usage`, with plan percentages and API credit balances |
+| `map` | A 3D brain map of the vault on `/map`, with a lean kiosk view and daily metrics |
+| `tv` | A player for rendered video episodes kept in the vault, on `/tv` |
+| `voice` | Read a note aloud through a local speech server (never on a server) |
+| `livestream` | A minute poller of your YouTube, Twitch and Kick channels and a public summary JSON |
+
+### `secondbrain.json`
+
+Settings that don't fit one env line live in the vault, in `secondbrain.json` at its root. Every section is optional; a file that doesn't parse is reported and ignored. `vault-template/secondbrain.example.json` shows each one.
+
+| Key | Used by | Holds |
+|---|---|---|
+| `goalsFile`, `missionFile` | projects, map | Your goals note (tables of `\| W1 \| Goal \| Measure \| Due \| Status \|`) and mission note |
+| `map.divisionFolders`, `map.missionFolders` | map | Which folders belong to which division when no project claims them |
+| `metrics` | map | The numbers the map tracks, each with a `collect` source (YouTube, X, Instagram, a Base balance) or a `sum` of others |
+| `tv.episodesDir`, `tv.shows` | tv | Where episodes live (default `tv/episodes`) and each show's name |
+| `livestream.youtube`, `.twitch`, `.kick` | livestream | Your channel on each platform |
+| `projects.reportFile` | projects | Where `cli-projects render` writes the report (default `projects.md`) |
 
 Then `secondbrain embed` to build the vector index.
 
@@ -156,7 +189,7 @@ app/deploy/deploy.sh          # ships source, installs Node/Postgres+pgvector/Ca
 ssh <your server> 'nano /etc/secondbrain/env && systemctl restart secondbrain'   # first time only: paste the lines + TOGETHER_API_KEY
 ```
 
-`deploy.sh` reads its settings from your vault `.env` (or the environment): `DEPLOY_HOST` (ssh destination with root), `DEPLOY_PUBLIC_HOST` (domain or IP), `DEPLOY_VAULT_DIR` (vault checkout on the server), and optionally `DEPLOY_APP_USER`, `DEPLOY_APP_DIR`, `DEPLOY_HERMES_HOME`, `EXTRA_CADDY_IMPORT`. See the header of `deploy/deploy.sh`.
+`deploy.sh` reads its settings from your vault `.env` (or the environment): `DEPLOY_HOST` (ssh destination with root), `DEPLOY_PUBLIC_HOST` (domain or IP), `DEPLOY_VAULT_DIR` (vault checkout on the server), and optionally `DEPLOY_APP_USER`, `DEPLOY_APP_DIR`, `DEPLOY_HERMES_HOME`, `EXTRA_CADDY_IMPORT` (comma separated), `DEPLOY_REDIRECT_FROM` (e.g. the bare IP, redirected to the public host), `DEPLOY_PAUSE_FILE`, `DEPLOY_EMBED=1` and `DEPLOY_DB_BACKUP=1`. `MODULES` decides which timers it installs. See the header of `deploy/deploy.sh`.
 
 ```
 ```

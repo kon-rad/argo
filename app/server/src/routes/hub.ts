@@ -27,6 +27,7 @@ const ALLOWED: [string, RegExp][] = [
   ['GET', new RegExp(`^/tasks/${TASK}$`)],
   ['GET', new RegExp(`^/tasks/${TASK}/log$`)],
   ['POST', new RegExp(`^/tasks/${TASK}/comment$`)],
+  ['POST', new RegExp(`^/tasks/${TASK}/assign$`)],
   ['GET', /^\/chats$/],
   ['POST', /^\/chats$/],
   ['GET', new RegExp(`^/chats/${CHAT}/events$`)],
