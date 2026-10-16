@@ -28,7 +28,12 @@ DB_NAME="${DB_NAME:-secondbrain}"
 # this launcher into client mode: no local Postgres, no migrations (the droplet
 # app owns the schema), and no scan/embed/ring-pull/agents-sync from the Mac.
 # SECONDBRAIN_DB=local forces the old local database (e.g. offline, read-only use).
-VAULT_ENV="$APP_ROOT/../.env"
+# The vault holds the engine at <vault>/.secondbrain/app (VAULT_ROOT overrides),
+# the same rule config.ts and deploy.sh use. Getting this wrong silently falls
+# back to a local database.
+ENGINE_ROOT="$(cd "$APP_ROOT/.." && pwd)"
+if [[ "$(basename "$ENGINE_ROOT")" == ".secondbrain" ]]; then VAULT_DIR="$(dirname "$ENGINE_ROOT")"; else VAULT_DIR="$ENGINE_ROOT"; fi
+VAULT_ENV="${VAULT_ROOT:-$VAULT_DIR}/.env"
 if [[ -z "${SECONDBRAIN_DB_URL:-}" && -f "$VAULT_ENV" ]]; then
   SECONDBRAIN_DB_URL="$(sed -n 's/^SECONDBRAIN_DB_URL=//p' "$VAULT_ENV" | tail -1)"
 fi
