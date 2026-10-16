@@ -70,8 +70,8 @@ export async function upsertRuns(tx: TxClient, runs: RunRecord[]): Promise<numbe
          verify_output=EXCLUDED.verify_output, verify_at=EXCLUDED.verify_at, log_path=EXCLUDED.log_path,
          agent_name=EXCLUDED.agent_name, team_slug=EXCLUDED.team_slug, work_type=EXCLUDED.work_type,
          reasons=EXCLUDED.reasons, wakeup_ids=EXCLUDED.wakeup_ids, resumed=EXCLUDED.resumed
-       WHERE (u.verify_at, u.ended_at, u.lane, u.session_id, u.agent_name, u.reasons::text)
-             IS DISTINCT FROM (EXCLUDED.verify_at, EXCLUDED.ended_at, EXCLUDED.lane, EXCLUDED.session_id, EXCLUDED.agent_name, EXCLUDED.reasons::text)`,
+       WHERE (u.verify_at, u.ended_at, u.lane, u.session_id, u.agent_name, u.task_id, u.work_type, u.reasons::text)
+             IS DISTINCT FROM (EXCLUDED.verify_at, EXCLUDED.ended_at, EXCLUDED.lane, EXCLUDED.session_id, EXCLUDED.agent_name, EXCLUDED.task_id, EXCLUDED.work_type, EXCLUDED.reasons::text)`,
       [r.host, r.runId, r.sessionId, r.taskId, r.board, r.lane, r.model, r.startedAt, r.endedAt, r.durationMs, r.durationApiMs,
         r.numTurns, r.subtype, r.isError, r.totalCostUsd, JSON.stringify(r.usage ?? null),
         JSON.stringify(r.modelUsage ?? null), v?.name ?? null, v?.passed ?? null, v?.exitCode ?? null,
