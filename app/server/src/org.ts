@@ -41,6 +41,7 @@ export const OrgDoc = z.object({
       reports_to: Name.optional(),
       model: z.string().optional(),
       expertise: z.string().optional(),
+      work: z.enum(['research', 'coding', 'design', 'media', 'writing', 'sales', 'education', 'ops']).optional(),
       channels: z.array(z.string()).optional(),
     }),
   ),
@@ -136,11 +137,11 @@ export async function importOrg(input: unknown): Promise<{ agents: number; teams
     // Two passes: reports_to is a self-reference.
     for (const [name, a] of Object.entries(doc.agents)) {
       await tx.query(
-        `INSERT INTO org_agents (name, team_slug, runtime, role, model, expertise, org_version)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)
+        `INSERT INTO org_agents (name, team_slug, runtime, role, model, expertise, org_version, work)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
          ON CONFLICT (name) DO UPDATE SET team_slug = EXCLUDED.team_slug, runtime = EXCLUDED.runtime, role = EXCLUDED.role,
-           model = EXCLUDED.model, expertise = EXCLUDED.expertise, org_version = EXCLUDED.org_version, retired_at = NULL, updated_at = now()`,
-        [name, a.team ?? null, a.runtime, a.role, a.model ?? null, a.expertise ?? null, doc.version],
+           model = EXCLUDED.model, expertise = EXCLUDED.expertise, org_version = EXCLUDED.org_version, work = EXCLUDED.work, retired_at = NULL, updated_at = now()`,
+        [name, a.team ?? null, a.runtime, a.role, a.model ?? null, a.expertise ?? null, doc.version, a.work ?? null],
       );
     }
     for (const [name, a] of Object.entries(doc.agents)) {
