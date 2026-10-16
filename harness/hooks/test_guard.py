@@ -37,6 +37,11 @@ SHELL = [
     ("git commit -m 'fix -f flag docs' && git push", False),
     ("echo $(cat .env)", True),
     ("ls /home/someone", False),
+    # Excluding a secrets file from a transfer protects it; it isn't copying it.
+    ("rsync -azn --delete --exclude node_modules --exclude '.env.local' ./ srv:/app/", False),
+    ("rsync -az --exclude=.env --filter='protect .env.production' ./ srv:/app/", False),
+    ("rsync -az --exclude node_modules .env.local srv:/app/", True),
+    ("rsync -az --exclude '.env.local' ./.env srv:/app/", True),
 ]
 
 FILES = [
@@ -158,6 +163,16 @@ def test_engine_inside_a_vault_finds_the_vault_rules(tmp_path):
     p = subprocess.run([sys.executable, str(hooks / "guard.py")], input=json.dumps(payload),
                        capture_output=True, text=True, timeout=10, cwd=elsewhere, env=env)
     assert p.returncode == 2
+
+
+def test_local_file_can_disable_the_rsync_dry_run_rule(guard):
+    cmd = "rsync -avz --delete web/ server:/srv/web/"
+    off = {**LOCAL, "disable": ["rsync_dry_run"]}
+    assert both(guard, "Bash", "terminal", {"command": cmd}, {"command": cmd}, off) == (False, False)
+    # Secrets and force-push rules can't be switched off, and unknown names are ignored.
+    off = {"disable": ["rsync_dry_run", "secrets", "force_push"]}
+    assert both(guard, "Bash", "terminal", {"command": "cat .env"}, {"command": "cat .env"}, off) == (True, True)
+    assert both(guard, "Bash", "terminal", {"command": "git push -f"}, {"command": "git push -f"}, off) == (True, True)
 
 
 @pytest.mark.parametrize("raw", ["not json", "[1, 2]"])

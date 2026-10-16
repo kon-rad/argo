@@ -13,6 +13,15 @@ did and no dev-log entry was written, send the agent back once with:
 
 One-shot: Claude's stop_hook_active and Hermes's attempt > 0 both mean the
 agent was already nudged, so the gate lets it finish. Fails open on any error.
+
+Dev logs live under Projects/<project>/ by default. A vault can add roots and
+exempt paths in the "devlog" section of .agents/guard.local.json (found the
+same way guard.py finds it):
+
+  "devlog": {
+    "roots":  ["Areas/app/*"],          # globs; <root>/**/dev-log/YYYY-MM-DD*.md counts
+    "exempt": [".agents/memory/"]       # path prefixes that are never watched
+  }
 """
 import glob
 import json
@@ -21,10 +30,13 @@ import re
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from guard import find_local_rules  # noqa: E402
+
 WATCHED = re.compile(
     r"(?:^|/)(?:\.hermes/(?:skills|scripts|server|plugins)/|\.agents/|\.claude/settings\.json$|\.claude/agents/)"
 )
-DEVLOG = re.compile(r"(?:^|/)Projects/[^/]+/(?:.+/)?dev-log/\d{4}-\d{2}-\d{2}[^/]*\.md$")
+DEFAULT_ROOTS = ["Projects/*"]
 RECENT_SECONDS = 6 * 3600
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
@@ -60,11 +72,40 @@ def claude_changed_paths(transcript_path: str):
     return paths
 
 
-def recent_devlog_on_disk(root: str) -> bool:
+def load_settings(payload: dict):
+    """Dev-log roots and exempt prefixes: the defaults plus the vault's guard.local.json."""
+    roots, exempt = list(DEFAULT_ROOTS), []
+    path = find_local_rules(payload)
+    try:
+        with open(path) as f:
+            section = (json.load(f) or {}).get("devlog") or {}
+    except (OSError, TypeError, ValueError, AttributeError):
+        section = {}
+    if isinstance(section, dict):
+        for key, out in (("roots", roots), ("exempt", exempt)):
+            items = section.get(key)
+            if isinstance(items, list):
+                out.extend(i.strip("/") for i in items if isinstance(i, str) and i.strip("/"))
+    return roots, exempt
+
+
+def devlog_pattern(roots):
+    alts = "|".join(re.escape(r).replace(r"\*", "[^/]+") for r in roots)
+    return re.compile(r"(?:^|/)(?:" + alts + r")/(?:.+/)?dev-log/\d{4}-\d{2}-\d{2}[^/]*\.md$")
+
+
+def exempt_pattern(prefixes):
+    if not prefixes:
+        return None
+    return re.compile(r"(?:^|/)(?:" + "|".join(re.escape(p) for p in prefixes) + r")(?:/|$)")
+
+
+def recent_devlog_on_disk(root: str, roots, devlog) -> bool:
     now = time.time()
-    for p in glob.glob(os.path.join(root, "Projects", "**", "dev-log", "*.md"), recursive=True):
-        if DEVLOG.search(p) and now - os.path.getmtime(p) < RECENT_SECONDS:
-            return True
+    for r in roots:
+        for p in glob.glob(os.path.join(root, r, "**", "dev-log", "*.md"), recursive=True):
+            if devlog.search(p) and now - os.path.getmtime(p) < RECENT_SECONDS:
+                return True
     return False
 
 
@@ -96,14 +137,16 @@ def main():
             sys.exit(0)
         changed = list(extra.get("changed_paths") or [])
 
+    roots, prefixes = load_settings(payload)
+    devlog, exempt = devlog_pattern(roots), exempt_pattern(prefixes)
     watched = sorted({os.path.relpath(p, vault_root(payload.get("cwd") or "")) if os.path.isabs(p) else p
-                      for p in changed if WATCHED.search(p)})
-    wrote_devlog = any(DEVLOG.search(p) for p in changed)
+                      for p in changed if WATCHED.search(p) and not (exempt and exempt.search(p))})
+    wrote_devlog = any(devlog.search(p) for p in changed)
 
     # Claude's transcript covers the whole session. Hermes only reports this
     # turn's edits, so a dev log written in an earlier turn counts if it's recent.
     if not claude and not wrote_devlog:
-        wrote_devlog = recent_devlog_on_disk(vault_root(payload.get("cwd") or ""))
+        wrote_devlog = recent_devlog_on_disk(vault_root(payload.get("cwd") or ""), roots, devlog)
 
     if watched and not wrote_devlog:
         shown = ", ".join(watched[:4]) + (f" +{len(watched) - 4} more" if len(watched) > 4 else "")

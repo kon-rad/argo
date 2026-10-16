@@ -15,8 +15,14 @@ Vault-specific rules come from .agents/guard.local.json in the vault:
   {
     "protected_dirs": [{"path": "/home/other-user/", "reason": "..."}],
     "no_delete":      [{"path": "data/blobs", "reason": "..."}],
-    "readonly":       [{"pattern": "Areas/old/[^/]*\\.html$", "reason": "..."}]
+    "readonly":       [{"pattern": "Areas/old/[^/]*\\.html$", "reason": "..."}],
+    "disable":        ["rsync_dry_run"]
   }
+
+"disable" switches off built-in rules by name. Only "rsync_dry_run" can be
+switched off (for a vault whose owner deploys without a dry run); the secrets
+and force-push rules always apply. The same file's "devlog" section is read
+by devlog_gate.py.
 
 The file is found, in order, at $SB_GUARD_LOCAL, next to the vault that holds
 this engine (<vault>/.secondbrain/harness/hooks/guard.py), under
@@ -49,6 +55,13 @@ SECRET_TOKEN = re.compile(
     r"""(?:^|[\s/"'=<>:])(?:\.env(?:\.(?!example\b)[\w.-]+)?|auth\.json|\.credentials\.json)(?=$|[\s"';|&)<>])"""
 )
 SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|\n]|\$\(|`")
+# rsync/scp flags that keep a file OUT of a transfer. Naming .env.local there is how a
+# deploy protects the server's secrets, so it must not read as copying them.
+EXCLUDE_ARG = re.compile(
+    r"""--(?:exclude|filter|include)(?:-from)?(?:=|\s+)(?:'[^']*'|"[^"]*"|\S+)"""
+)
+# Built-in rules a vault may switch off in guard.local.json "disable".
+DISABLEABLE = {"rsync_dry_run"}
 
 
 def find_local_rules(payload: dict):
@@ -74,7 +87,7 @@ def find_local_rules(payload: dict):
 
 def load_local_rules(payload: dict) -> dict:
     path = find_local_rules(payload)
-    rules = {"protected_dirs": [], "no_delete": [], "readonly": []}
+    rules = {"protected_dirs": [], "no_delete": [], "readonly": [], "disable": set()}
     if not path:
         return rules
     try:
@@ -84,11 +97,14 @@ def load_local_rules(payload: dict) -> dict:
         return rules
     if not isinstance(data, dict):
         return rules
-    for key in rules:
+    for key in ("protected_dirs", "no_delete", "readonly"):
         field = "pattern" if key == "readonly" else "path"
         items = data.get(key) or []
         if isinstance(items, list):
             rules[key] = [i for i in items if isinstance(i, dict) and isinstance(i.get(field), str) and i.get(field)]
+    disable = data.get("disable") or []
+    if isinstance(disable, list):
+        rules["disable"] = {d for d in disable if d in DISABLEABLE}
     return rules
 
 
@@ -128,11 +144,11 @@ def check_shell(cmd: str, rules: dict):
             continue
         word = first_word(seg)
 
-        if word in READERS and SECRET_TOKEN.search(seg):
+        if word in READERS and SECRET_TOKEN.search(EXCLUDE_ARG.sub(" ", seg)):
             return ("guard: that would print or copy a secrets file. Load keys with "
                     "`set -a; . ./.env; set +a` and test variables instead (AGENTS.md, Credentials).")
 
-        if word == "rsync" and "--delete" in seg:
+        if word == "rsync" and "--delete" in seg and "rsync_dry_run" not in rules["disable"]:
             dry = "--dry-run" in seg or re.search(r"(?:^|\s)-[A-Za-z]*n[A-Za-z]*(?=\s|$)", seg)
             if not dry:
                 return ("guard: rsync --delete without a dry run. Run it with -n first, read the "
