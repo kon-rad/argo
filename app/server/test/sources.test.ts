@@ -115,6 +115,9 @@ describe('sources and runs API', () => {
     expect(b.status).toBe(409);
     expect(b.body.run_id).toBe(a.body.run_id);
 
+    // The connector sets `release` only once it runs; on a busy machine that can
+    // be after this line, and an unreleased run blocks every later sync (409).
+    await started;
     release?.();
     await waitForRun(a.body.run_id, 'ok');
   });
@@ -134,6 +137,7 @@ describe('sources and runs API', () => {
     );
     expect(rows[0]!.count).toBe(1);
 
+    await started;
     release?.();
     await waitForRun(a.body.run_id, 'ok');
   });
