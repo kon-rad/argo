@@ -28,4 +28,9 @@ export default function setup(): void {
     ['node-pg-migrate', '-m', 'db/migrations', '-j', 'sql', '--no-check-order', 'up'],
     { cwd: APP_ROOT, stdio: 'inherit', env: { ...process.env, DATABASE_URL: TEST_URL } },
   );
+
+  // The org tests connect as sb_org with no password in the URL. On a server that
+  // checks passwords (CI), give the role the run's PGPASSWORD, which pg sends.
+  const pw = process.env.PGPASSWORD;
+  if (pw) psql(TEST_DB, `ALTER ROLE sb_org PASSWORD '${pw.replace(/'/g, "''")}'`);
 }
