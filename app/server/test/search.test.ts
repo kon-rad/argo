@@ -36,6 +36,10 @@ beforeAll(async () => {
   );
   await writeFile(join(root, 'notes/dog.md'), '# Dog\n\nA lazy dog sleeps all afternoon.\n');
   await writeFile(
+    join(root, 'notes/imu.md'),
+    '# IMU\n\nThe brooch carries an LSM6DSV16X on the AE-LSM6DSV16X breakout.\n',
+  );
+  await writeFile(
     join(root, 'notes/aside.md'),
     '# Aside\n\nSomething quick, mentioned once, about nothing in particular.\n',
   );
@@ -105,6 +109,46 @@ describe('GET /api/search', () => {
     const paths = hits(res);
     expect(paths.at(-1)).toBe('media/quick.png');
     expect(paths.length).toBeGreaterThan(1);
+  });
+
+  it('finds a substring inside a longer word (part numbers)', async () => {
+    // Full-text search indexes "LSM6DSV16X" as one token, so "LSM6DSV" never
+    // matched. The keyword box must behave like an editor's find: any substring.
+    const res = await request(app).get('/api/search').query({ q: 'LSM6DSV' });
+    expect(res.status).toBe(200);
+    expect(hits(res)).toEqual(['notes/imu.md']);
+    expect(res.body.results[0].snippet).toContain('<b>LSM6DSV</b>16X');
+
+    const suffix = await request(app).get('/api/search').query({ q: 'DSV16X' });
+    expect(hits(suffix)).toEqual(['notes/imu.md']);
+
+    const mixedCase = await request(app).get('/api/search').query({ q: 'lsm6dsv' });
+    expect(hits(mixedCase)).toEqual(['notes/imu.md']);
+  });
+
+  it('ranks a substring-only match below full-text matches and above filename matches', async () => {
+    await writeFile(join(root, 'notes/quicksand.md'), '# Sand\n\nQuicksand swallows the unwary.\n');
+    await writeFile(join(root, 'media/quick.png'), Buffer.from([0x89, 0x50]));
+    await scanVault({ root, sourceId: await vaultSourceId() });
+
+    const res = await request(app).get('/api/search').query({ q: 'quick' });
+    const paths = hits(res);
+    expect(paths[0]).toBe('notes/fox.md');
+    expect(paths.indexOf('notes/quicksand.md')).toBeGreaterThan(paths.indexOf('notes/aside.md'));
+    expect(paths.at(-1)).toBe('media/quick.png');
+
+    await rm(join(root, 'notes/quicksand.md'));
+    await scanVault({ root, sourceId: await vaultSourceId() });
+  });
+
+  it('applies the source filter to substring matches', async () => {
+    const res = await request(app).get('/api/search').query({ q: 'LSM6DSV', source: 'discord' });
+    expect(res.body.results).toHaveLength(0);
+  });
+
+  it('matches the substring in the title, with a snippet from the content', async () => {
+    const res = await request(app).get('/api/search').query({ q: 'IMU' });
+    expect(hits(res)).toEqual(['notes/imu.md']);
   });
 
   it('filters by source', async () => {

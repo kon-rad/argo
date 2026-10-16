@@ -163,7 +163,7 @@ describe('usage api', () => {
   /** A bot's wake: two calls in one resumed session, one a cli-org post, one the final reply. */
   async function seedBot(): Promise<void> {
     await importOrg({ version: 'usage-1', company: 'Argo', ceo: 'owner', teams: { platform: { name: 'Platform', lead: 'atlas' } }, channels: {},
-      agents: { owner: { runtime: 'human', role: 'CEO', channels: ['*'] }, atlas: { role: 'Head of Platform', team: 'platform', reports_to: 'owner' } } });
+      agents: { owner: { runtime: 'human', role: 'CEO', channels: ['*'] }, atlas: { role: 'Head of Platform', team: 'platform', reports_to: 'owner', work: 'coding' } } });
     await query(`INSERT INTO projects (slug, title, stage) VALUES ('secondbrain-app', 'Second Brain app', 'building')`);
     await query(`INSERT INTO task_links (task_id, board, title, project_slug, assignee, created_by, work_type) VALUES ('t_0bada55e', 'exo', 'Fix the parser', 'secondbrain-app', 'atlas', 'owner', 'coding')`);
     await query(`INSERT INTO org_wakeups (agent_name, reason, ref, created_at, claimed_at, claimed_by, done_at) VALUES ('atlas', 'mention', '62', '2026-10-14T02:59:00Z', '2026-10-14T03:00:00Z', 'org-atlas-20261014-030000', '2026-10-14T03:01:00Z')`);
@@ -174,8 +174,9 @@ describe('usage api', () => {
         call('b3', '2026-10-14T04:00:10Z', { host: 'droplet', sessionExternalId: 'bot-s', entrypoint: 'sdk-cli', tool: 'Bash', action: 'card', outputTokens: 20 }),
       ]);
       await store.upsertRuns(tx, [
+        // No work type in this run's header (an older log): the agent's own default from the roster applies.
         { host: 'droplet', runId: 'org-atlas-20261014-030000', sessionId: 'bot-s', taskId: null, board: null, lane: null, agentName: 'atlas', teamSlug: 'platform',
-          workType: 'coding', reasons: [{ reason: 'mention', ref: '62' }], wakeupIds: [1], resumed: true, model: 'claude-opus-5-5',
+          workType: null, reasons: [{ reason: 'mention', ref: '62' }], wakeupIds: [1], resumed: true, model: 'claude-opus-5-5',
           startedAt: new Date('2026-10-14T03:00:00Z'), endedAt: new Date('2026-10-14T03:01:00Z'), durationMs: 60000, durationApiMs: null, numTurns: 3,
           subtype: 'success', isError: false, totalCostUsd: null, usage: null, modelUsage: null, verify: null, logPath: '/home/agent/cc-runs/org-atlas-20261014-030000.jsonl' },
         { host: 'droplet', runId: 'org-atlas-20261014-040000', sessionId: 'bot-s', taskId: 't_0bada55e', board: 'exo', lane: null, agentName: 'atlas', teamSlug: 'platform',
@@ -217,6 +218,9 @@ describe('usage api', () => {
       ['org-atlas-20261014-040000', null, 't_0bada55e', 'secondbrain-app', 1, 20],
       ['org-atlas-20261014-030000', 'mention', null, null, 2, 100]]);
     expect((await request(app).get('/api/usage/runs').query({ ...range, work_type: 'research' })).body.runs).toEqual([]);
+    // An action filter keeps the runs that made such a call.
+    expect((await request(app).get('/api/usage/runs').query({ ...range, action: 'post' })).body.runs.map((x: { run_id: string }) => x.run_id)).toEqual(['org-atlas-20261014-030000']);
+    expect((await request(app).get('/api/usage/runs').query({ ...range, action: 'dm' })).body.runs).toEqual([]);
     // The wakes table carries tokens per bot.
     const wakes = await request(app).get('/api/usage/org-wakes').query(range);
     expect(wakes.body.agents[0]).toMatchObject({ agent_name: 'atlas', wakes: 1, mention: 1, tokens: 3 * 1110 + 120 });

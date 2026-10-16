@@ -5,7 +5,7 @@ import { api, fileHref, type SearchMode, type SearchResponse } from '../lib/api.
 const PAGE = 25;
 
 const MODES: { value: SearchMode; label: string; hint: string }[] = [
-  { value: 'keyword', label: 'Keyword', hint: 'Postgres full-text. Exact words, quoted "phrases" and -exclusions.' },
+  { value: 'keyword', label: 'Keyword', hint: 'Any substring, like an editor\'s find, plus full-text words, quoted "phrases" and -exclusions.' },
   { value: 'semantic', label: 'Meaning', hint: 'Nearest neighbours over embedded chunks. Finds notes that never use your words.' },
   { value: 'hybrid', label: 'Both', hint: 'Keyword and meaning, fused by reciprocal rank. The best default when you are not sure.' },
 ];
@@ -94,7 +94,7 @@ export default function Search() {
         <p className="text-[var(--ink-dim)]">
           {mode === 'keyword' ? (
             <>
-              Nothing matched. Quoted <code>"phrases"</code> and <code>-exclusions</code> both work
+              Nothing contains that text. Quoted <code>"phrases"</code> and <code>-exclusions</code> both work
               here — or try <button type="button" className="text-[var(--accent)] hover:underline" onClick={() => setParam('mode', 'hybrid')}>searching by meaning</button>.
             </>
           ) : (

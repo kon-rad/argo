@@ -151,10 +151,11 @@ const RUNS_CTE = `
            r.reasons,
            coalesce(tl.work_type, r.work_type,
                     CASE r.lane WHEN 'cc-coder' THEN 'coding' WHEN 'cc-research' THEN 'research'
-                                WHEN 'cc-writer' THEN 'writing' WHEN 'cc-reviewer' THEN 'coding' END) AS work_type,
+                                WHEN 'cc-writer' THEN 'writing' WHEN 'cc-reviewer' THEN 'coding' END,
+                    a.work) AS work_type,
            tl.project_slug, tl.feature_slug, tl.title AS card_title,
            CASE WHEN r.agent_name IS NOT NULL THEN 'bot' ELSE 'cc-lane' END AS surface,
-           'claude-code' AS source, true AS headless, NULL::text AS action
+           'claude-code' AS source, true AS headless
     FROM usage_runs r
     LEFT JOIN org_agents a ON a.name = r.agent_name
     LEFT JOIN task_links tl ON tl.task_id = r.task_id
@@ -162,8 +163,22 @@ const RUNS_CTE = `
     WHERE r.started_at >= $1 AND r.started_at < $2),
   tok AS (
     SELECT host, run_id, count(*)::int AS calls, sum(input_tokens)::bigint AS input, sum(cache_write_tokens)::bigint AS cache_write,
-           sum(cache_read_tokens)::bigint AS cache_read, sum(output_tokens)::bigint AS output
-    FROM usage_calls WHERE ts >= $1 - interval '1 day' AND ts < $2 + interval '1 day' AND run_id IS NOT NULL GROUP BY 1, 2)`;
+           sum(cache_read_tokens)::bigint AS cache_read, sum(output_tokens)::bigint AS output,
+           array_agg(DISTINCT action) FILTER (WHERE action IS NOT NULL) AS actions
+    FROM usage_calls WHERE ts >= $1 - interval '1 day' AND ts < $2 + interval '1 day' AND run_id IS NOT NULL GROUP BY 1, 2),
+  rr AS (SELECT runs.*, tok.calls, tok.input, tok.cache_write, tok.cache_read, tok.output, tok.actions FROM runs LEFT JOIN tok USING (host, run_id))`;
+
+/** Filters on a run: as on a call, except that an action filter keeps the runs that made such a call. */
+function runsFilterSql(f: Filters, params: unknown[]): string {
+  const rest: Filters = { ...f };
+  delete rest.action;
+  let sql = filterSql(rest, params, 'rr.');
+  if (f.action?.length) {
+    params.push(f.action);
+    sql += ` AND coalesce(rr.actions, '{}') && $${params.length}::text[]`;
+  }
+  return sql;
+}
 
 export function usageRouter(): Router {
   const router = Router();
@@ -261,9 +276,7 @@ export function usageRouter(): Router {
     };
     const runs = await query(
       `${RUNS_CTE}
-       SELECT runs.*, tok.calls, tok.input, tok.cache_write, tok.cache_read, tok.output
-       FROM runs LEFT JOIN tok USING (host, run_id)
-       WHERE runs.host=$3 AND runs.session_id=$4 ORDER BY runs.started_at`, [new Date(0), new Date('2999-01-01'), host, sid]);   // no dollar figure for Claude Code
+       SELECT * FROM rr WHERE rr.host=$3 AND rr.session_id=$4 ORDER BY rr.started_at`, [new Date(0), new Date('2999-01-01'), host, sid]);   // no dollar figure for Claude Code
     const messages = a.rows[0] ? (await query(
       `SELECT m.id, m.seq, m.role, m.kind, m.ts, left(m.content_text, ${TEXT_LIMIT}) AS text,
               length(m.content_text) AS length, m.is_sidechain,
@@ -320,13 +333,10 @@ export function usageRouter(): Router {
     const q = parseOr400(range.extend({ limit: z.coerce.number().int().min(1).max(1000).default(500) }), req.query);
     const [from, to] = span(q, 7);
     const params: unknown[] = [from, to, q.limit];
-    const where = filterSql(pickFilters(q), params, 'runs.');
+    const where = runsFilterSql(pickFilters(q), params);
     const { rows } = await query(
       `${RUNS_CTE}
-       SELECT runs.*, tok.calls, tok.input, tok.cache_write, tok.cache_read, tok.output
-       FROM runs LEFT JOIN tok USING (host, run_id)
-       WHERE true${where}
-       ORDER BY runs.started_at DESC LIMIT $3`, params);
+       SELECT * FROM rr WHERE true${where} ORDER BY rr.started_at DESC LIMIT $3`, params);
     res.json({ runs: rows });
   }));
   return router;

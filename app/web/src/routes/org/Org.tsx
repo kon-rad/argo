@@ -447,7 +447,7 @@ function AgentPage() {
             if (dmText.trim()) sendDm.mutate();
           }}
         >
-          <input aria-label={`DM ${name}`} className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-sm" placeholder={`DM ${name} as konrad (wakes it)`} value={dmText} onChange={(e) => setDmText(e.target.value)} />
+          <input aria-label={`DM ${name}`} className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-sm" placeholder={`DM ${name} as yourself (wakes it)`} value={dmText} onChange={(e) => setDmText(e.target.value)} />
           <button type="submit" disabled={!dmText.trim() || sendDm.isPending} className="rounded bg-[var(--accent)] px-3 py-1 text-sm font-medium text-white disabled:opacity-50">Send</button>
           {sendDm.isError && <span className="self-center text-xs text-[var(--warn)]">{sendDm.error.message}</span>}
         </form>
