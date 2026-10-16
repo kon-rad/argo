@@ -26,6 +26,7 @@ Never add: real names, hostnames, IP addresses (other than `127.0.0.1` and the R
 | `harness/` | Hooks shared by Claude Code and Hermes: `hooks/guard.py` (blocks dangerous tool calls), `hooks/devlog_gate.py` (asks for a dev log before finishing), Claude settings and the fact-checker agent |
 | `skills/` | Generic skills in `SKILL.md` format, linked into a vault's `.agents/skills/` by `secondbrain-vault link-skills` |
 | `tools/`, `bin/secondbrain-vault` | The vault CLI: `init`, `rules`, `link-skills` |
+| `addons/` | Optional extras that run outside the app, each with its own README and tests. `tv-kiosk/`: a Raspberry Pi that shows the app full screen on a TV |
 | `scripts/check-public.sh` | The leak check |
 | `docs/` | Architecture docs |
 
@@ -35,7 +36,7 @@ Never add: real names, hostnames, IP addresses (other than `127.0.0.1` and the R
 |---|---|
 | App tests (needs a local Postgres) | `cd app && npm ci && npm test` |
 | App typecheck and build | `cd app && npm run build` |
-| Python tests (harness, CLI) | `python3 -m pytest harness tools` |
+| Python tests (harness, CLI, add-ons) | `python3 -m pytest harness tools addons` |
 | Leak check | `scripts/check-public.sh` (add your own private denylist at `~/.config/secondbrain/denylist.txt`) |
 
 Run all of them before you open a PR. Say in the PR which ones you ran and what they printed.

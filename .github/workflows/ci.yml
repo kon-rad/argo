@@ -43,7 +43,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install pytest
-      - run: python -m pytest harness tools
+      - run: python -m pytest harness tools addons
 
   leaks:
     runs-on: ubuntu-latest
