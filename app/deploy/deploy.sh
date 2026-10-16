@@ -35,7 +35,22 @@ APP_ROOT="$(cd "$HERE/.." && pwd)"
 ENGINE_ROOT="$(cd "$APP_ROOT/.." && pwd)"
 if [[ "$(basename "$ENGINE_ROOT")" == ".secondbrain" ]]; then VAULT_ROOT_LOCAL="$(dirname "$ENGINE_ROOT")"; else VAULT_ROOT_LOCAL="$ENGINE_ROOT"; fi
 VAULT_ROOT_LOCAL="${VAULT_ROOT:-$VAULT_ROOT_LOCAL}"
-if [[ -f "$VAULT_ROOT_LOCAL/.env" ]]; then set -a; . "$VAULT_ROOT_LOCAL/.env"; set +a; fi
+# Read only the settings this script uses, literally: the vault's env file holds
+# keys and hashes whose `$` sequences a shell `source` would expand (or trip
+# set -u on). A value already in the environment wins.
+ENV_FILE="${DEPLOY_ENV_FILE:-$VAULT_ROOT_LOCAL/.env}"
+read_env() {
+  local key=$1 line val
+  [[ -n "${!key:-}" || ! -f "$ENV_FILE" ]] && return 0
+  line=$(grep -E "^(export +)?$key=" "$ENV_FILE" | tail -n 1) || return 0
+  val=${line#*=}; val=${val%$'\r'}
+  if [[ $val == \"*\" || $val == \'*\' ]]; then val=${val:1:${#val}-2}; fi
+  printf -v "$key" '%s' "$val"; export "$key"
+}
+for k in DEPLOY_HOST DEPLOY_PUBLIC_HOST DEPLOY_VAULT_DIR DEPLOY_APP_USER DEPLOY_APP_DIR DEPLOY_HERMES_HOME \
+         EXTRA_CADDY_IMPORT DEPLOY_REDIRECT_FROM DEPLOY_PAUSE_FILE DEPLOY_EMBED DEPLOY_DB_BACKUP DEPLOY_MODULES MODULES; do
+  read_env "$k"
+done
 
 HOST="${DEPLOY_HOST:?set DEPLOY_HOST (ssh destination with root)}"
 PUBLIC_HOST="${DEPLOY_PUBLIC_HOST:?set DEPLOY_PUBLIC_HOST (domain or IP)}"
