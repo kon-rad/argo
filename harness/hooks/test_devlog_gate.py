@@ -9,7 +9,7 @@ GATE = Path(__file__).resolve().parent / "devlog_gate.py"
 
 
 def run(payload, env_extra=None):
-    env = {k: v for k, v in os.environ.items() if k != "DEV_LOG_INDEX"}
+    env = {k: v for k, v in os.environ.items() if k not in ("DEV_LOG_INDEX", "SB_GUARD_LOCAL", "CLAUDE_PROJECT_DIR")}
     env.update(env_extra or {})
     return subprocess.run([sys.executable, str(GATE)], input=json.dumps(payload),
                           capture_output=True, text=True, timeout=10, env=env)
@@ -54,3 +54,46 @@ def test_claude_stop_reads_transcript(tmp_path):
     assert p.returncode == 2
     p = run({"hook_event_name": "Stop", "transcript_path": str(t), "stop_hook_active": True})
     assert p.returncode == 0
+
+
+def local_file(tmp_path, data):
+    f = tmp_path / "guard.local.json"
+    f.write_text(json.dumps(data))
+    return {"SB_GUARD_LOCAL": str(f)}
+
+
+def test_local_devlog_roots_count_as_dev_logs(tmp_path):
+    changed = [".agents/hooks/guard.py", "Areas/app/search/dev-log/2026-10-16_x.md"]
+    assert json.loads(run(hermes(changed)).stdout)["decision"] == "block"
+    env = local_file(tmp_path, {"devlog": {"roots": ["Areas/app/*"]}})
+    assert json.loads(run(hermes(changed), env).stdout) == {}
+    # Projects/ still counts with extra roots set.
+    p = run(hermes([".agents/hooks/guard.py", "Projects/x/dev-log/2026-10-16_y.md"]), env)
+    assert json.loads(p.stdout) == {}
+
+
+def test_local_devlog_roots_are_found_on_disk(tmp_path):
+    vault = tmp_path / "vault"
+    (vault / "Projects").mkdir(parents=True)
+    (vault / "AGENTS.md").write_text("x")
+    log = vault / "Areas" / "app" / "search" / "dev-log"
+    log.mkdir(parents=True)
+    (log / "2026-10-16_x.md").write_text("entry")
+    env = local_file(tmp_path, {"devlog": {"roots": ["Areas/app/*"]}})
+    p = run(hermes([".agents/hooks/guard.py"], cwd=str(vault)), env)
+    assert json.loads(p.stdout) == {}
+
+
+def test_local_devlog_exempt_paths_are_not_watched(tmp_path):
+    changed = [".agents/memory/bot.md"]
+    assert json.loads(run(hermes(changed)).stdout)["decision"] == "block"
+    env = local_file(tmp_path, {"devlog": {"exempt": [".agents/memory/"]}})
+    assert json.loads(run(hermes(changed), env).stdout) == {}
+    p = run(hermes(changed + [".agents/hooks/guard.py"]), env)
+    reason = json.loads(p.stdout)["reason"]
+    assert ".agents/hooks/guard.py" in reason and "memory" not in reason
+
+
+def test_broken_devlog_section_keeps_defaults(tmp_path):
+    env = local_file(tmp_path, {"devlog": {"roots": "nope", "exempt": [3]}})
+    assert json.loads(run(hermes([".agents/hooks/guard.py"]), env).stdout)["decision"] == "block"
