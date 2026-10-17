@@ -19,7 +19,7 @@ The app reads `<vault>/.env` at start (`app/server/src/config.ts`), validates ev
 | `PORT` | `5123` | HTTP port (always bound to `127.0.0.1`) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `DEPLOYMENT` | `local` | `local` (no login, loopback) or `server` (login required). See [deployment.md](deployment.md) |
-| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `usage`, `map`, `tv`, `voice`, `livestream`. Unknown names are ignored |
+| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `usage`, `map`, `tv`, `voice`, `livestream`, `localai`. Unknown names are ignored |
 | `OWNER_NAME` | `owner` | Your name in the authenticator app and as a comment author |
 | `DEV_LOG_PATH`, `DOCS_PATH` | unset | Vault-relative notes the nav bar links to; unset hides the link |
 | `SCAN_INTERVAL_MINUTES` | `0` | Rescan and re-embed every N minutes; `0` means only when asked |
@@ -63,6 +63,7 @@ Deploy settings (`DEPLOY_*`) are read by `deploy.sh` only: see [deployment.md](d
 | `PROJECTS_FEED_TOKEN` | `projects` | unset | Read-only bearer token for `GET /api/feed/projects` (a kiosk panel). Unset: the route doesn't exist. `deploy.sh` generates one |
 | `ORG_OWNER` | `org` | `owner` | Your handle on the agent board (lowercase, `a-z0-9-`) |
 | `RING_PULL_SSH_HOST`, `RING_PULL_DB` | `ring` | unset, `secondbrain` | Mirror a server's ring tables over ssh |
+| `LOCAL_AI_EXPORT_URL`, `LOCAL_AI_HOST` | `localai` | unset, `local` | The model host's logging gateway (base URL) and the `usage_hosts` slug its rows go under |
 | `TTS_URL`, `TTS_MODEL` | `voice` | `http://127.0.0.1:8880`, a Kokoro model | A local OpenAI-compatible speech server. Never used on a server |
 | `ROBOT_LAUNCH_SCRIPT` | none (local only) | unset | A script the "start robot" button runs. Unset: the route isn't mounted |
 

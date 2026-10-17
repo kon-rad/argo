@@ -8,6 +8,7 @@ import { defaultEmbeddingProvider } from './embeddings/factory.js';
 import { agentsRouter } from './routes/agents.js';
 import { tvRouter } from './routes/tv.js';
 import { usageRouter } from './routes/usage.js';
+import { localAiRouter } from './routes/localAi.js';
 import { b2Router, type B2Options } from './routes/b2.js';
 import { errorHandlerFor } from './routes/http.js';
 import { databaseRouter } from './routes/database.js';
@@ -154,6 +155,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
     app.use('/api/hub', hubRouter(opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }));
   }
   if (modules.has('usage')) app.use('/api/usage', usageRouter());
+  if (modules.has('localai')) app.use('/api/local-ai', localAiRouter());
   if (modules.has('projects')) app.use('/api/projects', projectsRouter(vaultRoot));
   if (modules.has('org')) app.use('/api/org', orgRouter(vaultRoot));
   if (modules.has('map')) app.use('/api/map', mapRouter());

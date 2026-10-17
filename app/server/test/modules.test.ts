@@ -7,6 +7,7 @@ describe('optional modules', () => {
   it('parses a comma list and drops unknown names', () => {
     expect([...parseModules('ring, agents ,bogus,')]).toEqual(['ring', 'agents']);
     expect([...parseModules('tv,map,org,projects,usage,voice,livestream')]).toEqual(['projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream']);
+    expect([...parseModules('localai')]).toEqual(['localai']);
     expect(parseModules('').size).toBe(0);
   });
 

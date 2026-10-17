@@ -18,6 +18,7 @@ A module that is off mounts no API routes, shows no nav link and gets no timers 
 | [`tv`](#tv) | `/tv` | A player for video episodes kept in your vault |
 | [`voice`](#voice) | (a Listen button) | Read a note aloud through a local speech server |
 | [`livestream`](#livestream) | (a public JSON) | Stream stats for YouTube, Twitch and Kick |
+| [`localai`](#localai) | (a section on `/usage`) | Calls your own model host served: tokens, speed and energy by model and caller |
 | [`ring`](#ring) | `/ring` | Data from a wearable ring, pushed in by a client |
 
 ## projects
@@ -109,6 +110,20 @@ A poller that checks your channels every minute and writes a public summary JSON
 | Settings | `livestream.youtube`, `.twitch`, `.kick` in `secondbrain.json` |
 | Timers (server) | the minute poller |
 | Skill | `livestream-x` (adds an X stream by link) |
+
+## localai
+
+Usage for models you run yourself. A home model host (for example a Mac running Ollama and a speech server) puts a logging gateway in front of its model ports; the gateway stores every call with its token counts, timings, energy and full text, and serves the rows at `GET /api/export?table=<t>&after=<seq>&limit=<n>` in change order. The server pulls them every 5 minutes into `local_ai_runs`, `local_ai_texts`, `local_ai_run_texts`, `local_models` and `local_model_loads`, one cursor per table, and `/usage` shows a "Local models" section: tokens over time by caller, per-model calls, tokens, tok/s and watt-hours, per-caller totals and the latest calls. Clients name themselves with an `X-Argo-Caller: <agent>/<role>` header.
+
+| | |
+|---|---|
+| Settings | `LOCAL_AI_EXPORT_URL` (the gateway's web base URL), `LOCAL_AI_HOST` (a `usage_hosts` slug; register it first) |
+| API | `/api/local-ai/summary`, `/api/local-ai/runs`, `/api/local-ai/runs/:host/:id` (one call with its texts) |
+| CLI | `secondbrain local-ai-pull` (the server's timer runs it) |
+| Timers (server) | `local-ai-pull` every 5 minutes |
+| Privacy | The full prompt and response text is copied to the server. Caller IP, PID and command line stay on the host |
+
+The host being off is normal: each table records the error on its cursor, `/usage` shows "last try failed", and the next run picks up where the cursor stopped.
 
 ## ring
 

@@ -162,7 +162,7 @@ export interface RingNight {
 
 /** What this install has turned on (server: GET /api/meta). */
 export interface AppMeta {
-  modules: ('ring' | 'agents' | 'projects' | 'org' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream')[];
+  modules: ('ring' | 'agents' | 'projects' | 'org' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'localai')[];
   owner: string;
   devLogPath: string | null;
   docsPath: string | null;
@@ -373,6 +373,23 @@ export interface OrgWakeRow {
   agent_name: string; team_slug: string | null; role: string; wakes: number; done: number; open: number; routine: number;
   dm?: number; mention?: number; task?: number; tokens?: number; output?: number;
   avg_minutes: number | null; last_wake: string | null;
+}
+export interface LocalAiAgg {
+  runs: number; errors: number; prompt: number; cached: number; output: number;
+  avg_output_tps: number | null; avg_ttft_ms: number | null; energy_wh: number; audio_seconds: number;
+}
+export interface LocalAiSummary {
+  bucket: 'hour' | 'day'; tz: string; total: LocalAiAgg;
+  models: (LocalAiAgg & { host: string; model: string; service: string })[];
+  callers: (LocalAiAgg & { caller: string })[];
+  series: { bucket: string; key: string; prompt: number; output: number; runs: number }[];
+  hosts: { host: string; display: string; last_ok_at: string | null; last_try_at: string | null; error: string | null; last_run_at: string | null }[];
+}
+export interface LocalAiRun {
+  host: string; id: string; started_at: string; ended_at: string | null; state: string; service: string; route: string; model: string; caller: string;
+  tool_names: string[] | null; message_count: number | null; prompt_tokens: number | null; cached_tokens: number | null; output_tokens: number | null;
+  ttft_ms: number | null; total_ms: number | null; output_tps: number | null; cold_start: boolean | null; done_reason: string | null;
+  audio_seconds: number | null; voice: string | null; energy_j: number | null; error: string | null;
 }
 export interface UsageHost { slug: string; display: string; kind: 'laptop' | 'server' | 'pi'; chip: string | null; notes: string | null }
 export interface UsageMessage {
@@ -811,6 +828,8 @@ export const api = {
   usageMessage: (id: number) => request<{ id: number; raw: unknown }>(`/usage/messages/${id}`),
   usageRuns: (from: string, to: string, f: UsageFilters = {}) => request<{ runs: UsageRun[] }>('/usage/runs', { from, to, ...usageFilterParams(f) }),
   usageOrgWakes: (from: string, to: string) => request<{ agents: OrgWakeRow[] }>('/usage/org-wakes', { from, to }),
+  localAiSummary: (from: string, to: string, bucket: 'hour' | 'day', tz: string) => request<LocalAiSummary>('/local-ai/summary', { from, to, bucket, tz }),
+  localAiRuns: (from: string, to: string, caller?: string) => request<{ runs: LocalAiRun[] }>('/local-ai/runs', { from, to, caller, limit: 50 }),
 };
 
 export const rawUrl = (path: string): string => url('/raw', { path });

@@ -83,9 +83,13 @@ const Schema = z.object({
   // localhost only. Used by the voice module's Listen button; never on a server.
   TTS_URL: z.string().url().default('http://127.0.0.1:8880'),
   TTS_MODEL: z.string().default('mlx-community/Kokoro-82M-bf16'),
+  // localai module: a home model host's logging gateway export (http://<host>:<port>, no path) and
+  // the usage_hosts slug its rows are filed under. Unset URL = local-ai-pull does nothing.
+  LOCAL_AI_EXPORT_URL: z.string().url().optional(),
+  LOCAL_AI_HOST: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/).default('local'),
 });
 
-export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream'] as const;
+export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream', 'localai'] as const;
 export type ModuleName = (typeof MODULE_NAMES)[number];
 
 /** `"ring, agents"` → {'ring', 'agents'}; unknown names are ignored. */
@@ -148,5 +152,7 @@ export const config = {
   projectsFeedToken: parsed.data.PROJECTS_FEED_TOKEN,
   ttsUrl: parsed.data.TTS_URL.replace(/\/+$/, ''),
   ttsModel: parsed.data.TTS_MODEL,
+  localAiExportUrl: parsed.data.LOCAL_AI_EXPORT_URL?.replace(/\/+$/, ''),
+  localAiHost: parsed.data.LOCAL_AI_HOST,
   webDist: resolve(appRoot, 'web', 'dist'),
 } as const;

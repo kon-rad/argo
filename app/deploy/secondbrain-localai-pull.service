@@ -1,0 +1,15 @@
+[Unit]
+Description=Second Brain: copy the local model host's call log (logging gateway export) into local_ai_*
+After=network-online.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-localai-pull.js
+Nice=10
+PrivateTmp=true
+NoNewPrivileges=true
