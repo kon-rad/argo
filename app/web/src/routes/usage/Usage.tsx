@@ -7,6 +7,7 @@ import {
 } from '../../lib/api.js';
 import LineChart from '../../components/charts/LineChart.js';
 import StackedBars, { type BarSeries } from '../../components/charts/StackedBars.js';
+import LocalModels from './LocalModels.js';
 import { bucketEnd, formatTokens, money, planText, TYPE_SERIES } from './format.js';
 import { zoned } from '../../lib/time.js';
 
@@ -345,6 +346,8 @@ export default function Usage() {
           </tbody>
         </table></div>
       </section>
+
+      <LocalModels from={from} to={to} bucket={bucket} tz={tz} fmtBucket={fmtBucket} />
 
       <section>
         <h2 className="text-sm font-semibold">Agent wakes (the company board)</h2>

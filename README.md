@@ -55,6 +55,7 @@ Everything beyond browse, search and the database page is an optional module, of
 | `tv` | Your own video channel, played from episodes in your vault |
 | `voice` | Read notes aloud with a local speech server |
 | `livestream` | Stream stats for YouTube, Twitch and Kick |
+| `localai` | Usage of models you run yourself, pulled from a logging gateway on your model host |
 | `ring` | Wearable ring data, stored next to your notes |
 
 Details for each: [docs/modules.md](docs/modules.md).

@@ -397,6 +397,12 @@ cmd_usage_sync() {
   ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-usage-sync.js"
 }
+cmd_local_ai_pull() {
+  refuse_if_remote local-ai-pull
+  # The local model host's call log (LOCAL_AI_EXPORT_URL) into local_ai_*. The server's timer runs it.
+  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-localai-pull.js"
+}
 cmd_usage_push() {
   # Mac -> droplet: new Claude Code transcript bytes and plan readings over one SSH call.
   ensure_node; ensure_build
@@ -464,6 +470,7 @@ secondbrain embed    embed new and changed notes for semantic search
 secondbrain archive  archive Claude Code + Hermes conversations to B2 and Postgres
 secondbrain agents-sync  copy Hermes chats and cron history into Postgres
 secondbrain usage-sync   this machine's Claude Code usage into the ledger
+secondbrain local-ai-pull  a local model host's call log into the ledger (localai module)
 secondbrain usage-push   send new Claude Code usage to the droplet ledger (Mac)
 secondbrain usage-backfill  wire lines for archived Mac sessions (pipe to the droplet importer)
 secondbrain credits    show | set <provider> <balance> | sync  prepaid API credit balances
@@ -496,6 +503,7 @@ case "${1:-start}" in
   ring-pull)     cmd_ring_pull ;;
   agents-sync)   cmd_agents_sync ;;
   usage-sync)    cmd_usage_sync ;;
+  local-ai-pull) cmd_local_ai_pull ;;
   usage-push)    cmd_usage_push ;;
   usage-backfill) cmd_usage_backfill ;;
   auth-setup)    cmd_auth_setup ;;

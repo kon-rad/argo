@@ -149,6 +149,7 @@ Everything beyond browse, search and the database page is a module. A module tha
 | `tv` | A player for rendered video episodes kept in the vault, on `/tv` |
 | `voice` | Read a note aloud through a local speech server (never on a server) |
 | `livestream` | A minute poller of your YouTube, Twitch and Kick channels and a public summary JSON |
+| `localai` | A 5-minute pull of a home model host's call log (logging gateway export) into `local_ai_*`, shown on `/usage` |
 
 ### `secondbrain.json`
 
