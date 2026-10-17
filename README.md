@@ -33,14 +33,31 @@ You don't need Exo to use secondbrain: it runs the same on a laptop or a small s
 
 | Path | What |
 |---|---|
-| `app/` | The web app: browse and search your vault (keyword and semantic), a database explorer, and optional modules. Runs on your laptop with no login, or on a server behind Caddy with password + authenticator login |
-| `vault-template/` | A PARA vault with the shared agent rules, ready to fill |
-| `harness/` | Hooks Claude Code and Hermes both run: a guard against dangerous tool calls, and a gate that asks for a dev log before an agent finishes |
-| `skills/` | Shared agent skills (`SKILL.md`, used by both Claude Code and Hermes) |
+| [`app/`](app/README.md) | The web app: browse your vault with wikilinks and backlinks, search it (keyword, semantic, hybrid), edit notes safely, and ask the database page questions in plain language. Runs on your laptop with no login, or on a server behind Caddy with password + authenticator login |
+| [`vault-template/`](vault-template/) | A PARA vault with the shared agent rules (`AGENTS.base.md`), settings templates and folder READMEs, ready to fill |
+| [`harness/`](docs/agent-harness.md) | Hooks Claude Code and Hermes both run: a guard against dangerous tool calls, and a gate that asks for a dev log before an agent finishes. Plus a read-only fact-checker subagent |
+| [`skills/`](skills/) | Shared agent skills (`SKILL.md`, used by both Claude Code and Hermes): `fact-check`, `ingest`, `company-report`, `org-member`, `livestream-x` |
 | `bin/secondbrain-vault` | Starts a vault, compiles its `AGENTS.md`, links the skills |
-| `addons/tv-kiosk/` | Flash a Raspberry Pi that shows the app full screen on a TV |
+| [`addons/tv-kiosk/`](addons/tv-kiosk/README.md) | Flash a Raspberry Pi that shows the app full screen on a TV |
+| [`docs/`](docs/README.md) | How it all works, how to set it up, every setting |
 
-**Modules** (all off until you list them in `MODULES`): `projects` (tracker), `org` (agent message board), `usage` (what your agents cost), `map` (3D brain map), `tv` (your own video channel), `voice` (read notes aloud locally), `livestream` (stream stats), `ring` (wearable ring data), `agents` (kanban, chats and cron history). Each is described in [`app/README.md`](app/README.md).
+### Modules
+
+Everything beyond browse, search and the database page is an optional module, off until you list it in `MODULES`:
+
+| Module | Adds |
+|---|---|
+| `projects` | A project tracker with stages and verifications, a CLI for agents, a kiosk feed |
+| `org` | A message board where a company of named AI agents reports to you |
+| `agents` | A kanban board, agent chats and cron history |
+| `usage` | What your agents cost, by bot, task and project |
+| `map` | A 3D brain map of your notes, projects and goals, with metrics |
+| `tv` | Your own video channel, played from episodes in your vault |
+| `voice` | Read notes aloud with a local speech server |
+| `livestream` | Stream stats for YouTube, Twitch and Kick |
+| `ring` | Wearable ring data, stored next to your notes |
+
+Details for each: [docs/modules.md](docs/modules.md).
 
 ## How it fits together
 
@@ -59,6 +76,22 @@ my-vault/                      private
 └── Projects/ Areas/ Research/ Archives/
 ```
 
+| | The engine (this repo) | Your vault |
+|---|---|---|
+| Visibility | Public, MIT | Private |
+| Holds | Code, template, hooks, shared skills | Notes, settings, keys, your rules and skills |
+| Changes by | Pull request | Your own commits |
+
+Markdown is the source of truth. Postgres is an index over it: drop the database, rescan, lose nothing. More in [docs/architecture.md](docs/architecture.md).
+
+## Requirements
+
+- git, Python 3.9+
+- Node.js 22+
+- PostgreSQL 15+ with [pgvector](https://github.com/pgvector/pgvector) 0.8+
+- Optional: a [Together AI](https://together.ai) key or a local [Ollama](https://ollama.com) for semantic search
+- Optional: [Claude Code](https://claude.com/claude-code) or Hermes, for agents
+
 ## Quick start
 
 ```bash
@@ -66,23 +99,62 @@ mkdir my-vault && cd my-vault && git init
 git submodule add https://github.com/kon-rad/secondbrain.git .secondbrain
 .secondbrain/bin/secondbrain-vault init .
 cp .env.example .env
+git add -A && git commit -m "new vault"
+
+.secondbrain/app/bin/secondbrain        # installs, migrates, builds, starts, opens the browser
+.secondbrain/app/bin/secondbrain scan   # build the index
 ```
 
-Then run the app: see [`app/README.md`](app/README.md) (Node 22, Postgres 15 with pgvector).
+The app runs on `http://127.0.0.1:5123`. The full walk-through, with installing Postgres and pgvector on macOS and Linux: [docs/getting-started.md](docs/getting-started.md).
+
+## Agents in your vault
+
+Open the vault in Claude Code, or point Hermes at it, and they work under the same rules:
+
+- **One rulebook.** `AGENTS.md` is the engine's shared rules plus your `AGENTS.local.md`, compiled by `secondbrain-vault rules`. `CLAUDE.md` imports it.
+- **A guard before every tool call.** It blocks reading your secrets, force pushes and deploys without a dry run, plus whatever you add in `.agents/guard.local.json`.
+- **A dev log before "done".** If an agent changed skills, scripts or config, it's sent back once to write down what it did.
+
+Setup for each agent: [docs/agent-harness.md](docs/agent-harness.md).
+
+## Running it on a server
+
+`app/deploy/deploy.sh` turns an Ubuntu box into a private, logged-in copy of your second brain: Postgres with pgvector, Caddy with HTTPS, systemd units, and a timer for each module you enable. Run it from your laptop; the server needs no GitHub access. See [docs/deployment.md](docs/deployment.md).
 
 ## Updating
 
 ```bash
-git -C .secondbrain pull origin main      # or check out a release tag
-.secondbrain/bin/secondbrain-vault rules   # refresh AGENTS.md
-.secondbrain/bin/secondbrain-vault link-skills
-git commit -am "engine: update"
+git -C .secondbrain fetch origin
+git -C .secondbrain checkout origin/main        # or a tag, or a commit
+.secondbrain/bin/secondbrain-vault rules        # refresh AGENTS.md
+.secondbrain/bin/secondbrain-vault link-skills  # pick up new shared skills
+git add .secondbrain AGENTS.md .agents/skills && git commit -m "engine: update"
 ```
+
+The launcher rebuilds and runs new migrations on the next start. More in [docs/vault.md](docs/vault.md#updating-the-engine).
+
+## Documentation
+
+| Doc | |
+|---|---|
+| [Getting started](docs/getting-started.md) | From nothing to a running vault |
+| [Architecture](docs/architecture.md) | Engine and vault, the app and its index, the harness, data flow |
+| [Your vault](docs/vault.md) | The template, `secondbrain-vault`, rules and skills, updating |
+| [Configuration](docs/configuration.md) | Every env variable and `secondbrain.json` key |
+| [Modules](docs/modules.md) | Each optional feature: pages, CLIs, settings, timers |
+| [Agent harness](docs/agent-harness.md) | The guard, the dev-log gate, Claude Code and Hermes wiring |
+| [Deployment](docs/deployment.md) | A server behind a login |
+| [Privacy](docs/privacy.md) | How the engine stays free of personal data |
+| [The app](app/README.md) | Tech stack, search design, invariants |
+
+## Status
+
+Early and moving fast. It runs one person's second brain every day, on a laptop and a server, with a company of agents working in it. Expect rough edges for anyone else's setup, and please open an issue when you hit one.
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). Agents: read [`AGENTS.md`](AGENTS.md) first.
+Bug reports, fixes, docs and skills are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first; AI coding agents read [AGENTS.md](AGENTS.md). Security issues: [SECURITY.md](SECURITY.md), privately.
 
 ## License
 
-MIT
+[MIT](LICENSE)

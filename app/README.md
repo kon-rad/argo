@@ -163,7 +163,7 @@ Settings that don't fit one env line live in the vault, in `secondbrain.json` at
 | `livestream.youtube`, `.twitch`, `.kick` | livestream | Your channel on each platform |
 | `projects.reportFile` | projects | Where `cli-projects render` writes the report (default `projects.md`) |
 
-Then `secondbrain embed` to build the vector index.
+Then `secondbrain scan` to build the index and `secondbrain embed` to build the vector index. Every setting: [docs/configuration.md](../docs/configuration.md).
 
 ---
 
@@ -189,10 +189,7 @@ app/deploy/deploy.sh          # ships source, installs Node/Postgres+pgvector/Ca
 ssh <your server> 'nano /etc/secondbrain/env && systemctl restart secondbrain'   # first time only: paste the lines + TOGETHER_API_KEY
 ```
 
-`deploy.sh` reads its settings from your vault `.env` (or the environment): `DEPLOY_HOST` (ssh destination with root), `DEPLOY_PUBLIC_HOST` (domain or IP), `DEPLOY_VAULT_DIR` (vault checkout on the server), and optionally `DEPLOY_APP_USER`, `DEPLOY_APP_DIR`, `DEPLOY_HERMES_HOME`, `EXTRA_CADDY_IMPORT` (comma separated), `DEPLOY_REDIRECT_FROM` (e.g. the bare IP, redirected to the public host), `DEPLOY_PAUSE_FILE`, `DEPLOY_EMBED=1` and `DEPLOY_DB_BACKUP=1`. `DEPLOY_MODULES` (else `MODULES`) decides which timers it installs; keep it the same as `MODULES` in the server's env file. See the header of `deploy/deploy.sh`.
-
-```
-```
+`deploy.sh` reads its settings from your vault `.env` (or the environment): `DEPLOY_HOST` (ssh destination with root), `DEPLOY_PUBLIC_HOST` (domain or IP), `DEPLOY_VAULT_DIR` (vault checkout on the server), and optionally `DEPLOY_APP_USER`, `DEPLOY_APP_DIR`, `DEPLOY_HERMES_HOME`, `EXTRA_CADDY_IMPORT` (comma separated), `DEPLOY_REDIRECT_FROM` (e.g. the bare IP, redirected to the public host), `DEPLOY_PAUSE_FILE`, `DEPLOY_EMBED=1` and `DEPLOY_DB_BACKUP=1`. `DEPLOY_MODULES` (else `MODULES`) decides which timers it installs; keep it the same as `MODULES` in the server's env file. See the header of `deploy/deploy.sh`, and [docs/deployment.md](../docs/deployment.md).
 
 Editing: the Edit button on any text file saves through `PUT /api/file/source`. It uses an optimistic lock (the file's sha256 when you opened it), so a change the Hermes agent, Obsidian or the git sync made meanwhile comes back as a 409 and is never overwritten. The write goes to a temp file and is then renamed into place, and the file is reindexed immediately.
 
@@ -200,7 +197,7 @@ Editing: the Edit button on any text file saves through `PUT /api/file/source`. 
 
 These are enforced by tests and hold across the codebase.
 
-- **Nothing writes to a `.md` file.** The app is read-only over vault content.
+- **Only the editor writes to a note**, through `PUT /api/file/source` with an optimistic lock (below). Scans, embeds and every other route are read-only over vault content.
 - **A no-change re-scan issues zero writes** to `vault_files`, `vault_links`, `vault_tags` — and a no-change re-embed issues zero writes to `vault_chunks` and makes zero API calls.
 - **The index is the allowlist.** `/api/raw` and `/api/file` reject `..`, absolute paths and null bytes, resolve inside `VAULT_ROOT`, *and* require the path to exist in `vault_files`. Credentials (`.env*`, `*.pem`, `*.key`, …) are filtered during the walk, outside the configurable skip list, so they can never be indexed and therefore never served.
 - **The scanner prunes directories by name at any depth**, never filtering files after walking. A leading slash anchors a rule to the vault root.
