@@ -8,7 +8,7 @@ Everything here must work for a stranger. Before you write a value, ask: would i
 
 | Kind of value | Where it goes |
 |---|---|
-| Secrets (keys, tokens, password hashes) | The user's vault `.env`, or `/etc/secondbrain/env` on a server. Add the variable name to `app/deploy/env.example` or `vault-template/.env.example` |
+| Secrets (keys, tokens, password hashes) | The user's vault `.env`, or `/etc/secondbrain/env` on a server. Add the variable name to `app/deploy/env.example` or `vault-template/env.example` (copied into vaults as `.env.example`) |
 | Personal settings (hosts, origins, names, paths, enabled modules) | Same env files, read in `app/server/src/config.ts` with a default that works for a stranger, or the feature off |
 | Personal rules for agents | The vault's `AGENTS.local.md` (never `vault-template/AGENTS.base.md`) |
 | Personal guard rules | The vault's `.agents/guard.local.json` |
@@ -59,4 +59,4 @@ Structured personal settings (which accounts to track, folder-to-division maps, 
 
 ## Docs
 
-User-facing behaviour changes update `README.md` or `docs/`. Architecture changes update `docs/architecture.md`.
+User-facing behaviour changes update `README.md` or the matching page in `docs/` (the table in `CONTRIBUTING.md`, "Docs", says which). Architecture changes update `docs/architecture.md`.
