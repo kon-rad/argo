@@ -28,6 +28,7 @@
 #                        projects: projects-render, the kiosk feed token, cli-projects on PATH
 #                        org: the sb_org role, cli-org on PATH · map: map-build, metrics
 #                        livestream: the minute poller and Caddy's /public/ files
+#                        social: the minute post-publisher and reauth check (cli-social)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -206,6 +207,7 @@ fi
 has projects && unit secondbrain-projects-render
 if has map; then unit secondbrain-map-build; unit secondbrain-metrics; fi
 has livestream && unit secondbrain-livestream
+has social && unit secondbrain-social
 [ "$WITH_EMBED" = 1 ] && unit secondbrain-embed
 [ "$WITH_BACKUP" = 1 ] && unit secondbrain-db-backup
 
