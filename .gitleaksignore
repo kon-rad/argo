@@ -1,2 +1,4 @@
 # Fake test key in app/server/test/provider.test.ts (first commit, before its gitleaks:allow comment). SHA updated after the 2026-10-17 history rewrite.
 d84c10b6effb2e49ab3fbee17f2669cd835dbf7c:app/server/test/provider.test.ts:generic-api-key:18
+# Fake PEM header in a redaction timing test (agent-sessions PR #8, 2026-10-19); split into two literals in the next commit.
+61e49e863b5d6902d744a5718fe9db890ed37b09:app/server/test/archive-redact.test.ts:private-key:70
