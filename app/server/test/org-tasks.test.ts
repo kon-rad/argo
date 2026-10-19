@@ -22,7 +22,7 @@ const ORG = {
   agents: {
     owner: { runtime: 'human', role: 'CEO', channels: ['*'] },
     atlas: { role: 'Head of Platform', team: 'platform', reports_to: 'owner' },
-    rune: { role: 'Platform engineer', team: 'platform', reports_to: 'atlas' },
+    rune: { role: 'Platform engineer', team: 'platform', reports_to: 'atlas', capabilities: ['code', 'web'] },
     juno: { role: 'Head of Media', team: 'media', reports_to: 'owner' },
     lena: { role: 'Writer', team: 'media', reports_to: 'juno' },
   },
@@ -72,10 +72,10 @@ describe('cards for bots', () => {
     expect(r.link).toMatchObject({ task_id: 't_000001', board: 'exo', project_slug: 'secondbrain-app', feature_slug: 'org-page', assignee: 'rune', created_by: 'owner', rounds: 0 });
     const { rows } = await query<{ owner: string }>(`SELECT owner FROM features WHERE slug = 'org-page'`);
     expect(rows[0]!.owner).toBe('rune');
-    expect(r.message).toMatchObject({ channel_slug: 'platform', kind: 'message', author: 'owner', task_id: 't_000001', project_slug: 'secondbrain-app', feature_slug: 'org-page', mentions: ['rune'] });
-    // The owner's mention wakes rune (reason owner); the dispatcher folds it into the same run as the card.
+    expect(r.message).toMatchObject({ channel_slug: 'platform', kind: 'message', author: 'owner', task_id: 't_000001', project_slug: 'secondbrain-app', feature_slug: 'org-page', mentions: [] });
+    // The note names rune without a mention: the card itself wakes rune when it is ready, so nothing else does.
     const { rows: wakes } = await query<{ agent_name: string; reason: string }>(`SELECT agent_name, reason FROM org_wakeups WHERE done_at IS NULL ORDER BY id`);
-    expect(wakes).toEqual([{ agent_name: 'rune', reason: 'owner' }]);
+    expect(wakes).toEqual([]);
     expect((await listTasks({ project: 'secondbrain-app' })).map((t) => t.task_id)).toEqual(['t_000001']);
     expect((await listTasks({ agent: 'lena' })).length).toBe(0);
   });
@@ -115,7 +115,7 @@ describe('cards for bots', () => {
     expect(comment[8]).toContain('Project: secondbrain-app/org-page');
     expect(comment[8]).toContain('hermes kanban complete <this card>');
     expect((await query<{ owner: string }>(`SELECT owner FROM features WHERE slug = 'org-page'`)).rows[0]!.owner).toBe('rune');
-    expect(r.message).toMatchObject({ channel_slug: 'platform', mentions: ['rune'], task_id: 't_01d00001' });
+    expect(r.message).toMatchObject({ channel_slug: 'platform', mentions: [], task_id: 't_01d00001' });
     expect((await listTasks({ agent: 'rune' })).map((l) => l.task_id)).toEqual(['t_01d00001']);
     // A finished or running card is refused before the kanban is touched; so is a card the board doesn't know.
     calls.length = 0;
@@ -285,10 +285,10 @@ describe('graphs and the review loop', () => {
     expect(links.map((l) => [l.node, l.kind, l.graph])).toEqual([['verify', 'verify', 'feature-build'], ['review', 'review', 'feature-build'], ['build', 'build', 'feature-build'], ['spec', 'spec', 'feature-build']]);
     // The feature's owner is the builder, not the reviewer or the lead of the verify node.
     expect((await query<{ owner: string }>(`SELECT owner FROM features WHERE slug = 'org-page'`)).rows[0]!.owner).toBe('rune');
-    expect(r.message).toMatchObject({ channel_slug: 'platform', mentions: ['atlas'], task_id: 't_000001' });
+    expect(r.message).toMatchObject({ channel_slug: 'platform', mentions: [], task_id: 't_000001' });
     expect(r.message!.body).toContain('spec t_000001 (atlas) → build t_000002 (rune) → review t_000003 (vera) → verify t_000004 (atlas)');
     const { rows: wakes } = await query<{ agent_name: string }>(`SELECT agent_name FROM org_wakeups WHERE done_at IS NULL`);
-    expect(wakes).toEqual([{ agent_name: 'atlas' }]);
+    expect(wakes).toEqual([]);   // each card wakes its bot when it is ready; the summary names them without a mention
   });
 
   it('redo opens a round for the builder, parks the review card on it, and escalates after two rounds', async () => {
@@ -308,7 +308,7 @@ describe('graphs and the review loop', () => {
     const round = (await listTasks({ agent: 'rune' })).find((l) => l.task_id === 't_000005')!;
     expect(round).toMatchObject({ rounds: 1, node: 'build', kind: 'build', graph: 'feature-build' });
     expect((await listTasks({ feature: 'org-page' })).find((l) => l.task_id === 't_000003')!.rounds).toBe(1);
-    expect(r1.message).toMatchObject({ channel_slug: 'platform', mentions: ['rune'], task_id: 't_000005' });
+    expect(r1.message).toMatchObject({ channel_slug: 'platform', mentions: [], task_id: 't_000005' });
     // Round 2 reviews the round-1 card (now a parent of the review card).
     const r2 = await redoTask(vera, 't_000003', 'Still 500.', fake);
     expect(r2).toMatchObject({ escalated: false, task_id: 't_000006', rounds: 2 });

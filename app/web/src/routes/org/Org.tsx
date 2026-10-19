@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, NavLink, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { api, type OrgChannel, type OrgChartAgent, type OrgMessage, type OrgWakeup, type UsageFacetValue } from '../../lib/api.js';
+import { api, type OrgApproval, type OrgChannel, type OrgChartAgent, type OrgMessage, type OrgWakeup, type UsageFacetValue } from '../../lib/api.js';
 import { formatTokens } from '../usage/format.js';
 import { ago, zoned } from '../../lib/time.js';
 
@@ -335,6 +335,63 @@ function Live() {
   );
 }
 
+/**
+ * Ship approvals: what the bots want to merge or deploy, waiting on the owner. Approving here is the same yes as
+ * "approve <id>" on Telegram; a denial needs a reason the bot can act on. Shared facts are listed under it.
+ */
+function Approvals() {
+  const qc = useQueryClient();
+  const list = useQuery({ queryKey: ['org', 'approvals'], queryFn: () => api.orgApprovals(), refetchInterval: POLL_MS });
+  const facts = useQuery({ queryKey: ['org', 'facts'], queryFn: () => api.orgFacts() });
+  const [why, setWhy] = useState<Record<number, string>>({});
+  const decide = useMutation({
+    mutationFn: (v: { id: number; decision: 'approve' | 'deny'; note?: string }) => api.orgDecide(v.id, v.decision, v.note),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['org', 'approvals'] }),
+  });
+  const row = (a: OrgApproval) => (
+    <li key={a.id} className="rounded border border-[var(--rule)] bg-[var(--paper)] p-2 text-sm" data-testid="approval">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="font-mono text-xs">#{a.id}</span>
+        <span className={a.status === 'pending' ? 'font-semibold' : 'text-[var(--ink-dim)]'}>{a.status}{a.ship_now ? ' (ship-now)' : ''}</span>
+        <Link className="text-[var(--accent)]" to={`/org/agents/${a.requested_by}`}>{a.requested_by}</Link>
+        <Link className="text-xs text-[var(--accent)]" to={`/agents/board/${a.task_id}`}>{a.task_id}</Link>
+        {a.pr_url && <a className="text-xs text-[var(--accent)] underline" href={a.pr_url} target="_blank" rel="noreferrer">PR</a>}
+        {a.deploy_target && <span className="text-xs">deploy {a.deploy_target}</span>}
+        <span className="ml-auto text-xs text-[var(--ink-dim)]">{ago(a.created_at)}</span>
+      </div>
+      <p className="mt-1 whitespace-pre-wrap">{a.summary}</p>
+      {a.status === 'pending' ? (
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button className="rounded bg-[var(--accent)] px-2 py-1 text-xs text-white disabled:opacity-50" disabled={decide.isPending}
+            onClick={() => decide.mutate({ id: a.id, decision: 'approve' })}>Approve</button>
+          <input className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-xs" placeholder="why not (for a denial)"
+            value={why[a.id] ?? ''} onChange={(e) => setWhy({ ...why, [a.id]: e.target.value })} />
+          <button className="rounded border border-[var(--rule)] px-2 py-1 text-xs disabled:opacity-50" disabled={decide.isPending || !why[a.id]?.trim()}
+            onClick={() => decide.mutate({ id: a.id, decision: 'deny', note: why[a.id] })}>Deny</button>
+        </div>
+      ) : a.decided_by ? <p className="mt-1 text-xs text-[var(--ink-dim)]">{a.decided_by}{a.note ? `: ${a.note}` : ''}</p> : null}
+    </li>
+  );
+  const items = list.data ?? [];
+  return (
+    <div className="h-full overflow-y-auto p-3">
+      <h2 className="mb-2 text-sm font-semibold">Waiting on you</h2>
+      {list.isError ? <p>⚠ {list.error.message}</p> : null}
+      {decide.isError ? <p className="text-sm">⚠ {decide.error.message}</p> : null}
+      <ul className="space-y-2">{items.filter((a) => a.status === 'pending').map(row)}</ul>
+      {!items.some((a) => a.status === 'pending') && <p className="text-sm text-[var(--ink-dim)]">Nothing to approve.</p>}
+      <h2 className="mb-2 mt-5 text-sm font-semibold">Decided</h2>
+      <ul className="space-y-2">{items.filter((a) => a.status !== 'pending').slice(0, 20).map(row)}</ul>
+      <h2 className="mb-2 mt-5 text-sm font-semibold">Shared facts</h2>
+      <ul className="space-y-1 text-sm">
+        {(facts.data ?? []).map((f) => (
+          <li key={f.id}><span className="font-mono text-xs">#{f.id}</span> <b>{f.subject}</b>: {f.claim} <span className="text-xs text-[var(--ink-dim)]">({f.confidence}, {f.source}, {f.author})</span></li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** Seven days of the bot's tokens by what woke it and what it did; the link opens /usage filtered to it. */
 function UsageStrip({ name }: { name: string }) {
   const [from, to] = useMemo(() => {
@@ -527,12 +584,14 @@ export default function Org() {
         <NavLink to="/org" end className={tab}>Channels</NavLink>
         <NavLink to="/org/chart" className={tab}>Org chart</NavLink>
         <NavLink to="/org/live" className={tab}>Live</NavLink>
+        <NavLink to="/org/approvals" className={tab}>Approvals</NavLink>
       </nav>
       <div className="min-h-0 flex-1">
         <Routes>
           <Route index element={<Channels />} />
           <Route path="chart" element={<Chart />} />
           <Route path="live" element={<Live />} />
+          <Route path="approvals" element={<Approvals />} />
           <Route path="agents/:name" element={<AgentPage />} />
         </Routes>
       </div>

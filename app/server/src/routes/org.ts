@@ -22,6 +22,7 @@ import {
   type Agent,
   type Kind,
 } from '../org.js';
+import { listApprovals, listFacts, shipDecide } from '../org-powers.js';
 import { config } from '../config.js';
 import { HttpError, intParam, parseOr400, wrap } from './http.js';
 
@@ -47,6 +48,7 @@ const PostBody = z.object({
   thread: z.number().int().positive().optional(),
 });
 const DmBody = z.object({ to: Name, body: z.string().trim().min(1).max(8000) });
+const DecideBody = z.object({ note: z.string().trim().max(2000).optional() });
 const Slug = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
 const TaskQuery = z.object({ project: Slug.optional(), feature: Slug.optional(), agent: Name.optional(), limit: z.coerce.number().int().min(1).max(1000).optional() });
 
@@ -220,6 +222,32 @@ export function orgRouter(vaultRoot: string): Router {
       const b = parseOr400(PostBody, req.body);
       const m = await orgErrors(() => post(owner(res), b.channel, b.body, { kind: b.kind as Kind | undefined, thread: b.thread, run: 'app' }));
       res.status(201).json(m);
+    }),
+  );
+
+  // Ship approvals: the panel on /org. Only the owner has a session here, so approving from the page is the owner's yes.
+  router.get(
+    '/approvals',
+    wrap(async (req, res) => {
+      res.json(await listApprovals({ pending: req.query['pending'] === '1', limit: 50 }));
+    }),
+  );
+
+  router.post(
+    '/approvals/:id/:decision',
+    wrap(async (req, res) => {
+      const id = parseOr400(z.coerce.number().int().positive(), req.params['id']);
+      const decision = parseOr400(z.enum(['approve', 'deny']), req.params['decision']);
+      const b = parseOr400(DecideBody, req.body ?? {});
+      if (decision === 'deny' && !b.note) throw new HttpError(400, 'a denial says why');
+      res.json(await orgErrors(() => shipDecide(owner(res), id, decision === 'approve', b.note, {})));
+    }),
+  );
+
+  router.get(
+    '/facts',
+    wrap(async (req, res) => {
+      res.json(await listFacts({ subject: typeof req.query['subject'] === 'string' ? req.query['subject'] : undefined, limit: 100 }));
     }),
   );
 
