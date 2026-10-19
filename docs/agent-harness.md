@@ -22,10 +22,13 @@ Before each tool call the agent sends the guard a JSON payload on stdin (tool na
 | Rule | Blocks | Can a vault turn it off? |
 |---|---|---|
 | Secrets | Shell readers or copiers (`cat`, `grep`, `sed`, `cp`, `rsync`, `curl`, `echo` and others) whose text names `.env`, `.env.<x>` (not `.env.example`), `auth.json` or `.credentials.json`; file-tool reads and writes of those files | No |
+| Keys in command lines | A key value written into a command (`sk-…`, `ghp_…`, `AKIA…`, `xox…-`, `hf_…`, or `NAME_KEY=<long value with a digit>`); `ssh` commands that expand a variable named like `*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*` on the local side; `echo`/`printf` of such a variable, and `printenv` of one. A command line shows in the process list and is saved in the agent's transcript and logs | No |
 | Force push | `git push --force`, `-f`, `--force-with-lease`, `+branch` | No |
 | Deploy without a dry run | `rsync --delete` without `-n` / `--dry-run` | Yes: `"disable": ["rsync_dry_run"]` |
 
 Loading keys into a shell the safe way passes: `set -a; . ./.env; set +a`, then test a variable (`[ -n "$SOME_KEY" ] && echo set`).
+
+Keys are never sent to another machine by an agent: the owner moves them by hand into a `chmod 600` env file there, and the agent sources that file on the remote side. A variable inside single quotes or written `\$NAME` is expanded by the remote shell, so `ssh host 'set -a; . ~/.config/app/env; set +a; ./run.sh'` passes.
 
 Shell commands are split on `;`, `&&`, `||`, pipes, newlines and `$(`, and each piece is judged by its first real word (skipping `VAR=x`, `sudo`, `env`). Because it matches on text, a harmless command that merely *mentions* `.env` next to `grep` is blocked too. The fix is to put the work in a script file, not to dodge the rule.
 
