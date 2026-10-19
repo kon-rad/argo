@@ -221,6 +221,13 @@ function formatFact(f: Fact): string {
   return `#${f.id} ${f.subject}: ${f.claim}  [${f.confidence}, ${f.source}, ${f.author}${f.via ? ` via ${f.via}` : ''}, ${when(new Date(f.valid_from))}${f.valid_to ? `, closed ${when(new Date(f.valid_to))}${f.retired_why ? `: ${f.retired_why}` : ''}` : ''}]`;
 }
 
+/** A search snippet as plain text for a model: no highlight tags, entities decoded (they cost tokens and mean nothing). */
+export function plainSnippet(html: string): string {
+  return html
+    .replace(/<\/?(?:b|mark|em|strong)>/g, '')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
 /**
  * The vault side of recall: hybrid (keyword + vector) when embeddings are configured, else keyword, over-fetched and
  * filtered so the owner's working files and finances never come back. Runs on the app's connection: the index
@@ -242,7 +249,7 @@ export async function recallVault(q: string, limit: number, env: NodeJS.ProcessE
   return hits
     .filter((h) => !recallExcluded(h.ref_path, extra))
     .slice(0, limit)
-    .map((h) => ({ source: 'vault' as const, ref: h.ref_path, title: h.title ?? '', text: h.snippet.replace(/<\/?mark>/g, ''), score: Number(h.rank) }));
+    .map((h) => ({ source: 'vault' as const, ref: h.ref_path, title: h.title ?? '', text: plainSnippet(h.snippet), score: Number(h.rank) }));
 }
 
 async function main(argv: string[], out: (s: string) => void = console.log): Promise<number> {

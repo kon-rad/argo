@@ -5,7 +5,7 @@ import pg from 'pg';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
-import { agentDatabaseUrl, main } from '../src/cli-org.js';
+import { agentDatabaseUrl, main, plainSnippet } from '../src/cli-org.js';
 import { query } from '../src/db.js';
 import { applyGraph, assignTask, createTask, dm, getAgent, importOrg, neededCapability, nodeNeed, post, type KanbanRunner } from '../src/org.js';
 import {
@@ -237,6 +237,10 @@ describe('shared memory', () => {
     expect(recallExcluded('Areas/Finance/exports/x.md')).toBe(true);
     expect(recallExcluded('Areas/zion/tenancy.md', ['Areas/zion/'])).toBe(true);
     expect(recallExcluded('Projects/kanban/kanban-design.md')).toBe(false);
+  });
+
+  it('vault snippets reach the bot as plain text', () => {
+    expect(plainSnippet('the <b>kanban</b> &quot;exo&quot; board&#39;s <mark>SQLite</mark> &lt;file&gt; &amp; more')).toBe(`the kanban "exo" board's SQLite <file> & more`);
   });
 
   it('cli-org recall merges facts, memory files and the vault', async () => {
