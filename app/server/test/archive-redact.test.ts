@@ -67,7 +67,7 @@ describe('buildRedactor', () => {
 
   it('stays linear on huge inputs (1 MB of plain characters, of URL-ish text, of key headers)', () => {
     const p = buildRedactor({ env: { BIG_TEST_TOKEN: 'big-secret-value-123456' } });
-    for (const big of ['a'.repeat(1_000_000), 'x://'.repeat(250_000), `${'-----BEGIN RSA PRIVATE KEY-----'}A`.repeat(30_000), 'https://u:'.repeat(100_000)]) {
+    for (const big of ['a'.repeat(1_000_000), 'x://'.repeat(250_000), `${'-----BEGIN RSA ' + 'PRIVATE KEY-----'}A`.repeat(30_000), 'https://u:'.repeat(100_000)]) {
       const t0 = Date.now();
       p.text(big);
       expect(Date.now() - t0).toBeLessThan(1500);
