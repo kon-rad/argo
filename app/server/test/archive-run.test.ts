@@ -65,6 +65,33 @@ beforeEach(async () => {
 const count = async (t: string) => (await query<{ n: number }>(`SELECT count(*)::int n FROM ${t}`)).rows[0]!.n;
 
 describe('runArchive', () => {
+  it('archives a second Hermes home as hermes:user, skipping the sessions the main home already has', async () => {
+    const uh = join(root, 'user-hermes');
+    mkdirSync(uh, { recursive: true });
+    hermesDb(join(uh, 'state.db'), 2); // h1: the same session the main home holds
+    const db = new DatabaseSync(join(uh, 'state.db'));
+    db.exec(`INSERT INTO sessions VALUES ('h9','cli','m',1790000500,NULL,1,'only here')`);
+    db.prepare(`INSERT INTO messages (session_id, role, content, timestamp) VALUES ('h9','user','hello',1790000501)`).run();
+    db.close();
+    deps.paths.hermesUserHome = uh;
+    const s = (await runArchive(deps))!;
+    expect(s.errors).toEqual([]);
+    const { rows } = await query(`SELECT source, host, external_id, harness, profile FROM archive_sessions WHERE harness='hermes' ORDER BY source, host, external_id`);
+    expect(rows).toEqual([
+      { source: 'hermes', host: 'droplet', external_id: 'h1', harness: 'hermes', profile: 'main' },
+      { source: 'hermes', host: 'mac', external_id: 'h1', harness: 'hermes', profile: 'main' },
+      { source: 'hermes:user', host: 'mac', external_id: 'h9', harness: 'hermes', profile: 'user' },
+    ]);
+    expect(uploads[0]).toContain('archives/hermes/mac-user/state/2026-09-30.sqlite.gz');
+  });
+
+  it('ignores a user home that is the main home', async () => {
+    deps.paths.hermesUserHome = deps.paths.hermesHome;
+    const s = (await runArchive(deps))!;
+    expect(s.errors).toEqual([]);
+    expect((await query(`SELECT count(*)::int n FROM archive_sessions WHERE source='hermes:user'`)).rows[0]!.n).toBe(0);
+  });
+
   it('archives everything once, then nothing on a re-run', async () => {
     const s = (await runArchive(deps))!;
     expect(s.errors).toEqual([]);

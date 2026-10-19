@@ -1,12 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, join, relative } from 'node:path';
+import { basename, join, relative, resolve as resolvePath } from 'node:path';
 import { ingest, type Counts, type Item } from './ingest.js';
 import { walkFiles as walk } from '../usage/walkFiles.js';
 import * as stage from './stage.js';
 import * as store from './store.js';
 import type { Host } from './types.js';
 
-export interface ArchivePaths { claudeProjectsDir: string; claudePrefix: string; hermesHome: string; stateDir: string }
+export interface ArchivePaths {
+  claudeProjectsDir: string; claudePrefix: string; hermesHome: string; stateDir: string;
+  /** A second Hermes home on this machine (the user's default ~/.hermes when the vault runs its own); archived as 'hermes:user'. */
+  hermesUserHome?: string | null;
+}
 export interface RunDeps {
   paths: ArchivePaths; now: () => Date; log: (msg: string) => void;
   snapshotSqlite: (src: string, dest: string) => Promise<void>;
@@ -26,6 +30,7 @@ export function defaultPaths(vaultRoot: string, home: string): ArchivePaths {
     // Claude Code names a project dir by replacing every non-alphanumeric char of the cwd with '-'.
     claudePrefix: vaultRoot.replace(/[^A-Za-z0-9]/g, '-'),
     hermesHome: join(vaultRoot, '.hermes'),
+    hermesUserHome: join(home, '.hermes'),
     stateDir: join(home, 'Library', 'Application Support', 'secondbrain-archive'),
   };
 }
@@ -103,6 +108,16 @@ export async function runArchive(deps: RunDeps, opts: RunOptions = {}): Promise<
       try { await deps.snapshotSqlite(join(paths.hermesHome, 'state.db'), join(work, 'mac', 'state.db')); }
       catch (err) { summary.errors.push(`mac hermes snapshot: ${(err as Error).message}`); }
     }
+    // The user's own ~/.hermes, when it is a different home from the vault's: its state.db only.
+    const userHome = paths.hermesUserHome && resolvePath(paths.hermesUserHome) !== resolvePath(paths.hermesHome)
+      && existsSync(join(paths.hermesUserHome, 'state.db')) ? paths.hermesUserHome : null;
+    if (userHome) {
+      const snap = join(work, 'mac-user', 'state.db');
+      if (!opts.dryRun) {
+        try { await deps.snapshotSqlite(join(userHome, 'state.db'), snap); }
+        catch (err) { summary.errors.push(`mac user hermes snapshot: ${(err as Error).message}`); }
+      }
+    }
     if (opts.droplet !== false && opts.dryRun) summary.droplet = 'skipped'; // dry run: no SSH
     else if (opts.droplet !== false) {
       try {
@@ -128,6 +143,10 @@ export async function runArchive(deps: RunDeps, opts: RunOptions = {}): Promise<
         items.push({ source: 'hermes-pastes', host, localPath: f, logical: `${logicalHome}/pastes/${basename(f)}`, kind: 'blob',
           b2Desired: `archives/hermes/${host}/pastes/${basename(f)}.gz` });
     }
+    // After the main home, so its sessions are in before the user home is checked against them.
+    if (userHome && existsSync(join(work, 'mac-user', 'state.db'))) items.push({ source: 'hermes:user', host: 'mac',
+      localPath: join(work, 'mac-user', 'state.db'), logical: `${userHome}/state.db`, kind: 'hermes-db', daily: true,
+      b2Desired: `archives/hermes/mac-user/state/${today}.sqlite.gz` });
 
     // --- Stage ---
     const changedItems: Array<{ item: Item; prev: store.FileRow | null; st: stage.FileState }> = [];

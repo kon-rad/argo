@@ -1,13 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
-import { withTransaction } from '../db.js';
+import { query, withTransaction } from '../db.js';
 import { parseClaudeJsonl } from './claude.js';
 import { readHermes } from './hermes.js';
 import { splitLog } from './logs.js';
 import { readFrom } from '../usage/readFrom.js';
 import * as stage from './stage.js';
 import * as store from './store.js';
-import type { Host } from './types.js';
+import type { Host, SessionInput } from './types.js';
 
 export type Counts = { files: number; sessions: number; messages: number; logLines: number; memoryVersions: number };
 export type Bump = (s: string, k: keyof Counts, n?: number) => void;
@@ -34,7 +34,18 @@ export async function ingest(item: Item, errors: string[], bump: Bump): Promise<
     return;
   }
   if (item.kind === 'hermes-db') {
-    const { sessions, messages } = readHermes(item.localPath, item.host);
+    const read = readHermes(item.localPath, item.host, item.source as SessionInput['source']);
+    let { sessions, messages } = read;
+    if (item.source === 'hermes:user') {
+      // A second Hermes home on the same machine shares the history it was copied from:
+      // a session id the main home already archived is the same session, not a new one.
+      const { rows } = await query<{ external_id: string }>(
+        `SELECT external_id FROM archive_sessions WHERE source='hermes' AND host=$1 AND external_id = ANY($2::text[])`,
+        [item.host, sessions.map((s) => s.externalId)]);
+      const dup = new Set(rows.map((r) => r.external_id));
+      sessions = sessions.filter((s) => !dup.has(s.externalId));
+      messages = messages.filter((m) => !dup.has(m.sessionExternalId));
+    }
     const size = stage.fileState(item.localPath, row).sizeBytes;
     await withTransaction(async (tx) => {
       const ids = new Map<string, number>();

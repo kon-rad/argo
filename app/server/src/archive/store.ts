@@ -1,5 +1,7 @@
 import { query, type TxClient } from '../db.js';
 import { clean, sha256 } from './clean.js';
+import { redactor } from './redact.js';
+import { stepFields } from './steps.js';
 import type { Host, LogLine, ParsedMessage, SessionInput } from './types.js';
 
 export interface FileRow {
@@ -53,9 +55,10 @@ export async function markIngested(tx: TxClient, id: number, bytes: number, line
 }
 
 export async function upsertSession(tx: TxClient, s: SessionInput): Promise<{ id: number; changed: boolean }> {
-  const params = [s.source, s.host, s.externalId, s.parentExternalId, s.project, clean(s.title), s.model,
+  const r = redactor();
+  const params = [s.source, s.host, s.externalId, s.parentExternalId, s.project, s.title === null ? null : r.text(clean(s.title)), s.model,
     s.startedAt, s.endedAt, s.messageCount ?? 0, s.inputTokens, s.outputTokens, s.costUsd,
-    JSON.stringify(clean(s.meta)), s.b2Path, s.messageCount === null];
+    JSON.stringify(r.deep(clean(s.meta))), s.b2Path, s.messageCount === null];
   // $16 = stats come from archive_messages (Claude): keep the computed columns.
   const { rows } = await tx.query<{ id: number }>(
     `INSERT INTO archive_sessions AS a (source, host, external_id, parent_external_id, project, title, model,
@@ -88,25 +91,33 @@ const MSG_BATCH = 200;
 export async function upsertMessages(tx: TxClient, sessionId: number, input: ParsedMessage[]): Promise<number> {
   // One INSERT cannot touch the same conflict key twice: dedupe by externalId, last one wins.
   const msgs = [...new Map(input.map((m) => [m.externalId, m])).values()];
+  const red = redactor();
+  const COLS = 15;
   let changed = 0;
   for (let i = 0; i < msgs.length; i += MSG_BATCH) {
     const batch = msgs.slice(i, i + MSG_BATCH);
     const values: string[] = [];
     const params: unknown[] = [];
     batch.forEach((m, j) => {
-      const b = j * 11;
-      values.push(`($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9}::jsonb,$${b + 10},$${b + 11})`);
+      const b = j * COLS;
+      const ph = Array.from({ length: COLS }, (_, k) => `$${b + k + 1}${k === 8 ? '::jsonb' : k === 12 ? '::text[]' : ''}`);
+      values.push(`(${ph.join(',')})`);
+      // Classified from the original record; stored redacted. raw_sha stays the original's hash.
+      const f = stepFields(m.raw);
       params.push(sessionId, m.seq, m.externalId, m.parentExternalId, m.role, m.kind, m.ts,
-        clean(m.contentText), JSON.stringify(clean(m.raw)), m.rawSha, m.isSidechain);
+        red.text(clean(m.contentText)), JSON.stringify(red.deep(clean(m.raw))), m.rawSha, m.isSidechain,
+        f.step, f.toolNames.length ? f.toolNames : null, f.toolCallId, f.isError);
     });
     const r = await tx.query(
-      `INSERT INTO archive_messages AS a (session_id, seq, external_id, parent_external_id, role, kind, ts, content_text, raw, raw_sha, is_sidechain)
+      `INSERT INTO archive_messages AS a (session_id, seq, external_id, parent_external_id, role, kind, ts, content_text, raw, raw_sha, is_sidechain,
+         step, tool_names, tool_call_id, is_error)
        VALUES ${values.join(',')}
        ON CONFLICT (session_id, external_id) DO UPDATE SET
          seq=EXCLUDED.seq, parent_external_id=EXCLUDED.parent_external_id, role=EXCLUDED.role, kind=EXCLUDED.kind,
          ts=EXCLUDED.ts, content_text=EXCLUDED.content_text, raw=EXCLUDED.raw, raw_sha=EXCLUDED.raw_sha,
-         is_sidechain=EXCLUDED.is_sidechain
-       WHERE a.raw_sha IS DISTINCT FROM EXCLUDED.raw_sha`, params);
+         is_sidechain=EXCLUDED.is_sidechain, step=EXCLUDED.step, tool_names=EXCLUDED.tool_names,
+         tool_call_id=EXCLUDED.tool_call_id, is_error=EXCLUDED.is_error
+       WHERE a.raw_sha IS DISTINCT FROM EXCLUDED.raw_sha OR a.step IS NULL`, params);
     changed += r.rowCount ?? 0;
   }
   return changed;
