@@ -26,6 +26,7 @@ export const SHORTCUTS: Shortcut[] = [
   { code: 'KeyP', to: '/projects', label: 'Projects', module: 'projects' },
   { code: 'KeyM', to: '/map', label: 'Brain map', module: 'map', kiosk: '/map?kiosk=1' },
   { code: 'KeyU', to: '/usage', label: 'Usage', module: 'usage' },
+  { code: 'KeyG', to: '/media', label: 'Media', module: 'media' },
   { code: 'KeyC', to: '/cron', label: 'Cron', module: 'agents' },
   { code: 'KeyR', to: '/ring', label: 'Ring', module: 'ring' },
   { code: 'KeyV', to: '/vector-search', label: 'Vector search' },

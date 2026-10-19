@@ -149,6 +149,7 @@ Everything beyond browse, search and the database page is a module. A module tha
 | `tv` | A player for rendered video episodes kept in the vault, on `/tv` |
 | `voice` | Read a note aloud through a local speech server (never on a server) |
 | `livestream` | A minute poller of your YouTube, Twitch and Kick channels and a public summary JSON |
+| `media` | A gallery of every image, video and audio file in the vault on `/media`, with a lightbox player; `.b2.md` stubs play from B2 where the original isn't on disk |
 
 ### `secondbrain.json`
 

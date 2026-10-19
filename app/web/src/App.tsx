@@ -14,6 +14,7 @@ import Cron from './routes/Cron.js';
 import NavMenu, { type NavItem } from './components/NavMenu.js';
 import Projects from './routes/Projects.js';
 import Tv from './routes/Tv.js';
+import Media from './routes/Media.js';
 // three.js is large: the map loads only when it's opened.
 const MapPage = lazy(() => import('./routes/Map.js'));
 import Org from './routes/org/Org.js';
@@ -184,6 +185,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           {modules.has('projects') && <Route path="/projects" element={<Projects />} />}
           {modules.has('org') && <Route path="/org/*" element={<Org />} />}
           {modules.has('tv') && <Route path="/tv" element={<Tv />} />}
+          {modules.has('media') && <Route path="/media" element={<Media />} />}
           {/* The page was /argo-tv before the engine port; old kiosk URLs land on /tv. */}
           {modules.has('tv') && <Route path="/argo-tv" element={<Navigate to={`/tv${location.search}`} replace />} />}
           {modules.has('map') && (
@@ -209,6 +211,7 @@ function menus(modules: Set<string>, meta: AppMeta | undefined): [string, NavIte
   const vault: NavItem[] = [
     { to: '/', label: 'Browse', end: true },
     ...on('map', { to: '/map', label: 'Brain map' }),
+    ...on('media', { to: '/media', label: 'Media' }),
     { to: '/vector-search', label: 'Vector Search' },
     { to: '/database', label: 'Database' },
     { to: '/sources', label: 'Sources' },
