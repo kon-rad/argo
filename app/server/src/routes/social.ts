@@ -44,6 +44,32 @@ function providerOrThrow(opts: SocialOptions, name: string): SocialProvider {
   return provider;
 }
 
+/**
+ * The provider redirects the browser back here from its own site, and the
+ * session cookie is SameSite=Strict, so this one route is mounted before the
+ * session gate. The one-time state nonce stands in for the session: only a
+ * logged-in /connect can mint one.
+ */
+export function socialCallbackRouter(opts: SocialOptions): Router {
+  const router = Router();
+
+  router.get(
+    '/accounts/:provider/callback',
+    wrap(async (req, res) => {
+      const provider = providerOrThrow(opts, String(req.params.provider));
+      consumeState(req.query.state as string | undefined, provider.id);
+      const code = req.query.code as string | undefined;
+      if (!code) throw new HttpError(400, 'missing authorization code');
+      const redirectUri = `${opts.redirectBaseUrl}/api/social/accounts/${provider.id}/callback`;
+      const connected = await provider.exchangeCode(code, redirectUri);
+      const id = await saveConnectedAccount(provider.id, connected, opts.tokenEncKey);
+      res.json({ connected: { id, displayName: connected.displayName } });
+    }),
+  );
+
+  return router;
+}
+
 export function socialRouter(opts: SocialOptions): Router {
   const router = Router();
 
@@ -61,20 +87,6 @@ export function socialRouter(opts: SocialOptions): Router {
       const state = newState(provider.id);
       const redirectUri = `${opts.redirectBaseUrl}/api/social/accounts/${provider.id}/callback`;
       res.redirect(provider.authUrl(state, redirectUri));
-    }),
-  );
-
-  router.get(
-    '/accounts/:provider/callback',
-    wrap(async (req, res) => {
-      const provider = providerOrThrow(opts, String(req.params.provider));
-      consumeState(req.query.state as string | undefined, provider.id);
-      const code = req.query.code as string | undefined;
-      if (!code) throw new HttpError(400, 'missing authorization code');
-      const redirectUri = `${opts.redirectBaseUrl}/api/social/accounts/${provider.id}/callback`;
-      const connected = await provider.exchangeCode(code, redirectUri);
-      const id = await saveConnectedAccount(provider.id, connected, opts.tokenEncKey);
-      res.json({ connected: { id, displayName: connected.displayName } });
     }),
   );
 

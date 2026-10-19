@@ -108,4 +108,23 @@ describe('social routes', () => {
     expect((await request(a).get('/api/social/accounts')).body.accounts).toEqual([]);
     expect((await request(a).delete(`/api/social/accounts/${id}`)).status).toBe(404);
   });
+
+  it('on a server, the callback works without a session but everything else needs one', async () => {
+    // The state comes from a logged-in /connect; here a local app mints it.
+    const connect = await request(app()).get('/api/social/accounts/linkedin/connect');
+    const state = new URL(connect.headers.location).searchParams.get('state');
+
+    const server = createApp({
+      modules: new Set(['social']),
+      deployment: 'server',
+      auth: { passwordHash: 'x', totpSecret: 'JBSWY3DPEHPK3PXP', publicOrigin: 'https://example.test' },
+      social: { providers: { linkedin: fakeLinkedIn() }, tokenEncKey: KEY, redirectBaseUrl: 'https://brain.example.com' },
+    });
+    await request(server).get('/api/social/accounts').expect(401);
+    await request(server).get('/api/social/accounts/linkedin/connect').expect(401);
+    await request(server).get('/api/social/accounts/linkedin/callback?code=x&state=forged').expect(400);
+    const callback = await request(server).get(`/api/social/accounts/linkedin/callback?code=authcode123&state=${state}`);
+    expect(callback.status).toBe(200);
+    expect(callback.body.connected.displayName).toBe('Konrad Gnat');
+  });
 });

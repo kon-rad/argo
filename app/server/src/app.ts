@@ -22,7 +22,7 @@ import { projectsFeedRouter, projectsRouter } from './routes/projects.js';
 import { ringRouter, type RingRouterOptions } from './routes/ring.js';
 import { runsRouter } from './routes/runs.js';
 import { searchRouter, type ProviderFactory } from './routes/search.js';
-import { socialRouter, type SocialOptions } from './routes/social.js';
+import { socialCallbackRouter, socialRouter, type SocialOptions } from './routes/social.js';
 import { sourcesRouter } from './routes/sources.js';
 import { systemRouter } from './routes/system.js';
 import { treeRouter } from './routes/tree.js';
@@ -115,6 +115,17 @@ export function createApp(opts: AppOptions = {}): express.Express {
     app.use('/api/feed', projectsFeedRouter(vaultRoot, opts.projectsFeedToken ?? config.projectsFeedToken));
   }
 
+  // The OAuth callback: the provider's redirect arrives without the session cookie.
+  const socialOpts: SocialOptions | undefined = modules.has('social')
+    ? {
+        providers: defaultSocialProviders(),
+        tokenEncKey: config.socialTokenEncKey,
+        redirectBaseUrl: config.socialRedirectBaseUrl,
+        ...opts.social,
+      }
+    : undefined;
+  if (socialOpts) app.use('/api/social', socialCallbackRouter(socialOpts));
+
   if (remote) {
     const auth = createAuth(
       opts.auth ?? {
@@ -174,17 +185,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
   if (modules.has('map')) app.use('/api/map', mapRouter());
   if (modules.has('tv')) app.use('/api/tv', tvRouter(vaultRoot));
   if (modules.has('media')) app.use('/api/media', mediaRouter(vaultRoot));
-  if (modules.has('social')) {
-    app.use(
-      '/api/social',
-      socialRouter({
-        providers: defaultSocialProviders(),
-        tokenEncKey: config.socialTokenEncKey,
-        redirectBaseUrl: config.socialRedirectBaseUrl,
-        ...opts.social,
-      }),
-    );
-  }
+  if (socialOpts) app.use('/api/social', socialRouter(socialOpts));
   // Local-only: one spawns a shell script, the other stops the process. Neither
   // belongs on an internet-facing box, logged in or not.
   const robotScript = opts.friendly?.script ?? config.robotLaunchScript;

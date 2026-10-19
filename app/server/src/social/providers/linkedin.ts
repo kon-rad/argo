@@ -8,7 +8,7 @@ const USERINFO_URL = 'https://api.linkedin.com/v2/userinfo';
 const POSTS_URL = 'https://api.linkedin.com/rest/posts';
 // LinkedIn versions the Posts/Images API by calendar month. Bump when LinkedIn
 // sunsets this version (see the migration guide linked from the design doc).
-const LINKEDIN_VERSION = '202510';
+const LINKEDIN_VERSION = '202610';
 const SCOPES = 'openid profile w_member_social';
 
 export interface LinkedInOptions {

@@ -134,6 +134,7 @@ A standard LinkedIn app gets a 60-day access token and **no refresh token** (Lin
 | Settings | `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `SOCIAL_REDIRECT_BASE_URL`, `SOCIAL_TOKEN_ENC_KEY` |
 | Timers (server) | the minute publisher/reauth-check (`secondbrain-social`) |
 | Design | `Projects/secondbrain-app/social-linkedin-plan.md` in the vault |
+| OAuth callback | Served before the login check (the session cookie is SameSite=Strict, so LinkedIn's redirect arrives without it); the one-time `state` from a logged-in `/connect` guards it |
 
 ## Adding a module
 
