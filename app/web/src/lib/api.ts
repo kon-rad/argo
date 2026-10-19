@@ -162,7 +162,7 @@ export interface RingNight {
 
 /** What this install has turned on (server: GET /api/meta). */
 export interface AppMeta {
-  modules: ('ring' | 'agents' | 'projects' | 'org' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream')[];
+  modules: ('ring' | 'agents' | 'projects' | 'org' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'media')[];
   owner: string;
   devLogPath: string | null;
   docsPath: string | null;
@@ -845,6 +845,44 @@ export interface TvEpisode {
 export const tvApi = {
   episodes: () =>
     request<{ episodes: TvEpisode[]; shows: Record<string, string>; episodesDir: string }>('/tv/episodes'),
+};
+
+export type MediaKind = 'image' | 'video' | 'audio';
+
+export interface MediaItem {
+  path: string;
+  folder: string;
+  name: string;
+  ext: string;
+  kind: MediaKind;
+  size_bytes: number | null;
+  mtime: string | null;
+  /** 'b2' when only a .b2.md stub is here and the file streams from B2. */
+  source: 'local' | 'b2';
+  /** False when the index lists the file but this machine's disk doesn't have it. */
+  available: boolean;
+  url: string;
+}
+
+export interface MediaQuery {
+  kind?: 'all' | MediaKind;
+  path?: string;
+  q?: string;
+  sort?: 'new' | 'name' | 'size';
+  limit?: number;
+  offset?: number;
+}
+
+export interface MediaResponse {
+  items: MediaItem[];
+  total: number;
+  has_more: boolean;
+  counts: Record<MediaKind, number>;
+  folders: { path: string; count: number }[];
+}
+
+export const mediaApi = {
+  list: (q: MediaQuery) => request<MediaResponse>('/media', { ...q }),
 };
 
 export function formatBytes(bytes: number): string {
