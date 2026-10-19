@@ -104,6 +104,9 @@ export function createApp(opts: AppOptions = {}): express.Express {
   // Saving a note carries the whole file; everything else stays at 1 MB. The
   // second parser skips a body the first has already read.
   app.use('/api/file/source', express.json({ limit: '6mb' }));
+  // A queued social post carries its images as base64 (4 x 5 MB at most). Like the
+  // note saver above, it parses before the session check, which still refuses it.
+  app.use('/api/social/posts', express.json({ limit: '30mb' }));
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req, res) => {

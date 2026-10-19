@@ -91,18 +91,13 @@ describe('linkedinProvider.publish', () => {
   it('posts text-only content and reads the new post id from the x-restli-id header', async () => {
     const f = (async () => new Response(null, { status: 201, headers: { 'x-restli-id': 'urn:li:share:999' } })) as typeof fetch;
     const provider = linkedinProvider({ ...OPTS, fetchFn: f });
-    const result = await provider.publish(account, { id: 1, accountId: 1, body: 'Hello LinkedIn', mediaPaths: [], attemptCount: 0 });
+    const result = await provider.publish(account, { id: 1, accountId: 1, body: 'Hello LinkedIn', media: [], attemptCount: 0 });
     expect(result).toEqual({ remoteId: 'urn:li:share:999', url: 'https://www.linkedin.com/feed/update/urn:li:share:999/' });
-  });
-
-  it('rejects media posts for now (not built yet)', async () => {
-    const provider = linkedinProvider(OPTS);
-    await expect(provider.publish(account, { id: 1, accountId: 1, body: 'x', mediaPaths: ['note.png'], attemptCount: 0 })).rejects.toThrow(/not supported yet/);
   });
 
   it('surfaces a non-2xx response as an error', async () => {
     const f = (async () => new Response('rate limited', { status: 429 })) as typeof fetch;
     const provider = linkedinProvider({ ...OPTS, fetchFn: f });
-    await expect(provider.publish(account, { id: 1, accountId: 1, body: 'x', mediaPaths: [], attemptCount: 0 })).rejects.toThrow(/HTTP 429/);
+    await expect(provider.publish(account, { id: 1, accountId: 1, body: 'x', media: [], attemptCount: 0 })).rejects.toThrow(/HTTP 429/);
   });
 });

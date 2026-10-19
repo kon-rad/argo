@@ -13,6 +13,9 @@ EnvironmentFile=/etc/secondbrain/env
 ExecStart=/usr/bin/node --no-warnings server/dist/cli-social.js
 # Exit 2 = at least one post failed to publish; not a unit failure (it retries next minute).
 SuccessExitStatus=2
-TimeoutStartSec=50
+# A pass starts no new post after 40 s; this covers one post's uploads after that
+# (4 images x (20 s init + 30 s upload) + the post). The timer doesn't start a
+# second run while one is active.
+TimeoutStartSec=300
 PrivateTmp=true
 NoNewPrivileges=true
