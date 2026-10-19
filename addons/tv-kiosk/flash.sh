@@ -8,7 +8,8 @@
 # Settings come from the environment (load your .env first). Required:
 #   TV_PASSWORD     password for TV_USER (sudo); only its SHA-512 hash goes on the card
 #   WIFI_SSID, WIFI_PASSWORD
-#   TV_PAGES        pages to show, ';'-separated: "https://host/page 60;https://host/other 30"
+#   TV_PAGE         the page to show: "https://host/tv?kiosk=1" (TV_PAGES, the old
+#                   ';'-separated list, still works: its first entry is used)
 # Optional:
 #   TV_HOSTNAME (sb-tv)  TV_USER (tv)  TV_SSH_PUBKEY (~/.ssh/id_ed25519.pub)
 #   WIFI_COUNTRY (US)    TV_TIMEZONE (UTC)  TV_KEYBOARD (us)
@@ -21,7 +22,7 @@ while [ $# -gt 0 ]; do
     --image)  IMAGE="$2"; shift 2 ;;
     --device) DEVICE="$2"; shift 2 ;;
     --render) RENDER="$2"; shift 2 ;;
-    *) sed -n '2,17p' "$0"; exit 1 ;;
+    *) sed -n '2,16p' "$0"; exit 1 ;;
   esac
 done
 
@@ -31,7 +32,8 @@ TV_SSH_PUBKEY="${TV_SSH_PUBKEY:-$HOME/.ssh/id_ed25519.pub}"
 WIFI_COUNTRY="${WIFI_COUNTRY:-US}"
 TV_TIMEZONE="${TV_TIMEZONE:-UTC}"
 TV_KEYBOARD="${TV_KEYBOARD:-us}"
-for v in TV_PASSWORD WIFI_SSID WIFI_PASSWORD TV_PAGES; do
+TV_PAGE="${TV_PAGE:-$(printf '%s' "${TV_PAGES:-}" | cut -d';' -f1 | awk '{print $1}')}"
+for v in TV_PASSWORD WIFI_SSID WIFI_PASSWORD TV_PAGE; do
   [ -n "${!v:-}" ] || { echo "flash.sh: $v is not set" >&2; exit 1; }
 done
 [ -r "$TV_SSH_PUBKEY" ] || { echo "flash.sh: no SSH public key at $TV_SSH_PUBKEY" >&2; exit 1; }
@@ -87,7 +89,7 @@ TV_USER=$TV_USER
 TV_HOSTNAME=$TV_HOSTNAME
 WIFI_COUNTRY=$WIFI_COUNTRY
 EOF
-  printf '%s\n' "$TV_PAGES" | tr ';' '\n' | sed 's/^[[:space:]]*//;/^$/d' > "$out/tv-kiosk/pages"
+  printf '%s\n' "$TV_PAGE" > "$out/tv-kiosk/pages"
   install -m 0755 "$HERE/install.sh" "$out/tv-kiosk/install.sh"
   install -m 0755 "$HERE/bin/sb-tv" "$out/tv-kiosk/sb-tv"
   if [ -n "${TS_AUTHKEY:-}" ]; then
