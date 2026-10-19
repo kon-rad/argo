@@ -21,10 +21,13 @@ import { projectsFeedRouter, projectsRouter } from './routes/projects.js';
 import { ringRouter, type RingRouterOptions } from './routes/ring.js';
 import { runsRouter } from './routes/runs.js';
 import { searchRouter, type ProviderFactory } from './routes/search.js';
+import { socialRouter, type SocialOptions } from './routes/social.js';
 import { sourcesRouter } from './routes/sources.js';
 import { systemRouter } from './routes/system.js';
 import { treeRouter } from './routes/tree.js';
 import { voiceRouter, type VoiceOptions } from './routes/voice.js';
+import { linkedinProvider } from './social/providers/linkedin.js';
+import type { SocialProvider } from './social/providers/types.js';
 import { togetherSqlGenerator, type SqlGenerator } from './sqlgen.js';
 
 export interface AppOptions {
@@ -58,11 +61,22 @@ export interface AppOptions {
   projectsFeedToken?: string;
   /** Overridden in tests: temp settings and cache, and a fake speech server. */
   voice?: Partial<VoiceOptions>;
+  /** Overridden in tests with fake providers and a fixed encryption key. */
+  social?: Partial<SocialOptions>;
 }
 
 function defaultSqlGenerator(): SqlGenerator {
   if (!config.togetherApiKey) throw new Error('TOGETHER_API_KEY is not set, so questions cannot be turned into SQL');
   return togetherSqlGenerator({ apiKey: config.togetherApiKey, model: config.sqlModel });
+}
+
+/** Only LinkedIn is wired today; an unconfigured provider is simply absent, not an error. */
+function defaultSocialProviders(): Record<string, SocialProvider> {
+  const providers: Record<string, SocialProvider> = {};
+  if (config.linkedinClientId && config.linkedinClientSecret) {
+    providers.linkedin = linkedinProvider({ clientId: config.linkedinClientId, clientSecret: config.linkedinClientSecret });
+  }
+  return providers;
 }
 
 export function createApp(opts: AppOptions = {}): express.Express {
@@ -158,6 +172,17 @@ export function createApp(opts: AppOptions = {}): express.Express {
   if (modules.has('org')) app.use('/api/org', orgRouter(vaultRoot));
   if (modules.has('map')) app.use('/api/map', mapRouter());
   if (modules.has('tv')) app.use('/api/tv', tvRouter(vaultRoot));
+  if (modules.has('social')) {
+    app.use(
+      '/api/social',
+      socialRouter({
+        providers: defaultSocialProviders(),
+        tokenEncKey: config.socialTokenEncKey,
+        redirectBaseUrl: config.socialRedirectBaseUrl,
+        ...opts.social,
+      }),
+    );
+  }
   // Local-only: one spawns a shell script, the other stops the process. Neither
   // belongs on an internet-facing box, logged in or not.
   const robotScript = opts.friendly?.script ?? config.robotLaunchScript;

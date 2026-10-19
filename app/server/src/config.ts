@@ -83,9 +83,21 @@ const Schema = z.object({
   // localhost only. Used by the voice module's Listen button; never on a server.
   TTS_URL: z.string().url().default('http://127.0.0.1:8880'),
   TTS_MODEL: z.string().default('mlx-community/Kokoro-82M-bf16'),
+  // social module: LinkedIn is the first provider. App-level OAuth credentials
+  // from developer.linkedin.com; one app serves every connected account.
+  LINKEDIN_CLIENT_ID: z.string().optional(),
+  LINKEDIN_CLIENT_SECRET: z.string().optional(),
+  // Base URL the LinkedIn OAuth callback redirects to, e.g. https://brain.example.com.
+  // Must exactly match a redirect URI registered on the LinkedIn app. Defaults to
+  // PUBLIC_ORIGIN (server) or http://localhost:5123 (local dev).
+  SOCIAL_REDIRECT_BASE_URL: z.string().url().optional(),
+  // 32-byte key (64 hex chars) used to AES-256-GCM encrypt stored OAuth tokens.
+  // Required only when the social module is on; generate with
+  // `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`.
+  SOCIAL_TOKEN_ENC_KEY: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
 });
 
-export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream'] as const;
+export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream', 'social'] as const;
 export type ModuleName = (typeof MODULE_NAMES)[number];
 
 /** `"ring, agents"` → {'ring', 'agents'}; unknown names are ignored. */
@@ -149,4 +161,8 @@ export const config = {
   ttsUrl: parsed.data.TTS_URL.replace(/\/+$/, ''),
   ttsModel: parsed.data.TTS_MODEL,
   webDist: resolve(appRoot, 'web', 'dist'),
+  linkedinClientId: parsed.data.LINKEDIN_CLIENT_ID,
+  linkedinClientSecret: parsed.data.LINKEDIN_CLIENT_SECRET,
+  socialRedirectBaseUrl: (parsed.data.SOCIAL_REDIRECT_BASE_URL ?? parsed.data.PUBLIC_ORIGIN ?? `http://localhost:${parsed.data.PORT}`).replace(/\/+$/, ''),
+  socialTokenEncKey: parsed.data.SOCIAL_TOKEN_ENC_KEY,
 } as const;

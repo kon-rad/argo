@@ -15,7 +15,8 @@ export async function truncateAll(): Promise<void> {
                task_links, org_wakeups, org_reads, org_messages, org_channel_members, org_channels, org_agents,
                verifications, stage_changes, features, projects, teams, divisions,
                usage_calls, usage_runs, plan_usage_snapshots, hermes_usage_snapshots, usage_files, provider_credit_snapshots,
-               metric_samples, map_edges, map_nodes, map_layouts
+               metric_samples, map_edges, map_nodes, map_layouts,
+               social_posts, social_accounts
                RESTART IDENTITY CASCADE`);
 }
 

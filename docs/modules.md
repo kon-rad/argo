@@ -19,6 +19,7 @@ A module that is off mounts no API routes, shows no nav link and gets no timers 
 | [`voice`](#voice) | (a Listen button) | Read a note aloud through a local speech server |
 | [`livestream`](#livestream) | (a public JSON) | Stream stats for YouTube, Twitch and Kick |
 | [`ring`](#ring) | `/ring` | Data from a wearable ring, pushed in by a client |
+| [`social`](#social) | (connect + queue, no page UI yet) | Schedule and publish posts to LinkedIn (more platforms planned) |
 
 ## projects
 
@@ -119,6 +120,20 @@ Stores data from a wearable ring that a separate client pushes in, next to your 
 | Page | `/ring` |
 | CLI | `secondbrain ring-pull` (mirror a server's ring tables) |
 | Settings | `RING_PULL_SSH_HOST`, `RING_PULL_DB` |
+
+## social
+
+Connects your own LinkedIn account (self-service "Share on LinkedIn" permission, no app review) and publishes queued posts on a schedule. No web page yet — connect and queue through the API (`GET /api/social/accounts/linkedin/connect`, `POST /api/social/posts`); a compose UI is a planned follow-up.
+
+A standard LinkedIn app gets a 60-day access token and **no refresh token** (LinkedIn only issues those to Marketing Developer Platform partners). Without that approval, reconnecting every ~2 months is expected, not a bug: the minute timer pings Telegram once when an account's access token is within 7 days of expiring with nothing left to refresh it.
+
+| | |
+|---|---|
+| API | `GET/DELETE /api/social/accounts`, `GET /api/social/accounts/:provider/connect` + `/callback`, `GET/POST/DELETE /api/social/posts` |
+| CLI | `cli-social` — one pass: publish due posts, then check for accounts needing reauth |
+| Settings | `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `SOCIAL_REDIRECT_BASE_URL`, `SOCIAL_TOKEN_ENC_KEY` |
+| Timers (server) | the minute publisher/reauth-check (`secondbrain-social`) |
+| Design | `Projects/secondbrain-app/social-linkedin-plan.md` in the vault |
 
 ## Adding a module
 
