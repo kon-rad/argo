@@ -9,7 +9,7 @@ import { query } from '../src/db.js';
 import { addDevice } from '../src/ingest/devices.js';
 import { routeDirect, routeState, routeThroughProxy, watchProxy } from '../src/ledger/claudeSettings.js';
 import { defaultConfig } from '../src/ledger/config.js';
-import { assembleSse, HEALTH_PATH, recordExchange, sessionFromMetadata, startProxy, type Captured } from '../src/ledger/proxy.js';
+import { assembleSse, captureQueue, HEALTH_PATH, recordExchange, sessionFromMetadata, startProxy, type Captured } from '../src/ledger/proxy.js';
 import { Ledger } from '../src/ledger/store.js';
 import { syncOnce } from '../src/ledger/sync.js';
 import { truncateAll } from './helpers.js';
@@ -143,6 +143,27 @@ describe('capture proxy', () => {
     expect(seen.map((s) => s.url)).toEqual(['/api/hello']); // health never reaches the upstream
   });
 
+  it('cancels the upstream call when the agent hangs up mid-stream', async () => {
+    await new Promise((ok) => upstream.close(ok));
+    let upstreamClosed = false;
+    upstream = http.createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('event: ping\ndata: {}\n\n'); // starts streaming, never finishes
+      res.on('close', () => { upstreamClosed = true; });
+    });
+    await new Promise<void>((ok) => upstream.listen(0, '127.0.0.1', ok));
+    await new Promise((ok) => proxy.close(ok));
+    proxy = await startProxy({ port: 0, upstream: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, onCapture: () => {} });
+    proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+    const ctl = new AbortController();
+    const res = await fetch(`${proxyUrl}/v1/messages`, { method: 'POST', body: '{}', signal: ctl.signal });
+    const reader = res.body!.getReader();
+    await reader.read();
+    ctl.abort();
+    await new Promise((ok) => setTimeout(ok, 200));
+    expect(upstreamClosed).toBe(true);
+  });
+
   it('answers 502 in the API error shape when the upstream is down', async () => {
     await new Promise((ok) => upstream.close(ok));
     upstream = http.createServer();
@@ -186,6 +207,27 @@ describe('capture proxy', () => {
         JOIN llm_blobs b ON b.sha = m.sha WHERE x.request_id='req_2' ORDER BY m.i`);
       expect(rebuilt.rows.map((r) => r.body)).toEqual(sent.messages);
     });
+  });
+});
+
+describe('captureQueue', () => {
+  it('retries a capture while the ledger is locked and drops one that can never be written', async () => {
+    const done: string[] = [];
+    let locked = true;
+    const log: string[] = [];
+    const push = captureQueue((c) => {
+      if (c.path === 'bad') throw new Error('not JSON');
+      if (locked) throw new Error('database is locked');
+      done.push(c.path);
+    }, (m) => log.push(m));
+    const cap = (path: string) => ({ path } as Captured);
+    push(cap('a'));
+    push(cap('bad'));
+    expect(done).toEqual([]);
+    locked = false;
+    await new Promise((ok) => setTimeout(ok, 400));
+    expect(done).toEqual(['a']);
+    expect(log.join(' ')).toContain('dropped');
   });
 });
 

@@ -16,7 +16,8 @@ export async function truncateAll(): Promise<void> {
                verifications, stage_changes, features, projects, teams, divisions,
                ingest_batches, ingest_devices, llm_exchanges, llm_blobs,
                usage_calls, usage_runs, plan_usage_snapshots, hermes_usage_snapshots, usage_files, provider_credit_snapshots,
-               metric_samples, map_edges, map_nodes, map_layouts
+               metric_samples, map_edges, map_nodes, map_layouts,
+               social_posts, social_accounts
                RESTART IDENTITY CASCADE`);
 }
 

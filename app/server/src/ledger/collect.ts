@@ -46,7 +46,8 @@ function readSlice(path: string, offset: number, max: number): Buffer {
  * A file whose first line changed, or that shrank, is read again from the start;
  * rows already in the ledger with the same JSON are not re-queued.
  */
-export function collectClaude(ledger: Ledger, dir: string, provider: string, maxBytesPerFile = 32 * 1024 * 1024): CollectCounts {
+// Small slices keep each write transaction short: the capture proxy writes to the same file and must not wait.
+export function collectClaude(ledger: Ledger, dir: string, provider: string, maxBytesPerFile = 8 * 1024 * 1024): CollectCounts {
   const c = emptyCounts();
   if (!existsSync(dir)) return c;
   for (const path of walkFiles(dir).filter((p) => p.endsWith('.jsonl')).sort()) {
@@ -105,6 +106,8 @@ export function hermesNames(homeLabel: string, profile: string): { source: strin
   return { source: p === 'main' ? 'hermes' : `hermes:${p}`, profile: p };
 }
 
+const HERMES_TX_ROWS = 2000;
+
 function fileSig(path: string): string {
   const parts = [path, `${path}-wal`].map((p) => (existsSync(p) ? `${statSync(p).size}:${statSync(p).mtimeMs}` : '-'));
   return parts.join('|');
@@ -138,23 +141,25 @@ export async function collectHermes(ledger: Ledger, homes: Array<{ dir: string; 
           const counters = readHermesCounters(copy, LOCAL, profile);
           rmSync(copy, { force: true }); // a plaintext copy of the conversations: never leave it behind
           const meta = home.label === 'main' ? { profile, timezone: tz } : { profile, timezone: tz, home: home.label };
-          ledger.tx(() => {
-            for (const s of sessions) {
-              const skey = `${source}|${s.externalId}`;
-              const data = { ...noHost(s), source, startedAt: iso(s.startedAt), endedAt: iso(s.endedAt), meta: { ...s.meta, ...meta } };
-              if (ledger.put('session', skey, data, { source, sessionKey: skey, ts: data.startedAt })) c.sessions++;
-            }
-            for (const m of messages) {
-              const skey = `${source}|${m.sessionExternalId}`;
-              const data = { ...m, ts: iso(m.ts) };
-              if (ledger.put('message', `${skey}|${m.externalId}`, data, { source, sessionKey: skey, ts: data.ts })) c.messages++;
-            }
-            for (const k of counters) {
-              const data = { ...noHost(k), startedAt: iso(k.startedAt), endedAt: iso(k.endedAt) };
-              if (ledger.put('counter', `${profile}|${k.sessionId}`, data, { source, sessionKey: `${source}|${k.sessionId}`, ts: data.endedAt })) c.counters++;
-            }
-            ledger.setCursor(name, sig);
-          });
+          // Sessions, then messages and counters, a few thousand rows per transaction (the proxy shares the
+          // file); the cursor moves last, so a crash midway only means the same rows are read and skipped next time.
+          const writes: Array<() => void> = [];
+          for (const s of sessions) {
+            const skey = `${source}|${s.externalId}`;
+            const data = { ...noHost(s), source, startedAt: iso(s.startedAt), endedAt: iso(s.endedAt), meta: { ...s.meta, ...meta } };
+            writes.push(() => { if (ledger.put('session', skey, data, { source, sessionKey: skey, ts: data.startedAt })) c.sessions++; });
+          }
+          for (const m of messages) {
+            const skey = `${source}|${m.sessionExternalId}`;
+            const data = { ...m, ts: iso(m.ts) };
+            writes.push(() => { if (ledger.put('message', `${skey}|${m.externalId}`, data, { source, sessionKey: skey, ts: data.ts })) c.messages++; });
+          }
+          for (const k of counters) {
+            const data = { ...noHost(k), startedAt: iso(k.startedAt), endedAt: iso(k.endedAt) };
+            writes.push(() => { if (ledger.put('counter', `${profile}|${k.sessionId}`, data, { source, sessionKey: `${source}|${k.sessionId}`, ts: data.endedAt })) c.counters++; });
+          }
+          for (let i = 0; i < writes.length; i += HERMES_TX_ROWS) ledger.tx(() => writes.slice(i, i + HERMES_TX_ROWS).forEach((w) => w()));
+          ledger.setCursor(name, sig);
           c.files++;
         } catch (err) {
           c.errors.push(`hermes ${src}: ${(err as Error).message}`);

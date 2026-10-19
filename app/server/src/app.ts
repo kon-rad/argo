@@ -23,10 +23,13 @@ import { projectsFeedRouter, projectsRouter } from './routes/projects.js';
 import { ringRouter, type RingRouterOptions } from './routes/ring.js';
 import { runsRouter } from './routes/runs.js';
 import { searchRouter, type ProviderFactory } from './routes/search.js';
+import { socialCallbackRouter, socialRouter, type SocialOptions } from './routes/social.js';
 import { sourcesRouter } from './routes/sources.js';
 import { systemRouter } from './routes/system.js';
 import { treeRouter } from './routes/tree.js';
 import { voiceRouter, type VoiceOptions } from './routes/voice.js';
+import { linkedinProvider } from './social/providers/linkedin.js';
+import type { SocialProvider } from './social/providers/types.js';
 import { togetherSqlGenerator, type SqlGenerator } from './sqlgen.js';
 
 export interface AppOptions {
@@ -60,11 +63,22 @@ export interface AppOptions {
   projectsFeedToken?: string;
   /** Overridden in tests: temp settings and cache, and a fake speech server. */
   voice?: Partial<VoiceOptions>;
+  /** Overridden in tests with fake providers and a fixed encryption key. */
+  social?: Partial<SocialOptions>;
 }
 
 function defaultSqlGenerator(): SqlGenerator {
   if (!config.togetherApiKey) throw new Error('TOGETHER_API_KEY is not set, so questions cannot be turned into SQL');
   return togetherSqlGenerator({ apiKey: config.togetherApiKey, model: config.sqlModel });
+}
+
+/** Only LinkedIn is wired today; an unconfigured provider is simply absent, not an error. */
+function defaultSocialProviders(): Record<string, SocialProvider> {
+  const providers: Record<string, SocialProvider> = {};
+  if (config.linkedinClientId && config.linkedinClientSecret) {
+    providers.linkedin = linkedinProvider({ clientId: config.linkedinClientId, clientSecret: config.linkedinClientSecret });
+  }
+  return providers;
 }
 
 export function createApp(opts: AppOptions = {}): express.Express {
@@ -91,7 +105,9 @@ export function createApp(opts: AppOptions = {}): express.Express {
   // Saving a note carries the whole file; everything else stays at 1 MB. The
   // second parser skips a body the first has already read.
   app.use('/api/file/source', express.json({ limit: '6mb' }));
-  app.use('/api/ingest', express.json({ limit: '64mb' }));
+  // Each machine's agent ledger syncs here with a device token, no session (usage module). Mounted
+  // ahead of the global parser: the router checks the token before it reads its large body.
+  if (modules.has('usage')) app.use('/api/ingest', ingestRouter());
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req, res) => {
@@ -103,10 +119,16 @@ export function createApp(opts: AppOptions = {}): express.Express {
     app.use('/api/feed', projectsFeedRouter(vaultRoot, opts.projectsFeedToken ?? config.projectsFeedToken));
   }
 
-  // Each machine's agent ledger syncs here with a device token, no session (usage module).
-  if (modules.has('usage')) {
-    app.use('/api/ingest', ingestRouter());
-  }
+  // The OAuth callback: the provider's redirect arrives without the session cookie.
+  const socialOpts: SocialOptions | undefined = modules.has('social')
+    ? {
+        providers: defaultSocialProviders(),
+        tokenEncKey: config.socialTokenEncKey,
+        redirectBaseUrl: config.socialRedirectBaseUrl,
+        ...opts.social,
+      }
+    : undefined;
+  if (socialOpts) app.use('/api/social', socialCallbackRouter(socialOpts));
 
   if (remote) {
     const auth = createAuth(
@@ -167,6 +189,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
   if (modules.has('map')) app.use('/api/map', mapRouter());
   if (modules.has('tv')) app.use('/api/tv', tvRouter(vaultRoot));
   if (modules.has('media')) app.use('/api/media', mediaRouter(vaultRoot));
+  if (socialOpts) app.use('/api/social', socialRouter(socialOpts));
   // Local-only: one spawns a shell script, the other stops the process. Neither
   // belongs on an internet-facing box, logged in or not.
   const robotScript = opts.friendly?.script ?? config.robotLaunchScript;

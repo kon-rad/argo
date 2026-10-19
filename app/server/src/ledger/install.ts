@@ -30,6 +30,10 @@ export function launchdPlist(s: ScheduleSpec): string {
 }
 
 const q = (s: string): string => `"${s.replace(/(["\\])/g, '\\$1')}"`;
+// systemd expands %-specifiers everywhere; a literal % is %%.
+const sd = (s: string): string => s.replace(/%/g, '%%');
+// `append:` takes a bare path with no quoting: a path with spaces goes to the journal instead.
+const sdLog = (f: string): string => (/\s/.test(f) ? 'StandardOutput=journal\nStandardError=journal' : `StandardOutput=append:${sd(f)}\nStandardError=append:${sd(f)}`);
 
 export function systemdUnits(s: ScheduleSpec): { service: string; timer: string } {
   return {
@@ -38,10 +42,9 @@ Description=Second Brain agent ledger: collect agent sessions, sync to the serve
 
 [Service]
 Type=oneshot
-Environment=SB_LEDGER_DIR=${q(s.dataDir)}
-ExecStart=${q(s.node)} --no-warnings ${q(s.bundle)} run
-StandardOutput=append:${s.logFile}
-StandardError=append:${s.logFile}
+Environment=SB_LEDGER_DIR=${q(sd(s.dataDir))}
+ExecStart=${q(sd(s.node))} --no-warnings ${q(sd(s.bundle))} run
+${sdLog(s.logFile)}
 `,
     timer: `[Unit]
 Description=Run the Second Brain agent ledger every ${s.intervalSec}s
@@ -49,7 +52,6 @@ Description=Run the Second Brain agent ledger every ${s.intervalSec}s
 [Timer]
 OnBootSec=60
 OnUnitActiveSec=${s.intervalSec}
-Persistent=true
 
 [Install]
 WantedBy=timers.target
@@ -57,10 +59,13 @@ WantedBy=timers.target
   };
 }
 
-/** Arguments for `schtasks`. Task Scheduler's minimum repeat is one minute. */
+/**
+ * Arguments for `schtasks`. Task Scheduler's minimum repeat is one minute, and /TR is capped at
+ * 261 characters, so the command carries no data folder: the bundle finds it from its own place.
+ */
 export function schtasksArgs(s: ScheduleSpec): string[] {
   const minutes = Math.max(1, Math.round(s.intervalSec / 60));
-  const cmd = `cmd /c set SB_LEDGER_DIR=${s.dataDir}&& ${q(s.node)} --no-warnings ${q(s.bundle)} run >> ${q(s.logFile)} 2>&1`;
+  const cmd = `cmd /c ${q(s.node)} --no-warnings ${q(s.bundle)} run >> ${q(s.logFile)} 2>&1`;
   return ['/Create', '/F', '/SC', 'MINUTE', '/MO', String(minutes), '/TN', SCHTASKS_NAME, '/TR', cmd];
 }
 
@@ -96,19 +101,19 @@ export function systemdProxyUnit(s: ScheduleSpec): string {
 Description=Second Brain capture proxy: records Claude Code's API calls into the agent ledger
 
 [Service]
-Environment=SB_LEDGER_DIR=${q(s.dataDir)}
-ExecStart=${q(s.node)} --no-warnings ${q(s.bundle)} proxy
+Environment=SB_LEDGER_DIR=${q(sd(s.dataDir))}
+ExecStart=${q(sd(s.node))} --no-warnings ${q(sd(s.bundle))} proxy
 Restart=always
 RestartSec=1
-StandardOutput=append:${s.logFile}
-StandardError=append:${s.logFile}
+${sdLog(s.logFile)}
 
 [Install]
 WantedBy=default.target
 `;
 }
 
+/** Task Scheduler can't restart a task from the command line, so the task is a loop that restarts the proxy. */
 export function schtasksProxyArgs(s: ScheduleSpec): string[] {
-  const cmd = `cmd /c set SB_LEDGER_DIR=${s.dataDir}&& ${q(s.node)} --no-warnings ${q(s.bundle)} proxy >> ${q(s.logFile)} 2>&1`;
+  const cmd = `cmd /c for /l %i in (0,0,1) do (${q(s.node)} --no-warnings ${q(s.bundle)} proxy >> ${q(s.logFile)} 2>&1 & timeout /t 2 /nobreak >nul)`;
   return ['/Create', '/F', '/SC', 'ONLOGON', '/TN', SCHTASKS_PROXY_NAME, '/TR', cmd];
 }

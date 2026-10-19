@@ -21,7 +21,13 @@ export interface ProxyOpts {
 
 export const HEALTH_PATH = '/__ledger/health';
 const MAX_TEE = 32 * 1024 * 1024; // a response bigger than this is still forwarded whole, just not recorded whole
-const HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'proxy-authorization', 'te', 'trailer', 'upgrade']);
+const MAX_REQUEST = 64 * 1024 * 1024;
+const HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'proxy-authorization', 'te', 'trailer', 'upgrade', 'transfer-encoding']);
+const endToEnd = (h: http.IncomingHttpHeaders): http.OutgoingHttpHeaders => {
+  const out: http.OutgoingHttpHeaders = {};
+  for (const [k, v] of Object.entries(h)) if (!HOP.has(k) && v !== undefined) out[k] = v;
+  return out;
+};
 const recordable = (method: string, path: string): boolean => method === 'POST' && /^\/v1\/messages(\?|$)/.test(path);
 
 export function startProxy(opts: ProxyOpts): Promise<http.Server> {
@@ -35,28 +41,38 @@ export function startProxy(opts: ProxyOpts): Promise<http.Server> {
     }
     const started = Date.now();
     const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => chunks.push(c));
+    let received = 0;
+    req.on('data', (c: Buffer) => {
+      received += c.length;
+      if (received > MAX_REQUEST) {
+        res.writeHead(413, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ type: 'error', error: { type: 'request_too_large', message: 'ledger proxy: request body over 64 MB' } }));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
     req.on('end', () => {
+      if (res.writableEnded) return;
       const body = Buffer.concat(chunks);
-      const headers: http.OutgoingHttpHeaders = {};
-      for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k) && v !== undefined) headers[k] = v;
+      const headers = endToEnd(req.headers);
       headers.host = up.host;
       // Plain responses so the copy is readable; the bytes to the agent are the same content.
       delete headers['accept-encoding'];
       const path = `${up.pathname.replace(/\/$/, '')}${req.url ?? '/'}`;
       const upstream = client.request({ protocol: up.protocol, hostname: up.hostname, port: up.port || undefined, method: req.method, path, headers }, (ur) => {
-        res.writeHead(ur.statusCode ?? 502, ur.headers);
+        res.writeHead(ur.statusCode ?? 502, endToEnd(ur.headers));
         const keep = recordable(req.method ?? '', req.url ?? '');
         const tee: Buffer[] = [];
         let size = 0;
         let truncated = false;
-        ur.on('data', (c: Buffer) => {
-          res.write(c);
-          if (!keep) return;
-          if (size + c.length <= MAX_TEE) { tee.push(c); size += c.length; } else truncated = true;
-        });
+        if (keep) {
+          ur.on('data', (c: Buffer) => {
+            if (size + c.length <= MAX_TEE) { tee.push(c); size += c.length; } else truncated = true;
+          });
+        }
+        ur.pipe(res); // backpressure: a slow reader slows the upstream read, not memory
         ur.on('end', () => {
-          res.end();
           if (!keep) return;
           setImmediate(() => {
             try {
@@ -73,7 +89,10 @@ export function startProxy(opts: ProxyOpts): Promise<http.Server> {
         });
         ur.on('error', () => res.destroy());
       });
+      // The agent hung up (Esc, a crash): stop the upstream call so the model stops generating and billing.
+      res.on('close', () => { if (!res.writableFinished) upstream.destroy(); });
       upstream.on('error', (err) => {
+        if (res.destroyed) return;
         opts.log?.(`upstream error: ${err.message}`);
         if (!res.headersSent) res.writeHead(502, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: `ledger proxy: upstream unreachable: ${err.message}` } }));
@@ -160,14 +179,15 @@ export function recordExchange(ledger: Ledger, c: Captured, provider: string): v
   const sid = sessionFromMetadata(req?.metadata?.user_id);
   const sessionKey = sid ? `claude-code|${sid}` : null;
   ledger.tx(() => {
+    // ts = first seen: a blob already stored keeps its first time (an unchanged put is a no-op), which prune reads.
     const blob = (kind: string, body: unknown): string | null => {
-      if (body === undefined || body === null) return null;
+      if (body === undefined) return null;
       const h = sha(body);
-      ledger.put('blob', h, { sha: h, kind, body }, { source: provider });
+      ledger.put('blob', h, { sha: h, kind, body }, { source: provider, ts: c.ts });
       return h;
     };
     const { system, tools, messages, ...params } = req ?? {};
-    const messageShas = Array.isArray(messages) ? messages.map((m: unknown) => blob('message', m)!) : [];
+    const messageShas = Array.isArray(messages) ? messages.map((m: unknown) => blob('message', m ?? null)!) : [];
     ledger.put('exchange', `${provider}|${c.requestId ?? randomUUID()}`, {
       ts: c.ts, provider, method: c.method, path: c.path, status: c.status, durationMs: c.durationMs, requestId: c.requestId,
       sessionExternalId: sid, model: req?.model ?? null, params: req ? params : null,
@@ -177,4 +197,33 @@ export function recordExchange(ledger: Ledger, c: Captured, provider: string): v
       error: c.status >= 400 || !req || c.truncated ? (c.truncated ? 'response larger than the capture limit' : text.slice(0, 10_000)) : null,
     }, { source: provider, sessionKey, ts: c.ts });
   });
+}
+
+/**
+ * Records captures one at a time, off the request path. The scheduled run may hold the
+ * ledger's write lock for a moment; the proxy's handle has a short busy timeout, so a
+ * locked write fails fast and is retried here instead of stalling live streams.
+ */
+export function captureQueue(record: (c: Captured) => void, log?: (msg: string) => void, max = 500): (c: Captured) => void {
+  const queue: Captured[] = [];
+  let timer: NodeJS.Timeout | null = null;
+  const drain = (): void => {
+    timer = null;
+    while (queue.length) {
+      try {
+        record(queue[0]!);
+        queue.shift();
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (/locked|busy/i.test(msg)) { timer = setTimeout(drain, 250); return; }
+        log?.(`capture dropped (request was served): ${msg}`);
+        queue.shift();
+      }
+    }
+  };
+  return (c) => {
+    if (queue.length >= max) { queue.shift(); log?.('capture queue full: dropped the oldest capture'); }
+    queue.push(c);
+    if (!timer) drain();
+  };
 }

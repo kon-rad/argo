@@ -1,0 +1,9 @@
+[Unit]
+Description=Second Brain social posting scheduler, every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

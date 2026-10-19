@@ -55,8 +55,10 @@ export async function syncOnce(ledger: Ledger, cfg: LedgerConfig, deps: SyncDeps
       if (body?.error?.message) message += `: ${body.error.message}`;
     } catch { /* not JSON */ }
     if (res.status === 401 || res.status === 403) return { kind: 'auth', message };
-    if (res.status === 400 || res.status === 413 || res.status === 422) return { kind: 'reject', message };
-    return { kind: 'retry', message }; // 404 (route not deployed yet), 429, 5xx
+    // 422 is the server's own "these rows are malformed"; 413 a row too big to ever fit. A bare 400 comes
+    // from the body parser (a cut-off upload, a gzip/length mismatch): network noise, so retried.
+    if (res.status === 413 || res.status === 422) return { kind: 'reject', message };
+    return { kind: 'retry', message }; // 400, 404 (route not deployed yet), 429, 5xx
   };
 
   const deliver = async (rows: WireRow[]): Promise<Delivered> => {

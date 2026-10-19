@@ -23,7 +23,7 @@ export async function addDevice(host: string, opts: { label?: string; display?: 
   return { id: Number(rows[0]!.id), token };
 }
 
-/** The live device for a bearer token, or null. Touches last_seen_at at most once a minute. */
+/** The live device for a bearer token, or null. Stamps last_seen_at (one small write per batch). */
 export async function findDevice(token: string): Promise<{ id: number; host: string } | null> {
   if (!TOKEN.test(token)) return null;
   const { rows } = await query<{ id: number; host: string }>(

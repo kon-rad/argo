@@ -9,7 +9,7 @@
 //   ledger proxy-on | proxy-off   route Claude Code through the proxy, or straight to the API again
 //   ledger requeue             retry every row the server refused (after a server upgrade)
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,7 @@ import {
   launchdPlist, launchdProxyPlist, LAUNCHD_LABEL, LAUNCHD_PROXY_LABEL, logFileFor, SCHTASKS_NAME, SCHTASKS_PROXY_NAME, schtasksArgs,
   schtasksProxyArgs, systemdProxyUnit, systemdUnits, SYSTEMD_PROXY_UNIT, SYSTEMD_UNIT, type ScheduleSpec,
 } from './ledger/install.js';
-import { HEALTH_PATH, recordExchange, startProxy } from './ledger/proxy.js';
+import { captureQueue, HEALTH_PATH, recordExchange, startProxy } from './ledger/proxy.js';
 import { Ledger } from './ledger/store.js';
 import { syncOnce } from './ledger/sync.js';
 import type { LedgerConfig } from './ledger/types.js';
@@ -34,7 +34,11 @@ const values = (name: string): string[] => rest.flatMap((a, i) => (a === `--${na
 const value = (name: string): string | undefined => values(name).at(-1);
 const log = (msg: string) => console.error(`${new Date().toISOString()} ledger: ${msg}`);
 
-const dir = dataDir();
+// A scheduled run is the installed copy at <data>/bin/ledger.mjs: its data folder is the one above it.
+const selfPath = fileURLToPath(import.meta.url);
+const besideBundle = resolve(dirname(selfPath), '..');
+const dir = !process.env.SB_LEDGER_DIR && selfPath.endsWith(join('bin', 'ledger.mjs')) && existsSync(join(besideBundle, 'ledger.json'))
+  ? besideBundle : dataDir();
 
 /** One run at a time: a manual `ledger run` while the scheduler's is going would race the cursors. */
 function acquireLock(): (() => void) | null {
@@ -45,8 +49,11 @@ function acquireLock(): (() => void) | null {
     let alive = false;
     if (pid) { try { process.kill(pid, 0); alive = true; } catch { alive = false; } }
     if (alive) return null;
-    rmSync(lock, { recursive: true, force: true });
-    mkdirSync(lock);
+    // Stale: rename is atomic, so of two runs taking over at once exactly one wins the rename.
+    const stale = `${lock}.stale-${process.pid}`;
+    try { renameSync(lock, stale); } catch { return null; }
+    rmSync(stale, { recursive: true, force: true });
+    try { mkdirSync(lock); } catch { return null; }
   }
   writeFileSync(join(lock, 'pid'), String(process.pid));
   return () => rmSync(lock, { recursive: true, force: true });
@@ -166,10 +173,10 @@ function uninstall(): void {
 
 async function proxy(): Promise<never> {
   const cfg = loadConfig(dir);
-  const ledger = new Ledger(join(dir, 'ledger.db'));
+  const ledger = new Ledger(join(dir, 'ledger.db'), { busyTimeoutMs: 50 });
   const server = await startProxy({
     port: cfg.proxy.port, upstream: cfg.proxy.upstream, log,
-    onCapture: (c) => recordExchange(ledger, c, 'anthropic'),
+    onCapture: captureQueue((c) => recordExchange(ledger, c, 'anthropic'), log),
   });
   log(`capture proxy on http://127.0.0.1:${cfg.proxy.port} -> ${cfg.proxy.upstream} (${BUNDLE})`);
   const stop = () => server.close(() => { ledger.close(); process.exit(0); });

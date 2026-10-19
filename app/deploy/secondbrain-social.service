@@ -1,0 +1,18 @@
+[Unit]
+Description=Second Brain: publish due social posts, check for accounts needing reauth
+After=network-online.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# As the app user (owns the database and the encryption key in EnvironmentFile).
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-social.js
+# Exit 2 = at least one post failed to publish; not a unit failure (it retries next minute).
+SuccessExitStatus=2
+TimeoutStartSec=50
+PrivateTmp=true
+NoNewPrivileges=true

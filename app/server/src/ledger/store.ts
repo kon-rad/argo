@@ -22,7 +22,7 @@ const SCHEMA = `
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 CREATE TABLE records (
   kind TEXT NOT NULL, key TEXT NOT NULL, source TEXT, session_key TEXT, ts TEXT,
-  seq INTEGER NOT NULL, sha TEXT NOT NULL, data BLOB NOT NULL,
+  seq INTEGER NOT NULL, sha TEXT NOT NULL, data BLOB NOT NULL, pruned INTEGER NOT NULL DEFAULT 0,
   first_seen TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   PRIMARY KEY (kind, key));
 CREATE UNIQUE INDEX records_seq ON records (seq);
@@ -42,12 +42,13 @@ export class Ledger {
   private readonly st: Record<string, StatementSync>;
   private inTx = false;
 
-  constructor(path: string) {
+  /** `busyTimeoutMs`: how long a write waits for the other process's transaction (the proxy keeps it short). */
+  constructor(path: string, opts: { busyTimeoutMs?: number } = {}) {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     // auto_vacuum only takes effect on an empty file: set before the first table. Incremental, so prune
     // frees pages in place instead of VACUUM's full temporary copy (laptops prune because disk is short).
-    this.db.exec(`PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=10000;`);
+    this.db.exec(`PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=${opts.busyTimeoutMs ?? 10000};`);
     const version = Number((this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version);
     if (version === 0) {
       this.db.exec(`BEGIN; ${SCHEMA}
@@ -58,11 +59,11 @@ export class Ledger {
     }
     this.st = {
       sha: this.db.prepare('SELECT sha FROM records WHERE kind=? AND key=?'),
-      get: this.db.prepare('SELECT data FROM records WHERE kind=? AND key=?'),
+      get: this.db.prepare('SELECT data FROM records WHERE kind=? AND key=? AND pruned=0'),
       seq: this.db.prepare(`UPDATE meta SET v = CAST(v AS INTEGER) + 1 WHERE k='seq' RETURNING v`),
       put: this.db.prepare(`INSERT INTO records (kind, key, source, session_key, ts, seq, sha, data) VALUES (?,?,?,?,?,?,?,?)
         ON CONFLICT (kind, key) DO UPDATE SET source=excluded.source, session_key=excluded.session_key, ts=excluded.ts,
-          seq=excluded.seq, sha=excluded.sha, data=excluded.data`),
+          seq=excluded.seq, sha=excluded.sha, data=excluded.data, pruned=0`),
       meta: this.db.prepare('SELECT v FROM meta WHERE k=?'),
       setMeta: this.db.prepare('INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v=excluded.v'),
       delMeta: this.db.prepare('DELETE FROM meta WHERE k=?'),
@@ -153,14 +154,17 @@ export class Ledger {
   }
 
   /**
-   * Drops rows the server has acknowledged whose turn is older than `days`, then
-   * returns the pages to the filesystem. Unsynced rows are never touched. Cursors stay, so the
-   * collectors don't read the pruned turns back in.
+   * Empties rows the server has acknowledged whose turn is older than `days`, then returns
+   * the pages to the filesystem. The key and hash stay, so a collector that reads the same
+   * turn again (Hermes re-reads a whole state.db) sees it unchanged and doesn't resend it.
+   * Unsynced and quarantined rows are never touched; sessions and counters are small and stay.
    */
   prune(days: number, now = new Date()): number {
     const cutoff = new Date(now.getTime() - days * 86_400_000).toISOString();
-    const r = this.db.prepare(`DELETE FROM records WHERE seq <= ? AND kind IN ('message', 'call') AND ts IS NOT NULL AND ts < ?`)
-      .run(this.syncState().ackedSeq, cutoff);
+    const r = this.tx(() => this.db.prepare(`UPDATE records SET data = x'', pruned = 1
+      WHERE pruned = 0 AND seq <= ? AND kind IN ('message', 'call', 'exchange', 'blob') AND ts IS NOT NULL AND ts < ?
+        AND NOT EXISTS (SELECT 1 FROM quarantine q WHERE q.kind = records.kind AND q.key = records.key AND q.requeued_at IS NULL)`)
+      .run(this.syncState().ackedSeq, cutoff));
     const n = Number(r.changes);
     if (n) this.db.exec('PRAGMA incremental_vacuum; PRAGMA wal_checkpoint(TRUNCATE);');
     return n;
@@ -195,13 +199,13 @@ export class Ledger {
 
   stats(): Record<string, unknown> {
     const s = this.syncState();
-    const kinds = Object.fromEntries((this.db.prepare('SELECT kind, count(*) n FROM records GROUP BY kind').all() as Array<{ kind: string; n: number }>)
+    const kinds = Object.fromEntries((this.db.prepare('SELECT kind, count(*) n FROM records WHERE pruned=0 GROUP BY kind').all() as Array<{ kind: string; n: number }>)
       .map((r) => [r.kind, Number(r.n)]));
     const sources = Object.fromEntries((this.db.prepare(`SELECT source, count(*) n FROM records WHERE kind='session' GROUP BY source`).all() as Array<{ source: string; n: number }>)
       .map((r) => [r.source, Number(r.n)]));
     const pend = this.db.prepare('SELECT count(*) n, min(ts) oldest FROM records WHERE seq > ?').get(s.ackedSeq) as { n: number; oldest: string | null };
     const tokens = { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, thinking: 0 };
-    for (const r of this.db.prepare(`SELECT data FROM records WHERE kind='call'`).iterate() as Iterable<{ data: Uint8Array }>) {
+    for (const r of this.db.prepare(`SELECT data FROM records WHERE kind='call' AND pruned=0`).iterate() as Iterable<{ data: Uint8Array }>) {
       const c = JSON.parse(unpack(r.data)) as Record<string, number>;
       tokens.calls++;
       tokens.input += c.inputTokens ?? 0; tokens.output += c.outputTokens ?? 0; tokens.cacheRead += c.cacheReadTokens ?? 0;

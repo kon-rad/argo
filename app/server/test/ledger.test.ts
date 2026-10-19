@@ -10,7 +10,7 @@ import { query } from '../src/db.js';
 import { addDevice, revokeDevice } from '../src/ingest/devices.js';
 import { collectClaude, collectHermes, hermesNames } from '../src/ledger/collect.js';
 import { defaultConfig } from '../src/ledger/config.js';
-import { launchdPlist, schtasksArgs, systemdUnits } from '../src/ledger/install.js';
+import { launchdPlist, schtasksArgs, schtasksProxyArgs, systemdProxyUnit, systemdUnits } from '../src/ledger/install.js';
 import { Ledger } from '../src/ledger/store.js';
 import { backoffMs, syncOnce } from '../src/ledger/sync.js';
 import type { LedgerConfig } from '../src/ledger/types.js';
@@ -77,6 +77,23 @@ describe('ledger store', () => {
     expect(ledger.get('message', 'old')).toBeNull();
     expect(ledger.get('message', 'recent')).toEqual({ a: 2 });
     expect(ledger.get('message', 'old-unsynced')).toEqual({ a: 3 });
+  });
+
+  it('prune empties rows but keeps their hash, so an identical re-read is not resent, and spares quarantined rows', () => {
+    ledger.put('message', 'm', { a: 1 }, { ts: '2026-01-01T00:00:00Z' });
+    ledger.put('blob', 'b', { body: 'system prompt' }, { ts: '2026-01-01T00:00:00Z' });
+    ledger.put('exchange', 'x', { e: 1 }, { ts: '2026-01-01T00:00:00Z' });
+    ledger.put('message', 'refused', { a: 2 }, { ts: '2026-01-01T00:00:00Z' });
+    ledger.setMeta('acked_seq', ledger.headSeq);
+    ledger.quarantine(ledger.pending(3, 1e6)[0]!, 'HTTP 422');
+    expect(ledger.prune(30, new Date('2026-10-19T00:00:00Z'))).toBe(3);
+    expect(ledger.get('message', 'm')).toBeNull();
+    expect(ledger.get('message', 'refused')).toEqual({ a: 2 });
+    const head = ledger.headSeq;
+    expect(ledger.put('message', 'm', { a: 1 })).toBe(false); // Hermes reads the same turn again
+    expect(ledger.headSeq).toBe(head);
+    expect(ledger.put('message', 'm', { a: 9 })).toBe(true); // a real change still goes out
+    expect(ledger.get('message', 'm')).toEqual({ a: 9 });
   });
 
   it('requeues refused rows: a day later on schedule, at once on request, and counts the attempts', () => {
@@ -205,8 +222,17 @@ describe('install units', () => {
     expect(u.service).toContain('ExecStart="/opt/node/bin/node" --no-warnings "/data/bin/ledger.mjs" run');
     expect(u.timer).toContain('OnUnitActiveSec=120');
   });
-  it('Task Scheduler repeats in whole minutes', () => {
-    expect(schtasksArgs({ ...spec, intervalSec: 90 })).toEqual(expect.arrayContaining(['/SC', 'MINUTE', '/MO', '2', '/TN', 'SecondBrainLedger']));
+  it('Task Scheduler repeats in whole minutes and fits its 261-character command limit', () => {
+    const args = schtasksArgs({ ...spec, intervalSec: 90 });
+    expect(args).toEqual(expect.arrayContaining(['/SC', 'MINUTE', '/MO', '2', '/TN', 'SecondBrainLedger']));
+    expect(args[args.indexOf('/TR') + 1]!.length).toBeLessThan(261);
+    expect(schtasksProxyArgs(spec).join(' ')).toContain('for /l %i in (0,0,1) do');
+  });
+  it('systemd units escape % and send a log path with spaces to the journal', () => {
+    const u = systemdUnits({ ...spec, dataDir: '/data/100%', logFile: '/my logs/ledger.log' });
+    expect(u.service).toContain('SB_LEDGER_DIR="/data/100%%"');
+    expect(u.service).toContain('StandardOutput=journal');
+    expect(systemdProxyUnit(spec)).toContain('Restart=always');
   });
 });
 
@@ -296,6 +322,17 @@ describe('sync to the server', () => {
     expect(r).toMatchObject({ status: 'ok', quarantined: 1, ackedSeq: ledger.headSeq });
     expect((ledger.stats().sync as { quarantined: number }).quarantined).toBe(1);
     expect((await query(`SELECT count(*)::int n FROM archive_messages`)).rows[0].n).toBe(2);
+  });
+
+  it('treats a bare 400 (a cut-off upload) as noise to retry, not a bad row', async () => {
+    collectClaude(ledger, projects, 'anthropic');
+    const fake = (async () => new Response('{"error":{"message":"request aborted"}}', { status: 400 })) as typeof fetch;
+    expect(await syncOnce(ledger, cfg, { ...deps, fetch: fake }, { force: true })).toMatchObject({ status: 'retry', quarantined: 0, ackedSeq: 0 });
+  });
+
+  it('refuses a request without a token before reading its body', async () => {
+    const res = await fetch(`${base}/api/ingest/batch`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{not json' });
+    expect(res.status).toBe(401);
   });
 
   it('stops on a revoked token and keeps the rows', async () => {
