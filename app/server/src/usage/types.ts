@@ -21,6 +21,8 @@ export interface UsageCall {
   /** The first tool the response invoked (Bash, Write, ...), and its class; null for the final text. */
   tool: string | null;
   action: Action | null;
+  /** Who served the call ('anthropic', 'bedrock', ...); null when the collector doesn't know. */
+  provider?: string | null;
 }
 
 export type Action = 'dm' | 'post' | 'ticket' | 'card' | 'tracker' | 'write' | 'read' | 'shell' | 'reply';

@@ -30,23 +30,26 @@ export async function upsertCalls(tx: TxClient, calls: UsageCall[]): Promise<num
     const batch = unique.slice(i, i + BATCH);
     const params: unknown[] = [];
     const values = batch.map((c, j) => {
-      const b = j * 19;
+      const b = j * 20;
       params.push(c.source, c.host, c.callId, c.requestId, c.sessionExternalId, c.messageExternalId, c.ts, c.model,
         c.entrypoint, c.cwd, c.isSidechain, c.inputTokens, c.cacheWriteTokens, c.cacheReadTokens, c.outputTokens,
-        c.thinkingTokens, c.webSearchRequests, c.tool ?? null, c.action ?? null);
-      return `(${Array.from({ length: 19 }, (_, k) => `$${b + k + 1}`).join(',')})`;
+        c.thinkingTokens, c.webSearchRequests, c.tool ?? null, c.action ?? null, c.provider ?? null);
+      return `(${Array.from({ length: 20 }, (_, k) => `$${b + k + 1}`).join(',')})`;
     });
     const r = await tx.query(
       `INSERT INTO usage_calls AS u (source, host, call_id, request_id, session_external_id, message_external_id, ts,
          model, entrypoint, cwd, is_sidechain, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens,
-         thinking_tokens, web_search_requests, tool, action)
+         thinking_tokens, web_search_requests, tool, action, provider)
        VALUES ${values.join(',')}
-       ON CONFLICT (source, host, call_id) DO UPDATE SET output_tokens = EXCLUDED.output_tokens,
-         thinking_tokens = EXCLUDED.thinking_tokens,
+       ON CONFLICT (source, host, call_id) DO UPDATE SET
+         output_tokens = GREATEST(u.output_tokens, EXCLUDED.output_tokens),
+         thinking_tokens = CASE WHEN EXCLUDED.output_tokens > u.output_tokens THEN EXCLUDED.thinking_tokens ELSE u.thinking_tokens END,
          tool = COALESCE(u.tool, EXCLUDED.tool), action = COALESCE(u.action, EXCLUDED.action),
-         message_external_id = CASE WHEN u.session_external_id = EXCLUDED.session_external_id
+         provider = COALESCE(EXCLUDED.provider, u.provider),
+         message_external_id = CASE WHEN EXCLUDED.output_tokens > u.output_tokens AND u.session_external_id = EXCLUDED.session_external_id
                                     THEN EXCLUDED.message_external_id ELSE u.message_external_id END
-       WHERE EXCLUDED.output_tokens > u.output_tokens`, params);
+       -- A fuller copy of the response, or the first one that says which provider served it.
+       WHERE EXCLUDED.output_tokens > u.output_tokens OR (u.provider IS NULL AND EXCLUDED.provider IS NOT NULL)`, params);
     changed += r.rowCount ?? 0;
   }
   return changed;

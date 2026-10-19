@@ -414,6 +414,18 @@ cmd_credits() {
   ensure_deps; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-credits.js" "$@"
 }
+cmd_ledger() {
+  # This machine's agent ledger (local SQLite, syncs to the server). Builds the one-file bundle and
+  # runs it; `secondbrain ledger install --server … --token … --host …` schedules it.
+  ensure_node; ensure_deps
+  "$APP_ROOT/bin/build-ledger.sh" >/dev/null || die "ledger build failed"
+  node --no-warnings "$APP_ROOT/server/dist/ledger/ledger.mjs" "$@"
+}
+cmd_ingest_device() {
+  # Server side: device tokens the machines' ledgers sync with (add <host> | list | revoke <id>).
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-ingest-device.js" "$@"
+}
 cmd_archive() {
   # Writes only archive_* tables, which nothing else touches, so it runs
   # directly rather than through the server's scan queue.
@@ -462,6 +474,8 @@ secondbrain logs     tail the server log
 secondbrain scan     rescan the vault
 secondbrain embed    embed new and changed notes for semantic search
 secondbrain archive  archive Claude Code + Hermes conversations to B2 and Postgres
+secondbrain ledger   this machine's agent ledger: run | status | install --server URL --token T --host SLUG
+secondbrain ingest-device  (server) device tokens for ledgers: add <host> | list | revoke <id>
 secondbrain agents-sync  copy Hermes chats and cron history into Postgres
 secondbrain usage-sync   this machine's Claude Code usage into the ledger
 secondbrain usage-push   send new Claude Code usage to the droplet ledger (Mac)
@@ -487,6 +501,8 @@ case "${1:-start}" in
   scan)          cmd_scan ;;
   embed)         cmd_embed ;;
   archive)       cmd_archive "${@:2}" ;;
+  ledger)        cmd_ledger "${@:2}" ;;
+  ingest-device) cmd_ingest_device "${@:2}" ;;
   inventory)     cmd_inventory "${@:2}" ;;
   org)           cmd_org "${@:2}" ;;
   backlinks)     cmd_backlinks "${@:2}" ;;

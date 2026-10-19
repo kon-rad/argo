@@ -60,6 +60,7 @@ Deploy settings (`DEPLOY_*`) are read by `deploy.sh` only: see [deployment.md](d
 | `AGENT_HUB_URL`, `AGENT_HUB_TOKEN` | `agents` | unset | The agent-hub service that serves the kanban board and chats. Unset: those tabs say so |
 | `HERMES_HOME` | `agents`, archive | `~/.hermes` | Hermes's home on this machine |
 | `ARCHIVE_SSH_HOST`, `REMOTE_HERMES_HOME`, `REMOTE_HERMES_USER` | archive | unset | Pull a server's Hermes history over ssh; unset skips the pull |
+| `SB_LEDGER_DIR`, `SB_LEDGER_TOKEN` | agent ledger (on each machine, not the server) | the OS data folder, the token in `ledger.json` | Where a machine's agent ledger keeps `ledger.db` and `ledger.json`, and a token that overrides the stored one. See the app README, "Agent ledger" |
 | `PROJECTS_FEED_TOKEN` | `projects` | unset | Read-only bearer token for `GET /api/feed/projects` (a kiosk panel). Unset: the route doesn't exist. `deploy.sh` generates one |
 | `ORG_OWNER` | `org` | `owner` | Your handle on the agent board (lowercase, `a-z0-9-`) |
 | `RING_PULL_SSH_HOST`, `RING_PULL_DB` | `ring` | unset, `secondbrain` | Mirror a server's ring tables over ssh |

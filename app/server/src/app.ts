@@ -12,6 +12,7 @@ import { b2Router, type B2Options } from './routes/b2.js';
 import { errorHandlerFor } from './routes/http.js';
 import { databaseRouter } from './routes/database.js';
 import { fileRouter } from './routes/file.js';
+import { ingestRouter } from './routes/ingest.js';
 import { hubRouter, type HubOptions } from './routes/hub.js';
 import { mapRouter } from './routes/map.js';
 import { mediaRouter } from './routes/media.js';
@@ -90,6 +91,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
   // Saving a note carries the whole file; everything else stays at 1 MB. The
   // second parser skips a body the first has already read.
   app.use('/api/file/source', express.json({ limit: '6mb' }));
+  app.use('/api/ingest', express.json({ limit: '64mb' }));
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req, res) => {
@@ -99,6 +101,11 @@ export function createApp(opts: AppOptions = {}): express.Express {
   // A kiosk's read-only projects summary: a bearer token, no session.
   if (modules.has('projects')) {
     app.use('/api/feed', projectsFeedRouter(vaultRoot, opts.projectsFeedToken ?? config.projectsFeedToken));
+  }
+
+  // Each machine's agent ledger syncs here with a device token, no session (usage module).
+  if (modules.has('usage')) {
+    app.use('/api/ingest', ingestRouter());
   }
 
   if (remote) {
