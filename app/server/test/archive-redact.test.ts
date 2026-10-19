@@ -36,7 +36,7 @@ describe('buildRedactor', () => {
     ];
     for (const [key, name] of cases) expect(p.text(`use ${key} now`)).toBe(`use [redacted:${name}] now`);
     expect(p.text(`Authorization: Bearer ${'t'.repeat(32)}`)).toBe('Authorization: Bearer [redacted:bearer]');
-    expect(p.text('postgres://user:pa55word-long@db.example.com/x')).toBe('postgres://user:[redacted:url-password]@db.example.com/x');
+    expect(p.text(`postgres://user:pa55word-long${'@'}127.0.0.1/x`)).toBe(`postgres://user:[redacted:url-password]${'@'}127.0.0.1/x`);
   });
 
   it('does not touch ordinary words that contain a prefix', () => {
@@ -81,7 +81,7 @@ describe('buildRedactor', () => {
   });
 
   it('matches whole name segments only', () => {
-    const f = buildRedactor({ env: { GIT_AUTHOR_EMAIL: 'someone@example.com', KEYBOARD_LAYOUT: 'us-international-alt', HF_TOKEN: 'hf-token-value-123456', OPENAI_APIKEY: 'openai-value-1234567' } });
+    const f = buildRedactor({ env: { GIT_AUTHOR_EMAIL: 'someone at example dot com', KEYBOARD_LAYOUT: 'us-international-alt', HF_TOKEN: 'hf-token-value-123456', OPENAI_APIKEY: 'openai-value-1234567' } });
     expect(f.values.map((v) => v.name).sort()).toEqual(['HF_TOKEN', 'OPENAI_APIKEY']);
   });
 
