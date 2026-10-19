@@ -28,7 +28,7 @@
 #                        projects: projects-render, the kiosk feed token, cli-projects on PATH
 #                        org: the sb_org role, cli-org on PATH · map: map-build, metrics
 #                        livestream: the minute poller and Caddy's /public/ files
-#                        social: the minute post-publisher and reauth check (cli-social)
+#                        social: the minute post-publisher and reauth check, cli-social on PATH
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -186,6 +186,7 @@ grep -qxF '.*.sb-*.tmp' "$VAULT/.git/info/exclude" 2>/dev/null \
 WRAPPERS=()
 has org && WRAPPERS+=(cli-org)
 has projects && WRAPPERS+=(cli-projects)
+has social && WRAPPERS+=(cli-social)
 if [ "${#WRAPPERS[@]}" -gt 0 ]; then
   install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.local/bin"
   for w in "${WRAPPERS[@]}"; do

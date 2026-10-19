@@ -1,6 +1,6 @@
-import { query } from '../db.js';
+import { query, withTransaction } from '../db.js';
 import { decryptToken, encryptToken } from './crypto.js';
-import type { ConnectedAccount, ProviderName, QueuedPost, StoredAccount, TokenPair } from './providers/types.js';
+import type { ConnectedAccount, PostMedia, ProviderName, QueuedPost, StoredAccount, TokenPair } from './providers/types.js';
 
 interface AccountRow {
   id: number;
@@ -101,11 +101,20 @@ export async function disconnectAccount(id: number): Promise<boolean> {
   return (res.rowCount ?? 0) > 0;
 }
 
+/** What a listing shows of an image: never the bytes. */
+export interface MediaSummary {
+  position: number;
+  filename: string;
+  contentType: string;
+  size: number;
+  altText: string;
+}
+
 export interface PostRow {
   id: number;
   account_id: number;
   body: string;
-  media_paths: string[];
+  media: MediaSummary[];
   status: string;
   scheduled_for: Date;
   posted_at: Date | null;
@@ -116,18 +125,36 @@ export interface PostRow {
   created_at: Date;
 }
 
-export async function queuePost(accountId: number, body: string, mediaPaths: string[], scheduledFor: Date): Promise<PostRow> {
-  const { rows } = await query<PostRow>(
-    `INSERT INTO social_posts (account_id, body, media_paths, scheduled_for) VALUES ($1, $2, $3, $4) RETURNING *`,
-    [accountId, body, mediaPaths, scheduledFor],
-  );
+const POST_COLUMNS = `p.*, (
+  SELECT coalesce(json_agg(json_build_object(
+    'position', m.position, 'filename', m.filename, 'contentType', m.content_type,
+    'size', octet_length(m.bytes), 'altText', m.alt_text) ORDER BY m.position), '[]'::json)
+  FROM social_post_media m WHERE m.post_id = p.id) AS media`;
+
+/** The post and its images in one transaction: a post is never queued without the images it was meant to carry. */
+export async function queuePost(accountId: number, body: string, media: PostMedia[], scheduledFor: Date): Promise<PostRow> {
+  const id = await withTransaction(async (c) => {
+    const { rows } = await c.query<{ id: number }>(
+      `INSERT INTO social_posts (account_id, body, scheduled_for) VALUES ($1, $2, $3) RETURNING id`,
+      [accountId, body, scheduledFor],
+    );
+    const postId = rows[0]!.id;
+    for (const [position, m] of media.entries()) {
+      await c.query(
+        `INSERT INTO social_post_media (post_id, position, filename, content_type, bytes, alt_text) VALUES ($1, $2, $3, $4, $5, $6)`,
+        [postId, position, m.filename, m.contentType, m.bytes, m.altText],
+      );
+    }
+    return postId;
+  });
+  const { rows } = await query<PostRow>(`SELECT ${POST_COLUMNS} FROM social_posts p WHERE p.id = $1`, [id]);
   return rows[0]!;
 }
 
 export async function listPosts(status?: string): Promise<PostRow[]> {
   const { rows } = status
-    ? await query<PostRow>(`SELECT * FROM social_posts WHERE status = $1 ORDER BY scheduled_for`, [status])
-    : await query<PostRow>(`SELECT * FROM social_posts ORDER BY scheduled_for`);
+    ? await query<PostRow>(`SELECT ${POST_COLUMNS} FROM social_posts p WHERE p.status = $1 ORDER BY p.scheduled_for`, [status])
+    : await query<PostRow>(`SELECT ${POST_COLUMNS} FROM social_posts p ORDER BY p.scheduled_for`);
   return rows;
 }
 
@@ -137,11 +164,24 @@ export async function cancelPost(id: number): Promise<boolean> {
 }
 
 export async function dueQueuedPosts(now: Date, limit = 10): Promise<QueuedPost[]> {
-  const { rows } = await query<{ id: number; account_id: number; body: string; media_paths: string[]; attempt_count: number }>(
-    `SELECT id, account_id, body, media_paths, attempt_count FROM social_posts WHERE status = 'queued' AND scheduled_for <= $1 ORDER BY scheduled_for LIMIT $2`,
+  const { rows } = await query<{ id: number; account_id: number; body: string; attempt_count: number }>(
+    `SELECT id, account_id, body, attempt_count FROM social_posts WHERE status = 'queued' AND scheduled_for <= $1 ORDER BY scheduled_for LIMIT $2`,
     [now, limit],
   );
-  return rows.map((r) => ({ id: r.id, accountId: r.account_id, body: r.body, mediaPaths: r.media_paths, attemptCount: r.attempt_count }));
+  if (rows.length === 0) return [];
+  const { rows: media } = await query<{ post_id: number; filename: string; content_type: PostMedia['contentType']; bytes: Buffer; alt_text: string }>(
+    `SELECT post_id, filename, content_type, bytes, alt_text FROM social_post_media WHERE post_id = ANY($1) ORDER BY post_id, position`,
+    [rows.map((r) => r.id)],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    accountId: r.account_id,
+    body: r.body,
+    media: media
+      .filter((m) => Number(m.post_id) === Number(r.id))
+      .map((m) => ({ filename: m.filename, contentType: m.content_type, bytes: m.bytes, altText: m.alt_text })),
+    attemptCount: r.attempt_count,
+  }));
 }
 
 export async function markPublishing(id: number): Promise<void> {
