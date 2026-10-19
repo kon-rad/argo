@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { creditHistory, latestCredits } from '../credits.js';
 import { query } from '../db.js';
+import { agentSessionsRouter } from './agentSessions.js';
 import { HttpError, parseOr400, wrap } from './http.js';
 
 /**
@@ -185,6 +186,8 @@ export function usageRouter(): Router {
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
   // Prepaid API credits (OpenRouter, fal, Gemini): latest per provider plus the balance history.
+  router.use('/agent-sessions', agentSessionsRouter());
+
   router.get('/credits', wrap(async (req, res) => {
     const [from, to] = span(parseOr400(range, req.query), 30);
     res.json({ providers: await latestCredits(), history: await creditHistory(from, to) });
@@ -296,11 +299,13 @@ export function usageRouter(): Router {
 
   router.get('/messages/:id', wrap(async (req, res) => {
     const id = parseOr400(z.coerce.number().int().positive(), req.params.id);
-    const r = await query<{ id: number; raw: unknown; source: string | null }>(
-      `SELECT m.id, m.raw, a.source FROM archive_messages m LEFT JOIN archive_sessions a ON a.id = m.session_id WHERE m.id=$1`, [id]);
+    const r = await query<{ id: number; raw: unknown; source: string | null; content_text: string | null }>(
+      `SELECT m.id, m.raw, a.source, m.content_text FROM archive_messages m LEFT JOIN archive_sessions a ON a.id = m.session_id WHERE m.id=$1`, [id]);
     if (!r.rows[0]) throw new HttpError(404, 'no such message');
     const { source, raw } = r.rows[0];
-    res.json({ id: r.rows[0].id, raw: source === 'claude-code' ? stripCost(raw) : raw });
+    // ?full=1 adds the stored text uncapped (a long tool result the session view cut at 20,000 characters).
+    res.json({ id: r.rows[0].id, raw: source === 'claude-code' ? stripCost(raw) : raw,
+      ...(req.query.full === '1' ? { text: r.rows[0].content_text ?? '' } : {}) });
   }));
 
   // The agent company's wakes per agent (org_wakeups): how much of the shared
