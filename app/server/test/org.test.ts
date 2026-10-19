@@ -328,12 +328,12 @@ describe('cli main', () => {
       expect(await main(['whoami'], out)).toBe(0);
       expect(lines[0]).toBe('rune: Platform engineer on Platform & Agents (platform), reports to atlas');
       lines.length = 0;
-      expect(await main(['post', 'platform', 'hello @vera', '--kind', 'status'], out)).toBe(0);
+      expect(await main(['post', 'platform', 'hello @vera'], out)).toBe(0);
       expect(lines[0]).toMatch(/^posted \d+ in #platform \(mentions vera\)$/);
       lines.length = 0;
       process.env.ORG_AGENT = 'vera';
       expect(await main(['read'], out)).toBe(0);
-      expect(lines[0]).toMatch(/^#platform \d+ .* rune \[status\]\n  hello @vera$/);
+      expect(lines[0]).toMatch(/^#platform \d+ .* rune \[message\]\n  hello @vera$/);
       lines.length = 0;
       expect(await main(['read'], out)).toBe(0);
       expect(lines[0]).toBe('nothing new');

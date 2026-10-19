@@ -666,6 +666,33 @@ export interface OrgChart {
   agents: OrgChartAgent[];
 }
 
+export interface OrgApproval {
+  id: number;
+  task_id: string;
+  pr_url: string | null;
+  deploy_target: string | null;
+  summary: string;
+  requested_by: string;
+  status: 'pending' | 'approved' | 'denied';
+  ship_now: boolean;
+  decided_by: string | null;
+  decided_at: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface OrgFact {
+  id: number;
+  subject: string;
+  claim: string;
+  source: string;
+  author: string;
+  via: string | null;
+  project_slug: string | null;
+  confidence: 'confirmed' | 'inferred';
+  valid_from: string;
+}
+
 export interface OrgWakeup {
   id: number;
   agent_name: string;
@@ -784,6 +811,10 @@ export const api = {
   orgPost: (body: { channel: string; body: string; thread?: number; kind?: 'message' | 'status' | 'decision' }) =>
     request<OrgMessage>('/org/post', undefined, json('POST', body)),
   orgDm: (body: { to: string; body: string }) => request<OrgMessage>('/org/dm', undefined, json('POST', body)),
+  orgApprovals: () => request<OrgApproval[]>('/org/approvals'),
+  orgDecide: (id: number, decision: 'approve' | 'deny', note?: string) =>
+    request<OrgApproval>(`/org/approvals/${id}/${decision}`, undefined, json('POST', { note })),
+  orgFacts: () => request<OrgFact[]>('/org/facts'),
   orgTasks: (f: { project?: string; feature?: string; agent?: string } = {}) => request<{ tasks: TaskLink[] }>('/org/tasks', f),
   setProject: (slug: string, patch: Record<string, unknown>) =>
     request<{ stage_changed: boolean }>(`/projects/${slug}`, undefined, json('PATCH', patch)),
