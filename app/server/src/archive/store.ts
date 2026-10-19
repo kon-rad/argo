@@ -152,3 +152,8 @@ export async function recordMemoryVersion(tx: TxClient | null, source: string, h
      ON CONFLICT DO NOTHING`, [source, host, path, c, sha256(c)]);
   return (r.rowCount ?? 0) > 0;
 }
+
+export async function maxMessageId(): Promise<number> {
+  const { rows } = await query<{ n: string | null }>(`SELECT max(id) AS n FROM archive_messages`);
+  return Number(rows[0]?.n ?? 0);
+}

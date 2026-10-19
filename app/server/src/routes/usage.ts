@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { creditHistory, latestCredits } from '../credits.js';
 import { query } from '../db.js';
+import { expandSteps } from '../archive/steps.js';
 import { agentSessionsRouter } from './agentSessions.js';
 import { HttpError, parseOr400, wrap } from './http.js';
 
@@ -303,9 +304,15 @@ export function usageRouter(): Router {
       `SELECT m.id, m.raw, a.source, m.content_text FROM archive_messages m LEFT JOIN archive_sessions a ON a.id = m.session_id WHERE m.id=$1`, [id]);
     if (!r.rows[0]) throw new HttpError(404, 'no such message');
     const { source, raw } = r.rows[0];
-    // ?full=1 adds the stored text uncapped (a long tool result the session view cut at 20,000 characters).
-    res.json({ id: r.rows[0].id, raw: source === 'claude-code' ? stripCost(raw) : raw,
-      ...(req.query.full === '1' ? { text: r.rows[0].content_text ?? '' } : {}) });
+    // ?full=1 adds the text uncapped (a step the session view cut at 20,000 characters); &part=<key> picks
+    // that part of a row that holds several (a Hermes assistant row: thinking, response, tool calls).
+    let text: string | undefined;
+    if (req.query.full === '1') {
+      const part = typeof req.query.part === 'string' ? req.query.part : null;
+      const parts = part ? expandSteps({ id, role: '', kind: '', ts: null, raw, text: r.rows[0].content_text ?? '' }) : [];
+      text = parts.find((p) => p.key === part)?.text ?? r.rows[0].content_text ?? '';
+    }
+    res.json({ id: r.rows[0].id, raw: source === 'claude-code' ? stripCost(raw) : raw, ...(text !== undefined ? { text } : {}) });
   }));
 
   // The agent company's wakes per agent (org_wakeups): how much of the shared

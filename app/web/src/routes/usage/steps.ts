@@ -8,22 +8,31 @@ export type TurnItem = { kind: 'step'; step: AgentStep } | { kind: 'tool'; pair:
 /** One prompt and everything until the next prompt. A session that starts without a prompt gets a turn with `prompt: null`. */
 export interface Turn { prompt: AgentStep | null; items: TurnItem[] }
 
-/** Pairs each tool call with its result; a result whose call is not on the page stays a plain step. */
+/**
+ * Pairs each tool call with the first unused result after it that has the same id and comes from the same
+ * (sub)agent: providers reuse ids like `call_0` across turns. A result with no call stays a plain step.
+ */
 export function pairTools(steps: AgentStep[]): TurnItem[] {
-  const results = new Map<string, AgentStep>();
-  for (const s of steps) if (s.step === 'tool_result' && s.toolCallId && !results.has(s.toolCallId)) results.set(s.toolCallId, s);
-  const used = new Set<AgentStep>();
+  const keyOf = (s: AgentStep) => `${s.subagent ?? ''}\u0000${s.toolCallId}`;
+  const queues = new Map<string, number[]>();
+  steps.forEach((s, i) => {
+    if (s.step === 'tool_result' && s.toolCallId) (queues.get(keyOf(s)) ?? queues.set(keyOf(s), []).get(keyOf(s))!).push(i);
+  });
+  const used = new Set<number>();
   const items: TurnItem[] = [];
-  for (const s of steps) {
+  steps.forEach((s, i) => {
     if (s.step === 'tool_call') {
-      const r = s.toolCallId ? results.get(s.toolCallId) ?? null : null;
-      if (r) used.add(r);
+      const q = s.toolCallId ? queues.get(keyOf(s)) : undefined;
+      while (q?.length && q[0]! < i) q.shift();
+      const ri = q?.shift();
+      const r = ri === undefined ? null : steps[ri]!;
+      if (ri !== undefined) used.add(ri);
       const durationMs = r?.ts && s.ts ? Math.max(0, Date.parse(r.ts) - Date.parse(s.ts)) : null;
       items.push({ kind: 'tool', pair: { call: s, result: r, durationMs } });
-    } else if (!(s.step === 'tool_result' && used.has(s))) {
+    } else if (!(s.step === 'tool_result' && used.has(i))) {
       items.push({ kind: 'step', step: s });
     }
-  }
+  });
   return items;
 }
 

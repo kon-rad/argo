@@ -132,6 +132,27 @@ describe('agent sessions api', () => {
     expect(all.body.steps.some((s: { step: string }) => s.step === 'meta')).toBe(true);
   });
 
+  it('lists a Hermes continuation on its own and keeps a subagent whose parent is missing', async () => {
+    await withTransaction(async (tx) => {
+      await archive.upsertSession(tx, sess({ source: 'hermes', externalId: 'h2', parentExternalId: 'h1', title: 'Stand-up (cont.)',
+        startedAt: new Date('2026-10-18T11:00:00Z'), endedAt: new Date('2026-10-18T11:05:00Z'), messageCount: 0 }));
+      const o = await archive.upsertSession(tx, sess({ externalId: 'agent-orphan', parentExternalId: 'gone', title: 'Orphan' }));
+      await archive.upsertMessages(tx, o.id, [m('o1', '2026-10-18T12:00:00Z', cc('user', 'hi'), 'hi')]);
+      await archive.refreshSessionStats(tx, o.id);
+    });
+    const ids = (await list()).body.sessions.map((x: { external_id: string }) => x.external_id);
+    expect(ids).toEqual(['agent-orphan', 'h2', 's1', 'h1']);
+  });
+
+  it('puts a call\'s tokens only on its own session when another session reuses the record id', async () => {
+    await withTransaction(async (tx) => {
+      const other = await archive.upsertSession(tx, sess({ externalId: 's9', title: 'Resumed copy' }));
+      await archive.upsertMessages(tx, other.id, [m('a2', '2026-10-18T13:00:00Z', cc('assistant', [{ type: 'text', text: 'copy' }]), 'copy')]);
+    });
+    const r = await request(app).get('/api/usage/agent-sessions/mac/s9');
+    expect(r.body.steps[0].call).toBeNull();
+  });
+
   it('answers 404 for an unknown session and 400 for a bad host', async () => {
     expect((await request(app).get('/api/usage/agent-sessions/mac/nope')).status).toBe(404);
     expect((await request(app).get('/api/usage/agent-sessions/Bad%20Host/s1')).status).toBe(400);

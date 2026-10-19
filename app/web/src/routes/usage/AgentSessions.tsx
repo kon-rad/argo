@@ -36,7 +36,7 @@ function Row({ s, tz }: { s: AgentSessionRow; tz: string }) {
       <td>{s.host}</td>
       <td>{s.harness}{s.profile && s.profile !== 'main' ? <span className="text-xs text-[var(--ink-dim)]"> · {s.profile}</span> : null}</td>
       <td className="max-w-[28rem]"><Link className="underline" to={sessionLink(s)}>{title}</Link>
-        {s.parent_external_id ? <span className="text-xs text-[var(--ink-dim)]"> (subagent)</span> : null}</td>
+        {s.parent_external_id ? <span className="text-xs text-[var(--ink-dim)]"> ({s.harness === 'claude-code' ? 'subagent' : 'continued'})</span> : null}</td>
       <td className="text-xs">{s.models.join(', ')}{s.provider ? <div className="text-[var(--ink-dim)]">{s.provider}</div> : null}</td>
       <td className="text-right">{s.steps}</td>
       <td className="text-right">{s.tool_calls}{s.errors ? <span className="text-red-600" title="tool calls that failed"> ✗{s.errors}</span> : null}</td>

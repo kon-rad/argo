@@ -92,6 +92,26 @@ describe('runArchive', () => {
     expect((await query(`SELECT count(*)::int n FROM archive_sessions WHERE source='hermes:user'`)).rows[0]!.n).toBe(0);
   });
 
+  it('redacts rows added since its last run with this machine\'s env values', async () => {
+    process.env.RUN_TEST_TOKEN = 'run-secret-value-424242';
+    const { resetRedactor } = await import('../src/archive/redact.js');
+    resetRedactor();
+    try {
+      expect((await runArchive(deps))!.redacted).toEqual({ messages: 0, sessions: 0 });
+      // A row that arrived from elsewhere (another machine's push), unredacted.
+      const sid = (await query<{ id: number }>(`SELECT id FROM archive_sessions LIMIT 1`)).rows[0]!.id;
+      await query(`INSERT INTO archive_messages (session_id, seq, external_id, role, kind, content_text, raw, raw_sha)
+        VALUES ($1, 99, 'pushed', 'user', 'user', 'token run-secret-value-424242', '{"t":"run-secret-value-424242"}', 'x')`, [sid]);
+      const s = (await runArchive(deps))!;
+      expect(s.redacted).toEqual({ messages: 1, sessions: 0 });
+      const { rows } = await query(`SELECT content_text, raw FROM archive_messages WHERE external_id='pushed'`);
+      expect(rows[0]).toEqual({ content_text: 'token [redacted:RUN_TEST_TOKEN]', raw: { t: '[redacted:RUN_TEST_TOKEN]' } });
+    } finally {
+      delete process.env.RUN_TEST_TOKEN;
+      resetRedactor();
+    }
+  });
+
   it('archives everything once, then nothing on a re-run', async () => {
     const s = (await runArchive(deps))!;
     expect(s.errors).toEqual([]);

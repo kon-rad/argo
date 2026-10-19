@@ -50,6 +50,16 @@ describe('session steps', () => {
     expect(items.filter((i) => i.kind === 'step').map((i) => i.kind === 'step' && i.step.id)).toEqual([1, 2, 4, 6]);
   });
 
+  it('pairs a reused tool call id with the next result after the call, not an earlier one', () => {
+    const steps = [
+      step({ id: 1, step: 'tool_call', toolName: 'a', toolCallId: 'call_0' }), step({ id: 2, step: 'tool_result', toolCallId: 'call_0', text: 'first' }),
+      step({ id: 3, step: 'tool_call', toolName: 'b', toolCallId: 'call_0' }), step({ id: 4, step: 'tool_result', toolCallId: 'call_0', text: 'second' }),
+      step({ id: 5, step: 'tool_call', toolName: 'c', toolCallId: 'call_0', subagent: 'Sub' }), step({ id: 6, step: 'tool_result', toolCallId: 'call_0', subagent: 'Sub', text: 'sub' }),
+    ];
+    const pairs = pairTools(steps).filter((i) => i.kind === 'tool').map((i) => i.kind === 'tool' && [i.pair.call.id, i.pair.result?.id]);
+    expect(pairs).toEqual([[1, 2], [3, 4], [5, 6]]);
+  });
+
   it('starts a turn at each main-session prompt only', () => {
     const turns = groupTurns([step({ id: 0, step: 'response', text: 'resumed' }), ...STEPS,
       step({ id: 7, step: 'prompt', text: 'sub prompt', subagent: 'Explore' }), step({ id: 8, step: 'prompt', text: 'next' })]);
@@ -66,7 +76,7 @@ describe('session steps', () => {
 describe('UsageSession', () => {
   it('shows the prompt, a tool card with its failed result, tokens, the subagent and loads full text on demand', async () => {
     const fetchMock = renderWith({ session: SESSION, runs: [], steps: STEPS, next: null }, undefined,
-      (u) => (u.includes('/usage/messages/6') ? { id: 6, raw: {}, text: 'FULL TEXT HERE' } : null));
+      (u) => (u.includes('/usage/messages/6') && u.includes('part=6') ? { id: 6, raw: {}, text: 'FULL TEXT HERE' } : null));
     await waitFor(() => expect(screen.getByText('Plan the usage board')).toBeTruthy());
     expect(screen.getByText('Build the usage board')).toBeTruthy();
     expect(screen.getByText('git status')).toBeTruthy();

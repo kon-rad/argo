@@ -24,11 +24,15 @@ CREATE INDEX archive_sessions_parent_idx ON archive_sessions (host, source, pare
 -- assistant row can hold thinking, a response and several tool calls: `step` is its main
 -- part and `tool_names` lists every call; the API expands the parts when it reads.
 -- Filled at ingest; `secondbrain archive-steps` fills rows stored before this migration.
+-- Nullable columns and a NOT VALID check: no table rewrite and no scan of the 1.6 GB table
+-- under the exclusive lock (a plain CHECK on ADD COLUMN validates every row).
 ALTER TABLE archive_messages
-  ADD COLUMN step         text CHECK (step IN ('prompt', 'response', 'thinking', 'tool_call', 'tool_result', 'system', 'meta')),
+  ADD COLUMN step         text,
   ADD COLUMN tool_names   text[],
   ADD COLUMN tool_call_id text,
   ADD COLUMN is_error     boolean;
+ALTER TABLE archive_messages ADD CONSTRAINT archive_messages_step_check
+  CHECK (step IN ('prompt', 'response', 'thinking', 'tool_call', 'tool_result', 'system', 'meta')) NOT VALID;
 CREATE INDEX archive_messages_step_todo_idx ON archive_messages (id) WHERE step IS NULL;
 CREATE INDEX archive_messages_tools_idx ON archive_messages USING gin (tool_names);
 CREATE INDEX archive_messages_tool_call_idx ON archive_messages (session_id, tool_call_id) WHERE tool_call_id IS NOT NULL;
@@ -40,6 +44,7 @@ DROP INDEX archive_messages_errors_idx;
 DROP INDEX archive_messages_tool_call_idx;
 DROP INDEX archive_messages_tools_idx;
 DROP INDEX archive_messages_step_todo_idx;
+ALTER TABLE archive_messages DROP CONSTRAINT archive_messages_step_check;
 ALTER TABLE archive_messages DROP COLUMN is_error, DROP COLUMN tool_call_id, DROP COLUMN tool_names, DROP COLUMN step;
 DROP INDEX archive_sessions_parent_idx;
 DROP INDEX archive_sessions_harness_idx;

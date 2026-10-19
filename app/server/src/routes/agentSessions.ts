@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db.js';
+import { redactor } from '../archive/redact.js';
 import { expandSteps, type StepPart } from '../archive/steps.js';
 import { HttpError, parseOr400, wrap } from './http.js';
 
@@ -26,6 +27,13 @@ export type ListQuery = z.infer<typeof listQuery>;
 
 interface Only { id: number }
 
+/** `c` is a Claude Code subagent of `p`. */
+const CHILD_OF = (c: string, p: string) => `${c}.harness = 'claude-code' AND ${c}.host = ${p}.host AND ${c}.source = ${p}.source
+  AND ${c}.parent_external_id = ${p}.external_id AND ${c}.id <> ${p}.id`;
+/** `a` is a Claude Code subagent whose parent is archived (so it shows inside the parent, not as a row). */
+const IS_CHILD = (a: string) => `${a}.harness = 'claude-code' AND ${a}.parent_external_id IS NOT NULL AND EXISTS (
+  SELECT 1 FROM archive_sessions pa WHERE pa.host = ${a}.host AND pa.source = ${a}.source AND pa.external_id = ${a}.parent_external_id)`;
+
 /**
  * One row per session. Without `subagents`, a Claude Code session's subagents are folded
  * into their parent (tokens, steps, tool calls) and only top-level sessions are listed.
@@ -41,13 +49,16 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
   // One session: no range, but $1 and $2 still need a type.
   if (only) { add(`a.id = $?`, only.id); where.push(`$1::timestamptz IS NOT NULL AND $2::timestamptz IS NOT NULL`); }
   else where.push(`coalesce(a.started_at, a.first_seen_at) < $2`, `coalesce(a.ended_at, a.started_at, a.updated_at) >= $1`);
-  if (!only && !q.subagents) where.push(`a.parent_external_id IS NULL`);
+  // Only Claude Code subagents fold into their parent (one level: they live under the parent's file). A Hermes
+  // parent_session_id marks a compression continuation, so every Hermes session is listed on its own. A
+  // subagent whose parent was never archived is listed too.
+  if (!only && !q.subagents) where.push(`NOT (${IS_CHILD('a')})`);
   if (q.harness) add(`a.harness = ANY ($?::text[])`, q.harness);
   if (q.host) add(`a.host = ANY ($?::text[])`, q.host);
   if (q.profile) add(`coalesce(a.profile, 'none') = ANY ($?::text[])`, q.profile);
   if (q.provider) add(`coalesce(a.provider, 'unknown') = ANY ($?::text[])`, q.provider);
   // Content filters look at the session and, when folded, its subagents.
-  const famOf = `SELECT c.id FROM archive_sessions c WHERE c.id = a.id OR (NOT $3 AND c.host = a.host AND c.source = a.source AND c.parent_external_id = a.external_id)`;
+  const famOf = `SELECT c.id FROM archive_sessions c WHERE c.id = a.id OR (NOT $3 AND ${CHILD_OF('c', 'a')})`;
   if (q.tool) add(`EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id IN (${famOf}) AND m.tool_names && $?::text[])`, q.tool);
   if (q.errors) where.push(`EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id IN (${famOf}) AND m.is_error)`);
   if (q.q) add(`(a.title ILIKE '%' || $? || '%' OR EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id IN (${famOf})
@@ -60,7 +71,7 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
        ORDER BY coalesce(a.started_at, a.first_seen_at) DESC, a.id DESC LIMIT $4 OFFSET $5),
      fam AS (
        SELECT p.id AS root, c.id, c.host, c.source, c.external_id FROM page p
-       JOIN archive_sessions c ON c.id = p.id OR (NOT $3 AND c.host = p.host AND c.source = p.source AND c.parent_external_id = p.external_id)),
+       JOIN archive_sessions c ON c.id = p.id OR (NOT $3 AND ${CHILD_OF('c', 'p')})),
      st AS (
        SELECT f.root, count(m.id)::int AS steps,
               coalesce(sum(cardinality(m.tool_names)) FILTER (WHERE m.step = 'tool_call'), 0)::int AS tool_calls,
@@ -157,15 +168,16 @@ export function agentSessionsRouter(): Router {
       call: StepOut['call'];
     }>(
       `WITH fam AS (
-         SELECT c.id, c.host, c.source, c.id = $1 AS own, coalesce(c.title, c.external_id) AS label FROM archive_sessions r
-         JOIN archive_sessions c ON c.id = r.id OR (c.host = r.host AND c.source = r.source AND c.parent_external_id = r.external_id)
+         SELECT c.id, c.host, c.source, c.external_id, c.id = $1 AS own, coalesce(c.title, c.external_id) AS label FROM archive_sessions r
+         JOIN archive_sessions c ON c.id = r.id OR (${CHILD_OF('c', 'r')})
          WHERE r.id = $1)
        SELECT m.id, m.role, m.kind, m.ts, m.raw, m.content_text AS text, f.own, f.label,
               CASE WHEN u.id IS NULL THEN NULL ELSE json_build_object('model', u.model, 'input', u.input_tokens,
                 'cache_write', u.cache_write_tokens, 'cache_read', u.cache_read_tokens, 'output', u.output_tokens,
                 'reasoning', u.thinking_tokens) END AS call
        FROM fam f JOIN archive_messages m ON m.session_id = f.id
-       LEFT JOIN usage_calls u ON f.source = 'claude-code' AND u.host = f.host AND u.message_external_id = m.external_id
+       LEFT JOIN usage_calls u ON f.source = 'claude-code' AND u.host = f.host AND u.session_external_id = f.external_id
+         AND u.message_external_id = m.external_id
        WHERE ($2 OR m.step IS DISTINCT FROM 'meta')
        ORDER BY m.ts NULLS FIRST, f.own DESC, m.session_id, m.seq
        OFFSET $3 LIMIT $4`, [rootId, q.meta, q.offset, q.limit + 1]);
@@ -184,6 +196,8 @@ export function agentSessionsRouter(): Router {
     const runs = await query(
       `SELECT run_id, agent_name, task_id, lane, started_at, num_turns, subtype, verify_name, verify_passed, verify_metric, verify_output
        FROM usage_runs WHERE host = $1 AND session_id = $2 ORDER BY started_at`, [host, sid]);
+    const red = redactor();
+    for (const r of runs.rows as Array<{ verify_output: string | null }>) if (r.verify_output) r.verify_output = red.text(r.verify_output);
     res.json({ session, runs: runs.rows, steps, next: more ? q.offset + q.limit : null });
   }));
 

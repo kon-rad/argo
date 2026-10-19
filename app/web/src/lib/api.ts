@@ -837,7 +837,8 @@ export const api = {
   usageSession: (host: string, externalId: string, source: string) =>
     request<{ session: UsageSessionRow; run: UsageRun | null; runs?: UsageRun[]; messages: UsageMessage[] }>(
       `/usage/sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}`, { source }),
-  usageMessage: (id: number, full = false) => request<{ id: number; raw: unknown; text?: string }>(`/usage/messages/${id}`, { full: full ? '1' : undefined }),
+  usageMessage: (id: number, full = false, part?: string) =>
+    request<{ id: number; raw: unknown; text?: string }>(`/usage/messages/${id}`, { full: full ? '1' : undefined, part }),
   agentSessions: (from: string, to: string, f: AgentSessionFilters = {}, offset = 0) =>
     request<{ sessions: AgentSessionRow[]; total: number }>('/usage/agent-sessions', { from, to, offset, ...agentParams(f) }),
   agentSessionFacets: (from: string, to: string) => request<{ facets: AgentSessionFacets }>('/usage/agent-sessions/facets', { from, to }),

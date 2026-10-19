@@ -38,34 +38,39 @@ const likeEscape = (s: string) => `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
  * Postgres finds the candidates (LIKE on the values, a POSIX regex on the formats), so
  * only matching rows cross the network; the JS redactor then does the exact replacement.
  */
-export async function redactExisting(opts: { batch: number; dryRun: boolean; log: Log }): Promise<{ scanned: number; changed: number; sessions: number }> {
+export async function redactExisting(opts: { batch: number; dryRun: boolean; log: Log; sinceId?: number }):
+  Promise<{ scanned: number; changed: number; sessions: number; lastId: number }> {
   const r = redactor();
   const likes = r.values.map((v) => likeEscape(v.value));
   const re = PATTERNS.map((p) => `(${p.pg})`).join('|');
   opts.log(`redact: ${r.values.length} env values (${r.values.map((v) => v.name).sort().join(', ') || 'none'}), ${PATTERNS.length} key formats${opts.dryRun ? ', dry run' : ''}`);
   const hit = (col: string) => `(${col} LIKE ANY ($1::text[]) OR ${col} ~ $2)`;
 
-  const { rows: span } = await query<{ lo: string | null; hi: string | null }>(`SELECT min(id) lo, max(id) hi FROM archive_messages`);
+  const { rows: span } = await query<{ lo: string | null; hi: string | null }>(
+    `SELECT min(id) lo, max(id) hi FROM archive_messages WHERE id > $1`, [opts.sinceId ?? 0]);
   let scanned = 0;
   let changed = 0;
+  let lastId = opts.sinceId ?? 0;
   if (span[0]?.lo != null) {
+    lastId = Number(span[0].hi);
     const lo = Number(span[0].lo);
     const hi = Number(span[0].hi);
     const window = opts.batch * 10;
     for (let a = lo; a <= hi; a += window) {
-      const { rows } = await query<{ id: number; content_text: string | null; raw: unknown }>(
-        `SELECT id, content_text, raw FROM archive_messages
+      // raw as text and back with ::jsonb: a JS parse would round integers above 2^53.
+      const { rows } = await query<{ id: number; content_text: string | null; raw_text: string }>(
+        `SELECT id, content_text, raw::text AS raw_text FROM archive_messages
          WHERE id >= $3 AND id < $4 AND (${hit('coalesce(content_text, \'\')')} OR ${hit('raw::text')})`,
         [likes, re, a, a + window]);
       scanned += Math.min(window, hi - a + 1);
       const updates = rows.map((row) => {
         const text = row.content_text === null ? null : r.text(row.content_text);
-        const raw = r.deep(row.raw);
-        return { id: row.id, text, raw, same: text === row.content_text && JSON.stringify(raw) === JSON.stringify(row.raw) };
+        const raw = r.jsonText(row.raw_text);
+        return { id: row.id, text, raw, same: text === row.content_text && raw === row.raw_text };
       }).filter((u) => !u.same);
       if (updates.length && !opts.dryRun) {
         await withTransaction(async (tx) => {
-          for (const u of updates) await tx.query(`UPDATE archive_messages SET content_text = $2, raw = $3::jsonb WHERE id = $1`, [u.id, u.text, JSON.stringify(u.raw)]);
+          for (const u of updates) await tx.query(`UPDATE archive_messages SET content_text = $2, raw = $3::jsonb WHERE id = $1`, [u.id, u.text, u.raw]);
         });
       }
       changed += updates.length;
@@ -73,16 +78,16 @@ export async function redactExisting(opts: { batch: number; dryRun: boolean; log
     }
   }
 
-  const { rows: sess } = await query<{ id: number; title: string | null; meta: unknown }>(
-    `SELECT id, title, meta FROM archive_sessions WHERE ${hit('coalesce(title, \'\')')} OR ${hit('meta::text')}`, [likes, re]);
+  const { rows: sess } = await query<{ id: number; title: string | null; meta_text: string }>(
+    `SELECT id, title, meta::text AS meta_text FROM archive_sessions WHERE ${hit('coalesce(title, \'\')')} OR ${hit('meta::text')}`, [likes, re]);
   let sessions = 0;
   for (const s of sess) {
     const title = s.title === null ? null : r.text(s.title);
-    const meta = r.deep(s.meta);
-    if (title === s.title && JSON.stringify(meta) === JSON.stringify(s.meta)) continue;
+    const meta = r.jsonText(s.meta_text);
+    if (title === s.title && meta === s.meta_text) continue;
     sessions++;
-    if (!opts.dryRun) await query(`UPDATE archive_sessions SET title = $2, meta = $3::jsonb WHERE id = $1`, [s.id, title, JSON.stringify(meta)]);
+    if (!opts.dryRun) await query(`UPDATE archive_sessions SET title = $2, meta = $3::jsonb WHERE id = $1`, [s.id, title, meta]);
   }
-  opts.log(`redact: ${changed} messages and ${sessions} sessions ${opts.dryRun ? 'would be' : ''} rewritten`);
-  return { scanned, changed, sessions };
+  opts.log(`redact: ${changed} messages and ${sessions} sessions ${opts.dryRun ? 'would be ' : ''}rewritten`);
+  return { scanned, changed, sessions, lastId };
 }

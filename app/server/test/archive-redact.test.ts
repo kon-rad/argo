@@ -65,6 +65,37 @@ describe('buildRedactor', () => {
     expect(f.text('abcdefghijklmnop')).toBe('[redacted:B_TOKEN]');
   });
 
+  it('stays linear on huge inputs (1 MB of plain characters, of URL-ish text, of key headers)', () => {
+    const p = buildRedactor({ env: { BIG_TEST_TOKEN: 'big-secret-value-123456' } });
+    for (const big of ['a'.repeat(1_000_000), 'x://'.repeat(250_000), `${'-----BEGIN RSA PRIVATE KEY-----'}A`.repeat(30_000), 'https://u:'.repeat(100_000)]) {
+      const t0 = Date.now();
+      p.text(big);
+      expect(Date.now() - t0).toBeLessThan(1500);
+    }
+  });
+
+  it('redacts the start of a private key printed without its END line', () => {
+    const p = buildRedactor({ env: {} });
+    const head = `-----BEGIN ${'OPENSSH'} PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\nQyNTUxOQAAACB\n`;
+    expect(p.text(`$ head -3 key\n${head}`)).toBe('$ head -3 key\n[redacted:private-key]');
+  });
+
+  it('matches whole name segments only', () => {
+    const f = buildRedactor({ env: { GIT_AUTHOR_EMAIL: 'someone@example.com', KEYBOARD_LAYOUT: 'us-international-alt', HF_TOKEN: 'hf-token-value-123456', OPENAI_APIKEY: 'openai-value-1234567' } });
+    expect(f.values.map((v) => v.name).sort()).toEqual(['HF_TOKEN', 'OPENAI_APIKEY']);
+  });
+
+  it('rewrites serialized JSON without touching numbers, and sees keys after an escaped newline', () => {
+    const p = buildRedactor({ env: { JSON_TEST_TOKEN: 'json-secret-value-99' } });
+    const json = `{"id":1234567890123456789,"text":"line\\n${fake('sk-ant-api03-', 30)}","q":"say \\"json-secret-value-99\\"","n":1.5}`;
+    const out = p.jsonText(json);
+    expect(out).toContain('1234567890123456789');
+    expect(out).toContain('line\\n[redacted:anthropic]');
+    expect(out).toContain('[redacted:JSON_TEST_TOKEN]');
+    expect(JSON.parse(out).n).toBe(1.5);
+    expect(p.jsonText('{"plain":"nothing here","n":2}')).toBe('{"plain":"nothing here","n":2}');
+  });
+
   it('has a Postgres prefilter for every pattern', () => {
     for (const p of PATTERNS) expect(p.pg.length).toBeGreaterThan(5);
   });

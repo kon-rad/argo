@@ -32,7 +32,7 @@ function CallChip({ call }: { call: AgentStep['call'] }) {
 
 function FullText({ step }: { step: AgentStep }) {
   const [open, setOpen] = useState(false);
-  const full = useQuery({ queryKey: ['usage-message-full', step.id], queryFn: () => api.usageMessage(step.id, true), enabled: open });
+  const full = useQuery({ queryKey: ['usage-message-full', step.id, step.key], queryFn: () => api.usageMessage(step.id, true, step.key), enabled: open });
   if (!step.truncated) return null;
   if (!open) {
     return <div className="text-xs text-[var(--ink-dim)]">Showing 20,000 of {step.length.toLocaleString()} characters.{' '}
@@ -143,6 +143,10 @@ export default function UsageSession() {
         {s.subagents ? ` · ${s.subagents} subagents` : ''}
         {s.harness !== 'claude-code' && s.cost_usd != null && ` · ${Number(s.cost_usd).toFixed(2)} USD`}
       </div>
+      {s.harness === 'hermes' && s.parent_external_id && (
+        <div className="text-xs text-[var(--ink-dim)]">Continues <Link className="underline"
+          to={`/usage/session/${s.host}/${encodeURIComponent(s.parent_external_id)}?source=${encodeURIComponent(s.source)}`}>{s.parent_external_id}</Link></div>
+      )}
       <Runs runs={first.runs} />
       <div className="mt-2 flex flex-wrap gap-3 text-xs">
         <label className="flex items-center gap-1"><input type="checkbox" checked={show.thinking} onChange={(e) => setShow({ thinking: e.target.checked })} />thinking</label>

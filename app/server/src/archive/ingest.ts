@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { basename } from 'node:path';
 import { query, withTransaction } from '../db.js';
 import { parseClaudeJsonl } from './claude.js';
@@ -17,6 +18,7 @@ export interface Item {
   kind: 'claude' | 'hermes-db' | 'log' | 'memory' | 'blob'; parentSid?: string; project?: string;
   rotatedPath?: string; // log: `<name>.1` holding the tail of the previously ingested file
   daily?: boolean; // hermes state: one upload per UTC day
+  dedupeDb?: string; // hermes-db: skip sessions this other state.db (the main home's snapshot) holds
 }
 
 export { readFrom } from '../usage/readFrom.js';
@@ -43,6 +45,12 @@ export async function ingest(item: Item, errors: string[], bump: Bump): Promise<
         `SELECT external_id FROM archive_sessions WHERE source='hermes' AND host=$1 AND external_id = ANY($2::text[])`,
         [item.host, sessions.map((s) => s.externalId)]);
       const dup = new Set(rows.map((r) => r.external_id));
+      // Also the main home's own snapshot: its sessions count even if its ingest failed earlier in this run.
+      if (item.dedupeDb && existsSync(item.dedupeDb)) {
+        const main = new DatabaseSync(item.dedupeDb, { readOnly: true });
+        try { for (const r of main.prepare('SELECT id FROM sessions').all() as Array<{ id: unknown }>) dup.add(String(r.id)); }
+        finally { main.close(); }
+      }
       sessions = sessions.filter((s) => !dup.has(s.externalId));
       messages = messages.filter((m) => !dup.has(m.sessionExternalId));
     }

@@ -8,13 +8,17 @@ import { existsSync, readFileSync } from 'node:fs';
  */
 export interface Redactor {
   text(s: string): string;
+  /** The same over serialized JSON, so a stored row can be rewritten without a parse that rounds big integers. */
+  jsonText(s: string): string;
   deep<T>(v: T): T;
   values: Array<{ name: string; value: string }>;
 }
 
 /** `js` does the replacing; `pg` is a POSIX prefilter for finding stored rows that need it. */
 export const PATTERNS: Array<{ name: string; js: RegExp; pg: string; keep?: number }> = [
-  { name: 'private-key', js: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, pg: '-----BEGIN [A-Z ]*PRIVATE KEY-----' },
+  // The body runs on base64 (and the literal \n of serialized JSON) up to the END line, or to where it stops when
+  // only the start of a key was printed (`head -5 id_ed25519`). Greedy with no backtracking: linear time.
+  { name: 'private-key', js: /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[A-Za-z0-9+/=\s\\]*(?:-----END [A-Z ]{0,40}PRIVATE KEY-----)?/g, pg: '-----BEGIN [A-Z ]*PRIVATE KEY-----' },
   { name: 'anthropic', js: /(?<![A-Za-z0-9])sk-ant-[A-Za-z0-9_-]{20,}/g, pg: 'sk-ant-[A-Za-z0-9_-]{20}' },
   { name: 'openai', js: /(?<![A-Za-z0-9-])sk-(?:proj-)?[A-Za-z0-9_-]{20,}/g, pg: '(^|[^A-Za-z0-9-])sk-[A-Za-z0-9_-]{20}' },
   { name: 'github', js: /(?<![A-Za-z0-9])(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})/g, pg: '(gh[pousr]_[A-Za-z0-9]{30}|github_pat_[A-Za-z0-9_]{30})' },
@@ -24,10 +28,12 @@ export const PATTERNS: Array<{ name: string; js: RegExp; pg: string; keep?: numb
   // Keep the scheme word: "Bearer [redacted:bearer]" still says what it was.
   { name: 'bearer', js: /(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/g, pg: 'Bearer\\s+[A-Za-z0-9._~+/=-]{20}', keep: 1 },
   // The password in scheme://user:password@host.
-  { name: 'url-password', js: /([a-z][a-z0-9+.-]*:\/\/[^\s:/@"']+:)[^\s@/"']{6,}(@)/gi, pg: '[a-z][a-z0-9+.-]*://[^[:space:]:/@]+:[^[:space:]@/]{6,}@', keep: 2 },
+  // Every class is bounded: unbounded ones made this quadratic on long runs of plain characters.
+  { name: 'url-password', js: /(\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s:/@"'\\]{1,256}:)[^\s@/"'\\]{6,256}(@)/gi, pg: '[a-z][a-z0-9+.-]*://[^[:space:]:/@]+:[^[:space:]@/]{6,}@', keep: 2 },
 ];
 
-const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE|AUTH|DSN)/i;
+// Whole name segments only: GEMINI_API_KEY and HF_TOKEN yes, GIT_AUTHOR_EMAIL and KEYBOARD_LAYOUT no.
+const SECRET_NAME = /(^|_)(KEY|KEYS|APIKEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|CREDENTIALS?|PRIVATE|AUTH|DSN|PAT)(_|$)/i;
 const MIN_LEN = 12;
 
 function isSecret(name: string, value: string): boolean {
@@ -70,11 +76,18 @@ export function buildRedactor(opts: { env: Record<string, string | undefined>; f
     if (!s) return s;
     let out = valueRe ? s.replace(valueRe, (m) => `[redacted:${byValue.get(m)}]`) : s;
     for (const p of PATTERNS) {
+      if (p.name === 'url-password' && !out.includes('://')) continue;
       out = out.replace(p.js, (...m: string[]) => p.keep === 1 ? `${m[1]}[redacted:${p.name}]`
         : p.keep === 2 ? `${m[1]}[redacted:${p.name}]${m[2]}` : `[redacted:${p.name}]`);
     }
     return out;
   };
+  // Each JSON string literal is decoded, redacted and re-encoded; numbers and structure are left byte for byte.
+  const jsonText = (s: string): string => s.replace(/"(?:[^"\\]|\\.)*"/g, (tok) => {
+    const v = JSON.parse(tok) as string;
+    const t = text(v);
+    return t === v ? tok : JSON.stringify(t);
+  });
 
   const deep = <T>(v: T): T => {
     if (typeof v === 'string') return text(v) as T;
@@ -87,7 +100,7 @@ export function buildRedactor(opts: { env: Record<string, string | undefined>; f
     return v;
   };
 
-  return { text, deep, values };
+  return { text, jsonText, deep, values };
 }
 
 let cached: Redactor | null = null;
