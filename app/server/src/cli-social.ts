@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { HttpError } from './routes/http.js';
-import { checkImageCount, toPostMedia } from './social/media.js';
+import { checkBodyLength, checkImageCount, toPostMedia } from './social/media.js';
 import { checkReauthNeeded, runDuePosts } from './social/scheduler.js';
 import { cancelPost, listAccounts, listPosts, queuePost } from './social/store.js';
 import { hermesTelegram } from './livestream-x.js';
@@ -72,7 +72,7 @@ async function queue(argv: string[]): Promise<number> {
 
   const body = (values['body-file'] ? readFileSync(values['body-file'], 'utf8') : (values.body ?? '')).trim();
   if (!body) throw new HttpError(400, 'the post needs --body or --body-file');
-  if (body.length > 3000) throw new HttpError(400, `the post is ${body.length} characters; 3000 at most`);
+  checkBodyLength(body);
 
   const images = values.image ?? [];
   const alts = values.alt ?? [];

@@ -82,7 +82,7 @@ describe('social store: posts', () => {
   it('cannot cancel a post that is no longer queued', async () => {
     const accountId = await store.saveConnectedAccount('linkedin', account(), KEY);
     const post = await store.queuePost(accountId, 'Hello world', [], T0);
-    await store.markPublishing(post.id);
+    await store.markPublishing(post.id, T0);
     expect(await store.cancelPost(post.id)).toBe(false);
   });
 

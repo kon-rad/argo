@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { HttpError, intParam, parseOr400, wrap } from './http.js';
 import type { SocialProvider } from '../social/providers/types.js';
-import { checkImageCount, MAX_IMAGES, toPostMedia } from '../social/media.js';
+import { checkBodyLength, checkImageCount, MAX_IMAGES, toPostMedia } from '../social/media.js';
 import { cancelPost, disconnectAccount, listAccounts, listPosts, queuePost, saveConnectedAccount } from '../social/store.js';
 
 export interface SocialOptions {
@@ -117,6 +117,7 @@ export function socialRouter(opts: SocialOptions): Router {
     '/posts',
     wrap(async (req, res) => {
       const body = parseOr400(QueuePostBody, req.body);
+      checkBodyLength(body.body);
       checkImageCount(body.media.length);
       const media = body.media.map((m) => toPostMedia(m.filename, Buffer.from(m.dataBase64, 'base64'), m.altText));
       const post = await queuePost(body.accountId, body.body, media, body.scheduledFor);

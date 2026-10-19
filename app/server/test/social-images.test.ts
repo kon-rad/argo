@@ -1,11 +1,11 @@
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
-import { checkImageCount, MAX_IMAGE_BYTES, sniffImageType, toPostMedia } from '../src/social/media.js';
+import { checkBodyLength, checkImageCount, MAX_IMAGE_BYTES, sniffImageType, toPostMedia } from '../src/social/media.js';
 import { linkedinProvider, toLittleText } from '../src/social/providers/linkedin.js';
 import type { PostMedia, QueuedPost, SocialProvider } from '../src/social/providers/types.js';
 import { runDuePosts } from '../src/social/scheduler.js';
-import { dueQueuedPosts, listPosts, queuePost, saveConnectedAccount } from '../src/social/store.js';
+import { dueQueuedPosts, listPosts, markPublishing, postMedia, queuePost, saveConnectedAccount } from '../src/social/store.js';
 import { truncateAll } from './helpers.js';
 
 const KEY = '0'.repeat(63) + '1';
@@ -65,7 +65,12 @@ describe('social images: validation', () => {
     expect(() => toPostMedia('a.txt', Buffer.from('hello'), 'alt')).toThrow(/not a JPEG, PNG or GIF/);
     expect(() => toPostMedia('a.png', Buffer.alloc(0), 'alt')).toThrow(/empty/);
     expect(() => toPostMedia('a.png', Buffer.concat([PNG, Buffer.alloc(MAX_IMAGE_BYTES)]), 'alt')).toThrow(/over the/);
-    expect(() => checkImageCount(21)).toThrow(/at most 20/);
+    expect(() => checkImageCount(5)).toThrow(/at most 4/);
+  });
+
+  it('checks the length LinkedIn will count: the text after escaping', () => {
+    expect(() => checkBodyLength('x'.repeat(3000))).not.toThrow();
+    expect(() => checkBodyLength('x'.repeat(2990) + '(((((((')).toThrow(/once escaped/);
   });
 });
 
@@ -78,6 +83,7 @@ describe('social images: LinkedIn little text', () => {
 
   it('keeps hashtags as hashtags and escapes a # that is not one', () => {
     expect(toLittleText('#AIagents #open_source\nissue#4')).toBe('{hashtag|\\#|AIagents} {hashtag|\\#|open\\_source}\nissue\\#4');
+    expect(toLittleText('We are #1 (#AI)')).toBe('We are \\#1 \\({hashtag|\\#|AI}\\)');
   });
 
   it('leaves URLs, arrows and plain text alone', () => {
@@ -151,8 +157,10 @@ describe('social images: store and scheduler', () => {
     expect(JSON.stringify(await listPosts())).not.toContain('bytes');
 
     const [due] = await dueQueuedPosts(T0);
-    expect(due!.media.map((m) => m.filename)).toEqual(['1.png', '2.jpg']);
-    expect(Buffer.compare(due!.media[1]!.bytes, JPG)).toBe(0);
+    expect(due).not.toHaveProperty('media'); // bytes are loaded one post at a time
+    const media = await postMedia(due!.id);
+    expect(media.map((m) => m.filename)).toEqual(['1.png', '2.jpg']);
+    expect(Buffer.compare(media[1]!.bytes, JPG)).toBe(0);
   });
 
   it('a post whose image the database refuses is not queued at all', async () => {
@@ -160,6 +168,27 @@ describe('social images: store and scheduler', () => {
     const bad = { ...img(), altText: '' }; // bypasses toPostMedia; the column CHECK refuses it
     await expect(queuePost(accountId, 'half a post', [img(), bad], T0)).rejects.toThrow();
     expect(await listPosts()).toEqual([]);
+  });
+
+  it('a post left publishing by a killed run is failed after 15 minutes, never requeued', async () => {
+    const accountId = await connect();
+    const p = await queuePost(accountId, 'interrupted', [], T0);
+    await markPublishing(p.id, T0);
+    const provider = { publish: async () => ({ remoteId: 'x' }) } as unknown as SocialProvider;
+    await runDuePosts({ linkedin: provider }, KEY, new Date(T0.getTime() + 10 * 60_000));
+    expect((await listPosts('publishing')).map((r) => r.id)).toEqual([p.id]); // 10 minutes: still in flight
+    await runDuePosts({ linkedin: provider }, KEY, new Date(T0.getTime() + 16 * 60_000));
+    expect((await listPosts('failed'))[0]).toMatchObject({ id: p.id, last_error: expect.stringMatching(/check LinkedIn/) });
+  });
+
+  it('starts no new post once the pass is over its time budget', async () => {
+    const accountId = await connect();
+    await queuePost(accountId, 'first', [], T0);
+    await queuePost(accountId, 'second', [], T0);
+    let t = 0;
+    const provider = { publish: async () => { t += 50_000; return { remoteId: 'x' }; } } as unknown as SocialProvider;
+    expect(await runDuePosts({ linkedin: provider }, KEY, T0, 40_000, () => t)).toEqual({ posted: 1, failed: 0 });
+    expect((await listPosts('queued')).map((r) => r.body)).toEqual(['second']);
   });
 
   it('runDuePosts hands the provider the post with its images', async () => {

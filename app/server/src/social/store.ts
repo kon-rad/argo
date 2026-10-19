@@ -163,29 +163,39 @@ export async function cancelPost(id: number): Promise<boolean> {
   return (res.rowCount ?? 0) > 0;
 }
 
-export async function dueQueuedPosts(now: Date, limit = 10): Promise<QueuedPost[]> {
+/** Due posts without their image bytes; the scheduler loads those one post at a time (postMedia). */
+export async function dueQueuedPosts(now: Date, limit = 10): Promise<Omit<QueuedPost, 'media'>[]> {
   const { rows } = await query<{ id: number; account_id: number; body: string; attempt_count: number }>(
     `SELECT id, account_id, body, attempt_count FROM social_posts WHERE status = 'queued' AND scheduled_for <= $1 ORDER BY scheduled_for LIMIT $2`,
     [now, limit],
   );
-  if (rows.length === 0) return [];
-  const { rows: media } = await query<{ post_id: number; filename: string; content_type: PostMedia['contentType']; bytes: Buffer; alt_text: string }>(
-    `SELECT post_id, filename, content_type, bytes, alt_text FROM social_post_media WHERE post_id = ANY($1) ORDER BY post_id, position`,
-    [rows.map((r) => r.id)],
-  );
-  return rows.map((r) => ({
-    id: r.id,
-    accountId: r.account_id,
-    body: r.body,
-    media: media
-      .filter((m) => Number(m.post_id) === Number(r.id))
-      .map((m) => ({ filename: m.filename, contentType: m.content_type, bytes: m.bytes, altText: m.alt_text })),
-    attemptCount: r.attempt_count,
-  }));
+  return rows.map((r) => ({ id: r.id, accountId: r.account_id, body: r.body, attemptCount: r.attempt_count }));
 }
 
-export async function markPublishing(id: number): Promise<void> {
-  await query(`UPDATE social_posts SET status = 'publishing' WHERE id = $1`, [id]);
+export async function postMedia(postId: number): Promise<PostMedia[]> {
+  const { rows } = await query<{ filename: string; content_type: PostMedia['contentType']; bytes: Buffer; alt_text: string }>(
+    `SELECT filename, content_type, bytes, alt_text FROM social_post_media WHERE post_id = $1 ORDER BY position`,
+    [postId],
+  );
+  return rows.map((m) => ({ filename: m.filename, contentType: m.content_type, bytes: m.bytes, altText: m.alt_text }));
+}
+
+export async function markPublishing(id: number, now: Date): Promise<void> {
+  await query(`UPDATE social_posts SET status = 'publishing', publishing_started_at = $2 WHERE id = $1`, [id, now]);
+}
+
+/**
+ * A run killed mid-publish leaves its post in 'publishing'. After 15 minutes it
+ * is marked failed, not requeued: LinkedIn may already have it, and a second
+ * copy is worse than a post the owner has to check and requeue by hand.
+ */
+export async function failStalePublishing(now: Date): Promise<number> {
+  const res = await query(
+    `UPDATE social_posts SET status = 'failed', last_error = 'interrupted while publishing; check LinkedIn before queueing it again'
+     WHERE status = 'publishing' AND (publishing_started_at IS NULL OR publishing_started_at < $1::timestamptz - interval '15 minutes')`,
+    [now],
+  );
+  return res.rowCount ?? 0;
 }
 
 export async function markPosted(id: number, now: Date, remoteId: string, url: string | undefined): Promise<void> {

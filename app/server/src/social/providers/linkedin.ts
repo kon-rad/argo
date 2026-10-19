@@ -37,9 +37,10 @@ interface UserInfoResponse {
 
 // "little" text format: the Posts API reads these characters as markup and
 // drops or truncates text at an unescaped one, so commentary is escaped. A
-// #word after whitespace stays a real hashtag via the hashtag template.
+// #word (starting with a letter, after whitespace or an opening bracket)
+// stays a real hashtag via the hashtag template; "#1" stays plain text.
 // https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/little-text-format
-const LITTLE = /(?<![^\s])#([\p{L}\p{N}_]+)|[\\|{}@[\]()<>#*_~]/gu;
+const LITTLE = /(?<![^\s(])#(\p{L}[\p{L}\p{N}_]*)|[\\|{}@[\]()<>#*_~]/gu;
 
 export function toLittleText(text: string): string {
   return text.replace(LITTLE, (m: string, tag: string | undefined) =>
@@ -102,7 +103,7 @@ export function linkedinProvider(opts: LinkedInOptions, now: () => Date = () => 
       method: 'PUT',
       headers: { authorization: `Bearer ${account.accessToken}`, 'content-type': media.contentType },
       body: new Uint8Array(media.bytes),
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!put.ok) await failed(put, `image upload of ${media.filename}`);
     return value.image;

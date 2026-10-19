@@ -1,5 +1,5 @@
 import { log } from '../logger.js';
-import type { SocialProvider, StoredAccount } from './providers/types.js';
+import type { QueuedPost, SocialProvider, StoredAccount } from './providers/types.js';
 import { NoRefreshTokenError } from './providers/types.js';
 import {
   accountsNeedingReauth,
@@ -7,8 +7,10 @@ import {
   getAccount,
   markFailedOrRetry,
   markPosted,
+  failStalePublishing,
   markPublishing,
   markReauthNotified,
+  postMedia,
   updateAccountTokens,
 } from './store.js';
 
@@ -32,18 +34,31 @@ async function freshAccount(id: number, provider: SocialProvider, encKey: string
  * workflow engine — a cron-polled table, sized for a handful of posts a day
  * (see design doc §4 for why Temporal wasn't worth adopting here).
  */
-export async function runDuePosts(providers: Record<string, SocialProvider>, encKey: string | undefined, now = new Date()): Promise<{ posted: number; failed: number }> {
+export async function runDuePosts(
+  providers: Record<string, SocialProvider>,
+  encKey: string | undefined,
+  now = new Date(),
+  /** No new post starts after this many ms, so a pass with slow uploads ends before the next timer tick piles up. */
+  budgetMs = 40_000,
+  clock: () => number = Date.now,
+): Promise<{ posted: number; failed: number }> {
+  const stale = await failStalePublishing(now);
+  if (stale) log.error(`social: ${stale} post(s) were interrupted while publishing; marked failed`);
+  const started = clock();
   const due = await dueQueuedPosts(now);
   let posted = 0;
   let failed = 0;
-  for (const post of due) {
-    await markPublishing(post.id);
+  for (const queued of due) {
+    if (clock() - started > budgetMs) break; // the rest stay queued for the next run
+    await markPublishing(queued.id, now);
+    const post: QueuedPost = { ...queued, media: [] };
     try {
       const account = await getAccount(post.accountId, encKey);
       if (!account) throw new Error(`account ${post.accountId} not found or disconnected`);
       const provider = providers[account.provider];
       if (!provider) throw new Error(`no provider registered for ${account.provider}`);
       const fresh = await freshAccount(post.accountId, provider, encKey, now);
+      post.media = await postMedia(post.id);
       const result = await provider.publish(fresh, post);
       await markPosted(post.id, now, result.remoteId, result.url);
       posted++;

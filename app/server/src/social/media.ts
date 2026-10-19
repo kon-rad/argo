@@ -1,11 +1,17 @@
 import { basename } from 'node:path';
 import { HttpError } from '../routes/http.js';
+import { toLittleText } from './providers/linkedin.js';
 import type { PostMedia } from './providers/types.js';
 
 /** Our own cap, not LinkedIn's: matches the column CHECK and keeps a post's row small. */
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-/** LinkedIn's multi-image posts take up to 20. */
-export const MAX_IMAGES = 20;
+/**
+ * Our cap; LinkedIn takes up to 20. Four keeps one queue request (base64 adds a
+ * third) under the route's 30 MB JSON limit and one post's uploads well inside
+ * the timer run's budget.
+ */
+export const MAX_IMAGES = 4;
+export const MAX_BODY = 3000;
 export const MAX_ALT_TEXT = 1000;
 
 /** The type comes from the file's first bytes, never from its name. */
@@ -27,6 +33,12 @@ export function toPostMedia(filename: string, bytes: Buffer, altText: string): P
   if (!alt) throw new HttpError(400, `${name}: alt text is required`);
   if (alt.length > MAX_ALT_TEXT) throw new HttpError(400, `${name}: alt text is ${alt.length} characters, over ${MAX_ALT_TEXT}`);
   return { filename: name, contentType, bytes, altText: alt };
+}
+
+/** LinkedIn counts the escaped text, so a body near the limit is checked after escaping. */
+export function checkBodyLength(body: string): void {
+  const sent = toLittleText(body).length;
+  if (sent > MAX_BODY) throw new HttpError(400, `the post is ${sent} characters once escaped for LinkedIn (${body.length} as typed); ${MAX_BODY} at most`);
 }
 
 export function checkImageCount(n: number): void {
