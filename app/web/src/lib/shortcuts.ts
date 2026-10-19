@@ -45,13 +45,22 @@ export function isChord(event: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altK
   return event.ctrlKey && event.metaKey && !event.altKey;
 }
 
+type Press = Pick<KeyboardEvent, 'code' | 'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>;
+
+/**
+ * Whether a press is this key: by code, or else by the character typed. Synthetic
+ * input (wtype on the Pi, some Bluetooth keyboards) can carry a meaningless code.
+ */
+export function isKey(event: Pick<KeyboardEvent, 'code' | 'key'>, code: string): boolean {
+  if (event.code === code) return true;
+  const key = (event.key ?? '').toLowerCase();
+  return code === HELP_CODE ? key === '/' || key === '?' : key === code.replace(/^Key/, '').toLowerCase();
+}
+
 /** Where a key press goes, or null when it is not one of the shortcuts. */
-export function target(
-  event: Pick<KeyboardEvent, 'code' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>,
-  shortcuts: Shortcut[],
-): string | null {
+export function target(event: Press, shortcuts: Shortcut[]): string | null {
   if (!isChord(event)) return null;
-  const s = shortcuts.find((x) => x.code === event.code);
+  const s = shortcuts.find((x) => x.code === event.code) ?? shortcuts.find((x) => isKey(event, x.code));
   if (!s) return null;
   return event.shiftKey && s.kiosk ? s.kiosk : s.to;
 }

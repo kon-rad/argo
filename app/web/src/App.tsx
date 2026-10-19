@@ -26,7 +26,7 @@ import FriendlyButton from './components/FriendlyButton.js';
 import AgentToggle from './components/AgentToggle.js';
 import VoiceToggle from './components/VoiceToggle.js';
 import ShortcutsHelp from './components/ShortcutsHelp.js';
-import { available, HELP_CODE, isChord, target } from './lib/shortcuts.js';
+import { available, HELP_CODE, isChord, isKey, target } from './lib/shortcuts.js';
 
 const navClass = ({ isActive }: { isActive: boolean }): string =>
   `px-2 py-1 rounded ${isActive ? 'text-[var(--ink)] bg-[var(--paper-sunk)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
@@ -92,7 +92,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         return;
       }
       if (event.repeat || !isChord(event)) return;
-      if (event.code === HELP_CODE) {
+      if (isKey(event, HELP_CODE)) {
         event.preventDefault();
         setHelpOpen((o) => !o);
         return;

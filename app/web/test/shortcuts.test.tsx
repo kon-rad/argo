@@ -6,7 +6,7 @@ import App from '../src/App.js';
 import { available, SHORTCUTS, target } from '../src/lib/shortcuts.js';
 
 const press = (code: string, mods: Partial<KeyboardEvent> = {}) =>
-  ({ code, ctrlKey: true, metaKey: true, altKey: false, shiftKey: false, ...mods });
+  ({ code, key: code.replace(/^Key/, '').toLowerCase(), ctrlKey: true, metaKey: true, altKey: false, shiftKey: false, ...mods });
 
 describe('shortcut keys', () => {
   const all = available(new Set(['tv', 'agents', 'org', 'map', 'projects', 'usage', 'ring']));
@@ -20,6 +20,11 @@ describe('shortcut keys', () => {
   it('opens the full-screen view with Shift, where a page has one', () => {
     expect(target(press('KeyT', { shiftKey: true }), all)).toBe('/tv?kiosk=1');
     expect(target(press('KeyA', { shiftKey: true }), all)).toBe('/agents');
+  });
+
+  it('falls back to the typed letter when the code is wrong (wtype on the Pi)', () => {
+    expect(target(press('Escape', { key: 'a' }), all)).toBe('/agents');
+    expect(target(press('Escape', { key: 'T', shiftKey: true }), all)).toBe('/tv?kiosk=1');
   });
 
   it('needs both Ctrl and Meta, and leaves Ctrl+Alt to the Pi', () => {
