@@ -375,6 +375,35 @@ export interface OrgWakeRow {
   avg_minutes: number | null; last_wake: string | null;
 }
 export interface UsageHost { slug: string; display: string; kind: 'laptop' | 'server' | 'pi'; chip: string | null; notes: string | null }
+/** One row of /usage/agent-sessions: a session from any harness and host. `cost_usd` only for non-Claude harnesses (Hermes's own estimate). */
+export interface AgentSessionRow {
+  id: number; source: string; harness: string; profile: string | null; provider: string | null; host: string;
+  external_id: string; parent_external_id: string | null; project: string | null; title: string | null; first_prompt: string | null;
+  started_at: string | null; ended_at: string | null; steps: number; tool_calls: number; errors: number; subagents: number;
+  models: string[]; calls: number; input: number; cache_write: number; cache_read: number; output: number; reasoning: number;
+  cost_usd?: number | null;
+}
+export type AgentStepKind = 'prompt' | 'response' | 'thinking' | 'tool_call' | 'tool_result' | 'system' | 'meta';
+export interface AgentStep {
+  id: number; key: string; step: AgentStepKind; ts: string | null; text: string; length: number; truncated: boolean;
+  toolName: string | null; toolCallId: string | null; isError: boolean | null; subagent: string | null;
+  call: { model: string; input: number; cache_write: number; cache_read: number; output: number; reasoning: number } | null;
+}
+export interface AgentSessionRun {
+  run_id: string; agent_name: string | null; task_id: string | null; lane: string | null; started_at: string | null;
+  num_turns: number | null; subtype: string | null; verify_name: string | null; verify_passed: boolean | null;
+  verify_metric: number | null; verify_output: string | null;
+}
+export interface AgentSessionFilters {
+  harness?: string[]; host?: string[]; profile?: string[]; provider?: string[]; tool?: string[];
+  q?: string; errors?: boolean; subagents?: boolean;
+}
+export type AgentSessionFacets = Record<'harness' | 'host' | 'profile' | 'provider' | 'tool', Array<{ value: string; n: number }>>;
+const agentParams = (f: AgentSessionFilters): Params => ({
+  harness: f.harness?.join(','), host: f.host?.join(','), profile: f.profile?.join(','), provider: f.provider?.join(','),
+  tool: f.tool?.join(','), q: f.q, errors: f.errors ? '1' : undefined, subagents: f.subagents ? '1' : undefined,
+});
+
 export interface UsageMessage {
   id: number; seq: number; role: string; kind: string; ts: string | null; text: string; truncated: boolean; length: number;
   is_sidechain: boolean; call: { model: string; input: number; cache_write: number; cache_read: number; output: number; action?: string | null; tool?: string | null; run_id?: string | null } | null;
@@ -808,7 +837,13 @@ export const api = {
   usageSession: (host: string, externalId: string, source: string) =>
     request<{ session: UsageSessionRow; run: UsageRun | null; runs?: UsageRun[]; messages: UsageMessage[] }>(
       `/usage/sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}`, { source }),
-  usageMessage: (id: number) => request<{ id: number; raw: unknown }>(`/usage/messages/${id}`),
+  usageMessage: (id: number, full = false) => request<{ id: number; raw: unknown; text?: string }>(`/usage/messages/${id}`, { full: full ? '1' : undefined }),
+  agentSessions: (from: string, to: string, f: AgentSessionFilters = {}, offset = 0) =>
+    request<{ sessions: AgentSessionRow[]; total: number }>('/usage/agent-sessions', { from, to, offset, ...agentParams(f) }),
+  agentSessionFacets: (from: string, to: string) => request<{ facets: AgentSessionFacets }>('/usage/agent-sessions/facets', { from, to }),
+  agentSession: (host: string, externalId: string, source: string | null, offset = 0) =>
+    request<{ session: AgentSessionRow; runs: AgentSessionRun[]; steps: AgentStep[]; next: number | null }>(
+      `/usage/agent-sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}`, { source: source ?? undefined, offset }),
   usageRuns: (from: string, to: string, f: UsageFilters = {}) => request<{ runs: UsageRun[] }>('/usage/runs', { from, to, ...usageFilterParams(f) }),
   usageOrgWakes: (from: string, to: string) => request<{ agents: OrgWakeRow[] }>('/usage/org-wakes', { from, to }),
 };
