@@ -20,8 +20,17 @@ same way guard.py finds it):
 
   "devlog": {
     "roots":  ["Areas/app/*"],          # globs; <root>/**/dev-log/YYYY-MM-DD*.md counts
-    "exempt": [".agents/memory/"]       # path prefixes that are never watched
+    "exempt": [".agents/memory/"],      # path prefixes that are never watched
+    "experience": {                     # optional: an experience library for harness changes
+      "dir":   "Projects/harness/experience",   # <dir>/YYYY-MM-DD*.md counts
+      "watch": ["AGENTS.local.md"]              # prefixes watched on top of the harness paths
+    }
   }
+
+With "experience" set, a session that changed harness files must also write an
+entry in that folder (the run that showed the problem, the change, the run that
+showed it worked), so the next agent editing the harness can read why. Same
+one-shot nudge as the dev log; both reasons go out in one message.
 """
 import glob
 import json
@@ -38,6 +47,7 @@ WATCHED = re.compile(
 )
 DEFAULT_ROOTS = ["Projects/*"]
 RECENT_SECONDS = 6 * 3600
+DATED_MD = r"/\d{4}-\d{2}-\d{2}[^/]*\.md$"
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
 REASON = (
@@ -46,6 +56,12 @@ REASON = (
     "(what changed and why, how it was tested with real results), update the ## Resume block in "
     "that project's dev-log/README.md{index} (AGENTS.md, 'Dev logs and feature docs'). "
     "If this change truly needs no dev log, say why in one line and finish."
+)
+EXPERIENCE_REASON = (
+    "experience gate: this session changed how agents work ({files}) but added no entry to {dir}/. "
+    "Before finishing: add {dir}/YYYY-MM-DD_<slug>.md from its _template.md (the run that showed the "
+    "problem, the change, the run that showed it worked or 'not yet', the lesson, applies when) and a "
+    "line in its index.md. If this change needs no entry, say why in one line and finish."
 )
 
 
@@ -73,8 +89,8 @@ def claude_changed_paths(transcript_path: str):
 
 
 def load_settings(payload: dict):
-    """Dev-log roots and exempt prefixes: the defaults plus the vault's guard.local.json."""
-    roots, exempt = list(DEFAULT_ROOTS), []
+    """Dev-log roots, exempt prefixes and the experience library: defaults plus the vault's guard.local.json."""
+    roots, exempt, experience = list(DEFAULT_ROOTS), [], None
     path = find_local_rules(payload)
     try:
         with open(path) as f:
@@ -86,7 +102,11 @@ def load_settings(payload: dict):
             items = section.get(key)
             if isinstance(items, list):
                 out.extend(i.strip("/") for i in items if isinstance(i, str) and i.strip("/"))
-    return roots, exempt
+        exp = section.get("experience")
+        if isinstance(exp, dict) and isinstance(exp.get("dir"), str) and exp["dir"].strip("/"):
+            watch = exp.get("watch") if isinstance(exp.get("watch"), list) else []
+            experience = (exp["dir"].strip("/"), [w for w in watch if isinstance(w, str) and w.strip("/")])
+    return roots, exempt, experience
 
 
 def devlog_pattern(roots):
@@ -137,21 +157,42 @@ def main():
             sys.exit(0)
         changed = list(extra.get("changed_paths") or [])
 
-    roots, prefixes = load_settings(payload)
+    roots, prefixes, experience = load_settings(payload)
     devlog, exempt = devlog_pattern(roots), exempt_pattern(prefixes)
-    watched = sorted({os.path.relpath(p, vault_root(payload.get("cwd") or "")) if os.path.isabs(p) else p
-                      for p in changed if WATCHED.search(p) and not (exempt and exempt.search(p))})
+    root = vault_root(payload.get("cwd") or "")
+    rel = lambda p: os.path.relpath(p, root) if os.path.isabs(p) else p  # noqa: E731
+    watched = sorted({rel(p) for p in changed if WATCHED.search(p) and not (exempt and exempt.search(p))})
     wrote_devlog = any(devlog.search(p) for p in changed)
+
+    reasons = []
+    if experience:
+        exp_dir, watch_extra = experience
+        entry = re.compile(r"(?:^|/)" + re.escape(exp_dir) + DATED_MD)
+        extra_rx = re.compile(r"^(?:" + "|".join(re.escape(w) for w in watch_extra) + r")") if watch_extra else None
+        exp_watched = sorted({rel(p) for p in changed
+                              if (WATCHED.search(p) or (extra_rx and extra_rx.search(rel(p))))
+                              and not (exempt and exempt.search(p)) and not entry.search(p)})
+        wrote_entry = any(entry.search(p) for p in changed)
+        if not claude and not wrote_entry:
+            now = time.time()
+            wrote_entry = any(now - os.path.getmtime(p) < RECENT_SECONDS
+                              for p in glob.glob(os.path.join(root, exp_dir, "*.md")) if entry.search(p))
+        if exp_watched and not wrote_entry:
+            shown = ", ".join(exp_watched[:4]) + (f" +{len(exp_watched) - 4} more" if len(exp_watched) > 4 else "")
+            reasons.append(EXPERIENCE_REASON.format(files=shown, dir=exp_dir))
 
     # Claude's transcript covers the whole session. Hermes only reports this
     # turn's edits, so a dev log written in an earlier turn counts if it's recent.
     if not claude and not wrote_devlog:
-        wrote_devlog = recent_devlog_on_disk(vault_root(payload.get("cwd") or ""), roots, devlog)
+        wrote_devlog = recent_devlog_on_disk(root, roots, devlog)
 
     if watched and not wrote_devlog:
         shown = ", ".join(watched[:4]) + (f" +{len(watched) - 4} more" if len(watched) > 4 else "")
         index = os.environ.get("DEV_LOG_INDEX")
-        reason = REASON.format(files=shown, index=f", and link new projects from {index}" if index else "")
+        reasons.insert(0, REASON.format(files=shown, index=f", and link new projects from {index}" if index else ""))
+
+    if reasons:
+        reason = "\n\n".join(reasons)
         if claude:
             print(reason, file=sys.stderr)
             sys.exit(2)

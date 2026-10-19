@@ -97,3 +97,65 @@ def test_local_devlog_exempt_paths_are_not_watched(tmp_path):
 def test_broken_devlog_section_keeps_defaults(tmp_path):
     env = local_file(tmp_path, {"devlog": {"roots": "nope", "exempt": [3]}})
     assert json.loads(run(hermes([".agents/hooks/guard.py"]), env).stdout)["decision"] == "block"
+
+
+EXP = {"devlog": {"experience": {"dir": "Projects/h/experience", "watch": ["AGENTS.local.md"]}}}
+
+
+def test_experience_off_by_default():
+    p = run(hermes([".agents/hooks/guard.py", "Projects/x/dev-log/2026-10-19_y.md"]))
+    assert json.loads(p.stdout) == {}
+
+
+def test_harness_change_needs_an_experience_entry(tmp_path):
+    env = local_file(tmp_path, EXP)
+    p = run(hermes([".agents/skills/x/SKILL.md", "Projects/x/dev-log/2026-10-19_y.md"]), env)
+    reason = json.loads(p.stdout)["reason"]
+    assert reason.startswith("experience gate:") and "Projects/h/experience/" in reason
+    assert "devlog gate" not in reason
+    p = run(hermes([".agents/skills/x/SKILL.md", "Projects/x/dev-log/2026-10-19_y.md",
+                    "Projects/h/experience/2026-10-19_x.md"]), env)
+    assert json.loads(p.stdout) == {}
+
+
+def test_both_reasons_in_one_message(tmp_path):
+    env = local_file(tmp_path, EXP)
+    reason = json.loads(run(hermes([".agents/hooks/guard.py"]), env).stdout)["reason"]
+    assert reason.startswith("devlog gate:") and "\n\nexperience gate:" in reason
+
+
+def test_experience_watch_prefixes_and_undated_files(tmp_path):
+    env = local_file(tmp_path, EXP)
+    p = run(hermes(["AGENTS.local.md"]), env)
+    assert "experience gate" in json.loads(p.stdout)["reason"]
+    # index.md and README.md in the library are not entries
+    p = run(hermes(["AGENTS.local.md", "Projects/h/experience/index.md"]), env)
+    assert "experience gate" in json.loads(p.stdout)["reason"]
+    # notes elsewhere are never watched
+    assert json.loads(run(hermes(["Areas/notes/a.md"]), env).stdout) == {}
+
+
+def test_experience_entry_found_on_disk_for_hermes(tmp_path):
+    vault = tmp_path / "vault"
+    (vault / "Projects" / "h" / "experience").mkdir(parents=True)
+    (vault / "AGENTS.md").write_text("x")
+    (vault / "Projects" / "h" / "experience" / "2026-10-19_x.md").write_text("entry")
+    env = local_file(tmp_path, EXP)
+    p = run(hermes(["AGENTS.local.md"], cwd=str(vault)), env)
+    assert json.loads(p.stdout) == {}
+
+
+def test_claude_stop_asks_for_experience_entry(tmp_path):
+    t = tmp_path / "t.jsonl"
+    edits = [".agents/skills/x/SKILL.md", "Projects/x/dev-log/2026-10-19_y.md"]
+    t.write_text("\n".join(json.dumps({"message": {"content": [
+        {"type": "tool_use", "name": "Write", "input": {"file_path": f}}]}}) for f in edits) + "\n")
+    env = local_file(tmp_path, EXP)
+    p = run({"hook_event_name": "Stop", "transcript_path": str(t), "stop_hook_active": False}, env)
+    assert p.returncode == 2 and "experience gate" in p.stderr
+
+
+def test_broken_experience_section_is_ignored(tmp_path):
+    env = local_file(tmp_path, {"devlog": {"experience": {"dir": 5}}})
+    p = run(hermes([".agents/skills/x/SKILL.md", "Projects/x/dev-log/2026-10-19_y.md"]), env)
+    assert json.loads(p.stdout) == {}

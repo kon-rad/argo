@@ -41,7 +41,8 @@ Shell commands are split on `;`, `&&`, `||`, pipes, newlines and `$(`, and each 
   "disable":        ["rsync_dry_run"],
   "devlog": {
     "roots":  ["Areas/app/*"],
-    "exempt": [".agents/memory/"]
+    "exempt": [".agents/memory/"],
+    "experience": { "dir": "Projects/harness/experience", "watch": ["AGENTS.local.md"] }
   }
 }
 ```
@@ -54,6 +55,7 @@ Shell commands are split on `;`, `&&`, `||`, pipes, newlines and `$(`, and each 
 | `disable` | Built-in rules to switch off. Only `rsync_dry_run` can be |
 | `devlog.roots` | Extra places where dev logs count (globs; `<root>/**/dev-log/YYYY-MM-DD*.md`) |
 | `devlog.exempt` | Path prefixes the dev-log gate never watches |
+| `devlog.experience` | Optional experience library: a session that changed watched files (plus the `watch` prefixes) must also add `<dir>/YYYY-MM-DD*.md`. Off when unset |
 
 The guard finds the file at `$SB_GUARD_LOCAL`, then next to the vault that holds the engine, then under `$CLAUDE_PROJECT_DIR`, then in the first parent of the working directory that has one. A missing or broken file means built-in rules only.
 
@@ -67,6 +69,7 @@ When an agent tries to finish (Claude Code `Stop`, Hermes `pre_verify`), the gat
 | Counts as a dev log | `Projects/*/**/dev-log/YYYY-MM-DD*.md`, plus any `devlog.roots` you add |
 | Index to link from | `DEV_LOG_INDEX` in your `.env`, if set |
 | One-shot | A second attempt always passes (Claude's `stop_hook_active`, Hermes's `attempt > 0`) |
+| Experience entry | Only with `devlog.experience`: a dated entry in that folder, which records the run that showed the problem, the change, and the run that showed it worked. Both reasons go out in one message |
 
 The point is a record a person can read: what changed, why, how it was tested. The `AGENTS.base.md` rules describe the expected dev-log layout.
 

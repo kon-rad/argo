@@ -114,7 +114,7 @@ Every agent runs the same guard, `.secondbrain/harness/hooks/guard.py`, before s
 | Secrets into context | Printing or copying `.env` files; file-tool reads of `.env`, `auth.json`, `.credentials.json` |
 | Deploy without a dry run | `rsync --delete` without `-n`/`--dry-run`, unless `.agents/guard.local.json` has `"disable": ["rsync_dry_run"]` |
 | Force push | `git push --force`, `-f`, `--force-with-lease`, `+branch` |
-| Vault-specific rules | Whatever `.agents/guard.local.json` lists: protected directories, paths that must not be deleted, read-only files. Its `devlog` section adds dev-log roots beyond `Projects/*` and paths the dev-log gate ignores |
+| Vault-specific rules | Whatever `.agents/guard.local.json` lists: protected directories, paths that must not be deleted, read-only files. Its `devlog` section adds dev-log roots beyond `Projects/*`, paths the dev-log gate ignores, and an optional experience library that harness changes must add an entry to |
 
 The guard covers agent tools only; a script you write can still read what the Unix user can.
 
