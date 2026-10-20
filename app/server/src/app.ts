@@ -12,6 +12,7 @@ import { b2Router, type B2Options } from './routes/b2.js';
 import { errorHandlerFor } from './routes/http.js';
 import { databaseRouter } from './routes/database.js';
 import { fileRouter } from './routes/file.js';
+import { ingestRouter } from './routes/ingest.js';
 import { hubRouter, type HubOptions } from './routes/hub.js';
 import { mapRouter } from './routes/map.js';
 import { mediaRouter } from './routes/media.js';
@@ -104,6 +105,9 @@ export function createApp(opts: AppOptions = {}): express.Express {
   // Saving a note carries the whole file; everything else stays at 1 MB. The
   // second parser skips a body the first has already read.
   app.use('/api/file/source', express.json({ limit: '6mb' }));
+  // Each machine's agent ledger syncs here with a device token, no session (usage module). Mounted
+  // ahead of the global parser: the router checks the token before it reads its large body.
+  if (modules.has('usage')) app.use('/api/ingest', ingestRouter());
   // A queued social post carries its images as base64 (4 x 5 MB at most). Like the
   // note saver above, it parses before the session check, which still refuses it.
   app.use('/api/social/posts', express.json({ limit: '30mb' }));

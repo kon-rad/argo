@@ -85,6 +85,22 @@ describe('runArchive', () => {
     expect(uploads[0]).toContain('archives/hermes/mac-user/state/2026-09-30.sqlite.gz');
   });
 
+  it('reads the Hermes plugin\'s per-request calls from both Mac homes', async () => {
+    const uh = join(root, 'user-hermes');
+    mkdirSync(join(uh, 'usage'), { recursive: true });
+    hermesDb(join(uh, 'state.db'), 1);
+    mkdirSync(join(deps.paths.hermesHome, 'usage'), { recursive: true });
+    const line = (sid: string, req: string) => JSON.stringify({ v: 1, kind: 'main', ts: '2026-09-30T10:00:00+00:00', session_id: sid,
+      api_request_id: req, provider: 'openrouter', model: 'm', input: 5, output: 1, cache_read: 0, cache_write: 0, reasoning: 0 }) + '\n';
+    writeFileSync(join(deps.paths.hermesHome, 'usage', 'calls-2026-09-30.jsonl'), line('h1', 'r-vault'));
+    writeFileSync(join(uh, 'usage', 'calls-2026-09-30.jsonl'), line('h9', 'r-user'));
+    deps.paths.hermesUserHome = uh;
+    const s = (await runArchive(deps))!;
+    expect(s.hermesCalls).toBe(2);
+    const { rows } = await query(`SELECT source, host, call_id FROM usage_calls ORDER BY call_id`);
+    expect(rows).toEqual([{ source: 'hermes:user', host: 'mac', call_id: 'r-user' }, { source: 'hermes', host: 'mac', call_id: 'r-vault' }]);
+  });
+
   it('ignores a user home that is the main home', async () => {
     deps.paths.hermesUserHome = deps.paths.hermesHome;
     const s = (await runArchive(deps))!;

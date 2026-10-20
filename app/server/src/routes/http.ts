@@ -13,12 +13,16 @@ export class HttpError extends Error {
   }
 }
 
-/** Express 5 forwards rejected promises, but only from a handler it can see. */
+/**
+ * Express 5 forwards rejected promises, but only from a handler it can see.
+ * `passOn`: a middleware step that calls next() once `fn` resolves.
+ */
 export function wrap(
   fn: (req: Request, res: Response) => Promise<unknown>,
+  passOn = false,
 ): RequestHandler {
   return (req, res, next) => {
-    fn(req, res).catch(next);
+    fn(req, res).then(() => { if (passOn) next(); }, next);
   };
 }
 

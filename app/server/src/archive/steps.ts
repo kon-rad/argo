@@ -46,6 +46,12 @@ function hermesCalls(v: unknown): HermesCall[] {
   });
 }
 
+/** A stored Hermes assistant row's tool-call ids and text, for matching it to the call that produced it; null otherwise. */
+export function hermesResponse(raw: unknown): { toolCallIds: string[]; content: string | null } | null {
+  if (!isObj(raw) || !isHermes(raw) || raw.role !== 'assistant') return null;
+  return { toolCallIds: hermesCalls(raw.tool_calls).map((c) => c.id).filter((id): id is string => !!id), content: str(raw.content) };
+}
+
 function claudeBlocks(raw: Obj): Obj[] {
   const c = raw.message?.content;
   if (typeof c === 'string') return [{ type: 'text', text: c }];

@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db.js';
 import { redactor } from '../archive/redact.js';
-import { expandSteps, type StepPart } from '../archive/steps.js';
+import { expandSteps, hermesResponse, type StepPart } from '../archive/steps.js';
+import { hermesMatchKey } from '../usage/hermesCalls.js';
 import { HttpError, parseOr400, wrap } from './http.js';
 
 /**
@@ -122,6 +123,50 @@ export interface StepOut extends Omit<StepPart, 'text'> {
   call: { model: string; input: number; cache_write: number; cache_read: number; output: number; reasoning: number } | null;
 }
 
+type CallJson = NonNullable<StepOut['call']>;
+
+/**
+ * Hermes calls come from the usage-ledger plugin, keyed by the response's tool-call ids or a hash of its
+ * text (hermesMatchKey). Matching runs over the whole session, not the page, so a call lands on one response
+ * only: each stored assistant row takes the call with its key, nearest in time when the key repeats; a row
+ * with no keyed call (text Hermes rewrote, or redaction changed) takes the nearest unused main call that ended
+ * within two minutes before it. Calls left over (side tasks) only count in the totals.
+ */
+async function attachHermesCalls(rootId: number, rows: Array<{ id: number; call: StepOut['call'] }>): Promise<void> {
+  const { rows: calls } = await query<{ id: number; ts: Date; match_key: string | null; aux: boolean } & CallJson>(
+    `SELECT u.id, u.ts, u.match_key, coalesce(u.entrypoint LIKE 'aux:%', false) AS aux, u.model,
+            u.input_tokens::float8 AS input, u.cache_write_tokens::float8 AS cache_write, u.cache_read_tokens::float8 AS cache_read,
+            u.output_tokens::float8 AS output, u.thinking_tokens::float8 AS reasoning
+     FROM archive_sessions a JOIN usage_calls u ON u.host = a.host AND u.source = a.source AND u.session_external_id = a.external_id
+     WHERE a.id = $1 ORDER BY u.ts`, [rootId]);
+  if (!calls.length) return;
+  // Only what matching needs from each assistant row, never the whole raw JSON.
+  const { rows: answers } = await query<{ id: number; ts: Date | null; raw: unknown }>(
+    `SELECT m.id, m.ts, jsonb_build_object('role', m.raw -> 'role', 'session_id', m.raw -> 'session_id',
+              'content', m.raw -> 'content', 'tool_calls', m.raw -> 'tool_calls') AS raw
+     FROM archive_messages m WHERE m.session_id = $1 AND m.raw ->> 'role' = 'assistant' ORDER BY m.ts, m.seq`, [rootId]);
+  const used = new Set<number>();
+  const byRow = new Map<number, CallJson>();
+  const chip = (c: (typeof calls)[number]): CallJson =>
+    ({ model: c.model, input: c.input, cache_write: c.cache_write, cache_read: c.cache_read, output: c.output, reasoning: c.reasoning });
+  const nearest = (list: typeof calls, at: number) =>
+    list.reduce<(typeof calls)[number] | null>((best, c) => (!best || Math.abs(c.ts.getTime() - at) < Math.abs(best.ts.getTime() - at) ? c : best), null);
+  const pending: Array<{ id: number; at: number }> = [];
+  for (const a of answers) {
+    const resp = hermesResponse(a.raw);
+    if (!resp || !a.ts) continue;
+    const at = new Date(a.ts).getTime();
+    const key = hermesMatchKey(resp.toolCallIds, resp.content);
+    const hit = key ? nearest(calls.filter((c) => c.match_key === key && !used.has(c.id)), at) : null;
+    if (hit) { used.add(hit.id); byRow.set(a.id, chip(hit)); } else pending.push({ id: a.id, at });
+  }
+  for (const { id, at } of pending) {
+    const hit = nearest(calls.filter((c) => !c.aux && !used.has(c.id) && c.ts.getTime() <= at + 5_000 && at - c.ts.getTime() <= 120_000), at);
+    if (hit) { used.add(hit.id); byRow.set(id, chip(hit)); }
+  }
+  for (const r of rows) { const c = byRow.get(r.id); if (c) r.call = c; }
+}
+
 export function agentSessionsRouter(): Router {
   const router = Router();
 
@@ -182,6 +227,7 @@ export function agentSessionsRouter(): Router {
        ORDER BY m.ts NULLS FIRST, f.own DESC, m.session_id, m.seq
        OFFSET $3 LIMIT $4`, [rootId, q.meta, q.offset, q.limit + 1]);
     const more = rows.length > q.limit;
+    if (session.harness === 'hermes') await attachHermesCalls(rootId, rows);
     const steps: StepOut[] = [];
     for (const r of rows.slice(0, q.limit)) {
       const parts = expandSteps({ id: r.id, role: r.role, kind: r.kind, ts: r.ts, raw: r.raw, text: r.text ?? '' });

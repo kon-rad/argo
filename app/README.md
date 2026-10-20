@@ -144,12 +144,33 @@ Everything beyond browse, search and the database page is a module. A module tha
 | `agents` | Agents and Cron pages over an agent-hub (kanban, Claude chats, Hermes history) |
 | `projects` | A project tracker (divisions, projects, features, verifications) on `/projects`, `cli-projects`, a kiosk feed and a rendered markdown report |
 | `org` | An agent company's message board on `/org` (`cli-org`): channels, DMs, wakeups for a dispatcher, row-level security per agent |
-| `usage` | A ledger of Claude Code and Hermes usage on `/usage`, with plan percentages and API credit balances |
+| `usage` | A ledger of Claude Code and Hermes usage on `/usage`, with plan percentages and API credit balances; also the ingest route each machine's agent ledger syncs to (below) |
 | `map` | A 3D brain map of the vault on `/map`, with a lean kiosk view and daily metrics |
 | `tv` | A player for rendered video episodes kept in the vault, on `/tv` |
 | `voice` | Read a note aloud through a local speech server (never on a server) |
 | `livestream` | A minute poller of your YouTube, Twitch and Kick channels and a public summary JSON |
 | `media` | A gallery of every image, video and audio file in the vault on `/media`, with a lightbox player; `.b2.md` stubs play from B2 where the original isn't on disk |
+
+### Agent ledger (every machine that runs agents)
+
+Each machine that runs Claude Code or Hermes keeps its own record of every turn (prompts, responses, thinking, tool calls and results, tokens, model, provider) in a local SQLite file, and syncs it to the server when it can reach it. Offline, nothing is lost: rows wait locally until the server confirms them. It runs on macOS, Linux and Windows with Node 22.5 or later and nothing else.
+
+```bash
+# On the server (usage module on): a token for the machine, shown once
+secondbrain ingest-device add laptop-2 --display "Second laptop" --kind laptop
+# Build the one-file bundle, copy it to the machine, install it there
+app/bin/build-ledger.sh            # -> server/dist/ledger/ledger.mjs
+node --no-warnings ledger.mjs install --server https://brain.example.com --token sbd_… --host laptop-2
+node --no-warnings ledger.mjs status
+```
+
+`install` writes `ledger.json` (0600, it holds the token) next to `ledger.db` in the OS data folder (macOS `~/Library/Application Support/secondbrain`, Linux `$XDG_DATA_HOME/secondbrain`, Windows `%LOCALAPPDATA%\secondbrain`; `SB_LEDGER_DIR` overrides) and schedules `ledger run` every two minutes (launchd, a systemd user timer, or Task Scheduler). Options: `--hermes <dir>[=<label>]` for each Hermes home (default `~/.hermes`), `--claude-dir`, `--redact-env <file>` (repeatable) for env files whose secret-named values are removed before anything leaves the machine (the server only knows its own keys; an unreadable file stops the sync rather than send unredacted), `--retain-days N` to drop synced turns older than N days on a small disk, `--proxy` for the capture proxy. `SB_LEDGER_TOKEN` overrides the stored token.
+
+**Capture proxy (optional).** Claude Code doesn't write its system prompt or tool definitions to disk. With `--proxy`, a local pass-through proxy runs as a service and `env.ANTHROPIC_BASE_URL` in `~/.claude/settings.json` points new Claude Code sessions at it: it forwards every request unchanged, never records headers, and keeps each Messages call with the system prompt, tools and messages stored once by hash. If it stops answering, the next `ledger run` takes Claude Code off it; `ledger proxy-off` does that by hand.
+
+**Hermes tokens per request.** Hermes keeps only session totals. The plugin in `harness/hermes/usage-ledger/` appends one JSON line per model request (tokens, model, provider, timing, and a match key: the response's tool-call ids or a hash of its text, never the text) to `<hermes home>/usage/calls-YYYY-MM-DD.jsonl`. Install it in every home and profile with `harness/hermes/install-usage-ledger.sh <hermes-home>...`, then restart the gateway. The ledger, `secondbrain agents-sync` and the Mac archive run read those files into `usage_calls` (source `hermes` or `hermes:<profile>`), and the session view puts each call's tokens on the response it made. Usage totals still take Hermes from its own session counters. Known gaps: Hermes runs one hook per turn at a time, so a second side call finishing at the same moment in the same turn is skipped (Hermes logs a warning); side calls with no session (idle gateway work) are not recorded. With `--proxy`, the ledger syncs only when `--redact-env` is set, because proxy captures are stored by content hash and can't be redacted afterwards.
+
+Upgrade the server before the machines: a ledger newer than the server may send rows the server doesn't know yet; they are kept and retried (`ledger requeue` retries them at once).
 
 ### `secondbrain.json`
 
