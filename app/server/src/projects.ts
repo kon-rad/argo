@@ -332,6 +332,71 @@ export async function addVerification(
   return rows[0]!.id;
 }
 
+/**
+ * Hides a project or one of its features from the default board. Nothing is
+ * deleted: rows, features, verifications and stage history stay, and
+ * `restoreItem` undoes it. Archiving a project does not touch its features'
+ * own flags, so restoring the project brings back exactly what was visible.
+ * Every call writes an `archive_events` row (the audit trail).
+ */
+export async function archiveItem(
+  projectSlug: string,
+  featureSlug: string | null,
+  by: string,
+  reason: string,
+): Promise<void> {
+  const why = Text.max(500).parse(reason);
+  await setArchived(projectSlug, featureSlug, true, by, why);
+}
+
+export async function restoreItem(
+  projectSlug: string,
+  featureSlug: string | null,
+  by: string,
+  note?: string | null,
+): Promise<void> {
+  await setArchived(projectSlug, featureSlug, false, by, note ? Text.max(500).parse(note) : null);
+}
+
+async function setArchived(
+  projectSlug: string,
+  featureSlug: string | null,
+  archived: boolean,
+  by: string,
+  reason: string | null,
+): Promise<void> {
+  Slug.parse(projectSlug);
+  if (featureSlug) Slug.parse(featureSlug);
+  const verb = archived ? 'archive' : 'restore';
+  const ref = featureSlug ? `${projectSlug}/${featureSlug}` : projectSlug;
+  await withTransaction(async (tx) => {
+    const proj = await tx.query<{ archived: boolean }>(`SELECT archived FROM projects WHERE slug = $1 FOR UPDATE`, [projectSlug]);
+    if (!proj.rows[0]) throw new TrackerError(`no project "${projectSlug}"`, 404);
+    let featureId: number | null = null;
+    let current = proj.rows[0].archived;
+    if (featureSlug) {
+      const f = await tx.query<{ id: number; archived: boolean }>(
+        `SELECT id, archived FROM features WHERE project_slug = $1 AND slug = $2 FOR UPDATE`,
+        [projectSlug, featureSlug],
+      );
+      if (!f.rows[0]) throw new TrackerError(`no feature "${ref}"`, 404);
+      featureId = Number(f.rows[0].id);
+      if (!archived && proj.rows[0].archived) {
+        throw new TrackerError(`can't restore ${ref} while ${projectSlug} is archived; restore the project first`, 409);
+      }
+      current = f.rows[0].archived;
+    }
+    if (current === archived) throw new TrackerError(`${ref} is ${archived ? 'already archived' : 'not archived'}`, 409);
+    const set = `archived = $2, archived_at = ${archived ? 'now()' : 'NULL'}, archived_by = ${archived ? '$3' : 'NULL'}, updated_at = now(), updated_by = $3`;
+    if (featureId !== null) await tx.query(`UPDATE features SET ${set} WHERE id = $1`, [featureId, archived, by]);
+    else await tx.query(`UPDATE projects SET ${set} WHERE slug = $1`, [projectSlug, archived, by]);
+    await tx.query(
+      `INSERT INTO archive_events (project_slug, feature_id, action, reason, by) VALUES ($1,$2,$3,$4,$5)`,
+      [projectSlug, featureId, verb, reason, by],
+    );
+  });
+}
+
 /** Idempotent: re-importing the same file changes nothing but updated_at. */
 export async function importSeed(raw: unknown, by: string): Promise<{ teams: number; projects: number; features: number }> {
   const seed = Seed.parse(raw);
@@ -381,6 +446,10 @@ export interface FeatureView {
   last_activity: string;
   verification: Verification | null;
   verifications_total: number;
+  archived: boolean;
+  archived_at: string | null;
+  archived_by: string | null;
+  archived_reason: string | null;
 }
 
 export interface ProjectView {
@@ -409,6 +478,10 @@ export interface ProjectView {
   counts: Record<Stage, number>;
   /** Shipped (live + done) over every feature that isn't parked. */
   progress: number | null;
+  archived: boolean;
+  archived_at: string | null;
+  archived_by: string | null;
+  archived_reason: string | null;
 }
 
 export interface DivisionView {
@@ -511,12 +584,17 @@ export function parseGoals(markdown: string): Goal[] {
   return goals;
 }
 
-export async function getBoard(vaultRoot: string, now = new Date()): Promise<Board> {
-  const [divisions, teams, projects, features, verifs, moves, recent] = await Promise.all([
+/**
+ * The board. Archived projects, and archived features of live projects, are
+ * left out unless `includeArchived` is set (then they carry `archived: true`).
+ */
+export async function getBoard(vaultRoot: string, now = new Date(), opts: { includeArchived?: boolean } = {}): Promise<Board> {
+  const withArchived = Boolean(opts.includeArchived);
+  const [divisions, teams, projects, features, verifs, moves, recent, archiveLog] = await Promise.all([
     query(`SELECT slug, name, mission, head FROM divisions ORDER BY sort, slug`),
     query(`SELECT slug, name, mission, lead, members FROM teams ORDER BY sort, slug`),
-    query(`SELECT * FROM projects ORDER BY priority NULLS LAST, slug`),
-    query(`SELECT * FROM features ORDER BY project_slug, sort, id`),
+    query(`SELECT * FROM projects ${withArchived ? '' : 'WHERE NOT archived'} ORDER BY priority NULLS LAST, slug`),
+    query(`SELECT * FROM features ${withArchived ? '' : 'WHERE NOT archived'} ORDER BY project_slug, sort, id`),
     query(
       `SELECT DISTINCT ON (feature_id) feature_id, kind, check_run, result, evidence, at, by,
               count(*) OVER (PARTITION BY feature_id) AS total
@@ -532,7 +610,15 @@ export async function getBoard(vaultRoot: string, now = new Date()): Promise<Boa
         WHERE s.at > $1 AND coalesce(s.note, '') NOT LIKE 'imported%' ORDER BY s.at DESC LIMIT 50`,
       [new Date(now.getTime() - 7 * 86_400_000)],
     ),
+    withArchived
+      ? query(
+          `SELECT DISTINCT ON (project_slug, feature_id) project_slug, feature_id, action, reason
+             FROM archive_events ORDER BY project_slug, feature_id, at DESC, id DESC`,
+        )
+      : Promise.resolve({ rows: [] as Record<string, any>[] }),
   ]);
+  const archiveReason = new Map<string, string | null>();
+  for (const r of archiveLog.rows) if (r.action === 'archive') archiveReason.set(`${r.project_slug}:${r.feature_id ?? ''}`, r.reason);
 
   const lastMove = new Map<string, string>();
   for (const r of moves.rows) lastMove.set(`${r.project_slug}:${r.feature_id ?? ''}`, iso(r.at));
@@ -555,6 +641,8 @@ export async function getBoard(vaultRoot: string, now = new Date()): Promise<Boa
       days_in_stage: daysBetween(moved, now), last_activity: activity,
       verification: v ? { kind: v.kind, check: v.check, result: v.result, evidence: v.evidence, at: v.at, by: v.by } : null,
       verifications_total: v?.total ?? 0,
+      archived: Boolean(f.archived), archived_at: f.archived_at ? iso(f.archived_at) : null, archived_by: f.archived_by ?? null,
+      archived_reason: archiveReason.get(`${f.project_slug}:${f.id}`) ?? null,
     };
     const list = byProject.get(f.project_slug) ?? [];
     list.push(view);
@@ -574,6 +662,8 @@ export async function getBoard(vaultRoot: string, now = new Date()): Promise<Boa
       days_in_stage: daysBetween(lastMove.get(`${p.slug}:`) ?? iso(p.created_at), now),
       next_action: nextActionFrom(readVault(vaultRoot, p.devlog_path) ?? ''),
       features: fs, counts, progress: denom > 0 ? (counts.live + counts.done) / denom : null,
+      archived: Boolean(p.archived), archived_at: p.archived_at ? iso(p.archived_at) : null, archived_by: p.archived_by ?? null,
+      archived_reason: archiveReason.get(`${p.slug}:`) ?? null,
     };
   });
 
@@ -637,12 +727,27 @@ export interface Report {
   shipped_7d: Item[];
   verified_7d: { pass: number; fail: number };
   projects: ProjectView[];
+  /** Archived projects and features: listed in a collapsed footer, left out of every count above. */
+  archived: (Item & { archived_at: string | null; archived_by: string | null })[];
 }
 
 const OPEN_GOAL = (g: Goal): boolean => !/^(done|cancelled)/i.test(g.status) && g.horizon !== '' && !g.code.startsWith('T');
 
 export async function buildReport(vaultRoot: string, now = new Date()): Promise<Report> {
-  const board = await getBoard(vaultRoot, now);
+  const full = await getBoard(vaultRoot, now, { includeArchived: true });
+  const archived: Report['archived'] = [];
+  for (const p of full.projects) {
+    if (p.archived) archived.push({ project: p.slug, feature: null, title: p.title, detail: p.archived_reason ?? '', archived_at: p.archived_at, archived_by: p.archived_by });
+    else {
+      for (const f of p.features) {
+        if (f.archived) archived.push({ project: p.slug, feature: f.slug, title: f.title, detail: f.archived_reason ?? '', archived_at: f.archived_at, archived_by: f.archived_by });
+      }
+    }
+  }
+  const board: Board = {
+    ...full,
+    projects: full.projects.filter((p) => !p.archived).map((p) => ({ ...p, features: p.features.filter((f) => !f.archived) })),
+  };
   const weekAgo = new Date(now.getTime() - 7 * 86_400_000).toISOString();
   const today = now.toISOString().slice(0, 10);
   const { rows: vrows } = await query<{ result: string; n: number }>(
@@ -729,7 +834,7 @@ export async function buildReport(vaultRoot: string, now = new Date()): Promise<
   return {
     as_of: board.as_of, generated_at: now.toISOString(), totals, needs_owner: needs, divisions, teams, goals, gaps,
     oldest: oldest.slice(0, 8).map(({ days: _d, ...i }) => i), backlog, moved_7d: board.recent, shipped_7d: shipped7,
-    verified_7d: verified, projects: board.projects,
+    verified_7d: verified, projects: board.projects, archived,
   };
 }
 

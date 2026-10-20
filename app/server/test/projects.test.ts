@@ -8,6 +8,8 @@ import { patchFrom, parseArgs, writeIfChanged } from '../src/cli-projects.js';
 import { query } from '../src/db.js';
 import {
   addVerification,
+  archiveItem,
+  restoreItem,
   buildReport,
   getBoard,
   importSeed,
@@ -250,6 +252,86 @@ describe('the report', () => {
     const r = await buildReport(vault);
     expect(r.projects).toEqual([]);
     expect(renderMarkdown(r)).toContain('Nothing is waiting on you.');
+  });
+});
+
+describe('archive and restore', () => {
+  beforeEach(truncateAll);
+  const TOKEN = 'k'.repeat(40);
+  const app = () => createApp({ modules: ALL_MODULES, vaultRoot: vault, projectsFeedToken: TOKEN });
+
+  it('hides an archived project from the board and keeps its rows and history', async () => {
+    await seedBasic();
+    await archiveItem('lifeos', null, 'sol', 'done, no activity 30d');
+    expect((await getBoard(vault)).projects).toEqual([]);
+    const all = (await getBoard(vault, new Date(), { includeArchived: true })).projects[0]!;
+    expect(all).toMatchObject({ slug: 'lifeos', archived: true, archived_by: 'sol', archived_reason: 'done, no activity 30d' });
+    expect(all.features).toHaveLength(2);
+    expect((await query(`SELECT count(*)::int AS n FROM stage_changes`)).rows[0]!.n).toBe(3);
+  });
+
+  it('archives one feature and leaves the project visible', async () => {
+    await seedBasic();
+    await archiveItem('lifeos', 'mcp', 'sol', 'dropped');
+    expect((await getBoard(vault)).projects[0]!.features.map((f) => f.slug)).toEqual(['core']);
+    const all = (await getBoard(vault, new Date(), { includeArchived: true })).projects[0]!;
+    expect(all.archived).toBe(false);
+    expect(all.features.find((f) => f.slug === 'mcp')).toMatchObject({ archived: true, archived_reason: 'dropped' });
+  });
+
+  it('restores, and writes an audit row for each action', async () => {
+    await seedBasic();
+    await archiveItem('lifeos', null, 'sol', 'stale');
+    await restoreItem('lifeos', null, 'konrad', 'needed again');
+    expect((await getBoard(vault)).projects).toHaveLength(1);
+    const p = (await query(`SELECT archived, archived_at, archived_by FROM projects WHERE slug = 'lifeos'`)).rows[0];
+    expect(p).toEqual({ archived: false, archived_at: null, archived_by: null });
+    const { rows } = await query(`SELECT action, reason, by, feature_id FROM archive_events ORDER BY id`);
+    expect(rows).toEqual([
+      { action: 'archive', reason: 'stale', by: 'sol', feature_id: null },
+      { action: 'restore', reason: 'needed again', by: 'konrad', feature_id: null },
+    ]);
+  });
+
+  it('refuses a repeat, a missing target, an empty reason, and restoring a feature under an archived project', async () => {
+    await seedBasic();
+    await archiveItem('lifeos', 'core', 'sol', 'x');
+    await expect(archiveItem('lifeos', 'core', 'sol', 'x')).rejects.toThrow(/already archived/);
+    await expect(restoreItem('lifeos', 'mcp', 'sol')).rejects.toThrow(/not archived/);
+    await expect(archiveItem('nope', null, 'sol', 'x')).rejects.toThrow(/no project/);
+    await expect(archiveItem('lifeos', 'nope', 'sol', 'x')).rejects.toThrow(/no feature/);
+    await expect(archiveItem('lifeos', null, 'sol', '  ')).rejects.toThrow();
+    await archiveItem('lifeos', null, 'sol', 'y');
+    await expect(restoreItem('lifeos', 'core', 'sol')).rejects.toThrow(/restore the project first/);
+  });
+
+  it('keeps archived work out of the report counts but lists it in a collapsed footer', async () => {
+    await seedBasic();
+    await upsertProject('old', { title: 'Old thing', stage: 'done' }, 'test', { create: true });
+    await archiveItem('old', null, 'sol', 'done, no activity 30d');
+    const r = await buildReport(vault);
+    expect(r.projects.map((p) => p.slug)).toEqual(['lifeos']);
+    expect(r.totals.projects.done).toBe(0);
+    expect(r.archived).toMatchObject([{ project: 'old', feature: null, detail: 'done, no activity 30d', archived_by: 'sol' }]);
+    const md = renderMarkdown(r);
+    expect(md).toContain('<summary>Archived (1)</summary>');
+    expect(md).toContain('Old thing');
+    expect(md).not.toContain('—');
+  });
+
+  it('serves the board without archived rows unless include_archived=true', async () => {
+    await seedBasic();
+    await request(app()).post('/api/projects/lifeos/archive').send({}).expect(400);
+    await request(app()).post('/api/projects/lifeos/archive').send({ reason: 'stale' }).expect(200);
+    await request(app()).post('/api/projects/lifeos/archive').send({ reason: 'stale' }).expect(409);
+    expect((await request(app()).get('/api/projects').expect(200)).body.projects).toEqual([]);
+    const all = await request(app()).get('/api/projects?include_archived=true').expect(200);
+    expect(all.body.projects[0]).toMatchObject({ slug: 'lifeos', archived: true });
+    await request(app()).get('/api/projects?include_archived=maybe').expect(400);
+    await request(app()).post('/api/projects/lifeos/restore').send({}).expect(200);
+    expect((await request(app()).get('/api/projects').expect(200)).body.projects).toHaveLength(1);
+    await request(app()).post('/api/projects/lifeos/features/mcp/archive').send({ reason: 'cut' }).expect(200);
+    expect((await request(app()).get('/api/projects').expect(200)).body.projects[0].features).toHaveLength(1);
   });
 });
 

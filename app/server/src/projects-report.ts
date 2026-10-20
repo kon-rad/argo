@@ -128,6 +128,14 @@ export function renderMarkdown(r: Report): string {
     }
     out.push('');
   }
+  if (r.archived.length) {
+    out.push('', '---', '', '<details>', `<summary>Archived (${r.archived.length})</summary>`, '');
+    out.push('| Item | Archived | By | Reason |', '|---|---|---|---|');
+    for (const a of r.archived) {
+      out.push(`| ${cell(a.feature ? `${a.project} / ${a.title}` : a.title)} | ${a.archived_at?.slice(0, 10) ?? ''} | ${cell(a.archived_by)} | ${cell(a.detail)} |`);
+    }
+    out.push('', '</details>');
+  }
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
 }
 

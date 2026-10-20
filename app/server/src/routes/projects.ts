@@ -3,6 +3,8 @@ import { Router, type Request } from 'express';
 import { z } from 'zod';
 import {
   addVerification,
+  archiveItem,
+  restoreItem,
   buildReport,
   FeaturePatch,
   getBoard,
@@ -19,7 +21,9 @@ import { HttpError, parseOr400, wrap } from './http.js';
 
 const Slug = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
 const Params = z.object({ slug: Slug, feature: Slug.optional() });
-const Format = z.object({ format: z.enum(['json', 'markdown', 'standup', 'telegram']).default('json') });
+const IncludeArchived = z.object({ include_archived: z.enum(['true', 'false']).default('false').transform((v) => v === 'true') });
+const ArchiveBody = z.object({ reason: z.string().trim().min(1).max(500) });
+const Format =z.object({ format: z.enum(['json', 'markdown', 'standup', 'telegram']).default('json') });
 
 /** Everything written from the browser is attributed to the owner. */
 const BY_APP = `${config.orgOwner}@app`;
@@ -41,8 +45,9 @@ export function projectsRouter(vaultRoot: string): Router {
 
   router.get(
     '/',
-    wrap(async (_req, res) => {
-      res.json(await getBoard(vaultRoot));
+    wrap(async (req, res) => {
+      const { include_archived } = parseOr400(IncludeArchived, req.query);
+      res.json(await getBoard(vaultRoot, new Date(), { includeArchived: include_archived }));
     }),
   );
 
@@ -84,6 +89,28 @@ export function projectsRouter(vaultRoot: string): Router {
       res.json(await tracked(() => upsertFeature(slug, feature!, patch, BY_APP)));
     }),
   );
+
+  const archiveRoutes = (path: string) => {
+    router.post(
+      `${path}/archive`,
+      wrap(async (req, res) => {
+        const { slug, feature } = parseOr400(Params, req.params);
+        const { reason } = parseOr400(ArchiveBody, req.body);
+        await tracked(() => archiveItem(slug, feature ?? null, BY_APP, reason));
+        res.json({ archived: true });
+      }),
+    );
+    router.post(
+      `${path}/restore`,
+      wrap(async (req, res) => {
+        const { slug, feature } = parseOr400(Params, req.params);
+        await tracked(() => restoreItem(slug, feature ?? null, BY_APP));
+        res.json({ archived: false });
+      }),
+    );
+  };
+  archiveRoutes('/:slug');
+  archiveRoutes('/:slug/features/:feature');
 
   router.post(
     '/:slug/features/:feature/verifications',

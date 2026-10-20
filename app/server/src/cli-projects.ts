@@ -6,6 +6,8 @@ import { config } from './config.js';
 import { pool } from './db.js';
 import {
   addVerification,
+  archiveItem,
+  restoreItem,
   buildReport,
   getBoard,
   importSeed,
@@ -21,7 +23,9 @@ import { settings } from './settings.js';
 const USAGE = `cli-projects: the project tracker (Postgres). Every agent and the company-report skill use this.
 
   report [--format markdown|standup|telegram|json]   the company report (default: telegram)
-  list                                               projects and features, one line each
+  list [--include-archived]                          projects and features, one line each (archived ones hidden by default)
+  archive <project>[/<feature>] --reason "why"       hide from the board and the report; nothing is deleted
+  restore <project>[/<feature>] [--note "why"]       bring it back (restore the project before its features)
   render [path]                                      write the markdown report to projects.reportFile (only if it changed)
   add-project <project> --title T --stage S [fields]
   add <project>/<feature> --title T [fields]         a new feature (starts in idea = backlog unless --stage)
@@ -124,13 +128,26 @@ async function main(argv: string[]): Promise<number> {
       console.log(changed ? `wrote ${path}` : `${path} unchanged`);
       return 0;
     }
+    case 'archive': {
+      const { project, feature } = target(pos[0]);
+      if (typeof opts.reason !== 'string') throw new TrackerError('archive needs --reason "why"');
+      await archiveItem(project, feature, by, opts.reason);
+      console.log(`archived ${project}${feature ? `/${feature}` : ''}`);
+      return 0;
+    }
+    case 'restore': {
+      const { project, feature } = target(pos[0]);
+      await restoreItem(project, feature, by, typeof opts.note === 'string' ? opts.note : null);
+      console.log(`restored ${project}${feature ? `/${feature}` : ''}`);
+      return 0;
+    }
     case 'list': {
-      const b = await getBoard(vault);
+      const b = await getBoard(vault, new Date(), { includeArchived: Boolean(opts['include-archived']) });
       for (const p of b.projects) {
-        console.log(`${p.slug} [${p.stage}]${p.division ? ` division=${p.division}` : ''}${p.team ? ` team=${p.team}` : ''}${p.needs_owner ? ` NEEDS: ${p.needs_owner}` : ''}`);
+        console.log(`${p.slug} [${p.stage}]${p.archived ? ' ARCHIVED' : ''}${p.division ? ` division=${p.division}` : ''}${p.team ? ` team=${p.team}` : ''}${p.needs_owner ? ` NEEDS: ${p.needs_owner}` : ''}`);
         for (const f of p.features) {
           const v = f.verification ? ` verified=${f.verification.result}` : '';
-          console.log(`  ${p.slug}/${f.slug} [${f.stage} ${f.days_in_stage}d]${v}${f.needs_owner ? ` NEEDS: ${f.needs_owner}` : ''}  ${f.title}`);
+          console.log(`  ${p.slug}/${f.slug} [${f.stage} ${f.days_in_stage}d]${f.archived ? ' ARCHIVED' : ''}${v}${f.needs_owner ? ` NEEDS: ${f.needs_owner}` : ''}  ${f.title}`);
         }
       }
       return 0;
