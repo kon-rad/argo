@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { VaultMarkdown } from '../../components/VaultMarkdown.js';
-import { api, type HubAgent, type KanbanTask } from '../../lib/api.js';
+import { api, fileHref, type HubAgent, type KanbanTask } from '../../lib/api.js';
+import { collectVaultRefs } from '../../lib/vaultRefs.js';
+import { ChatInput } from '../../components/ChatInput.js';
 import { useEventLog } from '../../lib/useEventLog.js';
 import EventFeed from '../../components/EventFeed.js';
 import HubError from './HubError.js';
@@ -50,9 +52,11 @@ export default function Board() {
   const boards = useQuery({ queryKey: ['hub-boards'], queryFn: api.boards, staleTime: 60_000 });
   const board = useQuery({ queryKey: ['hub-board', boardName], queryFn: () => api.board(boardName), refetchInterval: 5000 });
 
-  if (board.isError) return <HubError error={board.error} />;
   const tasks = board.data?.tasks ?? [];
   const doneCutoff = Date.now() / 1000 - 7 * 86400;
+  const { refsByTask, resolved: notes } = useCardNotes(tasks);
+
+  if (board.isError) return <HubError error={board.error} />;
 
   return (
     <div className="flex h-full min-h-0">
@@ -84,9 +88,8 @@ export default function Board() {
                 </h2>
                 <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto">
                   {rows.map((t) => (
-                    <li key={t.id}>
-                      <button type="button" onClick={() => navigate(`/agents/board/${t.id}`)}
-                        className={`w-full rounded border px-2 py-1.5 text-left text-sm hover:bg-[var(--paper-sunk)] ${taskId === t.id ? 'border-[var(--accent)]' : 'border-[var(--rule)]'}`}>
+                    <li key={t.id} className={`rounded border hover:bg-[var(--paper-sunk)] ${taskId === t.id ? 'border-[var(--accent)]' : 'border-[var(--rule)]'}`}>
+                      <button type="button" onClick={() => navigate(`/agents/board/${t.id}`)} className="w-full px-2 py-1.5 text-left text-sm">
                         <div className="line-clamp-3">{t.title}</div>
                         <div className="mt-1 flex items-center gap-2 text-xs text-[var(--ink-dim)]">
                           <AgentChip name={t.assignee} />
@@ -94,6 +97,7 @@ export default function Board() {
                           <span className="ml-auto tabular-nums">{age(t.completed_at ?? t.started_at ?? t.created_at)}</span>
                         </div>
                       </button>
+                      <CardNotes refs={refsByTask.get(t.id) ?? []} resolved={notes} />
                     </li>
                   ))}
                 </ul>
@@ -103,6 +107,44 @@ export default function Board() {
         </div>
       </div>
       {taskId && <TaskPanel id={taskId} board={boardName} onClose={() => navigate('/agents/board')} />}
+    </div>
+  );
+}
+
+/** The vault notes a card's title, body or result names, by card; resolved in batches of 100 for the whole board. */
+function useCardNotes(tasks: KanbanTask[]) {
+  const refsByTask = useMemo(
+    () => new Map(tasks.map((t) => [t.id, collectVaultRefs([t.title, t.body, t.result].filter(Boolean).join('\n\n'))])),
+    [tasks],
+  );
+  const all = useMemo(() => [...new Set([...refsByTask.values()].flat())].sort(), [refsByTask]);
+  const resolved = useQuery({
+    queryKey: ['vault-resolve-board', all],
+    queryFn: async () => {
+      const out: Record<string, string | null> = {};
+      for (let i = 0; i < all.length; i += 100) Object.assign(out, (await api.resolveRefs(all.slice(i, i + 100))).resolved);
+      return out;
+    },
+    enabled: all.length > 0,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
+  return { refsByTask, resolved: resolved.data ?? {} };
+}
+
+/** Links on a card tile to the notes it references; refs that aren't vault files are left out. */
+export function CardNotes({ refs, resolved }: { refs: string[]; resolved: Record<string, string | null> }) {
+  const paths = [...new Set(refs.map((r) => resolved[r]).filter((p): p is string => !!p))];
+  if (!paths.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1 px-2 pb-1.5" aria-label="Referenced notes">
+      {paths.slice(0, 4).map((p) => (
+        <Link key={p} to={fileHref(p)} title={p}
+          className="max-w-full truncate rounded bg-[var(--paper-sunk)] px-1.5 py-0.5 text-[0.7rem] text-[var(--accent)] underline-offset-2 hover:underline">
+          {p.split('/').pop()}
+        </Link>
+      ))}
+      {paths.length > 4 && <span className="text-[0.7rem] text-[var(--ink-faint)]">+{paths.length - 4} more</span>}
     </div>
   );
 }
@@ -236,10 +278,10 @@ function TaskPanel({ id, board, onClose }: { id: string; board: string; onClose:
                   </li>
                 ))}
               </ul>
-              <form className="mt-2 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (comment.trim()) send.mutate(); }}>
-                <input value={comment} onChange={(e) => setComment(e.target.value)} placeholder={`Comment as ${meta.data?.owner ?? 'owner'}`}
-                  className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-sm" />
-                <button type="submit" disabled={!comment.trim() || send.isPending} className="rounded border border-[var(--rule)] px-2 text-xs">Send</button>
+              <form className="mt-2 flex items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (comment.trim() && !send.isPending) send.mutate(); }}>
+                <ChatInput value={comment} onChange={setComment} label="Comment" placeholder={`Comment as ${meta.data?.owner ?? 'owner'} (Enter sends, Shift+Enter for a new line)`}
+                  onSubmit={() => { if (comment.trim() && !send.isPending) send.mutate(); }} />
+                <button type="submit" disabled={!comment.trim() || send.isPending} className="rounded border border-[var(--rule)] px-3 py-2 text-sm">Send</button>
               </form>
             </section>
             <details className="text-xs text-[var(--ink-dim)]">

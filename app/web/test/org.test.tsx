@@ -120,6 +120,23 @@ describe('Org page', () => {
     expect(JSON.parse(String(post.init?.body))).toEqual({ channel: 'all-hands', body: 'Ship it' });
   });
 
+  it('opens a channel at its newest message and posts on Enter, Shift+Enter keeps a new line', async () => {
+    // jsdom has no layout: give every box a tall scrollHeight so "the bottom" is a number.
+    const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(5000);
+    const calls = mount('/org?channel=platform');
+    await screen.findByText('shipped: the board');
+    await waitFor(() => expect(screen.getByTestId('channel-messages').scrollTop).toBe(5000));
+
+    const box = screen.getByLabelText('Message #platform');
+    expect(box.tagName).toBe('TEXTAREA');
+    fireEvent.change(box, { target: { value: 'line one' } });
+    fireEvent.keyDown(box, { key: 'Enter', shiftKey: true });
+    expect(calls.some((c) => c.url.endsWith('/api/org/post'))).toBe(false);
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/org/post'))).toBe(true));
+    height.mockRestore();
+  });
+
   it('shows a channel from the URL with kind chips, task links and folded replies, and marks it read', async () => {
     const calls = mount('/org?channel=platform');
     await screen.findByText('shipped: the board');

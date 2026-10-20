@@ -6,6 +6,8 @@ import remarkGfm from 'remark-gfm';
 import { api, type OrgApproval, type OrgChannel, type OrgChartAgent, type OrgMessage, type OrgWakeup, type UsageFacetValue } from '../../lib/api.js';
 import { formatTokens } from '../usage/format.js';
 import { ago, zoned } from '../../lib/time.js';
+import { useStickToBottom } from '../../lib/useStickToBottom.js';
+import { ChatInput } from '../../components/ChatInput.js';
 
 /**
  * The agent company: Argo's named agents on teams, talking in channels and DMs
@@ -125,22 +127,25 @@ function Composer({ channel, thread, onDone }: { channel: string; thread?: numbe
       onDone?.();
     },
   });
+  const submit = (): void => {
+    if (body.trim() && !send.isPending) send.mutate();
+  };
   return (
     <form
-      className="flex gap-2 border-t border-[var(--rule)] p-2"
+      className="flex items-end gap-2 border-t border-[var(--rule)] p-3"
       onSubmit={(e) => {
         e.preventDefault();
-        if (body.trim()) send.mutate();
+        submit();
       }}
     >
-      <input
-        aria-label={`Message ${channelLabel(channel)}`}
-        className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-sm"
-        placeholder={`Post in ${channelLabel(channel)} as yourself`}
+      <ChatInput
+        label={`Message ${channelLabel(channel)}`}
+        placeholder={`Post in ${channelLabel(channel)} as yourself (Enter posts, Shift+Enter for a new line)`}
         value={body}
-        onChange={(e) => setBody(e.target.value)}
+        onChange={setBody}
+        onSubmit={submit}
       />
-      <button type="submit" disabled={!body.trim() || send.isPending} className="rounded bg-[var(--accent)] px-3 py-1 text-sm font-medium text-white disabled:opacity-50">
+      <button type="submit" disabled={!body.trim() || send.isPending} className="rounded bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50">
         Post
       </button>
       {send.isError && <span className="self-center text-xs text-[var(--warn)]">{send.error.message}</span>}
@@ -183,6 +188,9 @@ function Channels() {
   }, [current, unread, newest, messages.data, qc]);
 
   const pick = (slug: string): void => setParams({ channel: slug });
+  const searching = q.trim().length > 1;
+  // Opens at the newest message; a search result list reads from the top instead.
+  const scroller = useStickToBottom(searching ? null : `channel:${current}:${messages.isSuccess}`);
 
   if (channels.isError) return <p className="p-4 text-sm">⚠ {channels.error.message}</p>;
   return (
@@ -225,8 +233,8 @@ function Channels() {
             {members.data ? `${members.data.members.length} members` : 'members'}
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          {q.trim().length > 1 ? (
+        <div ref={scroller.ref} className="min-h-0 flex-1 overflow-y-auto p-3" data-testid="channel-messages">
+          {searching ? (
             <>
               <div className="mb-2 text-xs text-[var(--ink-dim)]">{search.data ? `${search.data.messages.length} matches for "${q}"` : 'searching…'}</div>
               <MessageList messages={search.data?.messages ?? []} teams={teams} showChannel />
@@ -237,7 +245,7 @@ function Channels() {
             <MessageList messages={messages.data?.messages ?? []} teams={teams} />
           )}
         </div>
-        {current && <Composer channel={current} />}
+        {current && <Composer channel={current} onDone={scroller.pin} />}
       </div>
 
       {current && (
@@ -312,6 +320,7 @@ function Live() {
   const teams = useTeams();
   const feed = useQuery({ queryKey: ['org', 'messages', 'live'], queryFn: () => api.orgMessages({ limit: kiosk ? 12 : 60 }), refetchInterval: POLL_MS });
   const list = feed.data?.messages ?? [];
+  const live = useStickToBottom(`live:${feed.isSuccess}`);
   const body = feed.isError ? <p className="p-4">⚠ {feed.error.message}</p> : <MessageList messages={kiosk ? [...list].reverse() : list} teams={teams} showChannel big={kiosk} />;
   if (kiosk) {
     return (
@@ -330,7 +339,7 @@ function Live() {
         Every channel, newest at the bottom, refreshes every 5 s.
         <Link to="/org/live?kiosk=1" className="ml-auto underline">TV mode</Link>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">{body}</div>
+      <div ref={live.ref} className="min-h-0 flex-1 overflow-y-auto p-3">{body}</div>
     </div>
   );
 }
@@ -498,14 +507,15 @@ function AgentPage() {
       )}
       {p.agent.runtime !== 'human' && (
         <form
-          className="mb-4 flex gap-2"
+          className="mb-4 flex items-end gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (dmText.trim()) sendDm.mutate();
+            if (dmText.trim() && !sendDm.isPending) sendDm.mutate();
           }}
         >
-          <input aria-label={`DM ${name}`} className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-sm" placeholder={`DM ${name} as yourself (wakes it)`} value={dmText} onChange={(e) => setDmText(e.target.value)} />
-          <button type="submit" disabled={!dmText.trim() || sendDm.isPending} className="rounded bg-[var(--accent)] px-3 py-1 text-sm font-medium text-white disabled:opacity-50">Send</button>
+          <ChatInput label={`DM ${name}`} placeholder={`DM ${name} as yourself (wakes it; Enter sends, Shift+Enter for a new line)`} value={dmText} onChange={setDmText}
+            onSubmit={() => { if (dmText.trim() && !sendDm.isPending) sendDm.mutate(); }} />
+          <button type="submit" disabled={!dmText.trim() || sendDm.isPending} className="rounded bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50">Send</button>
           {sendDm.isError && <span className="self-center text-xs text-[var(--warn)]">{sendDm.error.message}</span>}
         </form>
       )}
