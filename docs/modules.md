@@ -20,6 +20,7 @@ A module that is off mounts no API routes, shows no nav link and gets no timers 
 | [`livestream`](#livestream) | (a public JSON) | Stream stats for YouTube, Twitch and Kick |
 | [`ring`](#ring) | `/ring` | Data from a wearable ring, pushed in by a client |
 | [`social`](#social) | (connect + queue, no page UI yet) | Schedule and publish posts with images to LinkedIn (more platforms planned) |
+| [`calendar`](#calendar) | `/calendar` | A month view and agenda of the events listed in your notes, with an .ics download |
 
 ## projects
 
@@ -137,6 +138,28 @@ A standard LinkedIn app gets a 60-day access token and **no refresh token** (Lin
 | Timers (server) | the minute publisher/reauth-check (`secondbrain-social`) |
 | Design | `Projects/secondbrain-app/social-linkedin-plan.md` in the vault |
 | OAuth callback | Served before the login check (the session cookie is SameSite=Strict, so LinkedIn's redirect arrives without it); the one-time `state` from a logged-in `/connect` guards it |
+
+## calendar
+
+Events live in notes, so the note that explains a trip or a meetup is also the record of when it happens. Put a table between two comments anywhere in a note:
+
+```
+<!-- calendar tz=Asia/Kolkata -->
+| Date | Start | End | Event | Where | Link |
+|---|---|---|---|---|---|
+| 2026-11-03 to 2026-11-06 | | | Devcon 8 | Jio World Centre | https://devcon.org |
+| 2026-11-03 | 09:00 | 18:00 | Opening day | Main hall | |
+<!-- /calendar -->
+```
+
+Columns are matched by header name in any order: `Date` and `Event` (or `Title`) are required; `Start`, `End`, `Where` (`Venue`, `Location`) and `Link` (`URL`) are optional. A date can be a range (`2026-11-03 to 2026-11-06`). Times are wall-clock in the block's `tz` (an IANA zone; UTC when missing or unknown), and a row with no start time is all day. A row with an impossible date or time is skipped and counted on the page, never guessed. A `[text](url)` in the Event cell becomes the event's link.
+
+| | |
+|---|---|
+| Page | `/calendar`: month grid (weeks start Monday), agenda for the month or a clicked day, times in each event's own zone, a link back to the note |
+| API | `GET /api/calendar` (`from`, `to` optional), `GET /api/calendar/ics` (an iCalendar file: timed events in UTC, all-day events as dates) |
+| Source | The index (`vault_files.body`), so an edit shows after the next scan |
+| Settings, timers | none |
 
 ## Adding a module
 

@@ -97,7 +97,7 @@ const Schema = z.object({
   SOCIAL_TOKEN_ENC_KEY: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
 });
 
-export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream', 'media', 'social'] as const;
+export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream', 'media', 'social', 'calendar'] as const;
 export type ModuleName = (typeof MODULE_NAMES)[number];
 
 /** `"ring, agents"` → {'ring', 'agents'}; unknown names are ignored. */

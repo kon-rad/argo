@@ -16,6 +16,7 @@ import { ingestRouter } from './routes/ingest.js';
 import { hubRouter, type HubOptions } from './routes/hub.js';
 import { mapRouter } from './routes/map.js';
 import { mediaRouter } from './routes/media.js';
+import { calendarRouter } from './routes/calendar.js';
 import { orgRouter } from './routes/org.js';
 import { friendlyRouter, type FriendlyOptions } from './routes/friendly.js';
 import { rawRouter } from './routes/raw.js';
@@ -192,6 +193,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
   if (modules.has('map')) app.use('/api/map', mapRouter());
   if (modules.has('tv')) app.use('/api/tv', tvRouter(vaultRoot));
   if (modules.has('media')) app.use('/api/media', mediaRouter(vaultRoot));
+  if (modules.has('calendar')) app.use('/api/calendar', calendarRouter());
   if (socialOpts) app.use('/api/social', socialRouter(socialOpts));
   // Local-only: one spawns a shell script, the other stops the process. Neither
   // belongs on an internet-facing box, logged in or not.

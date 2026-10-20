@@ -15,6 +15,7 @@ import NavMenu, { type NavItem } from './components/NavMenu.js';
 import Projects from './routes/Projects.js';
 import Tv from './routes/Tv.js';
 import Media from './routes/Media.js';
+import Calendar from './routes/Calendar.js';
 // three.js is large: the map loads only when it's opened.
 const MapPage = lazy(() => import('./routes/Map.js'));
 import Org from './routes/org/Org.js';
@@ -186,6 +187,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           {modules.has('org') && <Route path="/org/*" element={<Org />} />}
           {modules.has('tv') && <Route path="/tv" element={<Tv />} />}
           {modules.has('media') && <Route path="/media" element={<Media />} />}
+          {modules.has('calendar') && <Route path="/calendar" element={<Calendar />} />}
           {/* The page was /argo-tv before the engine port; old kiosk URLs land on /tv. */}
           {modules.has('tv') && <Route path="/argo-tv" element={<Navigate to={`/tv${location.search}`} replace />} />}
           {modules.has('map') && (
@@ -223,7 +225,10 @@ function menus(modules: Set<string>, meta: AppMeta | undefined): [string, NavIte
     ...on('usage', { to: '/usage', label: 'Usage' }),
     ...on('agents', { to: '/cron', label: 'Cron' }),
   ];
-  const life: NavItem[] = on('ring', { to: '/ring', label: 'Ring' });
+  const life: NavItem[] = [
+    ...on('calendar', { to: '/calendar', label: 'Calendar' }),
+    ...on('ring', { to: '/ring', label: 'Ring' }),
+  ];
   const docs: NavItem[] = [
     ...(meta?.devLogPath ? [{ to: `/file/${meta.devLogPath}`, label: 'Devlog' }] : []),
     ...(meta?.docsPath ? [{ to: `/file/${meta.docsPath}`, label: 'Docs' }] : []),

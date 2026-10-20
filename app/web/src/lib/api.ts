@@ -162,7 +162,7 @@ export interface RingNight {
 
 /** What this install has turned on (server: GET /api/meta). */
 export interface AppMeta {
-  modules: ('ring' | 'agents' | 'projects' | 'org' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'media')[];
+  modules: ('ring' | 'agents' | 'projects' | 'org' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'calendar')[];
   owner: string;
   devLogPath: string | null;
   docsPath: string | null;
@@ -955,6 +955,23 @@ export interface MediaResponse {
 
 export const mediaApi = {
   list: (q: MediaQuery) => request<MediaResponse>('/media', { ...q }),
+};
+
+export interface CalendarEvent {
+  date: string;
+  end_date: string;
+  start: string | null;
+  end: string | null;
+  tz: string;
+  title: string;
+  where: string | null;
+  link: string | null;
+  source: string;
+}
+
+export const calendarApi = {
+  list: () => request<{ events: CalendarEvent[]; skipped: number; sources: string[] }>('/calendar'),
+  icsUrl: (): string => url('/calendar/ics'),
 };
 
 export function formatBytes(bytes: number): string {
