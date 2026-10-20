@@ -217,6 +217,28 @@ describe('collectHermes', () => {
   }
 });
 
+describe('collectHermes with a second home', () => {
+  it('skips sessions the first home already has, with their messages and counters', async () => {
+    const vault = join(root, 'vault-hermes');
+    const user = join(root, 'user-hermes');
+    mkdirSync(vault);
+    mkdirSync(user);
+    buildHermes(join(vault, 'state.db'), 2);
+    buildHermes(join(user, 'state.db'), 2);               // h1: a copy of the vault's session
+    const db = new DatabaseSync(join(user, 'state.db'));
+    db.exec(`INSERT INTO sessions (id, source, started_at) VALUES ('h9', 'cli', 1790000500)`);
+    db.prepare(`INSERT INTO messages (session_id, role, content, timestamp) VALUES ('h9', 'user', 'only here', 1790000501)`).run();
+    db.close();
+    const c = await collectHermes(ledger, [{ dir: vault, label: 'main' }, { dir: user, label: 'user' }]);
+    expect(c.errors).toEqual([]);
+    expect(ledger.get('session', 'hermes|h1')).not.toBeNull();
+    expect(ledger.get('session', 'hermes:user|h1')).toBeNull();
+    expect(ledger.get('message', 'hermes:user|h1|msg:1')).toBeNull();
+    expect(ledger.get('counter', 'user|h1')).toBeNull();
+    expect(ledger.get('session', 'hermes:user|h9')).not.toBeNull();
+  });
+});
+
 describe('install units', () => {
   const spec = { node: '/opt/node/bin/node', bundle: '/data/bin/ledger.mjs', intervalSec: 120, dataDir: '/data', logFile: '/logs/ledger.log' };
   it('launchd runs `ledger run` on an interval', () => {

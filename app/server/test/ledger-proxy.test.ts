@@ -9,7 +9,8 @@ import { query } from '../src/db.js';
 import { addDevice } from '../src/ingest/devices.js';
 import { routeDirect, routeState, routeThroughProxy, watchProxy } from '../src/ledger/claudeSettings.js';
 import { defaultConfig } from '../src/ledger/config.js';
-import { assembleSse, captureQueue, HEALTH_PATH, recordExchange, sessionFromMetadata, startProxy, type Captured } from '../src/ledger/proxy.js';
+import { buildRedactor, type Redactor } from '../src/archive/redact.js';
+import { assembleSse, captureQueue, HEALTH_PATH, recordExchange, redactCaptures, sessionFromMetadata, startProxy, type Captured } from '../src/ledger/proxy.js';
 import { Ledger } from '../src/ledger/store.js';
 import { syncOnce } from '../src/ledger/sync.js';
 import { truncateAll } from './helpers.js';
@@ -31,12 +32,15 @@ const STREAM = sse([
   { type: 'message_stop' },
 ]);
 
+// A machine-only key the server can't know: not one of the redactor's key formats.
+const LOCAL_KEY = 'zz-local-value-1234567890abcdef';
+let red: Redactor = buildRedactor({ env: { MY_API_KEY: LOCAL_KEY } });
 const request = (turns: number) => ({
   model: 'claude-opus-5-5', max_tokens: 32000, stream: true, thinking: { type: 'adaptive' },
   metadata: { user_id: JSON.stringify({ device_id: 'd', account_uuid: 'a', session_id: SID }) },
   system: [{ type: 'text', text: 'You are Claude Code.' }],
   tools: [{ name: 'Bash', input_schema: { type: 'object' } }],
-  messages: Array.from({ length: turns }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `turn ${i}` })),
+  messages: Array.from({ length: turns }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: i === 0 ? `turn 0 key=${LOCAL_KEY}` : `turn ${i}` })),
 });
 
 describe('assembleSse', () => {
@@ -64,6 +68,7 @@ describe('capture proxy', () => {
 
   beforeEach(async () => {
     root = mkdtempSync(join(tmpdir(), 'ledger-proxy-'));
+    red = buildRedactor({ env: { MY_API_KEY: LOCAL_KEY } });
     ledger = new Ledger(join(root, 'ledger.db'));
     seen = [];
     upstream = http.createServer((req, res) => {
@@ -84,7 +89,7 @@ describe('capture proxy', () => {
     const captured: Captured[] = [];
     proxy = await startProxy({
       port: 0, upstream: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`,
-      onCapture: (c) => { captured.push(c); recordExchange(ledger, c, 'anthropic'); },
+      onCapture: (c) => { captured.push(c); recordExchange(ledger, c, 'anthropic', red); },
     });
     proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
   });
@@ -121,6 +126,29 @@ describe('capture proxy', () => {
     // No header (so no token) anywhere in the ledger.
     const all = ledger.pending(0, 1e9).map((r) => JSON.stringify(r.data)).join('\n');
     expect(all).not.toContain('secret-token');
+  });
+
+  it('forwards this machine\'s keys upstream untouched but records them redacted', async () => {
+    await send(1);
+    await settle();
+    expect(seen[0]!.body).toContain(LOCAL_KEY);
+    const all = ledger.pending(0, 1e9).map((r) => JSON.stringify(r.data)).join('\n');
+    expect(all).not.toContain(LOCAL_KEY);
+    expect(all).toContain('[redacted:MY_API_KEY]');
+  });
+
+  it('redact-captures rewrites older unsent captures and repoints their exchanges', async () => {
+    red = buildRedactor({ env: {} });          // as recorded before the proxy redacted
+    await send(3);
+    await settle();
+    expect(ledger.pending(0, 1e9).map((r) => JSON.stringify(r.data)).join('\n')).toContain(LOCAL_KEY);
+    const r = redactCaptures(ledger, buildRedactor({ env: { MY_API_KEY: LOCAL_KEY } }));
+    expect(r).toMatchObject({ exchanges: 1, blobs: 1, removed: 1 });
+    const rows = ledger.pending(0, 1e9);
+    expect(rows.map((x) => JSON.stringify(x.data)).join('\n')).not.toContain(LOCAL_KEY);
+    const ex = ledger.get<{ messages: string[] }>('exchange', 'anthropic|req_1')!;
+    for (const h of ex.messages) expect(ledger.get('blob', h)).not.toBeNull();
+    expect(rows.filter((x) => x.kind === 'blob')).toHaveLength(5); // system, tools, 3 turns; the old turn 0 is gone
   });
 
   it('stores the system prompt, tools and earlier messages once across turns', async () => {
@@ -205,7 +233,8 @@ describe('capture proxy', () => {
       const sent = JSON.parse(seen[1]!.body);
       const rebuilt = await query(`SELECT b.body FROM llm_exchanges x, unnest(x.message_shas) WITH ORDINALITY AS m(sha, i)
         JOIN llm_blobs b ON b.sha = m.sha WHERE x.request_id='req_2' ORDER BY m.i`);
-      expect(rebuilt.rows.map((r) => r.body)).toEqual(sent.messages);
+      // Byte for byte as sent, except this machine's key, which never leaves it.
+      expect(rebuilt.rows.map((r) => r.body)).toEqual(red.deep(sent.messages));
     });
   });
 });
