@@ -79,6 +79,11 @@ async function syncSessions(home: HermesHome, host: Host, tz: string | null, tmp
   const counters = readHermesCounters(copy, host, home.profile);
   // The main home keeps the archive's source name, so its rows line up with `secondbrain archive`.
   const source = home.profile === 'main' ? ('hermes' as const) : (`hermes:${home.profile}` as const);
+  // The plugin's day files from the last two weeks (re-reading is a no-op; a timer that was down catches up).
+  // Read first and on their own: a problem there must not stop the chats from syncing.
+  let calls: ReturnType<typeof readHermesCalls> = [];
+  try { calls = readHermesCalls(home.dir, source, host, Date.now() - CALL_WINDOW_MS); }
+  catch (err) { c.errors.push(`${home.profile} hermes calls: ${(err as Error).message}`); }
   await withTransaction(async (tx) => {
     const ids = new Map<string, number>();
     for (const s of sessions) {
@@ -95,9 +100,7 @@ async function syncSessions(home: HermesHome, host: Host, tz: string | null, tmp
     }
     for (const [sid, msgs] of bySession) c.messages += await store.upsertMessages(tx, ids.get(sid)!, msgs);
     c.usage += await recordHermesCounters(tx, counters, new Date());
-    // The plugin's day files from the last two weeks: re-reading them is a no-op, and a timer that was
-    // down for a few days still catches up.
-    c.calls += await upsertCalls(tx, readHermesCalls(home.dir, source, host, Date.now() - CALL_WINDOW_MS));
+    c.calls += await upsertCalls(tx, calls);
   });
 }
 

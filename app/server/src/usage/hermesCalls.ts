@@ -19,7 +19,7 @@ export function hermesCallFiles(dir: string, sinceMs = 0): string[] {
   if (!existsSync(folder)) return [];
   return readdirSync(folder).filter((f) => FILE.test(f)).sort()
     .map((f) => join(folder, f))
-    .filter((p) => statSync(p).mtimeMs >= sinceMs);
+    .filter((p) => { try { return statSync(p).mtimeMs >= sinceMs; } catch { return false; } });
 }
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : 0);
@@ -35,7 +35,9 @@ export function hermesCallFromLine(line: string, source: string, host: Host): Us
   if (!sid || !ts || Number.isNaN(ts.getTime())) return null;
   const aux = r.kind === 'aux';
   // A request without Hermes's own id still gets a stable one: the same line always maps to the same row.
-  const callId = text(r.api_request_id)
+  // Every attempt of an auxiliary call shares its request id: the retry number keeps them apart.
+  const reqId = text(r.api_request_id);
+  const callId = (reqId && aux ? `${reqId}#${typeof r.retry_count === 'number' ? r.retry_count : 0}` : reqId)
     ?? `h:${createHash('sha256').update(`${sid}|${r.ts}|${r.api_call_count ?? ''}|${r.kind}|${r.aux_task ?? ''}`).digest('hex').slice(0, 32)}`;
   const tools = Array.isArray(r.tools) ? r.tools.filter((t): t is string => typeof t === 'string') : [];
   return {

@@ -147,6 +147,23 @@ describe('agent sessions api', () => {
     expect(facts.rows[0].n).toBe(0);
   });
 
+  it('puts a Hermes call on one response only, across pages', async () => {
+    await withTransaction(async (tx) => {
+      const h = (await tx.query<{ id: number }>(`SELECT id FROM archive_sessions WHERE external_id = 'h1'`)).rows[0]!.id;
+      await archive.upsertMessages(tx, h, [m('msg:4', '2026-10-18T09:00:04Z', { id: 4, session_id: 'h1', role: 'assistant', content: 'rewritten' })]);
+      await usage.upsertCalls(tx, [{ ...call('req-1', 'h1', '', 0), source: 'hermes', messageExternalId: null,
+        ts: new Date('2026-10-18T09:00:01.900Z'), inputTokens: 500, matchKey: 't:call_a' }]);
+    });
+    const steps: Array<{ call: unknown }> = [];
+    for (let offset = 0, more = true; more; offset += 2) {
+      const r = await request(app).get('/api/usage/agent-sessions/mac/h1').query({ source: 'hermes', limit: 2, offset });
+      steps.push(...r.body.steps);
+      more = r.body.next !== null;
+    }
+    // msg:4 is within two minutes of the call, but msg:2 owns it by key.
+    expect(steps.filter((s) => s.call)).toHaveLength(1);
+  });
+
   it('pages long sessions and can include meta rows', async () => {
     const p1 = await request(app).get('/api/usage/agent-sessions/mac/s1').query({ limit: '2' });
     expect(p1.body.steps).toHaveLength(2);

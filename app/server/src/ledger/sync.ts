@@ -37,6 +37,13 @@ export async function syncOnce(ledger: Ledger, cfg: LedgerConfig, deps: SyncDeps
   const url = `${cfg.server.replace(/\/+$/, '')}/api/ingest/batch`;
   // This machine's keys, which the server can't know. Blobs are skipped: the server checks each one
   // against its content hash, and they come only from the optional capture proxy.
+  // The capture proxy's bodies (blobs) are stored by content hash and can't be redacted after the fact: with
+  // the proxy on, nothing is sent until this machine's env files are configured to redact the rest.
+  if (cfg.proxy.enabled && !(cfg.redactEnvFiles ?? []).length) {
+    const message = 'capture proxy is on but no --redact-env file is set: not syncing';
+    ledger.setMeta('last_error', message);
+    return { ...result, status: 'disabled', error: message };
+  }
   // An env file it can't read (macOS privacy rules for a scheduled job) stops the sync, never sends unredacted.
   let red: ReturnType<typeof buildRedactor>;
   try { red = buildRedactor({ env: process.env, files: cfg.redactEnvFiles ?? [] }); } catch (err) {

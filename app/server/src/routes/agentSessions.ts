@@ -127,11 +127,12 @@ type CallJson = NonNullable<StepOut['call']>;
 
 /**
  * Hermes calls come from the usage-ledger plugin, keyed by the response's tool-call ids or a hash of its
- * text (hermesMatchKey). Each stored assistant row takes the call with its key, nearest in time when the
- * key repeats; a row with no keyed call (text Hermes rewrote before saving) takes the nearest unused main
- * call that ended within two minutes before it. Calls left over (retries, side tasks) only count in the totals.
+ * text (hermesMatchKey). Matching runs over the whole session, not the page, so a call lands on one response
+ * only: each stored assistant row takes the call with its key, nearest in time when the key repeats; a row
+ * with no keyed call (text Hermes rewrote, or redaction changed) takes the nearest unused main call that ended
+ * within two minutes before it. Calls left over (side tasks) only count in the totals.
  */
-async function attachHermesCalls(rootId: number, rows: Array<{ ts: Date | null; raw: unknown; call: StepOut['call'] }>): Promise<void> {
+async function attachHermesCalls(rootId: number, rows: Array<{ id: number; call: StepOut['call'] }>): Promise<void> {
   const { rows: calls } = await query<{ id: number; ts: Date; match_key: string | null; aux: boolean } & CallJson>(
     `SELECT u.id, u.ts, u.match_key, coalesce(u.entrypoint LIKE 'aux:%', false) AS aux, u.model,
             u.input_tokens::float8 AS input, u.cache_write_tokens::float8 AS cache_write, u.cache_read_tokens::float8 AS cache_read,
@@ -139,24 +140,31 @@ async function attachHermesCalls(rootId: number, rows: Array<{ ts: Date | null; 
      FROM archive_sessions a JOIN usage_calls u ON u.host = a.host AND u.source = a.source AND u.session_external_id = a.external_id
      WHERE a.id = $1 ORDER BY u.ts`, [rootId]);
   if (!calls.length) return;
+  // Only what matching needs from each assistant row, never the whole raw JSON.
+  const { rows: answers } = await query<{ id: number; ts: Date | null; raw: unknown }>(
+    `SELECT m.id, m.ts, jsonb_build_object('role', m.raw -> 'role', 'session_id', m.raw -> 'session_id',
+              'content', m.raw -> 'content', 'tool_calls', m.raw -> 'tool_calls') AS raw
+     FROM archive_messages m WHERE m.session_id = $1 AND m.raw ->> 'role' = 'assistant' ORDER BY m.ts, m.seq`, [rootId]);
   const used = new Set<number>();
+  const byRow = new Map<number, CallJson>();
   const chip = (c: (typeof calls)[number]): CallJson =>
     ({ model: c.model, input: c.input, cache_write: c.cache_write, cache_read: c.cache_read, output: c.output, reasoning: c.reasoning });
   const nearest = (list: typeof calls, at: number) =>
     list.reduce<(typeof calls)[number] | null>((best, c) => (!best || Math.abs(c.ts.getTime() - at) < Math.abs(best.ts.getTime() - at) ? c : best), null);
-  const pending: Array<{ row: (typeof rows)[number]; at: number }> = [];
-  for (const row of rows) {
-    const resp = hermesResponse(row.raw);
-    if (!resp || !row.ts) continue;
-    const at = new Date(row.ts).getTime();
+  const pending: Array<{ id: number; at: number }> = [];
+  for (const a of answers) {
+    const resp = hermesResponse(a.raw);
+    if (!resp || !a.ts) continue;
+    const at = new Date(a.ts).getTime();
     const key = hermesMatchKey(resp.toolCallIds, resp.content);
     const hit = key ? nearest(calls.filter((c) => c.match_key === key && !used.has(c.id)), at) : null;
-    if (hit) { used.add(hit.id); row.call = chip(hit); } else pending.push({ row, at });
+    if (hit) { used.add(hit.id); byRow.set(a.id, chip(hit)); } else pending.push({ id: a.id, at });
   }
-  for (const { row, at } of pending) {
+  for (const { id, at } of pending) {
     const hit = nearest(calls.filter((c) => !c.aux && !used.has(c.id) && c.ts.getTime() <= at + 5_000 && at - c.ts.getTime() <= 120_000), at);
-    if (hit) { used.add(hit.id); row.call = chip(hit); }
+    if (hit) { used.add(hit.id); byRow.set(id, chip(hit)); }
   }
+  for (const r of rows) { const c = byRow.get(r.id); if (c) r.call = c; }
 }
 
 export function agentSessionsRouter(): Router {

@@ -84,6 +84,9 @@ async function install(): Promise<void> {
       return { dir: resolve(d!), label };
     });
   }
+  if (cfg.proxy.enabled && cfg.server && !(cfg.redactEnvFiles ?? []).length) {
+    throw new Error('--proxy with a server needs at least one --redact-env file: proxy captures are sent as they were recorded');
+  }
   const labels = cfg.hermesHomes.map((h) => h.label);
   if (new Set(labels).size !== labels.length) throw new Error(`Hermes home labels must be unique, got ${labels.join(', ')}`);
   const configFile = saveConfig(dir, cfg);

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -109,6 +109,17 @@ describe('agents sync', () => {
       { source: 'hermes', call_id: 'req-a', provider: 'openrouter' },
       { source: 'hermes:researcher', call_id: 'req-b', provider: 'openrouter' },
     ]);
+  });
+
+  it('still syncs chats when the plugin\'s usage folder can\'t be read', async () => {
+    mkdirSync(join(root, 'usage'));
+    writeFileSync(join(root, 'usage', 'calls-2026-10-20.jsonl'), '{}\n');
+    chmodSync(join(root, 'usage', 'calls-2026-10-20.jsonl'), 0o000);
+    try {
+      const r = await syncAgents(root, 'droplet');
+      expect(r.sessions).toBe(3);
+      expect(r.errors.join(' ')).toMatch(/hermes calls/);
+    } finally { chmodSync(join(root, 'usage', 'calls-2026-10-20.jsonl'), 0o600); }
   });
 
   it('keeps a job that disappears from jobs.json, marked removed', async () => {

@@ -10,7 +10,7 @@ _spec.loader.exec_module(ul)
 
 BASE = dict(
     session_id="20261020_101500_ab12cd", task_id="t1", turn_id="turn-1", api_request_id="req-1", api_call_count=2,
-    platform="telegram", provider="openrouter", base_url="https://user:pw@openrouter.ai/api/v1?key=x", api_mode="chat_completions",
+    platform="telegram", provider="openrouter", base_url="https://user:pw" + "@" + "openrouter.ai/api/v1?key=x", api_mode="chat_completions",
     model="anthropic/claude-sonnet-4.6", response_model="anthropic/claude-4.6-sonnet-20260101", api_duration=1.5,
     started_at=1_792_000_000.0, ended_at=1_792_000_001.5, finish_reason="tool_calls",
     usage={"input_tokens": 1200, "output_tokens": 80, "cache_read_tokens": 9000, "cache_write_tokens": 300, "reasoning_tokens": 40},
@@ -28,9 +28,8 @@ def test_row_has_tokens_model_and_tool_match_key():
     assert row["duration_ms"] == 1500
     assert row["tools"] == ["terminal", "read_file"]
     assert row["match"] == "t:call_a,call_b"
-    # No user info or query from the base URL, and no message text anywhere.
-    assert row["base_url"] == "https://openrouter.ai/api/v1"
-    assert "pw" not in json.dumps(row)
+    # Nothing from the base URL (it can carry a key), and no message text anywhere.
+    assert "base_url" not in row and "pw" not in json.dumps(row)
 
 
 def test_text_response_matches_by_hash_of_trimmed_text():
@@ -42,6 +41,8 @@ def test_aux_call_has_no_match_and_no_session_is_skipped():
     row = ul.build_row("aux", {**BASE, "aux_task": "title_generation", "assistant_message": None})
     assert row["kind"] == "aux" and row["aux_task"] == "title_generation" and row["match"] is None
     assert ul.build_row("main", {**BASE, "session_id": ""}) is None
+    # A failed attempt is not a call: its retry carries the tokens under the same request id.
+    assert ul.build_row("aux", {**BASE, "error": "timeout", "usage": None}) is None
 
 
 def test_rows_append_to_one_file_per_utc_day(tmp_path):

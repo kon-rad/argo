@@ -17,7 +17,9 @@ describe('Hermes plugin calls', () => {
 
   it('labels side calls and never matches them to a response', () => {
     const c = hermesCallFromLine(row({ kind: 'aux', aux_task: 'title_generation', match: 't:x' }), 'hermes', 'mac')!;
-    expect([c.entrypoint, c.matchKey]).toEqual(['aux:title_generation', null]);
+    expect([c.entrypoint, c.matchKey, c.callId]).toEqual(['aux:title_generation', null, 'req-1#0']);
+    // A retry shares the request id; it is its own row, so an earlier attempt can't shadow its tokens.
+    expect(hermesCallFromLine(row({ kind: 'aux', retry_count: 1 }), 'hermes', 'mac')!.callId).toBe('req-1#1');
   });
 
   it('gives a call without a request id the same id every time', () => {

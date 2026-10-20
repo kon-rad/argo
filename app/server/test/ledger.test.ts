@@ -400,6 +400,13 @@ describe('sync to the server', () => {
     ]);
   });
 
+  it('sends nothing while the capture proxy is on without an env file to redact with', async () => {
+    collectClaude(ledger, projects, 'anthropic');
+    const r = await syncOnce(ledger, { ...cfg, proxy: { ...cfg.proxy, enabled: true } }, deps, { force: true });
+    expect(r).toMatchObject({ status: 'disabled', sent: 0 });
+    expect(r.error).toMatch(/redact-env/);
+  });
+
   it('stops, never sends, when an env file to redact with cannot be read', async () => {
     collectClaude(ledger, projects, 'anthropic');
     const r = await syncOnce(ledger, { ...cfg, redactEnvFiles: [root] }, deps, { force: true });  // a directory: unreadable as a file

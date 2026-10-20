@@ -25,7 +25,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 log = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -83,23 +82,15 @@ def match_key(msg: Any) -> str | None:
     return None
 
 
-def _clean_url(url: Any) -> str | None:
-    """Scheme, host and path only: a base URL can carry a key in its user info or query."""
-    if not isinstance(url, str) or not url:
-        return None
-    try:
-        p = urlsplit(url)
-        return urlunsplit((p.scheme, p.hostname or "", p.path, "", "")) if p.scheme else None
-    except ValueError:
-        return None
-
 
 def build_row(kind: str, kw: dict[str, Any]) -> dict[str, Any] | None:
     usage = kw.get("usage") or {}
     if not isinstance(usage, dict):
         usage = {}
     session_id = kw.get("session_id") or ""
-    if not session_id:
+    # No session (idle gateway work) leaves nothing to attach to; a failed attempt has no usage, and its
+    # retry reuses the request id, so a zero row would shadow the real one.
+    if not session_id or kw.get("error"):
         return None
     ended = kw.get("ended_at") or time.time()
     started = kw.get("started_at")
@@ -117,10 +108,10 @@ def build_row(kind: str, kw: dict[str, Any]) -> dict[str, Any] | None:
         "turn_id": kw.get("turn_id"),
         "api_request_id": kw.get("api_request_id"),
         "api_call_count": kw.get("api_call_count"),
+        "retry_count": kw.get("retry_count"),
         "aux_task": kw.get("aux_task"),
         "platform": kw.get("platform"),
         "provider": kw.get("provider"),
-        "base_url": _clean_url(kw.get("base_url")),
         "api_mode": kw.get("api_mode"),
         "model": kw.get("model"),
         "response_model": kw.get("response_model"),
