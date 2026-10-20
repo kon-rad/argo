@@ -20,6 +20,9 @@ export interface LedgerConfig {
   batchBytes: number;
   /** Delete synced messages and calls older than this many days (the server keeps them). Null: keep everything. */
   retainDays: number | null;
+  /** Env files (KEY=value) whose secret-named values are removed from every row before it leaves this machine,
+   * on top of the key formats the redactor always catches. The server only knows its own keys. */
+  redactEnvFiles?: string[];
   /** The capture proxy: Claude Code's ANTHROPIC_BASE_URL points here, it forwards to `upstream` and records each exchange. */
   proxy: { enabled: boolean; port: number; upstream: string };
 }

@@ -3,7 +3,7 @@
 //   ledger run                 collect, then sync (what the scheduler runs)
 //   ledger collect | sync [--force] | status
 //   ledger install --server <url> --token <t> --host <slug> [--hermes <dir>[=<label>]]... [--claude-dir <dir>]
-//                  [--provider anthropic] [--interval 120] [--retain-days 60|forever] [--proxy [--proxy-port 18080]] [--no-schedule]
+//                  [--redact-env <file>]... [--provider anthropic] [--interval 120] [--retain-days 60|forever] [--proxy [--proxy-port 18080]] [--no-schedule]
 //   ledger uninstall
 //   ledger proxy               the capture proxy in the foreground (what its service runs)
 //   ledger proxy-on | proxy-off   route Claude Code through the proxy, or straight to the API again
@@ -76,6 +76,7 @@ async function install(): Promise<void> {
   if (flag('proxy')) cfg.proxy = { ...cfg.proxy, enabled: true };
   if (value('proxy-port')) cfg.proxy = { ...cfg.proxy, port: Number(value('proxy-port')) };
   if (value('upstream')) cfg.proxy = { ...cfg.proxy, upstream: value('upstream')!.replace(/\/+$/, '') };
+  if (values('redact-env').length) cfg.redactEnvFiles = values('redact-env').map((f) => resolve(f));
   if (value('retain-days')) cfg.retainDays = value('retain-days') === 'forever' ? null : Math.max(1, Number(value('retain-days')));
   if (values('hermes').length) {
     cfg.hermesHomes = values('hermes').map((h) => {

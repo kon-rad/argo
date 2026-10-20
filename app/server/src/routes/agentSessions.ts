@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db.js';
 import { redactor } from '../archive/redact.js';
-import { expandSteps, type StepPart } from '../archive/steps.js';
+import { expandSteps, hermesResponse, type StepPart } from '../archive/steps.js';
+import { hermesMatchKey } from '../usage/hermesCalls.js';
 import { HttpError, parseOr400, wrap } from './http.js';
 
 /**
@@ -122,6 +123,42 @@ export interface StepOut extends Omit<StepPart, 'text'> {
   call: { model: string; input: number; cache_write: number; cache_read: number; output: number; reasoning: number } | null;
 }
 
+type CallJson = NonNullable<StepOut['call']>;
+
+/**
+ * Hermes calls come from the usage-ledger plugin, keyed by the response's tool-call ids or a hash of its
+ * text (hermesMatchKey). Each stored assistant row takes the call with its key, nearest in time when the
+ * key repeats; a row with no keyed call (text Hermes rewrote before saving) takes the nearest unused main
+ * call that ended within two minutes before it. Calls left over (retries, side tasks) only count in the totals.
+ */
+async function attachHermesCalls(rootId: number, rows: Array<{ ts: Date | null; raw: unknown; call: StepOut['call'] }>): Promise<void> {
+  const { rows: calls } = await query<{ id: number; ts: Date; match_key: string | null; aux: boolean } & CallJson>(
+    `SELECT u.id, u.ts, u.match_key, coalesce(u.entrypoint LIKE 'aux:%', false) AS aux, u.model,
+            u.input_tokens::float8 AS input, u.cache_write_tokens::float8 AS cache_write, u.cache_read_tokens::float8 AS cache_read,
+            u.output_tokens::float8 AS output, u.thinking_tokens::float8 AS reasoning
+     FROM archive_sessions a JOIN usage_calls u ON u.host = a.host AND u.source = a.source AND u.session_external_id = a.external_id
+     WHERE a.id = $1 ORDER BY u.ts`, [rootId]);
+  if (!calls.length) return;
+  const used = new Set<number>();
+  const chip = (c: (typeof calls)[number]): CallJson =>
+    ({ model: c.model, input: c.input, cache_write: c.cache_write, cache_read: c.cache_read, output: c.output, reasoning: c.reasoning });
+  const nearest = (list: typeof calls, at: number) =>
+    list.reduce<(typeof calls)[number] | null>((best, c) => (!best || Math.abs(c.ts.getTime() - at) < Math.abs(best.ts.getTime() - at) ? c : best), null);
+  const pending: Array<{ row: (typeof rows)[number]; at: number }> = [];
+  for (const row of rows) {
+    const resp = hermesResponse(row.raw);
+    if (!resp || !row.ts) continue;
+    const at = new Date(row.ts).getTime();
+    const key = hermesMatchKey(resp.toolCallIds, resp.content);
+    const hit = key ? nearest(calls.filter((c) => c.match_key === key && !used.has(c.id)), at) : null;
+    if (hit) { used.add(hit.id); row.call = chip(hit); } else pending.push({ row, at });
+  }
+  for (const { row, at } of pending) {
+    const hit = nearest(calls.filter((c) => !c.aux && !used.has(c.id) && c.ts.getTime() <= at + 5_000 && at - c.ts.getTime() <= 120_000), at);
+    if (hit) { used.add(hit.id); row.call = chip(hit); }
+  }
+}
+
 export function agentSessionsRouter(): Router {
   const router = Router();
 
@@ -182,6 +219,7 @@ export function agentSessionsRouter(): Router {
        ORDER BY m.ts NULLS FIRST, f.own DESC, m.session_id, m.seq
        OFFSET $3 LIMIT $4`, [rootId, q.meta, q.offset, q.limit + 1]);
     const more = rows.length > q.limit;
+    if (session.harness === 'hermes') await attachHermesCalls(rootId, rows);
     const steps: StepOut[] = [];
     for (const r of rows.slice(0, q.limit)) {
       const parts = expandSteps({ id: r.id, role: r.role, kind: r.kind, ts: r.ts, raw: r.raw, text: r.text ?? '' });

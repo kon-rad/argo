@@ -10,7 +10,8 @@ import * as store from '../archive/store.js';
 import type { Host } from '../archive/types.js';
 import { readHermesCounters } from '../usage/hermesCounters.js';
 import { findHomes, hermesTimezone, type HermesHome } from './homes.js';
-import { recordHermesCounters } from '../usage/store.js';
+import { readHermesCalls } from '../usage/hermesCalls.js';
+import { recordHermesCounters, upsertCalls } from '../usage/store.js';
 
 /**
  * Copies what Hermes knows about its conversations and cron jobs into
@@ -31,6 +32,8 @@ export interface SyncCounts {
   runs: number;
   outputs: number;
   usage: number;
+  /** Per-request rows from the usage-ledger plugin. */
+  calls: number;
   errors: string[];
 }
 
@@ -65,6 +68,8 @@ const date = (v: unknown): Date | null => {
 const text = (v: unknown): string | null => (typeof v === 'string' && v !== '' && v !== 'None' ? v : null);
 const sha = (s: string): string => createHash('sha256').update(s).digest('hex');
 
+const CALL_WINDOW_MS = 14 * 86400_000;
+
 async function syncSessions(home: HermesHome, host: Host, tz: string | null, tmp: string, c: SyncCounts): Promise<void> {
   const src = join(home.dir, 'state.db');
   if (!existsSync(src)) return;
@@ -90,6 +95,9 @@ async function syncSessions(home: HermesHome, host: Host, tz: string | null, tmp
     }
     for (const [sid, msgs] of bySession) c.messages += await store.upsertMessages(tx, ids.get(sid)!, msgs);
     c.usage += await recordHermesCounters(tx, counters, new Date());
+    // The plugin's day files from the last two weeks: re-reading them is a no-op, and a timer that was
+    // down for a few days still catches up.
+    c.calls += await upsertCalls(tx, readHermesCalls(home.dir, source, host, Date.now() - CALL_WINDOW_MS));
   });
 }
 
@@ -183,7 +191,7 @@ async function syncCron(home: HermesHome, tz: string | null, tmp: string, c: Syn
 }
 
 export async function syncAgents(root: string, host: Host): Promise<SyncCounts> {
-  const counts: SyncCounts = { homes: 0, sessions: 0, messages: 0, jobs: 0, runs: 0, outputs: 0, usage: 0, errors: [] };
+  const counts: SyncCounts = { homes: 0, sessions: 0, messages: 0, jobs: 0, runs: 0, outputs: 0, usage: 0, calls: 0, errors: [] };
   const tz = hermesTimezone(root);
   const tmp = mkdtempSync(join(tmpdir(), 'agents-sync-'));
   try {

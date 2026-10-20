@@ -30,22 +30,22 @@ export async function upsertCalls(tx: TxClient, calls: UsageCall[]): Promise<num
     const batch = unique.slice(i, i + BATCH);
     const params: unknown[] = [];
     const values = batch.map((c, j) => {
-      const b = j * 20;
+      const b = j * 21;
       params.push(c.source, c.host, c.callId, c.requestId, c.sessionExternalId, c.messageExternalId, c.ts, c.model,
         c.entrypoint, c.cwd, c.isSidechain, c.inputTokens, c.cacheWriteTokens, c.cacheReadTokens, c.outputTokens,
-        c.thinkingTokens, c.webSearchRequests, c.tool ?? null, c.action ?? null, c.provider ?? null);
-      return `(${Array.from({ length: 20 }, (_, k) => `$${b + k + 1}`).join(',')})`;
+        c.thinkingTokens, c.webSearchRequests, c.tool ?? null, c.action ?? null, c.provider ?? null, c.matchKey ?? null);
+      return `(${Array.from({ length: 21 }, (_, k) => `$${b + k + 1}`).join(',')})`;
     });
     const r = await tx.query(
       `INSERT INTO usage_calls AS u (source, host, call_id, request_id, session_external_id, message_external_id, ts,
          model, entrypoint, cwd, is_sidechain, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens,
-         thinking_tokens, web_search_requests, tool, action, provider)
+         thinking_tokens, web_search_requests, tool, action, provider, match_key)
        VALUES ${values.join(',')}
        ON CONFLICT (source, host, call_id) DO UPDATE SET
          output_tokens = GREATEST(u.output_tokens, EXCLUDED.output_tokens),
          thinking_tokens = CASE WHEN EXCLUDED.output_tokens > u.output_tokens THEN EXCLUDED.thinking_tokens ELSE u.thinking_tokens END,
          tool = COALESCE(u.tool, EXCLUDED.tool), action = COALESCE(u.action, EXCLUDED.action),
-         provider = COALESCE(EXCLUDED.provider, u.provider),
+         provider = COALESCE(EXCLUDED.provider, u.provider), match_key = COALESCE(u.match_key, EXCLUDED.match_key),
          message_external_id = CASE WHEN EXCLUDED.output_tokens > u.output_tokens AND u.session_external_id = EXCLUDED.session_external_id
                                     THEN EXCLUDED.message_external_id ELSE u.message_external_id END
        -- A fuller copy of the response, or the first one that says which provider served it.

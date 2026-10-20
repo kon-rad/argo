@@ -1,7 +1,8 @@
 import type { Host } from '../archive/types.js';
 
 export interface UsageCall {
-  source: 'claude-code';
+  /** 'claude-code', or a Hermes home's archive source ('hermes', 'hermes:builder') for the usage-ledger plugin's calls. */
+  source: string;
   host: Host;
   callId: string;
   requestId: string | null;
@@ -23,6 +24,8 @@ export interface UsageCall {
   action: Action | null;
   /** Who served the call ('anthropic', 'bedrock', ...); null when the collector doesn't know. */
   provider?: string | null;
+  /** Hermes only: the plugin's key (tool-call ids or a text hash) that ties the call to its stored response. */
+  matchKey?: string | null;
 }
 
 export type Action = 'dm' | 'post' | 'ticket' | 'card' | 'tracker' | 'write' | 'read' | 'shell' | 'reply';

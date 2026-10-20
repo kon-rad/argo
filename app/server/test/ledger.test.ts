@@ -188,6 +188,14 @@ describe('collectHermes', () => {
   });
 
   it('reads every home and profile, skips unchanged databases and queues only new rows', async () => {
+    // A private temp dir: a ledger running on the same machine makes its own sb-ledger-* folders.
+    const tmp = join(root, 'tmp');
+    mkdirSync(tmp);
+    const before = process.env.TMPDIR;
+    process.env.TMPDIR = tmp;
+    try { await readsEveryHome(); } finally { if (before === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = before; }
+  });
+  async function readsEveryHome(): Promise<void> {
     const home = join(root, 'hermes');
     mkdirSync(join(home, 'profiles', 'builder'), { recursive: true });
     buildHermes(join(home, 'state.db'), 2);
@@ -206,7 +214,7 @@ describe('collectHermes', () => {
     buildHermes(join(home, 'state.db'), 3);
     expect(await collectHermes(ledger, [{ dir: home, label: 'main' }])).toMatchObject({ files: 1, messages: 1, sessions: 1 });
     expect(readdirSync(tmpdir()).filter((n) => n.startsWith('sb-ledger-'))).toEqual([]); // no plaintext snapshot left
-  });
+  }
 });
 
 describe('install units', () => {
@@ -364,6 +372,40 @@ describe('sync to the server', () => {
     expect(s.rows).toEqual([{ host: 'test-box', source: 'hermes', message_count: 2, cost_usd: 0.01 }]);
     const h = await query(`SELECT host, profile, reasoning_tokens, billing_provider FROM hermes_usage_snapshots`);
     expect(h.rows).toEqual([{ host: 'test-box', profile: 'main', reasoning_tokens: 3, billing_provider: 'openrouter' }]);
+  });
+
+  it('syncs the Hermes plugin\'s per-request calls for every profile, once, with this machine\'s keys removed', async () => {
+    const home = join(root, 'hermes');
+    const line = (sid: string, req: string, extra: Record<string, unknown> = {}) => JSON.stringify({ v: 1, kind: 'main',
+      ts: '2026-10-19T02:00:00+00:00', session_id: sid, api_request_id: req, platform: 'cli', provider: 'openrouter',
+      model: 'qwen3', input: 100, output: 9, cache_read: 50, cache_write: 0, reasoning: 4, tools: ['terminal'], match: 't:call_a', ...extra }) + '\n';
+    mkdirSync(join(home, 'usage'), { recursive: true });
+    mkdirSync(join(home, 'profiles', 'builder', 'usage'), { recursive: true });
+    writeFileSync(join(home, 'profiles', 'builder', 'state.db'), '');
+    writeFileSync(join(home, 'usage', 'calls-2026-10-19.jsonl'), line('h1', 'r1') + '{"cut off');
+    writeFileSync(join(home, 'profiles', 'builder', 'usage', 'calls-2026-10-19.jsonl'), line('b1', 'r2', { platform: 'MYTOKEN-abcdefghijklmnop' }));
+    const envFile = join(root, 'machine.env');
+    writeFileSync(envFile, 'SOME_API_KEY=MYTOKEN-abcdefghijklmnop\n');
+    await collectHermes(ledger, [{ dir: home, label: 'main' }]);
+    const again = await collectHermes(ledger, [{ dir: home, label: 'main' }]);
+    expect(again.calls).toBe(0);
+    expect(await syncOnce(ledger, { ...cfg, redactEnvFiles: [envFile] }, deps, { force: true })).toMatchObject({ status: 'ok' });
+    const c = await query(`SELECT source, host, call_id, session_external_id, input_tokens, thinking_tokens, provider, match_key, entrypoint
+      FROM usage_calls ORDER BY call_id`);
+    expect(c.rows).toEqual([
+      { source: 'hermes', host: 'test-box', call_id: 'r1', session_external_id: 'h1', input_tokens: 100, thinking_tokens: 4,
+        provider: 'openrouter', match_key: 't:call_a', entrypoint: 'cli' },
+      { source: 'hermes:builder', host: 'test-box', call_id: 'r2', session_external_id: 'b1', input_tokens: 100, thinking_tokens: 4,
+        provider: 'openrouter', match_key: 't:call_a', entrypoint: '[redacted:SOME_API_KEY]' },
+    ]);
+  });
+
+  it('stops, never sends, when an env file to redact with cannot be read', async () => {
+    collectClaude(ledger, projects, 'anthropic');
+    const r = await syncOnce(ledger, { ...cfg, redactEnvFiles: [root] }, deps, { force: true });  // a directory: unreadable as a file
+    expect(r).toMatchObject({ status: 'retry', sent: 0 });
+    expect(r.error).toMatch(/redact env file/);
+    expect((await query(`SELECT count(*)::int n FROM archive_messages`)).rows[0].n).toBe(0);
   });
 
   it('a later copy that names the provider fills it in without lowering token counts', async () => {

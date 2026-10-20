@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdtempSync, openSync, readSync, rmSync, statSync } from 'node:fs';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
@@ -7,6 +7,7 @@ import { parseClaudeJsonl } from '../archive/claude.js';
 import { readHermes } from '../archive/hermes.js';
 import { fingerprintOf } from '../archive/stage.js';
 import { callsFromRecords } from '../usage/claudeCalls.js';
+import { hermesCallFiles, parseHermesCalls } from '../usage/hermesCalls.js';
 import { readHermesCounters } from '../usage/hermesCounters.js';
 import { splitJsonLines } from '../usage/lines.js';
 import { readFrom } from '../usage/readFrom.js';
@@ -113,6 +114,28 @@ function fileSig(path: string): string {
   return parts.join('|');
 }
 
+/** The usage-ledger plugin's day files in one Hermes home or profile: a file is re-read when it grows. */
+export function collectHermesCalls(ledger: Ledger, dir: string, source: string, c: CollectCounts): void {
+  for (const path of hermesCallFiles(dir)) {
+    try {
+      const name = `hermes-calls:${path}`;
+      const sig = fileSig(path);
+      if (ledger.cursor<string>(name) === sig) continue;
+      const calls = parseHermesCalls(readFileSync(path, 'utf8'), source, LOCAL);
+      ledger.tx(() => {
+        for (const call of calls) {
+          const data = { ...noHost(call), ts: iso(call.ts)! };
+          const skey = `${source}|${call.sessionExternalId}`;
+          if (ledger.put('call', `${source}|${call.callId}`, data, { source, sessionKey: skey, ts: data.ts })) c.calls++;
+        }
+        ledger.setCursor(name, sig);
+      });
+    } catch (err) {
+      c.errors.push(`hermes calls ${path}: ${(err as Error).message}`);
+    }
+  }
+}
+
 /**
  * Hermes: each home and each of its profiles. A state.db that hasn't changed since
  * the last run (size and mtime of the file and its WAL) is skipped; a changed one is
@@ -127,9 +150,10 @@ export async function collectHermes(ledger: Ledger, homes: Array<{ dir: string; 
       if (!existsSync(home.dir)) continue;
       const tz = hermesTimezone(home.dir);
       for (const h of findHomes(home.dir)) {
+        const { source, profile } = hermesNames(home.label, h.profile);
+        collectHermesCalls(ledger, h.dir, source, c);
         const src = join(h.dir, 'state.db');
         if (!existsSync(src)) continue;
-        const { source, profile } = hermesNames(home.label, h.profile);
         try {
           const name = `hermes:${src}`;
           const sig = fileSig(src);

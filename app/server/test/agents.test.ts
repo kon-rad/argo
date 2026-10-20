@@ -94,6 +94,23 @@ describe('agents sync', () => {
     expect(runsLogged.rows[0]!.n).toBe(2);
   });
 
+  it('copies the usage-ledger plugin\'s per-request calls under each profile\'s source, once', async () => {
+    const line = (sid: string, req: string) => JSON.stringify({ v: 1, kind: 'main', ts: new Date().toISOString(), session_id: sid,
+      api_request_id: req, platform: 'telegram', provider: 'openrouter', model: 'deepseek-v4-flash', input: 30, output: 5,
+      cache_read: 0, cache_write: 0, reasoning: 2, tools: [], match: 'c:abc' }) + '\n';
+    mkdirSync(join(root, 'usage'));
+    mkdirSync(join(root, 'profiles', 'researcher', 'usage'));
+    writeFileSync(join(root, 'usage', 'calls-2026-10-20.jsonl'), line('20261011_070000_aaaa', 'req-a'));
+    writeFileSync(join(root, 'profiles', 'researcher', 'usage', 'calls-2026-10-20.jsonl'), line('20261011_080000_bbbb', 'req-b'));
+    expect((await syncAgents(root, 'droplet')).calls).toBe(2);
+    expect((await syncAgents(root, 'droplet')).calls).toBe(0);
+    const rows = await query(`SELECT source, call_id, provider FROM usage_calls ORDER BY call_id`);
+    expect(rows.rows).toEqual([
+      { source: 'hermes', call_id: 'req-a', provider: 'openrouter' },
+      { source: 'hermes:researcher', call_id: 'req-b', provider: 'openrouter' },
+    ]);
+  });
+
   it('keeps a job that disappears from jobs.json, marked removed', async () => {
     await syncAgents(root, 'droplet');
     writeFileSync(join(root, 'cron', 'jobs.json'), JSON.stringify({ jobs: [] }));

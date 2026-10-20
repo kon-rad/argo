@@ -2,6 +2,9 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { basename, join, relative, resolve as resolvePath } from 'node:path';
 import { redactExisting } from './backfill.js';
 import { ingest, type Counts, type Item } from './ingest.js';
+import { withTransaction } from '../db.js';
+import { readHermesCalls } from '../usage/hermesCalls.js';
+import { upsertCalls } from '../usage/store.js';
 import { walkFiles as walk } from '../usage/walkFiles.js';
 import * as stage from './stage.js';
 import * as store from './store.js';
@@ -28,6 +31,8 @@ export interface RunSummary {
   staged: number; uploaded: number; uploadError: string | null;
   ingested: Record<string, Counts>; errors: string[];
   redacted?: { messages: number; sessions: number };
+  /** Hermes per-request rows from the usage-ledger plugin's day files. */
+  hermesCalls?: number;
 }
 
 export function defaultPaths(vaultRoot: string, home: string): ArchivePaths {
@@ -224,6 +229,18 @@ export async function runArchive(deps: RunDeps, opts: RunOptions = {}): Promise<
       try {
         await ingest(item, summary.errors, bump);
       } catch (err) { summary.errors.push(`${item.source} ${item.logical}: ${(err as Error).message}`); }
+    }
+
+    // --- Hermes per-request tokens (usage-ledger plugin) for both Mac homes; idempotent, last two weeks ---
+    if (!opts.dryRun) {
+      try {
+        const since = deps.now().getTime() - 14 * 86400_000;
+        const calls = [
+          ...readHermesCalls(paths.hermesHome, 'hermes', 'mac', since),
+          ...(userHome ? readHermesCalls(userHome, 'hermes:user', 'mac', since) : []),
+        ];
+        if (calls.length) summary.hermesCalls = await withTransaction((tx) => upsertCalls(tx, calls));
+      } catch (err) { summary.errors.push(`hermes calls: ${(err as Error).message}`); }
     }
 
     // --- Redact new rows with this machine's env values ---

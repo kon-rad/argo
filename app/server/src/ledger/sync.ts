@@ -1,4 +1,5 @@
 import { gzipSync } from 'node:zlib';
+import { buildRedactor } from '../archive/redact.js';
 import type { Ledger } from './store.js';
 import type { LedgerConfig, WireBatch, WireRow } from './types.js';
 
@@ -34,9 +35,19 @@ export async function syncOnce(ledger: Ledger, cfg: LedgerConfig, deps: SyncDeps
     return { ...result, status: 'waiting', error: state.lastError };
   }
   const url = `${cfg.server.replace(/\/+$/, '')}/api/ingest/batch`;
+  // This machine's keys, which the server can't know. Blobs are skipped: the server checks each one
+  // against its content hash, and they come only from the optional capture proxy.
+  // An env file it can't read (macOS privacy rules for a scheduled job) stops the sync, never sends unredacted.
+  let red: ReturnType<typeof buildRedactor>;
+  try { red = buildRedactor({ env: process.env, files: cfg.redactEnvFiles ?? [] }); } catch (err) {
+    const message = `redact env file unreadable: ${(err as Error).message}`;
+    ledger.setMeta('last_error', message);
+    return { ...result, status: 'retry', error: message };
+  }
+  const clean = (rows: WireRow[]): WireRow[] => rows.map((r) => (r.kind === 'blob' ? r : { ...r, data: red.deep(r.data) }));
 
   const post = async (rows: WireRow[]): Promise<Outcome> => {
-    const batch: WireBatch = { v: 1, ledgerId: ledger.ledgerId, bundle: deps.bundle, fromSeq: rows[0]!.seq, toSeq: rows.at(-1)!.seq, rows };
+    const batch: WireBatch = { v: 1, ledgerId: ledger.ledgerId, bundle: deps.bundle, fromSeq: rows[0]!.seq, toSeq: rows.at(-1)!.seq, rows: clean(rows) };
     let res: Response;
     try {
       res = await deps.fetch(url, {

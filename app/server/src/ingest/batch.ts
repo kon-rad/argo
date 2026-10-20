@@ -35,6 +35,7 @@ const callData = z.object({
   model: str, entrypoint: opt(str), cwd: opt(str), isSidechain: z.boolean(), inputTokens: num, cacheWriteTokens: num,
   cacheReadTokens: num, outputTokens: num, thinkingTokens: num, webSearchRequests: num, tool: opt(str),
   action: opt(z.enum(['dm', 'post', 'ticket', 'card', 'tracker', 'write', 'read', 'shell', 'reply'])), provider: opt(str),
+  matchKey: opt(str),
 });
 const counterData = z.object({
   profile: str, sessionId: str, model: opt(str), billingProvider: opt(str), startedAt: opt(z.string()), endedAt: opt(z.string()),
@@ -97,7 +98,7 @@ export async function ingestBatch(device: { id: number; host: string }, batch: W
       messages.push({ seq: row.seq, source: src, m: { ...d, ts: date(d.ts) } });
     } else if (row.kind === 'call') {
       const d = parseRow(callData, row);
-      calls.push({ ...d, source: d.source as UsageCall['source'], host, ts: date(d.ts) ?? new Date(0) });
+      calls.push({ ...d, host, ts: date(d.ts) ?? new Date(0) });
     } else if (row.kind === 'counter') {
       const d = parseRow(counterData, row);
       counters.push({ ...d, host, startedAt: date(d.startedAt), endedAt: date(d.endedAt) });
