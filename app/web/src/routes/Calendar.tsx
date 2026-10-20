@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { calendarApi, type CalendarEvent } from '../lib/api.js';
@@ -29,14 +29,19 @@ function timeLabel(e: CalendarEvent): string {
 }
 
 export default function Calendar() {
-  const today = iso(new Date());
+  const today = new Date().toLocaleDateString('en-CA'); // the viewer's local day, YYYY-MM-DD
   const cal = useQuery({ queryKey: ['calendar'], queryFn: calendarApi.list });
   const events = cal.data?.events ?? [];
 
   // Open on the month of the next event (or this month when nothing is ahead).
-  const firstAhead = events.find((e) => e.end_date >= today)?.date ?? today;
+  // Set once, when the events first arrive, so a refetch never moves the view.
   const [cursor, setCursor] = useState<{ y: number; m: number } | null>(null);
-  const shown = cursor ?? { y: Number(firstAhead.slice(0, 4)), m: Number(firstAhead.slice(5, 7)) - 1 };
+  useEffect(() => {
+    if (cursor || !cal.data) return;
+    const firstAhead = cal.data.events.find((e) => e.end_date >= today)?.date ?? today;
+    setCursor({ y: Number(firstAhead.slice(0, 4)), m: Number(firstAhead.slice(5, 7)) - 1 });
+  }, [cal.data, cursor, today]);
+  const shown = cursor ?? { y: Number(today.slice(0, 4)), m: Number(today.slice(5, 7)) - 1 };
   const grid = useMemo(() => monthGrid(shown.y, shown.m), [shown.y, shown.m]);
   const monthKey = `${shown.y}-${String(shown.m + 1).padStart(2, '0')}`;
   const [selected, setSelected] = useState<string | null>(null);
@@ -124,8 +129,8 @@ export default function Calendar() {
               </div>
             )}
             <ul>
-              {list.map((e, i) => (
-                <li key={i} className="flex flex-wrap items-baseline gap-x-2 border-b border-[var(--rule)] py-1.5 text-sm">
+              {list.map((e) => (
+                <li key={e.id} className="flex flex-wrap items-baseline gap-x-2 border-b border-[var(--rule)] py-1.5 text-sm">
                   <span className="w-24 shrink-0 font-mono text-xs text-[var(--ink-dim)]">{timeLabel(e)}</span>
                   <span className="font-medium">
                     {e.link ? <a href={e.link} target="_blank" rel="noreferrer" className="underline decoration-dotted">{e.title}</a> : e.title}

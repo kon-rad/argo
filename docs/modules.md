@@ -152,12 +152,12 @@ Events live in notes, so the note that explains a trip or a meetup is also the r
 <!-- /calendar -->
 ```
 
-Columns are matched by header name in any order: `Date` and `Event` (or `Title`) are required; `Start`, `End`, `Where` (`Venue`, `Location`) and `Link` (`URL`) are optional. A date can be a range (`2026-11-03 to 2026-11-06`). Times are wall-clock in the block's `tz` (an IANA zone; UTC when missing or unknown), and a row with no start time is all day. A row with an impossible date or time is skipped and counted on the page, never guessed. A `[text](url)` in the Event cell becomes the event's link.
+Columns are matched by header name in any order: `Date` and `Event` (or `Title`) are required; `Start`, `End`, `Where` (`Venue`, `Location`) and `Link` (`URL`) are optional. A date can be a range (`2026-11-03 to 2026-11-06`). Times are wall-clock in the block's `tz` (an IANA zone, quoted or not; UTC when missing). A row with no start time is all day; an end at or before the start on a one-day row runs past midnight; a timed row with a date range is one stretch from the first day's start to the last day's end. A row with an impossible date or time, or an end but no start, and every row of a block whose zone doesn't exist, are skipped and counted on the page, never guessed. Links must be `http(s)` or `mailto:`. Cells may contain `\|` for a literal pipe (Obsidian's `[[Note\|alias]]`). A `[text](url)` in the Event cell becomes the event's link.
 
 | | |
 |---|---|
 | Page | `/calendar`: month grid (weeks start Monday), agenda for the month or a clicked day, times in each event's own zone, a link back to the note |
-| API | `GET /api/calendar` (`from`, `to` optional), `GET /api/calendar/ics` (an iCalendar file: timed events in UTC, all-day events as dates) |
+| API | `GET /api/calendar` (`from`, `to` optional), `GET /api/calendar/ics` (an iCalendar file: timed events in UTC, all-day events as dates, lines folded at 75 octets, a UID per note, block and row). Both sit behind the login, so a phone imports the file rather than subscribing to a URL |
 | Source | The index (`vault_files.body`), so an edit shows after the next scan |
 | Settings, timers | none |
 

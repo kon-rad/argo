@@ -31,10 +31,23 @@ describe('parseCalendar', () => {
     expect(events[1]).toMatchObject({ start: '09:00', end: '18:00', title: 'Opening', link: 'https://devcon.org/schedule' });
   });
 
-  it('needs a date and an event column, and falls back to UTC for an unknown zone', () => {
+  it('needs a date and an event column, skips a block with an unknown zone, accepts a quoted zone', () => {
     expect(parseCalendar('<!-- calendar -->\n| Start | Event |\n|---|---|\n| 09:00 | x |\n<!-- /calendar -->', 'a.md').events).toEqual([]);
     const r = parseCalendar('<!-- calendar tz=Mars/Base -->\n| Day | Title |\n|-|-|\n| 2026-01-02 | y |\n<!-- /calendar -->', 'b.md');
-    expect(r.events[0]).toMatchObject({ date: '2026-01-02', tz: 'UTC', title: 'y' });
+    expect(r.events).toEqual([]);
+    expect(r.skipped).toBe(1);
+    const u = parseCalendar('<!-- calendar tz="Europe/Warsaw" -->\n| Day | Title |\n|-|-|\n| 2026-01-02 | y |\n<!-- /calendar -->', 'c.md');
+    expect(u).toMatchObject({ skipped: 0, events: [{ date: '2026-01-02', tz: 'Europe/Warsaw', title: 'y' }] });
+  });
+
+  it('keeps escaped pipes in a cell, drops unsafe links and rows with an end but no start', () => {
+    const r = parseCalendar(
+      '<!-- calendar -->\n| Date | Start | End | Event | Link |\n|--|--|--|--|--|\n'
+      + '| 2026-01-02 | | | [[Note\\|Alias]] a \\| b | javascript:alert(1) |\n'
+      + '| 2026-01-03 | | 10:00 | No start | |\n<!-- /calendar -->', 'd.md');
+    expect(r.skipped).toBe(1);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0]).toMatchObject({ title: 'Alias a | b', link: null, id: 'd.md#1.1' });
   });
 });
 
@@ -55,5 +68,16 @@ describe('zonedToUtc and toIcs', () => {
     expect(ics).toContain('DTSTART:20261103T033000Z\r\nDTEND:20261103T123000Z');
     expect(ics).toContain('LOCATION:Main hall');
     expect(ics.startsWith('BEGIN:VCALENDAR\r\n')).toBe(true);
+  });
+
+  it('folds long lines at 75 octets, gives each row its own UID, and runs overnight rows past midnight', () => {
+    const body = '<!-- calendar tz=Asia/Kolkata -->\n| Date | Start | End | Event |\n|---|---|---|---|\n'
+      + `| 2026-11-03 | 18:00 | 02:00 | ${'Zażółć gęślą jaźń '.repeat(8)} |\n`
+      + `| 2026-11-03 | 18:00 | 02:00 | ${'Zażółć gęślą jaźń '.repeat(8)} |\n<!-- /calendar -->`;
+    const ics = toIcs(parseCalendar(body, 'e.md').events);
+    for (const line of ics.split('\r\n')) expect(Buffer.byteLength(line)).toBeLessThanOrEqual(75);
+    const uids = ics.match(/^UID:.*$/gm) ?? [];
+    expect(new Set(uids).size).toBe(2);
+    expect(ics).toContain('DTSTART:20261103T123000Z\r\nDTEND:20261103T203000Z');
   });
 });

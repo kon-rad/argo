@@ -958,6 +958,7 @@ export const mediaApi = {
 };
 
 export interface CalendarEvent {
+  id: string;
   date: string;
   end_date: string;
   start: string | null;

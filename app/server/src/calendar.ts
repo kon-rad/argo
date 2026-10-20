@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 /**
  * The calendar module's parser: events live in vault notes, as a markdown
  * table between two comments, so the note that explains an event is also the
@@ -18,6 +20,8 @@
  */
 
 export interface CalendarEvent {
+  /** Stable per row: the note, the block and the row's place in it. */
+  id: string;
   /** First day, YYYY-MM-DD, in the event's zone. */
   date: string;
   /** Last day for a multi-day event, else the same as `date`. */
@@ -72,15 +76,18 @@ function validDate(s: string | undefined): s is string {
   return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === s;
 }
 
+/** A table row's cells; `\|` is a literal pipe (as in `[[Note\|alias]]`), not a cell break. */
 function cells(line: string): string[] {
-  const t = line.trim().replace(/^\|/, '').replace(/\|$/, '');
-  return t.split('|').map((c) => c.trim());
+  const t = line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '');
+  return t.split(/(?<!\\)\|/).map((c) => c.replace(/\\\|/g, '|').trim());
 }
+
+const SAFE_URL = /^(https?:\/\/|mailto:)/i;
 
 /** `[text](url)` → its text and url; a bare URL is a link with no text. */
 function splitLink(raw: string): { text: string; url: string | null } {
   const m = MD_LINK.exec(raw);
-  if (m) return { text: (raw.replace(MD_LINK, m[1] ?? '')).trim(), url: m[2] ?? null };
+  if (m) return { text: (raw.replace(MD_LINK, m[1] ?? '')).trim(), url: m[2] && SAFE_URL.test(m[2]) ? m[2] : null };
   if (/^https?:\/\/\S+$/.test(raw)) return { text: '', url: raw };
   return { text: raw, url: null };
 }
@@ -97,19 +104,24 @@ function plain(raw: string): string {
 export function parseCalendar(body: string, source: string): { events: CalendarEvent[]; skipped: number } {
   const events: CalendarEvent[] = [];
   let skipped = 0;
+  let blockNo = 0;
   for (const block of body.matchAll(BLOCK)) {
-    const tzArg = /tz=([\w/+-]+)/.exec(block[1] ?? '')?.[1] ?? 'UTC';
-    const tz = validZone(tzArg) ? tzArg : 'UTC';
+    blockNo++;
+    const tz = /tz=["']?([\w/+-]+)/.exec(block[1] ?? '')?.[1] ?? 'UTC';
     const lines = (block[2] ?? '').split('\n').filter((l) => l.trim().startsWith('|'));
     if (lines.length < 2) continue;
     const header = cells(lines[0]!).map((h) => COLUMNS[h.toLowerCase().replace(/[^a-z]/g, '')]);
-    if (!header.includes('date') || !header.includes('title')) {
-      skipped += Math.max(0, lines.length - 2);
+    // A block we can't read (no date or event column, a zone that doesn't
+    // exist) is counted as skipped rather than shown at guessed times.
+    if (!header.includes('date') || !header.includes('title') || !validZone(tz)) {
+      skipped += lines.slice(1).filter((l) => !cells(l).every((c) => /^:?-+:?$/.test(c) || c === '')).length;
       continue;
     }
+    let rowNo = 0;
     for (const line of lines.slice(1)) {
       const row = cells(line);
-      if (row.every((c) => /^:?-{3,}:?$/.test(c) || c === '')) continue; // the |---| rule
+      if (row.every((c) => /^:?-+:?$/.test(c) || c === '')) continue; // the |---| rule
+      rowNo++;
       const get = (k: string) => {
         const i = header.indexOf(k as never);
         return i >= 0 ? (row[i] ?? '').trim() : '';
@@ -120,11 +132,12 @@ export function parseCalendar(body: string, source: string): { events: CalendarE
       const title = splitLink(plain(get('title')));
       const link = splitLink(get('link')).url ?? title.url;
       if (!validDate(d1) || (d2 !== undefined && !validDate(d2)) || (d2 && d2 < d1) || !title.text
-        || (start && !TIME.test(start)) || (end && !TIME.test(end))) {
+        || (start && !TIME.test(start)) || (end && !TIME.test(end)) || (end && !start)) {
         skipped++;
         continue;
       }
       events.push({
+        id: `${source}#${blockNo}.${rowNo}`,
         date: d1,
         end_date: d2 ?? d1,
         start: start ? start.padStart(5, '0') : null,
@@ -166,6 +179,25 @@ function nextDay(date: string): string {
   return t.toISOString().slice(0, 10);
 }
 
+/** RFC 5545 line folding: at most 75 octets a line, never splitting a character. */
+function fold(line: string): string {
+  const out: string[] = [];
+  let cur = '';
+  let octets = 0;
+  for (const ch of line) {
+    const n = Buffer.byteLength(ch);
+    if (octets + n > (out.length ? 74 : 75)) {
+      out.push(cur);
+      cur = '';
+      octets = 0;
+    }
+    cur += ch;
+    octets += n;
+  }
+  out.push(cur);
+  return out.join('\r\n ');
+}
+
 const icsText = (s: string) => s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
 const icsUtc = (d: Date) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
 
@@ -173,14 +205,16 @@ const icsUtc = (d: Date) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3
 export function toIcs(events: CalendarEvent[], stamp = new Date()): string {
   const out = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//secondbrain//calendar//EN', 'CALSCALE:GREGORIAN'];
   for (const e of events) {
-    const uid = `${e.date}-${e.start ?? 'day'}-${e.title}-${e.source}`.replace(/[^\w.-]+/g, '-').slice(0, 180);
+    const uid = createHash('sha1').update(e.id).digest('hex');
     out.push('BEGIN:VEVENT', `UID:${uid}@secondbrain`, `DTSTAMP:${icsUtc(stamp)}`);
     if (e.start) {
+      // One timed row is one stretch of time: from the first day's start to
+      // the last day's end. An end at or before the start on a one-day row
+      // runs past midnight (18:00 to 02:00); no end means one hour.
       const start = zonedToUtc(e.date, e.start, e.tz);
-      const end = e.end
-        ? zonedToUtc(e.end_date, e.end, e.tz)
-        : new Date(start.getTime() + 60 * 60000);
-      out.push(`DTSTART:${icsUtc(start)}`, `DTEND:${icsUtc(end > start ? end : new Date(start.getTime() + 60 * 60000))}`);
+      const endDay = e.end && e.end_date === e.date && e.end <= e.start ? nextDay(e.date) : e.end_date;
+      const end = e.end ? zonedToUtc(endDay, e.end, e.tz) : new Date(start.getTime() + 60 * 60000);
+      out.push(`DTSTART:${icsUtc(start)}`, `DTEND:${icsUtc(end)}`);
     } else {
       out.push(`DTSTART;VALUE=DATE:${e.date.replace(/-/g, '')}`, `DTEND;VALUE=DATE:${nextDay(e.end_date).replace(/-/g, '')}`);
     }
@@ -190,5 +224,5 @@ export function toIcs(events: CalendarEvent[], stamp = new Date()): string {
     out.push(`DESCRIPTION:${icsText(`From ${e.source}`)}`, 'END:VEVENT');
   }
   out.push('END:VCALENDAR');
-  return out.join('\r\n') + '\r\n';
+  return out.map(fold).join('\r\n') + '\r\n';
 }
