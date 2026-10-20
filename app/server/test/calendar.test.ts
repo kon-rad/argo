@@ -40,6 +40,11 @@ describe('parseCalendar', () => {
     expect(u).toMatchObject({ skipped: 0, events: [{ date: '2026-01-02', tz: 'Europe/Warsaw', title: 'y' }] });
   });
 
+  it('ignores blocks quoted in code fences or inline code', () => {
+    const doc = 'Use `<!-- calendar -->`.\n\n```\n<!-- calendar -->\n| Date | Event |\n|---|---|\n| 2026-01-02 | Example |\n<!-- /calendar -->\n```\n';
+    expect(parseCalendar(doc, 'docs.md')).toEqual({ events: [], skipped: 0 });
+  });
+
   it('keeps escaped pipes in a cell, drops unsafe links and rows with an end but no start', () => {
     const r = parseCalendar(
       '<!-- calendar -->\n| Date | Start | End | Event | Link |\n|--|--|--|--|--|\n'

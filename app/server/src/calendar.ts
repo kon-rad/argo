@@ -105,7 +105,10 @@ export function parseCalendar(body: string, source: string): { events: CalendarE
   const events: CalendarEvent[] = [];
   let skipped = 0;
   let blockNo = 0;
-  for (const block of body.matchAll(BLOCK)) {
+  // A block quoted in a code fence or inline code is documentation (the
+  // engine's own docs show one), not events.
+  const live = body.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '').replace(/`[^`\n]*`/g, '');
+  for (const block of live.matchAll(BLOCK)) {
     blockNo++;
     const tz = /tz=["']?([\w/+-]+)/.exec(block[1] ?? '')?.[1] ?? 'UTC';
     const lines = (block[2] ?? '').split('\n').filter((l) => l.trim().startsWith('|'));
