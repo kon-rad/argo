@@ -95,6 +95,16 @@ const Schema = z.object({
   // Required only when the social module is on; generate with
   // `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`.
   SOCIAL_TOKEN_ENC_KEY: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
+  // A personal key from Buffer (Settings > API). Relays Instagram, YouTube
+  // Shorts and X through the channels connected in that Buffer account;
+  // unset = no Buffer relay.
+  BUFFER_API_KEY: z.string().min(1).optional(),
+  // Public base URL Buffer fetches post media from (it has no upload), e.g.
+  // https://brain.example.com. Must be reachable from the internet.
+  // Defaults to SOCIAL_REDIRECT_BASE_URL.
+  SOCIAL_MEDIA_BASE_URL: z.string().url().optional(),
+  // X counts a post's length by weight; 280 on a free account, 25000 on Premium.
+  SOCIAL_X_MAX_CHARS: z.coerce.number().int().positive().default(280),
 });
 
 export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream', 'media', 'social'] as const;
@@ -164,5 +174,10 @@ export const config = {
   linkedinClientId: parsed.data.LINKEDIN_CLIENT_ID,
   linkedinClientSecret: parsed.data.LINKEDIN_CLIENT_SECRET,
   socialRedirectBaseUrl: (parsed.data.SOCIAL_REDIRECT_BASE_URL ?? parsed.data.PUBLIC_ORIGIN ?? `http://localhost:${parsed.data.PORT}`).replace(/\/+$/, ''),
+  socialMediaBaseUrl: (
+    parsed.data.SOCIAL_MEDIA_BASE_URL ?? parsed.data.SOCIAL_REDIRECT_BASE_URL ?? parsed.data.PUBLIC_ORIGIN ?? `http://localhost:${parsed.data.PORT}`
+  ).replace(/\/+$/, ''),
   socialTokenEncKey: parsed.data.SOCIAL_TOKEN_ENC_KEY,
+  bufferApiKey: parsed.data.BUFFER_API_KEY,
+  socialXMaxChars: parsed.data.SOCIAL_X_MAX_CHARS,
 } as const;

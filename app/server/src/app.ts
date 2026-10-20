@@ -28,7 +28,9 @@ import { sourcesRouter } from './routes/sources.js';
 import { systemRouter } from './routes/system.js';
 import { treeRouter } from './routes/tree.js';
 import { voiceRouter, type VoiceOptions } from './routes/voice.js';
+import { bufferProvider } from './social/providers/buffer.js';
 import { linkedinProvider } from './social/providers/linkedin.js';
+import { BUFFER_PROVIDER_KEY } from './social/scheduler.js';
 import type { SocialProvider } from './social/providers/types.js';
 import { togetherSqlGenerator, type SqlGenerator } from './sqlgen.js';
 
@@ -78,6 +80,7 @@ function defaultSocialProviders(): Record<string, SocialProvider> {
   if (config.linkedinClientId && config.linkedinClientSecret) {
     providers.linkedin = linkedinProvider({ clientId: config.linkedinClientId, clientSecret: config.linkedinClientSecret });
   }
+  if (config.bufferApiKey) providers[BUFFER_PROVIDER_KEY] = bufferProvider({ apiKey: config.bufferApiKey });
   return providers;
 }
 
@@ -122,12 +125,14 @@ export function createApp(opts: AppOptions = {}): express.Express {
     app.use('/api/feed', projectsFeedRouter(vaultRoot, opts.projectsFeedToken ?? config.projectsFeedToken));
   }
 
-  // The OAuth callback: the provider's redirect arrives without the session cookie.
+  // The OAuth callback (the provider's redirect arrives without the session
+  // cookie) and the public media a relay fetches by token.
   const socialOpts: SocialOptions | undefined = modules.has('social')
     ? {
         providers: defaultSocialProviders(),
         tokenEncKey: config.socialTokenEncKey,
         redirectBaseUrl: config.socialRedirectBaseUrl,
+        xMaxChars: config.socialXMaxChars,
         ...opts.social,
       }
     : undefined;

@@ -123,20 +123,37 @@ Stores data from a wearable ring that a separate client pushes in, next to your 
 
 ## social
 
-Connects your own LinkedIn account (self-service "Share on LinkedIn" permission, no app review) and publishes queued posts, with images, on a schedule. No web page yet: connect through the API (`GET /api/social/accounts/linkedin/connect`) and queue with `cli-social queue` or `POST /api/social/posts`; a compose UI is a planned follow-up.
+Publishes queued posts, with images or a video, on a schedule. LinkedIn goes out through your own LinkedIn account (self-service "Share on LinkedIn" permission, no app review). Instagram, YouTube Shorts and X go out through your [Buffer](https://buffer.com) account: one personal API key reaches every channel you connected there, so there is no app to register with Meta, Google or X. No web page yet: queue with `cli-social queue` or `POST /api/social/posts`; a compose UI is a planned follow-up.
 
-Images (JPEG, PNG or GIF, up to 5 MB each, 4 per post, alt text required) are stored as bytes in `social_post_media`, so a post can be queued from any machine that reaches the database and the server's timer always has the file. At publish time each image goes through LinkedIn's Images API (initialize upload, PUT the bytes), then the post refers to the image URNs; a failed upload fails the attempt before any post is created. A run starts no new post after 40 s; a post left `publishing` by a killed run is marked `failed` after 15 minutes (never requeued, since LinkedIn may already have it). The 3,000-character limit is checked on the escaped text. Post text is escaped into LinkedIn's "little" text format, so `( ) * _ @` and the like show as typed instead of cutting the post short, and `#word` stays a hashtag.
+**Drafts.** `cli-social queue --draft` (or `"draft": true` on the API) stores a post that the timer never publishes. `cli-social approve <id> [--at ISO]` (or `POST /api/social/posts/:id/approve`) queues it. This is how an agent proposes a post and the owner says yes; a post queued without `--draft` goes out at its time.
 
-A standard LinkedIn app gets a 60-day access token and **no refresh token** (LinkedIn only issues those to Marketing Developer Platform partners). Without that approval, reconnecting every ~2 months is expected, not a bug: the minute timer pings Telegram once when an account's access token is within 7 days of expiring with nothing left to refresh it.
+**Media.** Images (JPEG, PNG or GIF, up to 5 MB each, 4 per post, alt text required) or one video (MP4 or MOV, up to 200 MB, no alt text) are stored as bytes in `social_post_media`, so a post can be queued from any machine that reaches the database and the server's timer always has the file. A video's bytes are dropped once the post is out. LinkedIn takes images only: each goes through LinkedIn's Images API, then the post refers to the image URNs. Buffer has no upload, so for a relayed post the timer gives each file an unguessable token and Buffer fetches it from `GET /api/social/media/<token>/<filename>` (no session; served only while that post is publishing, with byte ranges). `SOCIAL_MEDIA_BASE_URL` must therefore be reachable from the internet.
+
+**Per-network rules, checked when a post is queued** (`social/rules.ts`), so a post never quietly falls back to Buffer's "notification publishing" (a phone reminder a person finishes):
+
+| Network | Rules | Options (`--option key=value`, or `--options-file` JSON) |
+|---|---|---|
+| LinkedIn | 3,000 characters once escaped; images only | none |
+| X | weighted length (URL = 23, CJK and emoji = 2) up to `SOCIAL_X_MAX_CHARS` (280 free, 25,000 Premium), each thread post too | `thread` (the posts after the body, in order; options file only), `aiGenerated` |
+| Instagram | caption 2,196 (a line break counts 2); needs media; a reel needs a video of 5 s to 15 min; images 0.8 to 1.91 wide-to-tall (1080x1350 is the tallest) | `instagramType` (post, reel, story; default reel for a video), `shareToFeed`, `firstComment`, `aiGenerated` |
+| YouTube | Shorts only: one video, exactly 9:16 or 1:1, 3 min at most (Buffer posts no long-form); title required, 100 characters; the body is the description, 5,000 | `title`, `categoryId` (default 28), `privacy` (public, unlisted, private), `madeForKids`, `notifySubscribers`, `aiGenerated` |
+
+The video size and length checks need `ffprobe` on the queueing machine; without it they are skipped with a note.
+
+**Publishing.** A LinkedIn run starts no new post after 40 s; a post left `publishing` by a killed run is marked `failed` after 15 minutes (never requeued, since LinkedIn may already have it). The 3,000-character limit is checked on the escaped text, which uses LinkedIn's "little" text format so `( ) * _ @` and the like show as typed and `#word` stays a hashtag. A relayed post is created in Buffer with `shareNow` at its due minute (our queue keeps the schedule, so Buffer's per-channel queue cap never binds), stays `publishing` until Buffer reports it `sent`, and then records the network's URL. A Buffer error, or no confirmation within 24 hours, marks it `failed` (never retried, since Buffer has it) and pings Telegram. Buffer's free plan allows 3,000 API requests a month; each post costs one create and a status check per minute until it is out.
+
+A standard LinkedIn app gets a 60-day access token and **no refresh token** (LinkedIn only issues those to Marketing Developer Platform partners). Without that approval, reconnecting every ~2 months is expected, not a bug: the minute timer pings Telegram once when an account's access token is within 7 days of expiring with nothing left to refresh it. Buffer accounts never expire here (the key is in env).
 
 | | |
 |---|---|
-| API | `GET/DELETE /api/social/accounts`, `GET /api/social/accounts/:provider/connect` + `/callback`, `GET/POST/DELETE /api/social/posts` |
-| CLI | `cli-social` (on the app user's PATH): no command = one pass (publish due posts, then the reauth check); `accounts`, `posts [--status S]`, `queue --body-file F [--image P --alt T]... [--account ID] [--at ISO]`, `cancel ID` |
-| Settings | `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `SOCIAL_REDIRECT_BASE_URL`, `SOCIAL_TOKEN_ENC_KEY` |
+| API | `GET/DELETE /api/social/accounts`, `GET /api/social/accounts/:provider/connect` + `/callback`, `GET/POST/DELETE /api/social/posts`, `POST /api/social/posts/:id/approve`, public `GET /api/social/media/:token/:filename` |
+| CLI | `cli-social` (on the app user's PATH): no command = one pass (publish due posts, check on posts handed to Buffer, then the reauth check); `accounts`, `connect-buffer`, `posts [--status S]`, `queue --body-file F [--image P --alt T]... | [--video P] [--account ID or network] [--at ISO] [--draft] [--option k=v]... [--options-file F]`, `approve ID [--at ISO]`, `cancel ID` |
+| Settings | `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `SOCIAL_REDIRECT_BASE_URL`, `SOCIAL_TOKEN_ENC_KEY`, `BUFFER_API_KEY`, `SOCIAL_MEDIA_BASE_URL`, `SOCIAL_X_MAX_CHARS` |
 | Timers (server) | the minute publisher/reauth-check (`secondbrain-social`) |
-| Design | `Projects/secondbrain-app/social-linkedin-plan.md` in the vault |
+| Design | `Projects/secondbrain-app/social-linkedin-plan.md` and `social-buffer-plan.md` in the vault |
 | OAuth callback | Served before the login check (the session cookie is SameSite=Strict, so LinkedIn's redirect arrives without it); the one-time `state` from a logged-in `/connect` guards it |
+
+**Setting up Buffer.** Connect each account in Buffer once (the free plan has 3 channels and a lifetime limit on new connections, so don't connect test accounts). Instagram must be a Business or Creator account for automatic publishing. Put `BUFFER_API_KEY` in the server's env, then run `cli-social connect-buffer`: it adds one account per Instagram, YouTube and X channel and skips the rest.
 
 ## Adding a module
 
