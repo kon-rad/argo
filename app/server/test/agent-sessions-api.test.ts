@@ -140,7 +140,8 @@ describe('agent sessions api', () => {
     const r = await request(app).get('/api/usage/agent-sessions/mac/h1').query({ source: 'hermes' });
     const chips = r.body.steps.filter((s: { call: unknown }) => s.call).map((s: { key: string; call: { input: number; reasoning: number } }) => [s.key, s.call.input, s.call.reasoning]);
     const id = (ext: string) => r.body.steps.find((s: { step: string; text: string }) => ext === 'msg:2' ? s.step === 'thinking' : s.text === 'All done.').id;
-    expect(chips).toEqual([[`${id('msg:2')}:r`, 500, 3], [String(id('msg:4')), 600, 3]]);
+    // On the response, not the hidden-by-default thinking part.
+    expect(chips).toEqual([[String(id('msg:2')), 500, 3], [String(id('msg:4')), 600, 3]]);
     // Totals still come from Hermes's own counters, and the dashboard's call view stays Claude Code only.
     expect(r.body.session.input).toBe(1000);
     const facts = await withTransaction((tx) => tx.query(`SELECT count(*)::int AS n FROM usage_facts WHERE source <> 'claude-code'`));

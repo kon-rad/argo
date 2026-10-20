@@ -231,12 +231,13 @@ export function agentSessionsRouter(): Router {
     const steps: StepOut[] = [];
     for (const r of rows.slice(0, q.limit)) {
       const parts = expandSteps({ id: r.id, role: r.role, kind: r.kind, ts: r.ts, raw: r.raw, text: r.text ?? '' });
+      // A response's tokens go on one part: the first that isn't thinking, which the page hides by default.
+      const chipAt = Math.max(0, parts.findIndex((p) => p.step !== 'thinking'));
       parts.forEach((p, i) => steps.push({
         ...p, id: r.id, ts: r.ts ? new Date(r.ts).toISOString() : null,
         text: p.text.length > TEXT_LIMIT ? p.text.slice(0, TEXT_LIMIT) : p.text, length: p.text.length, truncated: p.text.length > TEXT_LIMIT,
         subagent: r.own ? null : r.label,
-        // A Claude response's tokens go on its first part only.
-        call: i === 0 ? r.call : null,
+        call: i === chipAt ? r.call : null,
       }));
     }
     const runs = await query(
