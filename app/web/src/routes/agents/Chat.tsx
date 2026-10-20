@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, type ClaudeChat } from '../../lib/api.js';
 import { useEventLog } from '../../lib/useEventLog.js';
 import EventFeed from '../../components/EventFeed.js';
+import { ChatInput } from '../../components/ChatInput.js';
+import { useStickToBottom } from '../../lib/useStickToBottom.js';
 import HubError from './HubError.js';
 
 /**
@@ -97,13 +99,14 @@ function Conversation({ id, onBack }: { id: string; onBack: () => void }) {
   });
   const stop = useMutation({ mutationFn: () => api.stopClaudeChat(id), onSuccess: () => log.poke() });
 
-  const bottom = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ block: 'end' });
-  }, [log.events.length]);
+  // Opens at the newest turn and follows the stream, unless scrolled up.
+  const scroller = useStickToBottom(`${id}:${log.events.length > 0}`);
 
   const submit = () => {
-    if (text.trim() && !working) send.mutate(text);
+    if (text.trim() && !working && !send.isPending) {
+      send.mutate(text);
+      scroller.pin();
+    }
   };
 
   return (
@@ -114,24 +117,16 @@ function Conversation({ id, onBack }: { id: string; onBack: () => void }) {
         {chat && <span className="text-xs text-[var(--ink-dim)]">{chat.model} · {chat.cwd.replace(/^\/home\/hermes\//, '~/')}</span>}
         {chat && <span className="text-xs"><StatusLabel c={chat} /></span>}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      <div ref={scroller.ref} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         <div className="mx-auto max-w-3xl">
           {log.error && <HubError error={log.error} />}
           <EventFeed events={log.events} working={working} />
-          <div ref={bottom} />
         </div>
       </div>
       <form className="border-t border-[var(--rule)] p-3" onSubmit={(e) => { e.preventDefault(); submit(); }}>
         <div className="mx-auto flex max-w-3xl items-end gap-2">
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2}
-            placeholder={working ? 'Claude is working…' : 'Message Claude Code (Enter sends, Shift+Enter for a new line)'}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            className="min-h-[2.75rem] flex-1 resize-y rounded border border-[var(--rule)] bg-[var(--paper)] px-3 py-2 text-[0.95rem]" />
+          <ChatInput value={text} onChange={setText} onSubmit={submit} label="Message Claude Code"
+            placeholder={working ? 'Claude is working…' : 'Message Claude Code (Enter sends, Shift+Enter for a new line)'} />
           {working ? (
             <button type="button" onClick={() => stop.mutate()} className="rounded border border-[var(--warn)] px-3 py-2 text-sm text-[var(--warn)]">Stop</button>
           ) : (
