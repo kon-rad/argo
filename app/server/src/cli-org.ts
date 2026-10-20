@@ -40,6 +40,25 @@ import {
   type Message,
   type TaskLink,
 } from './org.js';
+import {
+  forget,
+  listApprovals,
+  listFacts,
+  recallExcluded,
+  recallFacts,
+  recallMemoryFiles,
+  remember,
+  shipCheck,
+  shipDecide,
+  shipNotice,
+  shipRequest,
+  type Approval,
+  type Fact,
+  type RecallHit,
+} from './org-powers.js';
+import { search } from './search.js';
+import { hybridSearch } from './semantic.js';
+import { defaultEmbeddingProvider, loadEmbeddingConfig } from './embeddings/factory.js';
 
 const USAGE = `cli-org: the agent company's message board (Postgres). Identity comes from ORG_AGENT, never from an argument.
 
@@ -57,10 +76,12 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   agents                                   the org chart (no identity needed)
   wakeups [--all]                          open wakeups for you (or everyone with --all)
   import <org.json>                        load the compiled org file (agents, teams, channels); idempotent
-  task create <bot> "<title>" --project p [--feature f] [--type t] [--body "..."] [--board exo] [--priority N]
-  task assign <card> <bot> --project p [--feature f] [--type t] [--board exo]   an existing card becomes the bot's
+  task create <bot> "<title>" --project p [--feature f] [--type t] [--needs cap] [--ship-now] [--body "..."] [--board exo] [--priority N]
+  task assign <card> <bot> --project p [--feature f] [--type t] [--needs cap] [--ship-now] [--board exo]   an existing card becomes the bot's
       --type: research | coding | design | media | writing | sales | education | ops (what the card's tokens count as on /usage;
-      default: the bot's team)
+      default: the bot's team). coding needs the code capability, ops deploy, research web; --needs names one outright
+      (code | review | merge | deploy | m1 | web). A bot without it is refused. --ship-now (owner only): merge and deploy
+      without asking
                                            one card, one bot: creates the kanban card tagged with the project, records the link,
                                            posts a mention in the bot's team channel; a human assigns anyone, a lead its team, a member itself
   task list [--project p] [--feature f] [--agent a] [--json]    cards with their project, feature and bot
@@ -69,6 +90,18 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   graph list                               the card templates (.agents/org/graphs/*.yaml, compiled)
   graph apply <template> --project p [--feature f] [--team t] [--board exo] [--dry-run] [--json]
                                            one card per node for the project's team, each waiting on its parents; roots are mentioned
+
+  shipping (nothing merges or deploys without the owner's yes, unless the owner made the card --ship-now):
+  ship request <card> "<summary>" [--pr <github pr url>] [--deploy <target>]   ask the owner; a ship-now card is approved at once
+  ship approve <id> [--note "..."] | ship deny <id> "<why>"                  the owner only, never inside a bot run
+  ship check <card> [--pr url] [--deploy target]                             exit 0 when it may ship (the wrappers ask this)
+  ship list [--pending] [--card t_..]
+
+  shared memory (every runtime, same verbs):
+  recall "<query>" [--project p] [--limit N] [--json]    the vault (keyword + vector), the bots' memory files, shared facts
+  remember "<subject>" "<claim>" --source <path|#msg|t_card|url> [--project p] [--inferred] [--supersedes id] [--via runtime@host]
+  facts [--subject s] [--project p] [--author a] [--all] [--json]
+  forget <id> "<why>"                                    close a fact (its author, the author's lead or the owner)
 
   dispatcher only (cc-dispatcher runs these as hermes):
   wake-claim <agent> --by <run id> --json  claim every open wakeup of the agent; prints them
@@ -180,11 +213,52 @@ export function notifyOwner(text: string, env: NodeJS.ProcessEnv = process.env):
   });
 }
 
+function formatApproval(a: Approval): string {
+  return `#${a.id} ${a.status.padEnd(8)} ${a.task_id} by ${a.requested_by}${a.pr_url ? ` ${a.pr_url}` : ''}${a.deploy_target ? ` deploy ${a.deploy_target}` : ''}${a.ship_now ? ' [ship-now]' : ''}  ${a.summary.slice(0, 120)}${a.decided_by ? `  (${a.decided_by} ${when(new Date(a.decided_at!))})` : ''}`;
+}
+
+function formatFact(f: Fact): string {
+  return `#${f.id} ${f.subject}: ${f.claim}  [${f.confidence}, ${f.source}, ${f.author}${f.via ? ` via ${f.via}` : ''}, ${when(new Date(f.valid_from))}${f.valid_to ? `, closed ${when(new Date(f.valid_to))}${f.retired_why ? `: ${f.retired_why}` : ''}` : ''}]`;
+}
+
+/** A search snippet as plain text for a model: no highlight tags, entities decoded (they cost tokens and mean nothing). */
+export function plainSnippet(html: string): string {
+  return html
+    .replace(/<\/?(?:b|mark|em|strong)>/g, '')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
+/**
+ * The vault side of recall: hybrid (keyword + vector) when embeddings are configured, else keyword, over-fetched and
+ * filtered so the owner's working files and finances never come back. Runs on the app's connection: the index
+ * isn't the board, so the sb_org role has no grant on it.
+ */
+export async function recallVault(q: string, limit: number, env: NodeJS.ProcessEnv = process.env): Promise<RecallHit[]> {
+  const extra = (env.ORG_RECALL_EXCLUDE ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  let hits: { ref_path: string; title: string | null; snippet: string; rank: number }[] = [];
+  try {
+    await loadEmbeddingConfig();
+    hits = (await hybridSearch(q, { source: 'vault', limit: limit * 3, offset: 0, provider: defaultEmbeddingProvider() })).results;
+  } catch {
+    try {
+      hits = (await search(q, { source: 'vault', limit: limit * 3, offset: 0 })).results;
+    } catch {
+      return [];
+    }
+  }
+  return hits
+    .filter((h) => !recallExcluded(h.ref_path, extra))
+    .slice(0, limit)
+    .map((h) => ({ source: 'vault' as const, ref: h.ref_path, title: h.title ?? '', text: plainSnippet(h.snippet), score: Number(h.rank) }));
+}
+
 async function main(argv: string[], out: (s: string) => void = console.log): Promise<number> {
   const [cmd, ...rest] = argv;
   const { pos, opts } = parseArgs(rest);
   const json = opts.json === true;
   const run = process.env.ORG_RUN;
+  // recall searches the vault on the app's own connection first (sb_org can't read the vault index), then switches.
+  const vaultHits = cmd === 'recall' && pos[0] ? await recallVault(pos[0], num(opts.limit, 'limit') ?? 8) : null;
   if (process.env.ORG_AGENT?.trim() && process.env.SB_ORG_DB_URL) setDatabaseUrl(agentDatabaseUrl(process.env.SB_ORG_DB_URL, identityName()));
   const me = async (): Promise<Agent> => getAgent(identityName());
   const print = (ms: Message[], empty: string): void => {
@@ -198,6 +272,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       if (json) return (out(JSON.stringify(w, null, 2)), 0);
       const a = w.agent;
       out(`${a.name}: ${a.role}${w.team ? ` on ${w.team.name} (${w.team.slug})` : ''}${a.reports_to ? `, reports to ${a.reports_to}` : ''}${w.is_lead ? ', team lead' : ''}${a.runtime === 'human' ? ' [human]' : ''}`);
+      if (a.capabilities?.length) out(`capabilities: ${a.capabilities.join(', ')}`);
       if (w.reports.length) out(`reports: ${w.reports.join(', ')}`);
       out(`channels: ${w.channels.map((c) => `#${c.slug}${c.unread ? ` (${c.unread} unread)` : ''}`).join('  ') || 'none'}`);
       out(w.wakeups.length ? `wakeups: ${w.wakeups.map((k) => `${k.reason}${k.ref ? ` ${k.ref}` : ''}`).join(', ')}` : 'wakeups: none');
@@ -339,7 +414,8 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         const project = str(opts.project);
         if (!assignee || !title || !project) throw new OrgError('task create <bot> "<title>" --project <slug> [--feature f] [--body "..."]');
         const r = await createTask(await me(), {
-          assignee, title, project, feature: str(opts.feature), type: str(opts.type), body: str(opts.body), board: str(opts.board), priority: num(opts.priority, 'priority'), run,
+          assignee, title, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true,
+          body: str(opts.body), board: str(opts.board), priority: num(opts.priority, 'priority'), run,
         }, kanbanRunner());
         if (json) out(JSON.stringify(r));
         else out(`card ${r.task_id} for ${r.link.assignee}: ${r.link.title} (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
@@ -349,7 +425,9 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         const [, card, assignee] = pos;
         const project = str(opts.project);
         if (!card || !assignee || !project) throw new OrgError('task assign <card> <bot> --project <slug> [--feature f] [--board exo]');
-        const r = await assignTask(await me(), { taskId: card, assignee, project, feature: str(opts.feature), type: str(opts.type), board: str(opts.board), run }, kanbanRunner());
+        const r = await assignTask(await me(), {
+          taskId: card, assignee, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, board: str(opts.board), run,
+        }, kanbanRunner());
         if (json) out(JSON.stringify(r));
         else out(`card ${r.task_id} now ${r.link.assignee}'s: ${r.link.title} (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
         return 0;
@@ -394,6 +472,80 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         return 0;
       }
       throw new OrgError('graph list|apply');
+    }
+    case 'ship': {
+      const [sub, a1, a2] = pos;
+      if (sub === 'request') {
+        if (!a1 || !a2) throw new OrgError('ship request <card> "<summary>" [--pr url] [--deploy target]');
+        const r = await shipRequest(await me(), { card: a1, summary: a2, pr: str(opts.pr), deploy: str(opts.deploy) });
+        if (json) return (out(JSON.stringify(r)), 0);
+        const a = r.approval;
+        if (a.status === 'approved') out(`ship #${a.id} approved at once (${a.note ?? 'ship-now'}); go ahead`);
+        else if (!r.created) out(`ship #${a.id} is already waiting on the owner; nothing new sent`);
+        else {
+          out(`ship #${a.id} asked${r.message ? ` (message ${r.message.id} in #${r.message.channel_slug})` : ''}; block the card until the answer wakes you`);
+          out(await notifyOwner(shipNotice(a)));
+        }
+        return 0;
+      }
+      if (sub === 'approve' || sub === 'deny') {
+        const id = num(a1, 'id');
+        if (id === undefined) throw new OrgError(`ship ${sub} <id>${sub === 'deny' ? ' "<why>"' : ''}`);
+        const a = await shipDecide(await me(), id, sub === 'approve', sub === 'deny' ? a2 : str(opts.note));
+        out(json ? JSON.stringify(a) : `ship #${a.id} ${a.status}; ${a.requested_by} is woken with the answer`);
+        return 0;
+      }
+      if (sub === 'check') {
+        if (!a1) throw new OrgError('ship check <card> [--pr url] [--deploy target]');
+        const r = await shipCheck(a1, { pr: str(opts.pr), deploy: str(opts.deploy) });
+        out(json ? JSON.stringify(r) : `${r.ok ? 'ok' : 'no'}: ${r.reason}`);
+        return r.ok ? 0 : 3;
+      }
+      if (sub === 'list') {
+        const as = await listApprovals({ pending: opts.pending === true, card: str(opts.card), limit: num(opts.limit, 'limit') });
+        if (json) return (out(JSON.stringify(as, null, 2)), 0);
+        out(as.length ? as.map(formatApproval).join('\n') : 'no approvals');
+        return 0;
+      }
+      throw new OrgError('ship request|approve|deny|check|list');
+    }
+    case 'recall': {
+      const [q] = pos;
+      if (!q) throw new OrgError('recall "<query>" [--project p] [--limit N]');
+      const limit = num(opts.limit, 'limit') ?? 8;
+      const hits: RecallHit[] = [
+        ...(await recallFacts(q, { project: str(opts.project), limit })),
+        ...recallMemoryFiles(config.vaultRoot, q, Math.ceil(limit / 2)),
+        ...(vaultHits ?? []),
+      ];
+      if (json) return (out(JSON.stringify(hits, null, 2)), 0);
+      if (!hits.length) return (out('nothing found; try other words, or it is not written down yet'), 0);
+      for (const h of hits) out(`[${h.source}] ${h.ref}${h.title && h.source !== 'memory' ? `  ${h.title}` : ''}\n  ${h.text.replace(/\s+/g, ' ').slice(0, 400)}`);
+      return 0;
+    }
+    case 'remember': {
+      const [subject, claim] = pos;
+      const source = str(opts.source);
+      if (!subject || !claim || !source) throw new OrgError('remember "<subject>" "<claim>" --source <path|#msg|t_card|url> [--project p] [--inferred] [--supersedes id]');
+      const f = await remember(await me(), {
+        subject, claim, source, project: str(opts.project), inferred: opts.inferred === true, supersedes: num(opts.supersedes, 'supersedes'),
+        via: str(opts.via) ?? process.env.ORG_VIA,
+      });
+      out(json ? JSON.stringify(f) : `fact #${f.id} saved${f.supersedes ? ` (closes #${f.supersedes})` : ''}`);
+      return 0;
+    }
+    case 'facts': {
+      const fs = await listFacts({ subject: str(opts.subject), project: str(opts.project), author: str(opts.author), all: opts.all === true, limit: num(opts.limit, 'limit') });
+      if (json) return (out(JSON.stringify(fs, null, 2)), 0);
+      out(fs.length ? fs.map(formatFact).join('\n') : 'no facts');
+      return 0;
+    }
+    case 'forget': {
+      const id = num(pos[0], 'id');
+      if (id === undefined || !pos[1]) throw new OrgError('forget <id> "<why>"');
+      await forget(await me(), id, pos[1]);
+      out(`fact #${id} closed`);
+      return 0;
     }
     case 'import': {
       if (!pos[0]) throw new OrgError('import <org.json>');

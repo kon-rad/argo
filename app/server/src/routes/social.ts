@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { HttpError, intParam, parseOr400, wrap } from './http.js';
 import type { SocialProvider } from '../social/providers/types.js';
+import { checkBodyLength, checkImageCount, MAX_IMAGES, toPostMedia } from '../social/media.js';
 import { cancelPost, disconnectAccount, listAccounts, listPosts, queuePost, saveConnectedAccount } from '../social/store.js';
 
 export interface SocialOptions {
@@ -16,7 +17,11 @@ export interface SocialOptions {
 const QueuePostBody = z.object({
   accountId: z.coerce.number().int().positive(),
   body: z.string().trim().min(1).max(3000),
-  mediaPaths: z.array(z.string()).default([]),
+  /** Images in post order; the bytes travel as base64 (the JSON limit for this route is raised in app.ts). */
+  media: z
+    .array(z.object({ filename: z.string().min(1).max(200), altText: z.string(), dataBase64: z.string().min(1) }))
+    .max(MAX_IMAGES)
+    .default([]),
   scheduledFor: z.coerce.date(),
 });
 
@@ -112,7 +117,10 @@ export function socialRouter(opts: SocialOptions): Router {
     '/posts',
     wrap(async (req, res) => {
       const body = parseOr400(QueuePostBody, req.body);
-      const post = await queuePost(body.accountId, body.body, body.mediaPaths, body.scheduledFor);
+      checkBodyLength(body.body);
+      checkImageCount(body.media.length);
+      const media = body.media.map((m) => toPostMedia(m.filename, Buffer.from(m.dataBase64, 'base64'), m.altText));
+      const post = await queuePost(body.accountId, body.body, media, body.scheduledFor);
       res.status(201).json({ post });
     }),
   );

@@ -19,7 +19,7 @@ A module that is off mounts no API routes, shows no nav link and gets no timers 
 | [`voice`](#voice) | (a Listen button) | Read a note aloud through a local speech server |
 | [`livestream`](#livestream) | (a public JSON) | Stream stats for YouTube, Twitch and Kick |
 | [`ring`](#ring) | `/ring` | Data from a wearable ring, pushed in by a client |
-| [`social`](#social) | (connect + queue, no page UI yet) | Schedule and publish posts to LinkedIn (more platforms planned) |
+| [`social`](#social) | (connect + queue, no page UI yet) | Schedule and publish posts with images to LinkedIn (more platforms planned) |
 
 ## projects
 
@@ -123,14 +123,16 @@ Stores data from a wearable ring that a separate client pushes in, next to your 
 
 ## social
 
-Connects your own LinkedIn account (self-service "Share on LinkedIn" permission, no app review) and publishes queued posts on a schedule. No web page yet — connect and queue through the API (`GET /api/social/accounts/linkedin/connect`, `POST /api/social/posts`); a compose UI is a planned follow-up.
+Connects your own LinkedIn account (self-service "Share on LinkedIn" permission, no app review) and publishes queued posts, with images, on a schedule. No web page yet: connect through the API (`GET /api/social/accounts/linkedin/connect`) and queue with `cli-social queue` or `POST /api/social/posts`; a compose UI is a planned follow-up.
+
+Images (JPEG, PNG or GIF, up to 5 MB each, 4 per post, alt text required) are stored as bytes in `social_post_media`, so a post can be queued from any machine that reaches the database and the server's timer always has the file. At publish time each image goes through LinkedIn's Images API (initialize upload, PUT the bytes), then the post refers to the image URNs; a failed upload fails the attempt before any post is created. A run starts no new post after 40 s; a post left `publishing` by a killed run is marked `failed` after 15 minutes (never requeued, since LinkedIn may already have it). The 3,000-character limit is checked on the escaped text. Post text is escaped into LinkedIn's "little" text format, so `( ) * _ @` and the like show as typed instead of cutting the post short, and `#word` stays a hashtag.
 
 A standard LinkedIn app gets a 60-day access token and **no refresh token** (LinkedIn only issues those to Marketing Developer Platform partners). Without that approval, reconnecting every ~2 months is expected, not a bug: the minute timer pings Telegram once when an account's access token is within 7 days of expiring with nothing left to refresh it.
 
 | | |
 |---|---|
 | API | `GET/DELETE /api/social/accounts`, `GET /api/social/accounts/:provider/connect` + `/callback`, `GET/POST/DELETE /api/social/posts` |
-| CLI | `cli-social` — one pass: publish due posts, then check for accounts needing reauth |
+| CLI | `cli-social` (on the app user's PATH): no command = one pass (publish due posts, then the reauth check); `accounts`, `posts [--status S]`, `queue --body-file F [--image P --alt T]... [--account ID] [--at ISO]`, `cancel ID` |
 | Settings | `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `SOCIAL_REDIRECT_BASE_URL`, `SOCIAL_TOKEN_ENC_KEY` |
 | Timers (server) | the minute publisher/reauth-check (`secondbrain-social`) |
 | Design | `Projects/secondbrain-app/social-linkedin-plan.md` in the vault |

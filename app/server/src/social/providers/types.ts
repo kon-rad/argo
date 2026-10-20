@@ -32,12 +32,20 @@ export interface StoredAccount {
   refreshTokenExpiresAt: Date | null;
 }
 
-/** A row from social_posts, ready to publish. */
+/** One image attached to a post, bytes included (social_post_media). */
+export interface PostMedia {
+  filename: string;
+  contentType: 'image/jpeg' | 'image/png' | 'image/gif';
+  bytes: Buffer;
+  altText: string;
+}
+
+/** A row from social_posts with its images in order, ready to publish. */
 export interface QueuedPost {
   id: number;
   accountId: number;
   body: string;
-  mediaPaths: string[];
+  media: PostMedia[];
   attemptCount: number;
 }
 

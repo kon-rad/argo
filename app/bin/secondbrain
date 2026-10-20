@@ -426,6 +426,13 @@ cmd_ingest_device() {
   ensure_deps; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-ingest-device.js" "$@"
 }
+cmd_archive_steps() {
+  # One-off passes over archive rows stored before the agent-sessions migration:
+  # fill step columns; with --redact, rewrite stored rows that hold keys this machine knows.
+  # No local Postgres: on the Mac SECONDBRAIN_DB_URL is the server.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-archive-steps.js" "$@"
+}
 cmd_archive() {
   # Writes only archive_* tables, which nothing else touches, so it runs
   # directly rather than through the server's scan queue.
@@ -476,6 +483,7 @@ secondbrain embed    embed new and changed notes for semantic search
 secondbrain archive  archive Claude Code + Hermes conversations to B2 and Postgres
 secondbrain ledger   this machine's agent ledger: run | status | install --server URL --token T --host SLUG
 secondbrain ingest-device  (server) device tokens for ledgers: add <host> | list | revoke <id>
+secondbrain archive-steps  fill step columns of old archive rows (--redact: remove stored keys; --dry-run)
 secondbrain agents-sync  copy Hermes chats and cron history into Postgres
 secondbrain usage-sync   this machine's Claude Code usage into the ledger
 secondbrain usage-push   send new Claude Code usage to the droplet ledger (Mac)
@@ -503,6 +511,7 @@ case "${1:-start}" in
   archive)       cmd_archive "${@:2}" ;;
   ledger)        cmd_ledger "${@:2}" ;;
   ingest-device) cmd_ingest_device "${@:2}" ;;
+  archive-steps) cmd_archive_steps "${@:2}" ;;
   inventory)     cmd_inventory "${@:2}" ;;
   org)           cmd_org "${@:2}" ;;
   backlinks)     cmd_backlinks "${@:2}" ;;

@@ -9,6 +9,7 @@ import LineChart from '../../components/charts/LineChart.js';
 import StackedBars, { type BarSeries } from '../../components/charts/StackedBars.js';
 import { bucketEnd, formatTokens, money, planText, TYPE_SERIES } from './format.js';
 import { zoned } from '../../lib/time.js';
+import AgentSessions from './AgentSessions.js';
 
 const RANGES = [{ label: '24 h', days: 1 }, { label: '7 d', days: 7 }, { label: '30 d', days: 30 }, { label: '90 d', days: 90 }];
 const GROUP_COLORS = ['var(--chart-bar)', 'var(--ink)', '#c2410c', '#15803d', '#7c3aed', '#0e7490', '#b45309', '#be123c', '#4d7c0f', '#6d28d9'];
@@ -196,7 +197,6 @@ export default function Usage() {
   const selFrom = sel ?? from;
   const selTo = sel ? bucketEnd(sel, bucket, tz) : to;
   const facets = useQuery({ queryKey: ['usage-facets', selFrom, selTo, filterKey], queryFn: () => api.usageFacets(selFrom, selTo, filters) });
-  const sessions = useQuery({ queryKey: ['usage-sessions', selFrom, selTo, filterKey], queryFn: () => api.usageSessions(selFrom, selTo, filters) });
   const runs = useQuery({ queryKey: ['usage-runs', selFrom, selTo, filterKey], queryFn: () => api.usageRuns(selFrom, selTo, filters) });
   const orgWakes = useQuery({ queryKey: ['usage-org-wakes', selFrom, selTo], queryFn: () => api.usageOrgWakes(selFrom, selTo) });
   const fmtBucket = (b: string) => new Date(b).toLocaleString([], bucket === 'hour'
@@ -318,33 +318,7 @@ export default function Usage() {
         </table></div>
       </section>
 
-      <section>
-        <h2 className="text-sm font-semibold">Sessions</h2>
-        <div className="overflow-x-auto"><table className="w-full text-sm">
-          <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
-            <th>Session</th><th>Surface</th><th>Who</th><th>Project</th><th>Task</th><th className="text-right">Calls</th><th className="text-right">Input</th>
-            <th className="text-right">Cache write</th><th className="text-right">Cache read</th><th className="text-right">Output</th><th className="text-right">USD (Hermes)</th>
-          </tr></thead>
-          <tbody>
-            {(sessions.data?.sessions ?? []).map((s) => (
-              <tr key={`${s.source}|${s.host}|${s.external_id}`} className="border-t border-[var(--rule)]">
-                <td><Link className="underline" to={`/usage/session/${s.host}/${encodeURIComponent(s.external_id)}?source=${s.source}`}>
-                  {s.title ?? s.external_id.slice(0, 12)}</Link></td>
-                <td><Pick dim="surface" value={s.surface} onPick={addFilter} /></td>
-                <td><Pick dim="agent" value={s.agent_name} onPick={addFilter} /></td>
-                <td><Pick dim="project" value={s.project_slug} onPick={addFilter} /></td>
-                <td>{s.task_id ? `${s.task_id} (${s.lane ?? s.agent_name ?? '?'})` : ''}</td>
-                <td className="text-right">{s.calls}</td>
-                <td className="text-right">{formatTokens(Number(s.input))}</td>
-                <td className="text-right">{formatTokens(Number(s.cache_write))}</td>
-                <td className="text-right">{formatTokens(Number(s.cache_read))}</td>
-                <td className="text-right">{formatTokens(Number(s.output))}</td>
-                <td className="text-right">{s.cost_usd === null ? '' : `$${Number(s.cost_usd).toFixed(2)}`}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table></div>
-      </section>
+      <AgentSessions from={selFrom} to={selTo} tz={tz} />
 
       <section>
         <h2 className="text-sm font-semibold">Agent wakes (the company board)</h2>

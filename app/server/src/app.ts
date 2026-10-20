@@ -108,6 +108,9 @@ export function createApp(opts: AppOptions = {}): express.Express {
   // Each machine's agent ledger syncs here with a device token, no session (usage module). Mounted
   // ahead of the global parser: the router checks the token before it reads its large body.
   if (modules.has('usage')) app.use('/api/ingest', ingestRouter());
+  // A queued social post carries its images as base64 (4 x 5 MB at most). Like the
+  // note saver above, it parses before the session check, which still refuses it.
+  app.use('/api/social/posts', express.json({ limit: '30mb' }));
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req, res) => {

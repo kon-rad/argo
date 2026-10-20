@@ -42,6 +42,7 @@ export const OrgDoc = z.object({
       model: z.string().optional(),
       expertise: z.string().optional(),
       work: z.enum(['research', 'coding', 'design', 'media', 'writing', 'sales', 'education', 'ops']).optional(),
+      capabilities: z.array(z.enum(['code', 'review', 'merge', 'deploy', 'm1', 'web'])).optional(),
       channels: z.array(z.string()).optional(),
     }),
   ),
@@ -74,6 +75,8 @@ export interface Agent {
   reports_to: string | null;
   model: string | null;
   expertise: string | null;
+  /** What the bot may do beyond the board (code, review, merge, deploy, m1, web); the wrappers read this. */
+  capabilities: string[];
   retired_at: Date | null;
 }
 
@@ -137,11 +140,12 @@ export async function importOrg(input: unknown): Promise<{ agents: number; teams
     // Two passes: reports_to is a self-reference.
     for (const [name, a] of Object.entries(doc.agents)) {
       await tx.query(
-        `INSERT INTO org_agents (name, team_slug, runtime, role, model, expertise, org_version, work)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        `INSERT INTO org_agents (name, team_slug, runtime, role, model, expertise, org_version, work, capabilities)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          ON CONFLICT (name) DO UPDATE SET team_slug = EXCLUDED.team_slug, runtime = EXCLUDED.runtime, role = EXCLUDED.role,
-           model = EXCLUDED.model, expertise = EXCLUDED.expertise, org_version = EXCLUDED.org_version, work = EXCLUDED.work, retired_at = NULL, updated_at = now()`,
-        [name, a.team ?? null, a.runtime, a.role, a.model ?? null, a.expertise ?? null, doc.version, a.work ?? null],
+           model = EXCLUDED.model, expertise = EXCLUDED.expertise, org_version = EXCLUDED.org_version, work = EXCLUDED.work,
+           capabilities = EXCLUDED.capabilities, retired_at = NULL, updated_at = now()`,
+        [name, a.team ?? null, a.runtime, a.role, a.model ?? null, a.expertise ?? null, doc.version, a.work ?? null, [...new Set(a.capabilities ?? [])]],
       );
     }
     for (const [name, a] of Object.entries(doc.agents)) {
@@ -194,7 +198,7 @@ export async function importOrg(input: unknown): Promise<{ agents: number; teams
 
 export async function getAgent(name: string): Promise<Agent> {
   const { rows } = await query<Agent>(
-    `SELECT name, team_slug, runtime, role, reports_to, model, expertise, retired_at FROM org_agents WHERE name = $1`,
+    `SELECT name, team_slug, runtime, role, reports_to, model, expertise, capabilities, retired_at FROM org_agents WHERE name = $1`,
     [name],
   );
   const a = rows[0];
@@ -407,7 +411,7 @@ export async function dm(from: Agent, toName: string, body: string, opts: PostOp
   const to = await getAgent(toName);
   await assertDmAllowed(from, to);
   const kind: Kind = opts.kind ?? 'message';
-  if (!['message', 'handoff', 'reply', 'decision'].includes(kind)) throw new OrgError(`a DM can't be a ${kind}`);
+  if (!['message', 'handoff', 'reply', 'status', 'decision'].includes(kind)) throw new OrgError(`a DM can't be a ${kind}`);
   const slug = dmSlug(from.name, to.name);
   return withTransaction(async (tx) => {
     // SECURITY DEFINER: the one write to channels and memberships an agent makes (the RLS role can't insert them itself).
@@ -773,6 +777,8 @@ export interface TaskLink {
   node: string | null;
   kind: string;
   work_type: string | null;
+  ship_now: boolean;
+  needs: string | null;
   created_at: Date;
 }
 
@@ -782,6 +788,41 @@ function checkWorkType(t: string | undefined): WorkType | null {
   if (t === undefined) return null;
   if (!(WORK_TYPES as readonly string[]).includes(t)) throw new OrgError(`--type ${t}: one of ${WORK_TYPES.join(', ')}`);
   return t as WorkType;
+}
+
+export const CAPABILITIES = ['code', 'review', 'merge', 'deploy', 'm1', 'web'] as const;
+export type Capability = (typeof CAPABILITIES)[number];
+/** The capability a card's kind of work implies; `--needs` names one outright. */
+const WORK_NEEDS: Partial<Record<WorkType, Capability>> = { coding: 'code', ops: 'deploy', research: 'web' };
+
+export function neededCapability(work: string | null | undefined, needs: string | undefined): Capability | null {
+  if (needs !== undefined) {
+    if (!(CAPABILITIES as readonly string[]).includes(needs)) throw new OrgError(`--needs ${needs}: one of ${CAPABILITIES.join(', ')}`);
+    return needs as Capability;
+  }
+  return work ? WORK_NEEDS[work as WorkType] ?? null : null;
+}
+
+/** A card goes only to a bot that has the tools for it; the refusal names the bots that do. */
+export async function assertCapable(to: Agent, need: Capability | null): Promise<void> {
+  if (!need || (to.capabilities ?? []).includes(need)) return;
+  const { rows } = await query<{ name: string }>(
+    `SELECT name FROM org_agents WHERE $1 = ANY (capabilities) AND retired_at IS NULL AND runtime <> 'human' ORDER BY name`,
+    [need],
+  );
+  throw new OrgError(`${to.name} doesn't have the ${need} capability this card needs; give it to ${rows.map((r) => r.name).join(', ') || 'nobody yet (add it in org.yaml)'}`);
+}
+
+/** A graph node's need: build cards by the template's work, a code review needs a reviewer, spec and verify none. */
+export function nodeNeed(kind: string, work: string | null | undefined): Capability | null {
+  if (kind === 'build' || kind === 'work') return neededCapability(work, undefined);
+  if (kind === 'review' && work === 'coding') return 'review';
+  return null;
+}
+
+async function setFlags(taskId: string, shipNow: boolean, need: Capability | null): Promise<void> {
+  if (!shipNow && !need) return;
+  await query(`SELECT org_task_flags($1, $2, $3)`, [taskId, shipNow, need]);
 }
 
 /** Runs `hermes kanban …` and returns stdout; injected so tests never need the binary. */
@@ -878,6 +919,10 @@ export interface CreateTaskOpts {
   priority?: number;
   /** research | coding | design | media | writing | sales | education | ops; else the bot's default on /usage. */
   type?: string;
+  /** The capability the card needs, when its type doesn't say (e.g. m1 for a video job). */
+  needs?: string;
+  /** The owner says ship without asking: merge and deploy skip the approval. Humans only. */
+  shipNow?: boolean;
   run?: string;
 }
 
@@ -891,18 +936,25 @@ export interface CreateTaskOpts {
 export async function createTask(caller: Agent, opts: CreateTaskOpts, run: KanbanRunner): Promise<{ task_id: string; link: TaskLink; message: Message | null }> {
   const to = await getAgent(opts.assignee);
   await assertMayAssign(caller, to);
+  if (opts.shipNow && caller.runtime !== 'human') throw new OrgError('only the owner can mark a card ship-now');
+  const need = neededCapability(opts.type, opts.needs);
+  await assertCapable(to, need);
   await assertProject(opts.project, opts.feature);
-  const { task_id, link } = await createCard(caller, to, { ...opts, work: opts.type }, run);
+  const extra = opts.shipNow ? 'Ship-now: the owner said to ship this without asking; `cli-org ship request` is approved on the spot.' : undefined;
+  const created = await createCard(caller, to, { ...opts, work: opts.type, extra }, run);
+  await setFlags(created.task_id, opts.shipNow === true, need);
+  const link = (await query<TaskLink>(`SELECT * FROM task_links WHERE task_id = $1`, [created.task_id])).rows[0]!;
   const message = await mentionCard(caller, to, link, opts.run);
-  return { task_id, link, message };
+  return { task_id: created.task_id, link, message };
 }
 
 /** The mention in the bot's team channel that makes the board carry the card. Nothing when a bot gives itself a card. */
 async function mentionCard(caller: Agent, to: Agent, link: TaskLink, run?: string): Promise<Message | null> {
   if (caller.name === to.name || !to.team_slug) return null;
   const ref = `${link.project_slug}${link.feature_slug ? `/${link.feature_slug}` : ''}`;
-  // A mention, not a handoff: a handoff from outside the team also wakes the lead, and a card needs only its bot.
-  return post(caller, to.team_slug, `@${to.name} card ${link.task_id}: ${link.title} (${ref})`, { task: link.task_id, project: link.project_slug ?? undefined, feature: link.feature_slug ?? undefined, run });
+  // A note, not a mention: the card wakes the bot when it is ready, and an @-mention made a second wake (for a `todo`
+  // card, a wake with nothing to do yet). A handoff would also wake the lead.
+  return post(caller, to.team_slug, `card ${link.task_id} for ${to.name}: ${link.title} (${ref})`, { task: link.task_id, project: link.project_slug ?? undefined, feature: link.feature_slug ?? undefined, run });
 }
 
 export interface AssignTaskOpts {
@@ -912,6 +964,8 @@ export interface AssignTaskOpts {
   feature?: string;
   board?: string;
   type?: string;
+  needs?: string;
+  shipNow?: boolean;
   run?: string;
 }
 
@@ -928,6 +982,9 @@ export async function assignTask(caller: Agent, opts: AssignTaskOpts, run: Kanba
   if (!BOARD_RE.test(board)) throw new OrgError(`bad board name "${board}"`);
   const to = await getAgent(opts.assignee);
   await assertMayAssign(caller, to);
+  if (opts.shipNow && caller.runtime !== 'human') throw new OrgError('only the owner can mark a card ship-now');
+  const need = neededCapability(opts.type, opts.needs);
+  await assertCapable(to, need);
   await assertProject(opts.project, opts.feature);
   let card: { title?: string; status?: string } = {};
   try {
@@ -946,6 +1003,7 @@ export async function assignTask(caller: Agent, opts: AssignTaskOpts, run: Kanba
   await query(`SELECT org_task_link($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`, [
     opts.taskId, board, title, opts.project, opts.feature ?? null, to.name, caller.name, null, null, 'work', 0, checkWorkType(opts.type),
   ]);
+  await setFlags(opts.taskId, opts.shipNow === true, need);
   const { rows } = await query<TaskLink>(`SELECT * FROM task_links WHERE task_id = $1`, [opts.taskId]);
   const link = rows[0]!;
   const message = await mentionCard(caller, to, link, opts.run);
@@ -1061,6 +1119,7 @@ export async function applyGraph(caller: Agent, template: GraphTemplate, opts: A
     const to = agents.get(name) ?? (await getAgent(name));
     agents.set(name, to);
     await assertMayAssign(caller, to);
+    await assertCapable(to, nodeNeed(n.kind, n.work ?? template.work));
     for (const a of n.after) if (!planned.some((p) => p.node === a)) throw new OrgError(`graph ${template.name}: node ${n.id} is after unknown node ${a}`);
     planned.push({ node: n.id, kind: n.kind, assignee: name, title: fill(n.title, vars), after: n.after, task_id: null });
   }
@@ -1090,7 +1149,8 @@ export async function applyGraph(caller: Agent, template: GraphTemplate, opts: A
   let message: Message | null = null;
   const channel = team ?? 'all-hands';
   if (caller.runtime === 'human' || caller.team_slug === channel) {
-    message = await post(caller, channel, `${roots.map((r) => `@${r}`).join(' ')}${roots.length ? ' ' : ''}graph ${template.name} for ${opts.project}${opts.feature ? `/${opts.feature}` : ''}: ${chain}`, {
+    // Names, not @-mentions: each card wakes its bot when it becomes ready, so a mention would only add a wake.
+    message = await post(caller, channel, `${roots.join(' ')}${roots.length ? ': ' : ''}graph ${template.name} for ${opts.project}${opts.feature ? `/${opts.feature}` : ''}: ${chain}`, {
       project: opts.project, feature: opts.feature, run: opts.run, task: planned[0]?.task_id ?? undefined,
     });
   }
@@ -1160,7 +1220,7 @@ export async function redoTask(caller: Agent, reviewId: string, changes: string,
   ]);
   let message: Message | null = null;
   if (team && (caller.runtime === 'human' || caller.team_slug === team)) {
-    message = await post(caller, team, `@${builder.name} round ${rounds} of ${baseTitle}: card ${task_id}. ${text.slice(0, 300)}`, { task: task_id, project: reviewed.project_slug ?? undefined, feature: reviewed.feature_slug ?? undefined, run: runId });
+    message = await post(caller, team, `${builder.name}: round ${rounds} of ${baseTitle}: card ${task_id}. ${text.slice(0, 300)}`, { task: task_id, project: reviewed.project_slug ?? undefined, feature: reviewed.feature_slug ?? undefined, run: runId });
   }
   return { escalated: false, task_id, rounds, message };
 }

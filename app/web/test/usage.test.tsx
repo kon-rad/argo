@@ -11,15 +11,17 @@ const PLAN = { current: {
   history: [] };
 const SERIES = { bucket: 'hour', tz: 'UTC', rows: [
   { bucket: '2026-10-14T01:00:00.000Z', key: 'all', input: 10, cache_write: 100, cache_read: 1000, output: 50, calls: 1 }] };
-const SESSIONS = { sessions: [{ source: 'claude-code', host: 'droplet', external_id: 'cc1', title: 'Fix dispatcher', surface: 'cc-lane',
-  started_at: '2026-10-14T01:00:00Z', ended_at: '2026-10-14T01:05:00Z', calls: 9, input: 10, cache_write: 100, cache_read: 1000,
-  output: 50, cost_usd: null, task_id: 't_9', lane: 'cc-coder', archive_id: 3 },
-  { source: 'claude-code', host: 'mac', external_id: 'arch-only-session', title: null, surface: null,
-  started_at: null, ended_at: null, calls: 0, input: 0, cache_write: 0, cache_read: 0,
-  output: 0, cost_usd: null, task_id: null, lane: null, archive_id: 4 },
-  { source: 'hermes', host: 'droplet', external_id: 'h1', title: 'Hermes chat', surface: 'telegram',
-  started_at: '2026-10-14T01:00:00Z', ended_at: null, calls: 2, input: 5, cache_write: 0, cache_read: 0,
-  output: 5, cost_usd: 0.42, task_id: null, lane: null, archive_id: null }] };
+const row = (o: Record<string, unknown>) => ({ id: 1, source: 'claude-code', harness: 'claude-code', profile: null, provider: 'anthropic', host: 'droplet',
+  external_id: 'x', parent_external_id: null, project: null, title: null, first_prompt: null, started_at: null, ended_at: null,
+  steps: 0, tool_calls: 0, errors: 0, subagents: 0, models: [], calls: 0, input: 0, cache_write: 0, cache_read: 0, output: 0, reasoning: 0, ...o });
+const SESSIONS = { total: 3, sessions: [
+  row({ id: 1, external_id: 'cc1', title: 'Fix dispatcher', started_at: '2026-10-14T01:00:00Z', ended_at: '2026-10-14T01:05:00Z',
+    calls: 9, input: 10, cache_write: 100, cache_read: 1000, output: 50, steps: 12, tool_calls: 4, errors: 1, models: ['claude-opus-5-5'] }),
+  row({ id: 2, host: 'mac', external_id: 'arch-only-session' }),
+  row({ id: 3, source: 'hermes', harness: 'hermes', profile: 'main', provider: 'openrouter', external_id: 'h1', title: 'Hermes chat',
+    started_at: '2026-10-14T01:00:00Z', calls: 2, input: 5, output: 5, cost_usd: 0.42, models: ['deepseek-v4-flash'] })] };
+const AFACETS = { facets: { harness: [{ value: 'claude-code', n: 2 }, { value: 'hermes', n: 1 }], host: [{ value: 'droplet', n: 2 }, { value: 'mac', n: 1 }],
+  profile: [], provider: [], tool: [{ value: 'Bash', n: 4 }] } };
 const RUNS = { runs: [{ host: 'droplet', session_id: 'cc1', task_id: 't_9', lane: 'cc-coder', board: 'exo', model: 'claude-opus-5-5',
   started_at: '2026-10-14T01:00:00Z', ended_at: '2026-10-14T01:05:00Z', duration_ms: 300000, num_turns: 9, subtype: 'success',
   is_error: false, verify_name: 'argo-exo-tests', verify_passed: false, verify_exit: 1, verify_metric: 901, verify_output: '4 failed' }] };
@@ -35,7 +37,7 @@ function mockFetch() {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const u = String(input);
     const body = u.includes('/usage/plan') ? PLAN : u.includes('/usage/series') ? seriesBody
-      : u.includes('/usage/sessions') ? SESSIONS : u.includes('/usage/runs') ? RUNS
+      : u.includes('/usage/agent-sessions/facets') ? AFACETS : u.includes('/usage/agent-sessions') ? SESSIONS : u.includes('/usage/runs') ? RUNS
       : u.includes('/usage/org-wakes') ? { agents: [{ agent_name: 'atlas', team_slug: 'platform', role: 'Head', wakes: 3, done: 2, open: 1, routine: 1, dm: 1, mention: 1, task: 1, tokens: 5000, avg_minutes: 1.2, last_wake: '2026-10-14T01:00:00Z' }] }
       : u.includes('/usage/facets') ? FACETS : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -74,7 +76,7 @@ describe('Usage page', () => {
     fireEvent.click(container.querySelector('g[style*="cursor"]')!);
     await waitFor(() => expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.some((c) => {
       const u = String(c[0]);
-      return u.includes('/usage/sessions') && u.includes('from=2026-10-14T01%3A00%3A00.000Z') && u.includes('to=2026-10-14T02%3A00%3A00.000Z');
+      return u.includes('/usage/agent-sessions?') && u.includes('from=2026-10-14T01%3A00%3A00.000Z') && u.includes('to=2026-10-14T02%3A00%3A00.000Z');
     })).toBe(true));
   });
   it.each([[[]], [[{ bucket: '2026-10-14T01:00:00.000Z', key: 'all', input: 0, cache_write: 0, cache_read: 0, output: 0, calls: 0 }]]])(
@@ -110,7 +112,8 @@ describe('Usage page', () => {
   it('shows a bot\'s run with who, why, card, project, work and tokens', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const u = String(input);
-      const body = u.includes('/usage/plan') ? PLAN : u.includes('/usage/series') ? SERIES : u.includes('/usage/sessions') ? SESSIONS
+      const body = u.includes('/usage/plan') ? PLAN : u.includes('/usage/series') ? SERIES
+        : u.includes('/usage/agent-sessions/facets') ? AFACETS : u.includes('/usage/agent-sessions') ? SESSIONS
         : u.includes('/usage/runs') ? RUNS2 : u.includes('/usage/facets') ? FACETS : u.includes('/usage/org-wakes') ? { agents: [] } : {};
       return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }));
@@ -122,7 +125,8 @@ describe('Usage page', () => {
     expect(screen.getByRole('button', { name: 'secondbrain-app' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'coding' })).toBeTruthy();
     expect(screen.getByText('1070')).toBeTruthy();                       // 10 + 0 + 1000 + 60 tokens for the run
-    expect(document.body.textContent!.match(/\$/g)).toHaveLength(1);    // still only the Hermes session shows dollars
+    expect(document.body.textContent).not.toContain('$');                 // dollars only as Hermes's USD column
+    expect(screen.getAllByText('0.42 USD')).toHaveLength(1);
   });
 
   it('shows plan cards, the sessions table and a failed verify', async () => {
@@ -134,8 +138,11 @@ describe('Usage page', () => {
     expect(screen.getByRole('link', { name: 'Fix dispatcher' }).getAttribute('href')).toBe('/usage/session/droplet/cc1?source=claude-code');
     expect(screen.getByRole('link', { name: 'arch-only-se' })).toBeTruthy();   // null surface/started_at render blank, no crash
     expect(screen.getByText(/failed.*901/i)).toBeTruthy();
-    expect(document.body.textContent!.match(/\$/g)).toHaveLength(1);              // only the Hermes row shows dollars
-    expect(screen.getAllByText('$0.42')).toHaveLength(1);
+    expect(document.body.textContent).not.toContain('$');
+    expect(screen.getAllByText('0.42 USD')).toHaveLength(1);                     // only the Hermes row shows a cost
+    // The list's own filters: a harness chip adds s_harness to the request.
+    fireEvent.click(screen.getByRole('button', { name: 'hermes' }));
+    await waitFor(() => expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.some((c) => String(c[0]).includes('/usage/agent-sessions?') && String(c[0]).includes('harness=hermes'))).toBe(true));
     fireEvent.click(screen.getByRole('button', { name: '90 d' }));     // over 31 days: hourly buckets switch off
     await waitFor(() => expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.some((c) => String(c[0]).includes('bucket=day'))).toBe(true));
   });

@@ -12,12 +12,12 @@ export async function truncateAll(): Promise<void> {
                ring_raw, ring_daily, ring_samples, ring_sleep_stages, wallets,
                cron_jobs, cron_runs, cron_outputs, agents_sync_runs,
                livestream_sessions, livestream_viewer_samples, livestream_x_broadcasts, livestream_notices,
-               task_links, org_wakeups, org_reads, org_messages, org_channel_members, org_channels, org_agents,
+               memory_facts, org_approvals, task_links, org_wakeups, org_reads, org_messages, org_channel_members, org_channels, org_agents,
                verifications, stage_changes, features, projects, teams, divisions,
                ingest_batches, ingest_devices, llm_exchanges, llm_blobs,
                usage_calls, usage_runs, plan_usage_snapshots, hermes_usage_snapshots, usage_files, provider_credit_snapshots,
                metric_samples, map_edges, map_nodes, map_layouts,
-               social_posts, social_accounts
+               social_post_media, social_posts, social_accounts
                RESTART IDENTITY CASCADE`);
 }
 
