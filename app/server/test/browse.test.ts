@@ -75,6 +75,29 @@ describe('GET /api/tree', () => {
   });
 });
 
+describe('GET /api/file/resolve', () => {
+  it('answers each ref with the path the link graph would use', async () => {
+    const res = await request(app).get('/api/file/resolve').query({
+      ref: ['notes/beta.md', 'notes/sub/gamma', 'delta', 'nowhere', 'NOTES/BETA.MD'],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.resolved).toEqual({
+      'notes/beta.md': 'notes/beta.md',
+      'notes/sub/gamma': 'notes/sub/gamma.md',
+      delta: 'notes/delta.md',
+      nowhere: null,
+      'NOTES/BETA.MD': 'notes/beta.md',
+    });
+  });
+
+  it('takes a single ref, none, and refuses a flood', async () => {
+    expect((await request(app).get('/api/file/resolve').query({ ref: 'top' })).body.resolved).toEqual({ top: 'top.md' });
+    expect((await request(app).get('/api/file/resolve')).body.resolved).toEqual({});
+    const flood = Array.from({ length: 101 }, (_, i) => `n${i}`);
+    expect((await request(app).get('/api/file/resolve').query({ ref: flood })).status).toBe(400);
+  });
+});
+
 describe('GET /api/file', () => {
   it('returns frontmatter, tags, links and BACKLINKS', async () => {
     const res = await request(app).get('/api/file').query({ path: 'notes/beta.md' });
