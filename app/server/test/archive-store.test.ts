@@ -3,6 +3,7 @@ import { query, withTransaction } from '../src/db.js';
 import { sha256 } from '../src/archive/clean.js';
 import * as store from '../src/archive/store.js';
 import type { ParsedMessage, SessionInput } from '../src/archive/types.js';
+import { resetRedactor } from '../src/archive/redact.js';
 import { truncateAll } from './helpers.js';
 
 const session = (over: Partial<SessionInput> = {}): SessionInput => ({
@@ -65,6 +66,40 @@ describe('archive store', () => {
     });
     const { rows } = await query(`SELECT count(*)::int n FROM archive_messages`);
     expect(rows[0]!.n).toBe(1);
+  });
+
+  it('stores step fields and redacts text, raw, title and meta while keeping the original hash', async () => {
+    process.env.TEST_ARCHIVE_API_KEY = 'archive-secret-value-42';
+    resetRedactor();
+    try {
+      const raw = { type: 'assistant', uuid: 'a1', message: { content: [{ type: 'tool_use', id: 'toolu_9', name: 'Bash', input: { command: 'echo archive-secret-value-42' } }] } };
+      await withTransaction(async (tx) => {
+        const s = await store.upsertSession(tx, session({ title: 'key archive-secret-value-42', meta: { system_prompt: 'use archive-secret-value-42' } }));
+        await store.upsertMessages(tx, s.id, [{ ...msg(1, '[tool_use Bash] {"command":"echo archive-secret-value-42"}'), externalId: 'a1', role: 'assistant', kind: 'assistant', raw, rawSha: 'orig-sha' }]);
+      });
+      const m = (await query(`SELECT step, tool_names, tool_call_id, is_error, content_text, raw, raw_sha FROM archive_messages`)).rows[0]!;
+      expect(m).toMatchObject({ step: 'tool_call', tool_names: ['Bash'], tool_call_id: 'toolu_9', is_error: null, raw_sha: 'orig-sha' });
+      expect(m.content_text).toContain('[redacted:TEST_ARCHIVE_API_KEY]');
+      expect(JSON.stringify(m.raw)).not.toContain('archive-secret-value-42');
+      const s = (await query(`SELECT title, meta FROM archive_sessions`)).rows[0]!;
+      expect(s.title).toBe('key [redacted:TEST_ARCHIVE_API_KEY]');
+      expect(JSON.stringify(s.meta)).not.toContain('archive-secret-value-42');
+    } finally {
+      delete process.env.TEST_ARCHIVE_API_KEY;
+      resetRedactor();
+    }
+  });
+
+  it('fills the step of a row stored before the step columns on the next upsert', async () => {
+    const id = await withTransaction(async (tx) => {
+      const s = await store.upsertSession(tx, session());
+      await store.upsertMessages(tx, s.id, [msg(1, 'a')]);
+      return s.id;
+    });
+    await query(`UPDATE archive_messages SET step = NULL`);
+    const n = await withTransaction((tx) => store.upsertMessages(tx, id, [msg(1, 'a')]));
+    expect(n).toBe(1);
+    expect((await query(`SELECT step FROM archive_messages`)).rows[0]!.step).toBe('meta');
   });
 
   it('inserts log lines once and memory versions per content', async () => {

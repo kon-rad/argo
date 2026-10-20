@@ -1,23 +1,33 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, join, relative } from 'node:path';
+import { basename, join, relative, resolve as resolvePath } from 'node:path';
+import { redactExisting } from './backfill.js';
 import { ingest, type Counts, type Item } from './ingest.js';
 import { walkFiles as walk } from '../usage/walkFiles.js';
 import * as stage from './stage.js';
 import * as store from './store.js';
 import type { Host } from './types.js';
 
-export interface ArchivePaths { claudeProjectsDir: string; claudePrefix: string; hermesHome: string; stateDir: string }
+export interface ArchivePaths {
+  claudeProjectsDir: string; claudePrefix: string; hermesHome: string; stateDir: string;
+  /** A second Hermes home on this machine (the user's default ~/.hermes when the vault runs its own); archived as 'hermes:user'. */
+  hermesUserHome?: string | null;
+}
 export interface RunDeps {
   paths: ArchivePaths; now: () => Date; log: (msg: string) => void;
   snapshotSqlite: (src: string, dest: string) => Promise<void>;
   pullDroplet: (destDir: string) => Promise<void>;
   upload: (outboxRoot: string) => Promise<void>;
 }
-export interface RunOptions { dryRun?: boolean; upload?: boolean; droplet?: boolean }
+export interface RunOptions {
+  dryRun?: boolean; upload?: boolean; droplet?: boolean;
+  /** Redact rows added since the last run with this machine's env values (default on). */
+  redactNew?: boolean;
+}
 export interface RunSummary {
   startedAt: string; durationMs: number; droplet: 'ok' | 'skipped' | 'disabled';
   staged: number; uploaded: number; uploadError: string | null;
   ingested: Record<string, Counts>; errors: string[];
+  redacted?: { messages: number; sessions: number };
 }
 
 export function defaultPaths(vaultRoot: string, home: string): ArchivePaths {
@@ -26,6 +36,7 @@ export function defaultPaths(vaultRoot: string, home: string): ArchivePaths {
     // Claude Code names a project dir by replacing every non-alphanumeric char of the cwd with '-'.
     claudePrefix: vaultRoot.replace(/[^A-Za-z0-9]/g, '-'),
     hermesHome: join(vaultRoot, '.hermes'),
+    hermesUserHome: join(home, '.hermes'),
     stateDir: join(home, 'Library', 'Application Support', 'secondbrain-archive'),
   };
 }
@@ -72,6 +83,8 @@ export async function runArchive(deps: RunDeps, opts: RunOptions = {}): Promise<
 
   try {
     if (!opts.dryRun) { rmSync(work, { recursive: true, force: true }); mkdirSync(work, { recursive: true }); }
+    // First run with redaction: start at the rows that exist now (older ones: `secondbrain archive-steps --redact`).
+    const redactStart = opts.redactNew !== false && !existsSync(join(paths.stateDir, 'redact-cursor.json')) ? await store.maxMessageId() : null;
     const items: Item[] = [];
 
     // --- Claude Code (vault projects only) ---
@@ -103,6 +116,16 @@ export async function runArchive(deps: RunDeps, opts: RunOptions = {}): Promise<
       try { await deps.snapshotSqlite(join(paths.hermesHome, 'state.db'), join(work, 'mac', 'state.db')); }
       catch (err) { summary.errors.push(`mac hermes snapshot: ${(err as Error).message}`); }
     }
+    // The user's own ~/.hermes, when it is a different home from the vault's: its state.db only.
+    const userHome = paths.hermesUserHome && resolvePath(paths.hermesUserHome) !== resolvePath(paths.hermesHome)
+      && existsSync(join(paths.hermesUserHome, 'state.db')) ? paths.hermesUserHome : null;
+    if (userHome) {
+      const snap = join(work, 'mac-user', 'state.db');
+      if (!opts.dryRun) {
+        try { await deps.snapshotSqlite(join(userHome, 'state.db'), snap); }
+        catch (err) { summary.errors.push(`mac user hermes snapshot: ${(err as Error).message}`); }
+      }
+    }
     if (opts.droplet !== false && opts.dryRun) summary.droplet = 'skipped'; // dry run: no SSH
     else if (opts.droplet !== false) {
       try {
@@ -128,6 +151,10 @@ export async function runArchive(deps: RunDeps, opts: RunOptions = {}): Promise<
         items.push({ source: 'hermes-pastes', host, localPath: f, logical: `${logicalHome}/pastes/${basename(f)}`, kind: 'blob',
           b2Desired: `archives/hermes/${host}/pastes/${basename(f)}.gz` });
     }
+    // After the main home, so its sessions are in before the user home is checked against them.
+    if (userHome && existsSync(join(work, 'mac-user', 'state.db'))) items.push({ source: 'hermes:user', host: 'mac',
+      localPath: join(work, 'mac-user', 'state.db'), logical: `${userHome}/state.db`, kind: 'hermes-db', daily: true,
+      b2Desired: `archives/hermes/mac-user/state/${today}.sqlite.gz`, dedupeDb: join(work, 'mac', 'state.db') });
 
     // --- Stage ---
     const changedItems: Array<{ item: Item; prev: store.FileRow | null; st: stage.FileState }> = [];
@@ -197,6 +224,21 @@ export async function runArchive(deps: RunDeps, opts: RunOptions = {}): Promise<
       try {
         await ingest(item, summary.errors, bump);
       } catch (err) { summary.errors.push(`${item.source} ${item.logical}: ${(err as Error).message}`); }
+    }
+
+    // --- Redact new rows with this machine's env values ---
+    // Other machines push transcripts that the server redacts with the server's env only; this
+    // machine's own secrets (the vault .env) are caught here, within one run of arriving.
+    if (opts.redactNew !== false) {
+      try {
+        const cursorFile = join(paths.stateDir, 'redact-cursor.json');
+        let sinceId: number;
+        if (existsSync(cursorFile)) sinceId = Number(JSON.parse(readFileSync(cursorFile, 'utf8')).lastId) || 0;
+        else sinceId = redactStart ?? 0;
+        const r = await redactExisting({ batch: 2000, dryRun: false, log: () => {}, sinceId });
+        writeFileSync(cursorFile, JSON.stringify({ lastId: r.lastId, at: deps.now().toISOString() }));
+        summary.redacted = { messages: r.changed, sessions: r.sessions };
+      } catch (err) { summary.errors.push(`redact: ${(err as Error).message}`); }
     }
     return summary;
   } finally {
