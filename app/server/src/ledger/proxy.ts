@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
+import type { Redactor } from '../archive/redact.js';
 import type { Ledger } from './store.js';
 
 /**
@@ -146,7 +147,7 @@ export function assembleSse(text: string): Record<string, any> {
   return msg;
 }
 
-const sha = (v: unknown): string => createHash('sha256').update(JSON.stringify(v)).digest('hex');
+export const sha = (v: unknown): string => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 
 /**
  * The transcript's session id from Claude Code's metadata.user_id: a JSON string with a
@@ -167,10 +168,14 @@ export function sessionFromMetadata(userId: unknown): string | null {
  * are stored once as content-addressed blobs; the exchange lists their hashes. Each turn
  * re-sends the whole conversation, so storing it whole would grow with the square of its length.
  */
-export function recordExchange(ledger: Ledger, c: Captured, provider: string): void {
+/**
+ * `red` removes this machine's keys before anything is hashed: blobs are stored and sent by content hash,
+ * so they can't be redacted later without breaking the exchanges that point at them.
+ */
+export function recordExchange(ledger: Ledger, c: Captured, provider: string, red: Redactor): void {
   let req: Record<string, any> | null = null;
-  try { req = JSON.parse(c.requestBody.toString('utf8')); } catch { /* not JSON: kept as an error note below */ }
-  const text = c.responseBody.toString('utf8');
+  try { req = red.deep(JSON.parse(c.requestBody.toString('utf8'))); } catch { /* not JSON: kept as an error note below */ }
+  const text = red.text(c.responseBody.toString('utf8'));
   let response: Record<string, any> | null = null;
   if (!c.truncated) {
     if (c.contentType.includes('text/event-stream')) response = assembleSse(text);
@@ -226,4 +231,50 @@ export function captureQueue(record: (c: Captured) => void, log?: (msg: string) 
     queue.push(c);
     if (!timer) drain();
   };
+}
+
+/**
+ * Redacts captures recorded before the proxy redacted (or with fewer env files), in place. Only rows not yet
+ * acknowledged by the server: each blob whose body changes gets its new hash, the exchanges are repointed,
+ * and blobs no unsent exchange or acknowledged row needs any more are deleted.
+ */
+export function redactCaptures(ledger: Ledger, red: Redactor): { exchanges: number; blobs: number; removed: number } {
+  const acked = ledger.syncState().ackedSeq;
+  const keys = (ledger.db.prepare(`SELECT key FROM records WHERE kind='exchange' AND seq > ?`).all(acked) as Array<{ key: string }>).map((r) => r.key);
+  const out = { exchanges: 0, blobs: 0, removed: 0 };
+  const renamed = new Map<string, string>();
+  const swap = (h: unknown): unknown => {
+    if (typeof h !== 'string') return h;
+    if (renamed.has(h)) return renamed.get(h);
+    const blob = ledger.get<{ sha: string; kind: string; body: unknown }>('blob', h);
+    if (!blob) return h;
+    const body = red.deep(blob.body);
+    const nh = sha(body);
+    if (nh !== h) { ledger.put('blob', nh, { sha: nh, kind: blob.kind, body }, { source: 'anthropic' }); out.blobs++; }
+    renamed.set(h, nh);
+    return nh;
+  };
+  for (const key of keys) {
+    ledger.tx(() => {
+      const x = ledger.get<Record<string, unknown>>('exchange', key);
+      if (!x) return;
+      const { system, tools, messages, ...rest } = x;
+      const next = { ...red.deep(rest), system: swap(system), tools: swap(tools), messages: Array.isArray(messages) ? messages.map(swap) : messages };
+      const row = ledger.db.prepare(`SELECT source, session_key, ts FROM records WHERE kind='exchange' AND key=?`).get(key) as { source: string | null; session_key: string | null; ts: string | null };
+      if (ledger.put('exchange', key, next, { source: row.source ?? undefined, sessionKey: row.session_key ?? undefined, ts: row.ts ?? undefined })) out.exchanges++;
+    });
+  }
+  // Blobs still referenced by any exchange stay; so does anything the server already has.
+  const used = new Set<string>();
+  for (const r of ledger.db.prepare(`SELECT key FROM records WHERE kind='exchange'`).all() as Array<{ key: string }>) {
+    const x = ledger.get<{ system?: string | null; tools?: string | null; messages?: string[] }>('exchange', r.key);
+    if (!x) continue;
+    for (const h of [x.system, x.tools, ...(x.messages ?? [])]) if (h) used.add(h);
+  }
+  const stale = (ledger.db.prepare(`SELECT key FROM records WHERE kind='blob' AND seq > ?`).all(acked) as Array<{ key: string }>)
+    .map((r) => r.key).filter((k) => !used.has(k));
+  const del = ledger.db.prepare(`DELETE FROM records WHERE kind='blob' AND key=?`);
+  ledger.tx(() => { for (const k of stale) del.run(k); });
+  out.removed = stale.length;
+  return out;
 }

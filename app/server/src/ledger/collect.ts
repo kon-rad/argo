@@ -168,17 +168,23 @@ export async function collectHermes(ledger: Ledger, homes: Array<{ dir: string; 
           // Sessions, then messages and counters, a few thousand rows per transaction (the proxy shares the
           // file); the cursor moves last, so a crash midway only means the same rows are read and skipped next time.
           const writes: Array<() => void> = [];
+          // A second home (the user's own ~/.hermes beside the vault's) often holds copies of the first home's
+          // sessions: a session the ledger already has under another Hermes source is skipped, as the archive does.
+          const copies = new Set(home.label === 'main' ? [] : sessions.map((s) => s.externalId).filter((id) => ledger.hermesSessionElsewhere(id, source)));
           for (const s of sessions) {
+            if (copies.has(s.externalId)) continue;
             const skey = `${source}|${s.externalId}`;
             const data = { ...noHost(s), source, startedAt: iso(s.startedAt), endedAt: iso(s.endedAt), meta: { ...s.meta, ...meta } };
             writes.push(() => { if (ledger.put('session', skey, data, { source, sessionKey: skey, ts: data.startedAt })) c.sessions++; });
           }
           for (const m of messages) {
+            if (copies.has(m.sessionExternalId)) continue;
             const skey = `${source}|${m.sessionExternalId}`;
             const data = { ...m, ts: iso(m.ts) };
             writes.push(() => { if (ledger.put('message', `${skey}|${m.externalId}`, data, { source, sessionKey: skey, ts: data.ts })) c.messages++; });
           }
           for (const k of counters) {
+            if (copies.has(k.sessionId)) continue;
             const data = { ...noHost(k), startedAt: iso(k.startedAt), endedAt: iso(k.endedAt) };
             writes.push(() => { if (ledger.put('counter', `${profile}|${k.sessionId}`, data, { source, sessionKey: `${source}|${k.sessionId}`, ts: data.endedAt })) c.counters++; });
           }

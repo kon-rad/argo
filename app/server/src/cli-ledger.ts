@@ -8,6 +8,7 @@
 //   ledger proxy               the capture proxy in the foreground (what its service runs)
 //   ledger proxy-on | proxy-off   route Claude Code through the proxy, or straight to the API again
 //   ledger requeue             retry every row the server refused (after a server upgrade)
+//   ledger redact-captures     redact proxy captures not yet sent with this machine's env files (once, after adding --redact-env)
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -20,7 +21,8 @@ import {
   launchdPlist, launchdProxyPlist, LAUNCHD_LABEL, LAUNCHD_PROXY_LABEL, logFileFor, SCHTASKS_NAME, SCHTASKS_PROXY_NAME, schtasksArgs,
   schtasksProxyArgs, systemdProxyUnit, systemdUnits, SYSTEMD_PROXY_UNIT, SYSTEMD_UNIT, type ScheduleSpec,
 } from './ledger/install.js';
-import { captureQueue, HEALTH_PATH, recordExchange, startProxy } from './ledger/proxy.js';
+import { buildRedactor, type Redactor } from './archive/redact.js';
+import { captureQueue, HEALTH_PATH, recordExchange, redactCaptures, startProxy } from './ledger/proxy.js';
 import { Ledger } from './ledger/store.js';
 import { syncOnce } from './ledger/sync.js';
 import type { LedgerConfig } from './ledger/types.js';
@@ -178,9 +180,14 @@ function uninstall(): void {
 async function proxy(): Promise<never> {
   const cfg = loadConfig(dir);
   const ledger = new Ledger(join(dir, 'ledger.db'), { busyTimeoutMs: 50 });
+  // Captures are redacted before they are hashed. An env file it can't read means no captures at all;
+  // requests are still forwarded, so Claude Code keeps working.
+  let red: Redactor | null = null;
+  try { red = buildRedactor({ env: process.env, files: cfg.redactEnvFiles ?? [] }); }
+  catch (err) { log(`captures off: redact env file unreadable: ${(err as Error).message}`); }
   const server = await startProxy({
     port: cfg.proxy.port, upstream: cfg.proxy.upstream, log,
-    onCapture: captureQueue((c) => recordExchange(ledger, c, 'anthropic'), log),
+    onCapture: red ? captureQueue((c) => recordExchange(ledger, c, 'anthropic', red!), log) : () => {},
   });
   log(`capture proxy on http://127.0.0.1:${cfg.proxy.port} -> ${cfg.proxy.upstream} (${BUNDLE})`);
   const stop = () => server.close(() => { ledger.close(); process.exit(0); });
@@ -201,7 +208,7 @@ try {
     const route = cmd === 'proxy-on' ? routeThroughProxy(cfg.proxy.port) : routeDirect(cfg.proxy.port);
     console.log(`Claude Code route for new sessions: ${route}`);
   }
-  else if (['run', 'collect', 'sync', 'status', 'requeue'].includes(cmd)) {
+  else if (['run', 'collect', 'sync', 'status', 'requeue', 'redact-captures'].includes(cmd)) {
     const cfg = loadConfig(dir);
     const release = cmd === 'status' ? () => {} : acquireLock();
     if (!release) { log('another run is active; exiting'); process.exit(0); }
@@ -214,6 +221,10 @@ try {
         if (c.claude.errors.length || c.hermes.errors.length) code = 2;
       }
       if (cmd === 'requeue') out.requeued = ledger.requeue();
+      if (cmd === 'redact-captures') {
+        if (!(cfg.redactEnvFiles ?? []).length) throw new Error('set --redact-env first (ledger install --redact-env <file>)');
+        out.redacted = redactCaptures(ledger, buildRedactor({ env: process.env, files: cfg.redactEnvFiles ?? [] }));
+      }
       if (cmd === 'run') out.requeued = ledger.requeue({ olderThanMs: 86_400_000, maxAttempts: 7 });
       if (cmd === 'run' || cmd === 'sync' || cmd === 'requeue') {
         out.sync = await syncOnce(ledger, cfg, { fetch, now: () => new Date(), bundle: BUNDLE, log }, { force: flag('force') || cmd === 'sync' || cmd === 'requeue' });
@@ -225,14 +236,14 @@ try {
           out.proxy = w;
         }
       }
-      if (cmd === 'status') out.status = { dir, server: cfg.server, host: cfg.host, hermesHomes: cfg.hermesHomes, ...ledger.stats() };
+      if (cmd === 'status') out.status = { dir, server: cfg.server, host: cfg.host, hermesHomes: cfg.hermesHomes, redactEnvFiles: cfg.redactEnvFiles ?? [], ...ledger.stats() };
       console.log(JSON.stringify(out, null, cmd === 'status' ? 2 : 0));
     } finally {
       ledger.close();
       release();
     }
   } else {
-    console.error(`usage: ledger run | collect | sync [--force] | status | requeue | install … | uninstall | proxy | proxy-on | proxy-off`);
+    console.error(`usage: ledger run | collect | sync [--force] | status | requeue | redact-captures | install … | uninstall | proxy | proxy-on | proxy-off`);
     code = 1;
   }
 } catch (err) {

@@ -65,6 +65,8 @@ export class Ledger {
         ON CONFLICT (kind, key) DO UPDATE SET source=excluded.source, session_key=excluded.session_key, ts=excluded.ts,
           seq=excluded.seq, sha=excluded.sha, data=excluded.data, pruned=0`),
       meta: this.db.prepare('SELECT v FROM meta WHERE k=?'),
+      elsewhere: this.db.prepare(`SELECT 1 FROM records WHERE kind='session' AND source LIKE 'hermes%' AND source <> ?
+        AND key = source || '|' || ? LIMIT 1`),
       setMeta: this.db.prepare('INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v=excluded.v'),
       delMeta: this.db.prepare('DELETE FROM meta WHERE k=?'),
       cursor: this.db.prepare('SELECT value FROM cursors WHERE name=?'),
@@ -109,6 +111,11 @@ export class Ledger {
     const { v } = this.st.seq!.get() as { v: string };
     this.st.put!.run(kind, key, opts.source ?? null, opts.sessionKey ?? null, opts.ts ?? null, Number(v), sha, pack(json));
     return true;
+  }
+
+  /** True when this Hermes session id is already in the ledger under another Hermes source (a copy in a second home). */
+  hermesSessionElsewhere(externalId: string, source: string): boolean {
+    return !!this.st.elsewhere!.get(source, externalId);
   }
 
   get<T = Record<string, unknown>>(kind: RecordKind, key: string): T | null {
