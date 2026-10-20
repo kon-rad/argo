@@ -187,7 +187,7 @@ describe('social images: store and scheduler', () => {
     await queuePost(accountId, 'second', [], T0);
     let t = 0;
     const provider = { publish: async () => { t += 50_000; return { remoteId: 'x' }; } } as unknown as SocialProvider;
-    expect(await runDuePosts({ linkedin: provider }, KEY, T0, 40_000, () => t)).toEqual({ posted: 1, failed: 0 });
+    expect(await runDuePosts({ linkedin: provider }, KEY, T0, 40_000, () => t)).toEqual({ posted: 1, failed: 0, handedOff: 0 });
     expect((await listPosts('queued')).map((r) => r.body)).toEqual(['second']);
   });
 
@@ -202,7 +202,7 @@ describe('social images: store and scheduler', () => {
       refresh: async () => { throw new Error('unused'); },
       publish: async (_a, p) => { seen.push(p); return { remoteId: 'urn:li:share:1' }; },
     };
-    expect(await runDuePosts({ linkedin: provider }, KEY, T0)).toEqual({ posted: 1, failed: 0 });
+    expect(await runDuePosts({ linkedin: provider }, KEY, T0)).toEqual({ posted: 1, failed: 0, handedOff: 0 });
     expect(seen[0]!.media).toHaveLength(1);
     expect(seen[0]!.media[0]!.altText).toBe('alt');
   });

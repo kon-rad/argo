@@ -2,6 +2,7 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import type { SocialProvider } from '../src/social/providers/types.js';
+import { saveConnectedAccount } from '../src/social/store.js';
 import { truncateAll } from './helpers.js';
 
 const KEY = '0'.repeat(63) + '1';
@@ -90,11 +91,22 @@ describe('social routes', () => {
     expect((await request(a).get('/api/social/posts?status=queued')).body.posts).toEqual([]);
   });
 
-  it('rejects a post body over 3000 characters', async () => {
+  it('rejects a LinkedIn post body over 3000 characters', async () => {
+    const accountId = await saveConnectedAccount(
+      'linkedin',
+      { providerAccountId: 'urn:li:person:abc', displayName: 'Test', tokens: { accessToken: 't', accessTokenExpiresAt: new Date(Date.now() + 3600_000), refreshToken: null, refreshTokenExpiresAt: null } },
+      KEY,
+    );
     const res = await request(app())
       .post('/api/social/posts')
-      .send({ accountId: 1, body: 'x'.repeat(3001), scheduledFor: new Date().toISOString() });
+      .send({ accountId, body: 'x'.repeat(3001), scheduledFor: new Date().toISOString() });
     expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).toMatch(/3000/);
+  });
+
+  it('rejects a post for an account that does not exist', async () => {
+    const res = await request(app()).post('/api/social/posts').send({ accountId: 99, body: 'hi', scheduledFor: new Date().toISOString() });
+    expect(res.status).toBe(404);
   });
 
   it('disconnects an account', async () => {

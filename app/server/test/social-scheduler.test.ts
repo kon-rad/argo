@@ -38,7 +38,7 @@ describe('runDuePosts', () => {
     const accountId = await connectAccount();
     const post = await queuePost(accountId, 'Hello LinkedIn', [], T0);
     const result = await runDuePosts({ linkedin: fakeProvider() }, KEY, T0);
-    expect(result).toEqual({ posted: 1, failed: 0 });
+    expect(result).toEqual({ posted: 1, failed: 0, handedOff: 0 });
     expect((await listPosts('posted')).map((p) => p.id)).toEqual([post.id]);
   });
 
@@ -49,7 +49,7 @@ describe('runDuePosts', () => {
       refresh: async () => ({ accessToken: 'newtok', accessTokenExpiresAt: new Date(T0.getTime() + 5_184_000_000), refreshToken: null, refreshTokenExpiresAt: null }),
     });
     const result = await runDuePosts({ linkedin: provider }, KEY, T0);
-    expect(result).toEqual({ posted: 1, failed: 0 });
+    expect(result).toEqual({ posted: 1, failed: 0, handedOff: 0 });
     const stored = await getAccount(accountId, KEY);
     expect(stored?.accessToken).toBe('newtok');
   });
@@ -58,7 +58,7 @@ describe('runDuePosts', () => {
     const accountId = await connectAccount(new Date(T0.getTime() - 1000)); // already expired
     const post = await queuePost(accountId, 'stuck', [], T0);
     const result = await runDuePosts({ linkedin: fakeProvider() }, KEY, T0);
-    expect(result).toEqual({ posted: 0, failed: 1 });
+    expect(result).toEqual({ posted: 0, failed: 1, handedOff: 0 });
     const rows = await listPosts('queued');
     expect(rows.find((r) => r.id === post.id)).toMatchObject({ attempt_count: 1, last_error: expect.stringMatching(/reauthorized manually/) });
   });
@@ -80,7 +80,7 @@ describe('runDuePosts', () => {
     const accountId = await connectAccount();
     await queuePost(accountId, 'later', [], new Date(T0.getTime() + 3600_000));
     const result = await runDuePosts({ linkedin: fakeProvider() }, KEY, T0);
-    expect(result).toEqual({ posted: 0, failed: 0 });
+    expect(result).toEqual({ posted: 0, failed: 0, handedOff: 0 });
   });
 });
 
