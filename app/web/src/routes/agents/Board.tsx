@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { VaultMarkdown } from '../../components/VaultMarkdown.js';
 import { api, type HubAgent, type KanbanTask } from '../../lib/api.js';
 import { useEventLog } from '../../lib/useEventLog.js';
 import EventFeed from '../../components/EventFeed.js';
@@ -203,13 +202,13 @@ function TaskPanel({ id, board, onClose }: { id: string; board: string; onClose:
         {t && (
           <>
             <h2 className="text-base font-semibold">{t.title}</h2>
-            {t.body && <div className="prose max-w-none text-sm"><ReactMarkdown remarkPlugins={[remarkGfm]}>{t.body}</ReactMarkdown></div>}
+            {t.body && <VaultMarkdown text={t.body} />}
             {t.result && (
               <section className="rounded border border-[var(--rule)] p-2">
                 <h3 className="text-xs font-semibold uppercase text-[var(--ink-dim)]">Result</h3>
-                <div className="prose max-w-none text-sm"><ReactMarkdown remarkPlugins={[remarkGfm]}>{t.result}</ReactMarkdown></div>
+                <VaultMarkdown text={t.result} />
                 {detail.data?.latest_summary && detail.data.latest_summary !== t.result && (
-                  <p className="mt-1 text-xs text-[var(--ink-dim)]">Handoff: {detail.data.latest_summary}</p>
+                  <VaultMarkdown text={`Handoff: ${detail.data.latest_summary}`} className="mt-1 text-xs text-[var(--ink-dim)]" />
                 )}
               </section>
             )}
@@ -233,7 +232,7 @@ function TaskPanel({ id, board, onClose }: { id: string; board: string; onClose:
                   <li key={i} className="text-sm">
                     <b className="font-medium">{c.author}</b>{' '}
                     <span className="text-xs text-[var(--ink-faint)]">{age(c.created_at)}</span>
-                    <div className="whitespace-pre-wrap">{c.body}</div>
+                    <VaultMarkdown text={c.body} breaks />
                   </li>
                 ))}
               </ul>

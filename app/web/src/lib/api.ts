@@ -753,6 +753,11 @@ export const api = {
   tree: (path: string, offset = 0, limit = 200) =>
     request<TreeResponse>('/tree', { path, offset, limit }),
   file: (path: string) => request<FileResponse>('/file', { path }),
+  /** Each ref (a vault path or a wikilink name) to the indexed path it points at, or null. */
+  resolveRefs: (refs: string[]) =>
+    request<{ resolved: Record<string, string | null> }>(
+      `/file/resolve?${new URLSearchParams(refs.map((ref) => ['ref', ref])).toString()}`,
+    ),
   search: (q: string, source?: string, offset = 0, limit = 25, mode: SearchMode = 'keyword') =>
     request<SearchResponse>('/search', { q, source, offset, limit, mode }),
   sources: () => request<{ sources: Source[] }>('/sources'),

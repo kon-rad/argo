@@ -3,6 +3,7 @@ import { readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { Router } from 'express';
 import { z } from 'zod';
+import { buildResolver } from '../connectors/vault/resolve.js';
 import { reindexFile } from '../connectors/vault/scan.js';
 import { query } from '../db.js';
 import { HttpError, parseOr400, wrap } from './http.js';
@@ -16,6 +17,9 @@ export const EDITABLE_EXTS = new Set([
 
 /** Past this, a textarea is the wrong tool and a download is the right one. */
 export const MAX_EDIT_BYTES = 5 * 1024 * 1024;
+
+/** A card with more note references than this is not a card. */
+const MAX_RESOLVE_REFS = 100;
 
 const sha256 = (data: string | Buffer): string => createHash('sha256').update(data).digest('hex');
 
@@ -63,6 +67,33 @@ export function fileRouter(vaultRoot: string): Router {
         links: links.rows,
         backlinks: backlinks.rows,
       });
+    }),
+  );
+
+  // Names to notes, for text that isn't a vault file: kanban cards, comments,
+  // bot results. `?ref=Research/ai/x.md&ref=x` answers each with the indexed
+  // path the scanner would link it to, or null. Same rules as the link graph.
+  router.get(
+    '/resolve',
+    wrap(async (req, res) => {
+      const raw = req.query['ref'];
+      const refs = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw]).filter(
+        (r): r is string => typeof r === 'string' && r.trim() !== '' && r.length <= 500,
+      );
+      if (refs.length > MAX_RESOLVE_REFS) throw new HttpError(400, `at most ${MAX_RESOLVE_REFS} refs per request`);
+      const resolved: Record<string, string | null> = {};
+      if (refs.length > 0) {
+        const { rows: files } = await query<{ id: number; path: string; name: string }>(
+          `SELECT id, path, name FROM vault_files`,
+        );
+        const resolve = buildResolver(files);
+        const pathById = new Map(files.map((f) => [f.id, f.path]));
+        for (const ref of refs) {
+          const id = resolve(ref);
+          resolved[ref] = id === null ? null : (pathById.get(id) ?? null);
+        }
+      }
+      res.json({ resolved });
     }),
   );
 
