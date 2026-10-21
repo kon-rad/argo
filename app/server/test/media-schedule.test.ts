@@ -12,6 +12,7 @@ import { truncateAll } from './helpers.js';
 const BRAND = `---
 brand: argo
 name: Argo
+updated: 2026-10-21
 tracker_projects: [argo-reel]
 style_guides:
   - media/style/long-form.md
@@ -27,7 +28,9 @@ channels:
     network: linkedin
     posting: direct
     account_id: ACC2
-    url: verify
+    url: unknown
+    role: personal profile
+    on_website: false
     style_guide: media/style/missing.md
   - id: blog
     network: web
@@ -62,7 +65,7 @@ describe('brand config', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.channels.map((c) => c.id)).toEqual(['instagram', 'linkedin', 'blog']);
-    expect(r.channels[1]).toMatchObject({ url: null, urlUnconfirmed: true, styleGuideMissing: true });
+    expect(r.channels[1]).toMatchObject({ url: null, urlUnconfirmed: true, styleGuideMissing: true, role: 'personal profile' });
     expect(r.channels[0]).toMatchObject({ url: 'https://www.instagram.com/argo/', styleGuideMissing: false });
     expect(r.warnings).toEqual([
       'style guide not found: media/style/missing.md (channel linkedin)',

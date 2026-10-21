@@ -39,7 +39,7 @@ Rules the server enforces when it loads a file (a brand that breaks one becomes 
 - An `account_id` belongs to at most one channel across all brands.
 - `buffer` and `direct` need an `account_id` that exists in `social_accounts`; `manual` must not have one. A disconnected account is allowed and shows as disconnected.
 - Channel ids are unique within a brand, and the file's `brand` must match its slug in `secondbrain.json`.
-- A missing style guide is shown as a broken link with a warning, not dropped. `url: verify` (or `status: verify`) shows the channel without a link and with a warning.
+- A missing style guide is shown as a broken link with a warning, not dropped. `url: verify` or `url: unknown` (or `status: verify`) shows the channel without a link and with a warning.
 - Paths must stay inside the vault.
 
 ## API

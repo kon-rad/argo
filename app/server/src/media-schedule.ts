@@ -26,6 +26,8 @@ export const ChannelSchema = z.object({
   account_id: z.number().int().positive().optional(),
   style_guide: z.string().optional(),
   note: z.string().optional(),
+  /** What the channel is for, one line. */
+  role: z.string().optional(),
   /** Folder of the channel's files, for manual channels. */
   files: z.string().optional(),
   status: z.string().optional(),
@@ -149,8 +151,9 @@ export function loadBrand(
   const channels: ChannelView[] = f.channels.map((c) => {
     const missing = c.style_guide !== undefined && guideMissing(c.style_guide);
     if (missing) warnings.push(`style guide not found: ${c.style_guide} (channel ${c.id})`);
-    const unconfirmed = c.url === undefined || c.url === 'verify';
-    if (c.status === 'verify' || c.url === 'verify') warnings.push(`channel ${c.id}: profile not confirmed yet`);
+    // "verify" and "unknown" both mean the profile URL is not known yet: shown without a link.
+    const unconfirmed = c.url === undefined || c.url === 'verify' || c.url === 'unknown';
+    if (c.status === 'verify' || c.url === 'verify' || c.url === 'unknown') warnings.push(`channel ${c.id}: profile not confirmed yet`);
     return {
       ...c,
       url: unconfirmed ? null : c.url!,

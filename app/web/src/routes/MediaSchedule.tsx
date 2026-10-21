@@ -218,7 +218,7 @@ function ChannelsPanel({ brand, channels, color }: { brand: Extract<MediaBrandRe
               {c.style_guide && (c.styleGuideMissing ? <span className="text-xs text-[var(--warn)]">style guide missing: {c.style_guide}</span> : <Link className="text-xs underline" to={`/file/${c.style_guide}`}>style guide</Link>)}
               {c.files && <Link className="text-xs underline" to={`/file/${c.files}`}>files</Link>}
               {c.posting !== 'manual' && <span className="text-xs text-[var(--ink-dim)]">{c.counts.queued} queued, {c.counts.posted} posted{c.counts.draft ? `, ${c.counts.draft} draft` : ''}{c.counts.failed ? `, ${c.counts.failed} failed` : ''}</span>}
-              {c.note && <span className="text-xs text-[var(--ink-faint)]">{c.note}</span>}
+              {(c.role ?? c.note) && <span className="text-xs text-[var(--ink-faint)]">{c.role ?? c.note}</span>}
             </li>
           );
         })}

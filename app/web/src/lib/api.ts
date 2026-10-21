@@ -542,6 +542,7 @@ export interface MediaChannel {
   style_guide?: string;
   styleGuideMissing: boolean;
   note?: string;
+  role?: string;
   files?: string;
   account: { state: 'connected' | 'disconnected' | 'missing'; tokenExpiresInDays: number | null; provider: string | null; transport: string | null } | null;
   counts: { draft: number; queued: number; posted: number; failed: number };
