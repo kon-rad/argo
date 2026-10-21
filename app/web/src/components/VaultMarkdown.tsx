@@ -1,4 +1,5 @@
-import { useMemo } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
+import { PreviewModal } from './PreviewModal.js';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useQuery } from '@tanstack/react-query';
@@ -42,7 +43,7 @@ export function VaultMarkdown({ text, className = 'prose max-w-none text-sm', br
             }
             const target = decode(href!.slice(kind.length + 1));
             const path = map[target];
-            if (path) return <Link to={fileHref(path)} className="text-[var(--accent)] underline">{children}</Link>;
+            if (path) return <PathLink path={path}>{children}</PathLink>;
             if (kind === 'vaultpath' || resolved.isPending) return <>{children}</>;
             return <span className="wikilink-dead" title={`No note in the vault matches “${target}”`}>{children}</span>;
           },
@@ -51,6 +52,24 @@ export function VaultMarkdown({ text, className = 'prose max-w-none text-sm', br
         {text}
       </ReactMarkdown>
     </div>
+  );
+}
+
+/** A resolved vault path: a link to /file/<path> and a Preview button that opens it in a modal. */
+function PathLink({ path, children }: { path: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Link to={fileHref(path)} className="text-[var(--accent)] underline">{children}</Link>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="ml-1 rounded border border-[var(--rule)] px-1 align-baseline text-[10px] leading-4 text-[var(--ink-dim)] hover:text-[var(--ink)]"
+      >
+        Preview
+      </button>
+      {open && <PreviewModal path={path} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 

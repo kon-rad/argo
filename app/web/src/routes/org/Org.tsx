@@ -8,6 +8,7 @@ import { formatTokens } from '../usage/format.js';
 import { ago, zoned } from '../../lib/time.js';
 import { useStickToBottom } from '../../lib/useStickToBottom.js';
 import { ChatInput } from '../../components/ChatInput.js';
+import { VaultMarkdown } from '../../components/VaultMarkdown.js';
 
 /**
  * The agent company: Argo's named agents on teams, talking in channels and DMs
@@ -79,7 +80,7 @@ function MessageCard({ m, teams, showChannel, big }: { m: OrgMessage; teams: Map
           </Link>
         )}
       </div>
-      <div className="mt-1 whitespace-pre-wrap break-words">{m.body}</div>
+      <VaultMarkdown text={m.body} breaks className="mt-1 break-words text-sm" />
     </article>
   );
 }
