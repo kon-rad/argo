@@ -39,6 +39,7 @@ const USAGE = `cli-social: the social posting queue (Postgres; the server's time
                               --account defaults to the only connected account; --at to now.
                               --draft: wait for \`approve\` instead of posting at --at.
                               Options: instagramType=post|reel|story, shareToFeed, firstComment,
+                              coverAt (Instagram reel: second of the video to use as the cover),
                               title (YouTube, required), categoryId, privacy, madeForKids,
                               notifySubscribers, aiGenerated; thread (X) only in --options-file
   approve <post id> [--at ISO] queue a draft (for --at, else its own time or now)
@@ -72,6 +73,7 @@ function probeVideo(path: string): VideoProbe | undefined {
 }
 
 const BOOLEAN_OPTIONS = new Set(['shareToFeed', 'madeForKids', 'notifySubscribers', 'aiGenerated']);
+const NUMBER_OPTIONS = new Set(['coverAt']);
 
 function parseOptions(pairs: string[], file: string | undefined): PostOptions {
   const raw: Record<string, unknown> = file ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>) : {};
@@ -81,7 +83,8 @@ function parseOptions(pairs: string[], file: string | undefined): PostOptions {
     const key = pair.slice(0, eq);
     const value = pair.slice(eq + 1);
     if (BOOLEAN_OPTIONS.has(key) && value !== 'true' && value !== 'false') throw new HttpError(400, `--option ${key} takes true or false`);
-    raw[key] = BOOLEAN_OPTIONS.has(key) ? value === 'true' : value;
+    if (NUMBER_OPTIONS.has(key) && !Number.isFinite(Number(value))) throw new HttpError(400, `--option ${key} takes a number`);
+    raw[key] = BOOLEAN_OPTIONS.has(key) ? value === 'true' : NUMBER_OPTIONS.has(key) ? Number(value) : value;
   }
   const parsed = PostOptionsSchema.safeParse(raw);
   if (!parsed.success) throw new HttpError(400, `bad options: ${parsed.error.issues.map((i) => `${i.path.join('.') || i.message}: ${i.message}`).join('; ')}`);

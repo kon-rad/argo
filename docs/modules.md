@@ -135,7 +135,7 @@ Publishes queued posts, with images or a video, on a schedule. LinkedIn goes out
 |---|---|---|
 | LinkedIn | 3,000 characters once escaped; images only | none |
 | X | weighted length (URL = 23, CJK and emoji = 2) up to `SOCIAL_X_MAX_CHARS` (280 free, 25,000 Premium), each thread post too | `thread` (the posts after the body, in order; options file only), `aiGenerated` |
-| Instagram | caption 2,196 (a line break counts 2); needs media; a reel needs a video of 5 s to 15 min; images 0.8 to 1.91 wide-to-tall (1080x1350 is the tallest) | `instagramType` (post, reel, story; default reel for a video), `shareToFeed`, `firstComment`, `aiGenerated` |
+| Instagram | caption 2,196 (a line break counts 2); needs media; a reel needs a video of 5 s to 15 min; images 0.8 to 1.91 wide-to-tall (1080x1350 is the tallest) | `instagramType` (post, reel, story; default reel for a video), `shareToFeed`, `firstComment`, `aiGenerated`, `coverAt` (a reel's cover: the second of the video to show on the profile grid, sent to Buffer as `thumbnailOffset`; Instagram only, since Buffer can't set a Short's cover and rejects custom cover images) |
 | YouTube | Shorts only: one video, exactly 9:16 or 1:1, 3 min at most (Buffer posts no long-form); title required, 100 characters; the body is the description, 5,000 | `title`, `categoryId` (default 28), `privacy` (public, unlisted, private), `madeForKids`, `notifySubscribers`, `aiGenerated` |
 
 The video size and length checks need `ffprobe` on the queueing machine; without it they are skipped with a note.
