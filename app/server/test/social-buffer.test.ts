@@ -5,7 +5,16 @@ import { bufferMetadata, bufferProvider } from '../src/social/providers/buffer.j
 import type { PostMedia, SocialProvider, StoredAccount } from '../src/social/providers/types.js';
 import { checkPost, imageSize, instagramLength, xWeightedLength } from '../src/social/rules.js';
 import { pollHandedOff, publicMediaUrl, runDuePosts } from '../src/social/scheduler.js';
-import { approvePost, cancelPost, listPosts, queuePost, saveConnectedAccount } from '../src/social/store.js';
+import {
+  accountIdForProvider,
+  approvePost,
+  cancelPost,
+  disconnectMissingBufferAccounts,
+  listPosts,
+  movePost,
+  queuePost,
+  saveConnectedAccount,
+} from '../src/social/store.js';
 import { query } from '../src/db.js';
 import { truncateAll } from './helpers.js';
 
@@ -352,5 +361,43 @@ describe('drafts', () => {
 
   it('builds media URLs under /api/social/media', () => {
     expect(publicMediaUrl('https://b.example.com/', 'tok', 'a b.mp4')).toBe('https://b.example.com/api/social/media/tok/a%20b.mp4');
+  });
+});
+
+describe('channel swap', () => {
+  beforeEach(truncateAll);
+
+  it('disconnects a Buffer account whose channel left Buffer, counts what still waits on it, and moves those posts', async () => {
+    const oldYt = await connect('youtube', 'chan-old');
+    const x = await connect('x');
+    const queued = await queuePost(oldYt, 'short', [], T0, { title: 't' }, 'queued');
+    const draft = await queuePost(oldYt, 'draft short', [], T0, { title: 't' }, 'draft');
+    const posted = await queuePost(oldYt, 'done', [], T0, { title: 't' }, 'queued');
+    await query(`UPDATE social_posts SET status = 'posted' WHERE id = $1`, [posted.id]);
+
+    const newYt = await connect('youtube', 'chan-new');
+    expect(await disconnectMissingBufferAccounts(['chan-new', 'chan-x'])).toEqual([{ id: oldYt, provider: 'youtube', waiting: 2 }]);
+    expect(await accountIdForProvider('youtube')).toBe(newYt);
+
+    expect(await movePost(queued.id, newYt)).toBe(true);
+    expect(await movePost(draft.id, newYt)).toBe(true);
+    expect(await movePost(posted.id, newYt)).toBe(false); // already out
+    expect(await movePost(queued.id, x)).toBe(false); // another network
+    expect(await movePost(queued.id, oldYt)).toBe(false); // disconnected
+    const rows = await listPosts();
+    expect(rows.find((r) => r.id === queued.id)).toMatchObject({ account_id: newYt, status: 'queued' });
+    expect(rows.find((r) => r.id === draft.id)).toMatchObject({ account_id: newYt, status: 'draft' });
+  });
+
+  it('changes nothing on an empty channel list, and never touches direct accounts', async () => {
+    const yt = await connect('youtube');
+    expect(await disconnectMissingBufferAccounts([])).toEqual([]);
+    const li = await saveConnectedAccount(
+      'linkedin',
+      { providerAccountId: 'li-1', displayName: 'li', tokens: { accessToken: 'a', accessTokenExpiresAt: new Date('9999-12-31T00:00:00Z'), refreshToken: null, refreshTokenExpiresAt: null } },
+      KEY,
+    );
+    expect(await disconnectMissingBufferAccounts(['chan-other'])).toEqual([{ id: yt, provider: 'youtube', waiting: 0 }]);
+    expect(await accountIdForProvider('linkedin')).toBe(li);
   });
 });
