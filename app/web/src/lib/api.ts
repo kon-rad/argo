@@ -530,7 +530,63 @@ export interface TrackerReport {
   projects: TrackerProject[];
 }
 
-export const AUTH_EXPIRED_EVENT = 'secondbrain:auth-expired';
+/** The media schedule page (server/src/media-schedule.ts). */
+export interface MediaChannel {
+  id: string;
+  network: string;
+  handle?: string;
+  url: string | null;
+  urlUnconfirmed: boolean;
+  posting: 'buffer' | 'direct' | 'manual';
+  account_id?: number;
+  style_guide?: string;
+  styleGuideMissing: boolean;
+  note?: string;
+  files?: string;
+  account: { state: 'connected' | 'disconnected' | 'missing'; tokenExpiresInDays: number | null; provider: string | null; transport: string | null } | null;
+  counts: { draft: number; queued: number; posted: number; failed: number };
+}
+
+export type MediaBrandResult =
+  | {
+      ok: true;
+      slug: string;
+      name: string;
+      config: string;
+      trackerProjects: string[];
+      styleGuides: { path: string; missing: boolean }[];
+      channels: MediaChannel[];
+      warnings: string[];
+    }
+  | { ok: false; slug: string; config: string; error: { file: string; line: number | null; message: string } };
+
+export interface MediaPost {
+  id: number;
+  account_id: number;
+  channelId: string;
+  network: string;
+  body: string;
+  options: Record<string, unknown>;
+  status: 'draft' | 'queued' | 'publishing' | 'posted' | 'failed' | 'canceled';
+  scheduled_for: string;
+  posted_at: string | null;
+  remote_url: string | null;
+  last_error: string | null;
+  card_id: string | null;
+  source_path: string | null;
+  hasMedia: boolean;
+  mediaCount: number;
+}
+
+export interface MediaCalendar {
+  brand: string;
+  from: string;
+  to: string;
+  posts: MediaPost[];
+  channels: MediaChannel[];
+}
+
+export const AUTH_EXPIRED_EVENT ='secondbrain:auth-expired';
 
 export async function request<T>(path: string, params?: Params, init?: RequestInit): Promise<T> {
   const res = await fetch(url(path, params), { credentials: 'same-origin', ...init });
@@ -814,6 +870,10 @@ export const api = {
   hubAgents: () => request<{ lanes: HubAgent[]; profiles: HubAgent[]; bots?: HubAgent[] }>('/hub/agents'),
   boards: () => request<{ boards: { slug: string; name: string }[] }>('/hub/boards'),
   board: (board: string) => request<{ board: string; tasks: KanbanTask[] }>('/hub/board', { board }),
+  mediaBrands: () => request<{ brands: MediaBrandResult[] }>('/media/brands'),
+  mediaCalendar: (slug: string, from: string, to: string) => request<MediaCalendar>(`/media/brands/${slug}/calendar`, { from, to }),
+  approvePost: (id: number) => request<{ post: MediaPost }>(`/social/posts/${id}/approve`, undefined, json('POST', {})),
+  cancelPost: (id: number) => request<{ canceled: boolean }>(`/social/posts/${id}`, undefined, { method: 'DELETE' }),
   task: (id: string, board: string) => request<KanbanTaskDetail>(`/hub/tasks/${id}`, { board }),
   taskLog: (id: string, offset: number) => request<EventPage>(`/hub/tasks/${id}/log`, { offset }),
   createTask: (t: { board: string; title: string; body: string; assignee: string; project?: string; feature?: string }) =>

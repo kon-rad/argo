@@ -137,6 +137,9 @@ export interface PostRow {
   attempt_count: number;
   handed_off_at: Date | null;
   created_at: Date;
+  /** The kanban card behind the post, and the vault draft it came from (both optional). */
+  card_id: string | null;
+  source_path: string | null;
 }
 
 const POST_COLUMNS = `p.*, (
@@ -156,11 +159,13 @@ export async function queuePost(
   scheduledFor: Date,
   options: PostOptions = {},
   status: 'queued' | 'draft' = 'queued',
+  link: { cardId?: string | null; sourcePath?: string | null } = {},
 ): Promise<PostRow> {
   const id = await withTransaction(async (c) => {
     const { rows } = await c.query<{ id: number }>(
-      `INSERT INTO social_posts (account_id, body, scheduled_for, options, status) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [accountId, body, scheduledFor, JSON.stringify(options), status],
+      `INSERT INTO social_posts (account_id, body, scheduled_for, options, status, card_id, source_path)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [accountId, body, scheduledFor, JSON.stringify(options), status, link.cardId ?? null, link.sourcePath ?? null],
     );
     const postId = rows[0]!.id;
     for (const [position, m] of media.entries()) {
@@ -175,10 +180,27 @@ export async function queuePost(
   return rows[0]!;
 }
 
-export async function listPosts(status?: string): Promise<PostRow[]> {
-  const { rows } = status
-    ? await query<PostRow>(`SELECT ${POST_COLUMNS} FROM social_posts p WHERE p.status = $1 ORDER BY p.scheduled_for`, [status])
-    : await query<PostRow>(`SELECT ${POST_COLUMNS} FROM social_posts p ORDER BY p.scheduled_for`);
+export interface PostFilter {
+  status?: string;
+  /** scheduled_for >= from and < to. */
+  from?: Date;
+  to?: Date;
+  accountIds?: number[];
+}
+
+export async function listPosts(filter: string | PostFilter = {}): Promise<PostRow[]> {
+  const f: PostFilter = typeof filter === 'string' ? { status: filter } : filter;
+  const where: string[] = [];
+  const args: unknown[] = [];
+  const add = (sql: string, v: unknown) => { args.push(v); where.push(sql.replace('?', `$${args.length}`)); };
+  if (f.status) add('p.status = ?', f.status);
+  if (f.from) add('p.scheduled_for >= ?::timestamptz', f.from);
+  if (f.to) add('p.scheduled_for < ?::timestamptz', f.to);
+  if (f.accountIds) add('p.account_id = ANY(?::bigint[])', f.accountIds);
+  const { rows } = await query<PostRow>(
+    `SELECT ${POST_COLUMNS} FROM social_posts p ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY p.scheduled_for, p.id`,
+    args,
+  );
   return rows;
 }
 

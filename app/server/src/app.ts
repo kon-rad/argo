@@ -19,6 +19,7 @@ import { mediaRouter } from './routes/media.js';
 import { orgRouter } from './routes/org.js';
 import { friendlyRouter, type FriendlyOptions } from './routes/friendly.js';
 import { rawRouter } from './routes/raw.js';
+import { mediaScheduleRouter } from './routes/mediaSchedule.js';
 import { projectsFeedRouter, projectsRouter } from './routes/projects.js';
 import { ringRouter, type RingRouterOptions } from './routes/ring.js';
 import { runsRouter } from './routes/runs.js';
@@ -196,6 +197,8 @@ export function createApp(opts: AppOptions = {}): express.Express {
   if (modules.has('org')) app.use('/api/org', orgRouter(vaultRoot));
   if (modules.has('map')) app.use('/api/map', mapRouter());
   if (modules.has('tv')) app.use('/api/tv', tvRouter(vaultRoot));
+  // The media schedule page's data; before the gallery router so `/brands` isn't read as a path.
+  if (socialOpts) app.use('/api/media/brands', mediaScheduleRouter(vaultRoot));
   if (modules.has('media')) app.use('/api/media', mediaRouter(vaultRoot));
   if (socialOpts) app.use('/api/social', socialRouter(socialOpts));
   // Local-only: one spawns a shell script, the other stops the process. Neither

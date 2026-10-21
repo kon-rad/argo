@@ -9,7 +9,7 @@ import { checkPost, type VideoProbe } from './social/rules.js';
 import { BUFFER_PROVIDER_KEY, checkReauthNeeded, pollHandedOff, runDuePosts } from './social/scheduler.js';
 import { accountIdForProvider, accountProvider, approvePost, cancelPost, listAccounts, listPosts, queuePost, saveConnectedAccount } from './social/store.js';
 import { hermesTelegram } from './livestream-x.js';
-import { PostOptionsSchema } from './routes/social.js';
+import { CARD_ID, PostOptionsSchema, SourcePath } from './routes/social.js';
 import { bufferProvider } from './social/providers/buffer.js';
 import { linkedinProvider } from './social/providers/linkedin.js';
 import type { PostMedia, PostOptions, SocialProvider } from './social/providers/types.js';
@@ -34,6 +34,7 @@ const USAGE = `cli-social: the social posting queue (Postgres; the server's time
   posts [--status S]          draft|queued|publishing|posted|failed|canceled, with their media
   queue --body-file F | --body T  [--image PATH --alt "text"]... | [--video PATH]
         [--account ID|linkedin|x|instagram|youtube] [--at ISO] [--draft]
+        [--card t_xxxxxxxx] [--source <vault path of the draft file>]
         [--option key=value]... [--options-file F.json]
                               queue a post; each --image needs an --alt, in the same order.
                               --account defaults to the only connected account; --at to now.
@@ -162,9 +163,15 @@ async function queue(argv: string[]): Promise<number> {
       draft: { type: 'boolean' },
       option: { type: 'string', multiple: true },
       'options-file': { type: 'string' },
+      card: { type: 'string' },
+      source: { type: 'string' },
     },
     strict: true,
   });
+  if (values.card !== undefined && !CARD_ID.test(values.card)) throw new HttpError(400, `bad --card ${values.card}; use a card id like t_0944bc6c`);
+  if (values.source !== undefined && !SourcePath.safeParse(values.source).success) {
+    throw new HttpError(400, `bad --source ${values.source}; use a vault-relative path of the draft file`);
+  }
 
   const body = (values['body-file'] ? readFileSync(values['body-file'], 'utf8') : (values.body ?? '')).trim();
   if (!body) throw new HttpError(400, 'the post needs --body or --body-file');
@@ -193,7 +200,10 @@ async function queue(argv: string[]): Promise<number> {
   const at = values.at && values.at !== 'now' ? new Date(values.at) : new Date();
   if (Number.isNaN(at.getTime())) throw new HttpError(400, `bad --at ${values.at}; use an ISO time like 2026-10-20T09:00:00+09:00`);
 
-  const post = await queuePost(accountId, body, media, at, options, values.draft ? 'draft' : 'queued');
+  const post = await queuePost(accountId, body, media, at, options, values.draft ? 'draft' : 'queued', {
+    cardId: values.card,
+    sourcePath: values.source,
+  });
   const verb = values.draft ? 'drafted' : 'queued';
   console.log(`${verb} post ${post.id} for ${account.provider} account ${accountId} at ${new Date(post.scheduled_for).toISOString()} (${body.length} characters)`);
   for (const m of post.media) console.log(`  media ${m.position + 1}: ${m.filename}, ${m.contentType}, ${kb(m.size)}${m.altText ? `, alt "${m.altText}"` : ''}`);
