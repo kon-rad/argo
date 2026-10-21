@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import Browse from './routes/Browse.js';
@@ -12,6 +12,7 @@ import Usage from './routes/usage/Usage.js';
 import UsageSession from './routes/usage/UsageSession.js';
 import Cron from './routes/Cron.js';
 import NavMenu, { type NavItem } from './components/NavMenu.js';
+import MobileMenu, { MenuButton } from './components/MobileMenu.js';
 import Projects from './routes/Projects.js';
 import Tv from './routes/Tv.js';
 import Media from './routes/Media.js';
@@ -74,8 +75,13 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
   const shortcuts = useMemo(() => available(new Set(moduleKey.split(','))), [moduleKey]);
   const [helpOpen, setHelpOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const mobileSearchRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+  const mobileMenuId = useId();
+  const sections = menus(modules, meta.data);
 
   async function logout(): Promise<void> {
     await api.logout().catch(() => {});
@@ -112,10 +118,15 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--rule)] px-3 py-2">
-        <Link to="/" className="font-semibold tracking-tight whitespace-nowrap">
+        <Link to="/" className="inline-flex min-h-11 items-center font-semibold tracking-tight whitespace-nowrap md:min-h-0">
           Second Brain
         </Link>
 
+        {/* Phone: one menu button; the sections, search and status live in the slide-over below. */}
+        <MenuButton open={menuOpen} onToggle={() => setMenuOpen((o) => !o)} controls={mobileMenuId} />
+
+        {/* From md up this wrapper disappears (display: contents), so the desktop header is unchanged. */}
+        <div className="hidden md:contents">
         <SearchBox
           inputRef={searchRef}
           onSubmit={(q) => navigate(`/search?q=${encodeURIComponent(q)}`)}
@@ -123,7 +134,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
 
         <nav className="flex items-center gap-1">
           {/* Menus list only the pages this install has; an empty menu is not shown. */}
-          {menus(modules, meta.data).map(([label, items]) => (
+          {sections.map(([label, items]) => (
             <NavMenu key={label} label={label} items={items} />
           ))}
           {modules.has('tv') && (
@@ -166,7 +177,28 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         <div className="ml-auto shrink-0">
           <ShortcutsHelp shortcuts={shortcuts} open={helpOpen} onOpenChange={setHelpOpen} />
         </div>
+        </div>
       </header>
+
+      <MobileMenu
+        id={mobileMenuId}
+        open={menuOpen}
+        onClose={closeMenu}
+        sections={[...sections, ...(modules.has('tv') ? ([['Watch', [{ to: '/tv', label: 'TV' }]]] as [string, NavItem[]][]) : [])]}
+        search={<SearchBox inputRef={mobileSearchRef} onSubmit={(q) => navigate(`/search?q=${encodeURIComponent(q)}`)} />}
+        footer={
+          <>
+            {modules.has('usage') && <UsageChip />}
+            {modules.has('agents') && <AgentToggle />}
+            <div className="text-xs"><IndexStatus /></div>
+            {loginRequired && (
+              <button type="button" onClick={() => void logout()} className="min-h-11 rounded border border-[var(--rule)] px-3 text-left text-base">
+                Log out
+              </button>
+            )}
+          </>
+        }
+      />
 
       <main className="min-h-0 flex-1">
         <Routes>
