@@ -184,6 +184,7 @@ Settings that don't fit one env line live in the vault, in `secondbrain.json` at
 | `tv.episodesDir`, `tv.shows` | tv | Where episodes live (default `tv/episodes`) and each show's name |
 | `livestream.youtube`, `.twitch`, `.kick` | livestream | Your channel on each platform |
 | `projects.reportFile` | projects | Where `cli-projects render` writes the report (default `projects.md`) |
+| `roadmap.file`, `roadmap.boards`, `roadmap.hermesBin`, `roadmap.themes` | projects | `cli-projects roadmap`: kanban cards and tracker features grouped by theme (a theme selects by `projects`, `features`, `cards`, `keywords`, or `[theme:<id>]` in a card). Default file `roadmap-board.md`; never overwrites a file without its generated marker |
 
 Then `secondbrain scan` to build the index and `secondbrain embed` to build the vector index. Every setting: [docs/configuration.md](../docs/configuration.md).
 

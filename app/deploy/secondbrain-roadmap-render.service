@@ -1,0 +1,16 @@
+[Unit]
+Description=Second Brain: render the roadmap by theme into the vault
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# Writes nothing and exits non-zero when the kanban or the tracker is unreachable.
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+Environment=HERMES_HOME=@HERMES_HOME@
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-projects.js roadmap
+TimeoutStartSec=90
+PrivateTmp=true
+NoNewPrivileges=true

@@ -79,6 +79,33 @@ const Settings = z.object({
       reportFile: z.string().default('projects.md'),
     })
     .prefault({}),
+  roadmap: z
+    .object({
+      /** Vault-relative file `cli-projects roadmap` writes. It never overwrites a file that lacks the generated marker. */
+      file: z.string().default('roadmap-board.md'),
+      /** Hermes kanban boards whose cards are read. */
+      boards: z.array(z.string().min(1)).default(['default']),
+      /** The hermes executable. */
+      hermesBin: z.string().default('hermes'),
+      /** One section per theme. A card or feature belongs when any selector matches. */
+      themes: z
+        .array(
+          z.object({
+            id: z.string().min(1),
+            title: z.string().min(1),
+            /** Tracker project slugs: every feature of these projects. */
+            projects: z.array(z.string()).default([]),
+            /** Tracker features as `project/feature`. */
+            features: z.array(z.string()).default([]),
+            /** Kanban card ids. */
+            cards: z.array(z.string()).default([]),
+            /** Case-insensitive words matched in a card title. `[theme:<id>]` in a title or body always matches. */
+            keywords: z.array(z.string()).default([]),
+          }),
+        )
+        .default([]),
+    })
+    .prefault({}),
 });
 
 export type SecondBrainSettings = z.infer<typeof Settings>;

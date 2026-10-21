@@ -206,6 +206,7 @@ if has usage; then
   chmod 755 /usr/local/bin/secondbrain-usage-import
 fi
 has projects && unit secondbrain-projects-render
+has projects && unit secondbrain-roadmap-render
 if has map; then unit secondbrain-map-build; unit secondbrain-metrics; fi
 has livestream && unit secondbrain-livestream
 has social && unit secondbrain-social
