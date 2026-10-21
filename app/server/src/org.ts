@@ -42,7 +42,7 @@ export const OrgDoc = z.object({
       model: z.string().optional(),
       expertise: z.string().optional(),
       work: z.enum(['research', 'coding', 'design', 'media', 'writing', 'sales', 'education', 'ops']).optional(),
-      capabilities: z.array(z.enum(['code', 'review', 'merge', 'deploy', 'm1', 'web'])).optional(),
+      capabilities: z.array(z.enum(['code', 'review', 'merge', 'deploy', 'm1', 'web', 'dispatch'])).optional(),
       channels: z.array(z.string()).optional(),
     }),
   ),
@@ -790,14 +790,16 @@ function checkWorkType(t: string | undefined): WorkType | null {
   return t as WorkType;
 }
 
-export const CAPABILITIES = ['code', 'review', 'merge', 'deploy', 'm1', 'web'] as const;
+export const CAPABILITIES = ['code', 'review', 'merge', 'deploy', 'm1', 'web', 'dispatch'] as const;
 export type Capability = (typeof CAPABILITIES)[number];
+/** What a card can need. `dispatch` (give any card to any bot: the chief of staff's sweep) is a power, not a need. */
+const CARD_NEEDS: readonly Capability[] = ['code', 'review', 'merge', 'deploy', 'm1', 'web'];
 /** The capability a card's kind of work implies; `--needs` names one outright. */
 const WORK_NEEDS: Partial<Record<WorkType, Capability>> = { coding: 'code', ops: 'deploy', research: 'web' };
 
 export function neededCapability(work: string | null | undefined, needs: string | undefined): Capability | null {
   if (needs !== undefined) {
-    if (!(CAPABILITIES as readonly string[]).includes(needs)) throw new OrgError(`--needs ${needs}: one of ${CAPABILITIES.join(', ')}`);
+    if (!(CARD_NEEDS as readonly string[]).includes(needs)) throw new OrgError(`--needs ${needs}: one of ${CARD_NEEDS.join(', ')}`);
     return needs as Capability;
   }
   return work ? WORK_NEEDS[work as WorkType] ?? null : null;
@@ -833,10 +835,77 @@ export const MAX_ROUNDS = 2;
 const CARD_ID = /^t_[0-9a-f]{6,32}$/;
 const BOARD_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
 
-/** Who may give whom a card: a human anyone on the roster; a lead its own team; a member only itself. */
+/**
+ * Vault code is worked by Claude Code on the owner's M4, never by a bot: the vault holds private notes and isn't a
+ * bot repo (Konrad, 2026-10-21). `m4` is a kanban assignee no dispatcher spawns; its cards wait for a session there.
+ */
+export const M4_ASSIGNEE = 'm4';
+export const VAULT_REPO = 'vault';
+const M4_AGENT: Agent = {
+  name: M4_ASSIGNEE, team_slug: null, runtime: 'session', role: "Claude Code on Konrad's M4 (vault work)", reports_to: 'konrad',
+  model: null, expertise: 'vault code: skills, scripts, hooks, notes', capabilities: [], retired_at: null,
+};
+
+/** The roster agent, or the M4 session for `m4`. */
+async function cardTarget(name: string): Promise<Agent> {
+  return name === M4_ASSIGNEE ? M4_AGENT : getAgent(name);
+}
+
+/** The repos a bot can branch and push in: the registry plus the ones the bots created. Null when this machine has no registry. */
+export function botRepos(file = process.env.BOT_REPOS_FILE ?? '/etc/secondbrain/bot-repos.toml'): string[] | null {
+  let toml: string;
+  try {
+    toml = readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+  const names = [...toml.matchAll(/^\[repos\.([A-Za-z0-9._-]+)\]/gm)].map((m) => m[1]!);
+  const workDir = /^work_dir\s*=\s*"([^"]+)"/m.exec(toml)?.[1];
+  if (workDir) {
+    try {
+      names.push(...Object.keys(JSON.parse(readFileSync(join(workDir, 'created-repos.json'), 'utf8')) as Record<string, unknown>));
+    } catch {
+      /* no repos created yet */
+    }
+  }
+  return [...new Set(names)];
+}
+
+/**
+ * Where a card's code lives decides who may get it (2026-10-21: a vault script given to rune dead-ended, t_47e2a857).
+ * The M4 takes vault work only; vault work goes only to the M4; a bot's coding card for a bot names a repo the bots
+ * reach (the owner may leave it out: the builder asks).
+ */
+export function checkRepo(caller: Agent, to: Agent, need: Capability | null, repo: string | undefined, repos: string[] | null = botRepos()): string | undefined {
+  if (to.name === M4_ASSIGNEE) {
+    if (repo !== undefined && repo !== VAULT_REPO) throw new OrgError(`${M4_ASSIGNEE} takes vault work only; give a ${repo} card to a bot with code`);
+    return VAULT_REPO;
+  }
+  if (repo === VAULT_REPO) {
+    throw new OrgError(`vault code is worked by Claude Code on Konrad's M4, not by a bot: cli-org task create ${M4_ASSIGNEE} "<title>" --project <p> --repo vault`);
+  }
+  if (need !== 'code' || (!repo && caller.runtime === 'human')) return repo;
+  if (!repo) {
+    throw new OrgError(`a coding card names its repo: --repo <name>${repos ? ` (one of ${repos.join(', ')})` : ''}; vault code goes to ${M4_ASSIGNEE} with --repo vault`);
+  }
+  if (repos && !repos.includes(repo)) {
+    throw new OrgError(`no bot can push to ${repo}: the bots reach ${repos.join(', ')}; vault code goes to ${M4_ASSIGNEE} with --repo vault, a new repo starts with cli-git repo create`);
+  }
+  return repo;
+}
+
+/**
+ * Who may give whom a card: a human anyone on the roster; the bot with `dispatch` (the chief of staff) any bot; a lead
+ * its own team; a member only itself. The M4 takes cards from a human, a lead or `dispatch`.
+ */
 export async function assertMayAssign(caller: Agent, to: Agent): Promise<void> {
   if (to.runtime === 'human') throw new OrgError(`${to.name} is not a bot; cards go to bots on the roster`);
   if (caller.runtime === 'human' || caller.name === to.name) return;
+  if ((caller.capabilities ?? []).includes('dispatch')) return;
+  if (to.name === M4_ASSIGNEE) {
+    if (await isLead(caller.name)) return;
+    throw new OrgError(`${caller.name} can't give the M4 a card: leads do; ask your lead`);
+  }
   if (caller.team_slug && caller.team_slug === to.team_slug && (await isLead(caller.name))) return;
   throw new OrgError(`${caller.name} can't give ${to.name} a card: a lead assigns inside its team, a member only to itself; ask your lead or hand off on the board`);
 }
@@ -866,14 +935,23 @@ interface CardSpec {
   rounds?: number;
   work?: string;
   extra?: string;
+  repo?: string;
 }
 
 function cardHeader(caller: Agent, to: Agent, c: CardSpec): string {
   const ref = `${c.project}${c.feature ? `/${c.feature}` : ''}`;
+  if (to.name === M4_ASSIGNEE) {
+    return [
+      `Project: ${ref}`,
+      `Assigned by ${caller.name}. Repo: vault. Worked by Claude Code on Konrad's M4; no bot wakes for it.`,
+      `When done: hermes kanban --board ${c.board ?? DEFAULT_BOARD} complete <this card> with the commits, plus a dev log as the vault rules ask.`,
+      ...(c.extra ? [c.extra] : []),
+    ].join('\n');
+  }
   const channel = to.team_slug ?? 'all-hands';
   const lines = [
     `Project: ${ref}`,
-    `Assigned by ${caller.name}.${c.graph ? ` Graph ${c.graph}, node ${c.node}${c.kind && c.kind !== 'work' ? ` (${c.kind})` : ''}.` : ''}${c.rounds ? ` Round ${c.rounds}.` : ''}`,
+    `Assigned by ${caller.name}.${c.repo ? ` Repo: ${c.repo}.` : ''}${c.graph ? ` Graph ${c.graph}, node ${c.node}${c.kind && c.kind !== 'work' ? ` (${c.kind})` : ''}.` : ''}${c.rounds ? ` Round ${c.rounds}.` : ''}`,
     `When done: cli-org post ${channel} "<what changed, with a path or command>" --kind status --task <this card> --project ${c.project}${c.feature ? ` --feature ${c.feature}` : ''}, then hermes kanban complete <this card>. Blocked: hermes kanban block <this card> "<why>" and tell your lead.`,
   ];
   if (c.extra) lines.push(c.extra);
@@ -923,6 +1001,8 @@ export interface CreateTaskOpts {
   needs?: string;
   /** The owner says ship without asking: merge and deploy skip the approval. Humans only. */
   shipNow?: boolean;
+  /** Where the code lives: a bot repo (required for coding cards) or `vault` (only for the M4). */
+  repo?: string;
   run?: string;
 }
 
@@ -934,14 +1014,15 @@ export interface CreateTaskOpts {
  * next tick and wakes the bot with it.
  */
 export async function createTask(caller: Agent, opts: CreateTaskOpts, run: KanbanRunner): Promise<{ task_id: string; link: TaskLink; message: Message | null }> {
-  const to = await getAgent(opts.assignee);
+  const to = await cardTarget(opts.assignee);
   await assertMayAssign(caller, to);
   if (opts.shipNow && caller.runtime !== 'human') throw new OrgError('only the owner can mark a card ship-now');
-  const need = neededCapability(opts.type, opts.needs);
+  const need = to.name === M4_ASSIGNEE ? null : neededCapability(opts.type, opts.needs);
   await assertCapable(to, need);
+  const repo = checkRepo(caller, to, need, opts.repo);
   await assertProject(opts.project, opts.feature);
   const extra = opts.shipNow ? 'Ship-now: the owner said to ship this without asking; `cli-org ship request` is approved on the spot.' : undefined;
-  const created = await createCard(caller, to, { ...opts, work: opts.type, extra }, run);
+  const created = await createCard(caller, to, { ...opts, work: opts.type, extra, repo }, run);
   await setFlags(created.task_id, opts.shipNow === true, need);
   const link = (await query<TaskLink>(`SELECT * FROM task_links WHERE task_id = $1`, [created.task_id])).rows[0]!;
   const message = await mentionCard(caller, to, link, opts.run);
@@ -954,7 +1035,9 @@ async function mentionCard(caller: Agent, to: Agent, link: TaskLink, run?: strin
   const ref = `${link.project_slug}${link.feature_slug ? `/${link.feature_slug}` : ''}`;
   // A note, not a mention: the card wakes the bot when it is ready, and an @-mention made a second wake (for a `todo`
   // card, a wake with nothing to do yet). A handoff would also wake the lead.
-  return post(caller, to.team_slug, `card ${link.task_id} for ${to.name}: ${link.title} (${ref})`, { task: link.task_id, project: link.project_slug ?? undefined, feature: link.feature_slug ?? undefined, run });
+  // The dispatch bot isn't in the other teams' channels: its note goes to #leads, where the bot's lead reads it.
+  const channel = caller.runtime !== 'human' && caller.team_slug !== to.team_slug && (caller.capabilities ?? []).includes('dispatch') ? 'leads' : to.team_slug;
+  return post(caller, channel, `card ${link.task_id} for ${to.name}: ${link.title} (${ref})`, { task: link.task_id, project: link.project_slug ?? undefined, feature: link.feature_slug ?? undefined, run });
 }
 
 export interface AssignTaskOpts {
@@ -966,6 +1049,7 @@ export interface AssignTaskOpts {
   type?: string;
   needs?: string;
   shipNow?: boolean;
+  repo?: string;
   run?: string;
 }
 
@@ -980,11 +1064,12 @@ export async function assignTask(caller: Agent, opts: AssignTaskOpts, run: Kanba
   if (!CARD_ID.test(opts.taskId)) throw new OrgError(`bad card id "${opts.taskId}"`);
   const board = opts.board ?? DEFAULT_BOARD;
   if (!BOARD_RE.test(board)) throw new OrgError(`bad board name "${board}"`);
-  const to = await getAgent(opts.assignee);
+  const to = await cardTarget(opts.assignee);
   await assertMayAssign(caller, to);
   if (opts.shipNow && caller.runtime !== 'human') throw new OrgError('only the owner can mark a card ship-now');
-  const need = neededCapability(opts.type, opts.needs);
+  const need = to.name === M4_ASSIGNEE ? null : neededCapability(opts.type, opts.needs);
   await assertCapable(to, need);
+  const repo = checkRepo(caller, to, need, opts.repo);
   await assertProject(opts.project, opts.feature);
   let card: { title?: string; status?: string } = {};
   try {
@@ -999,7 +1084,7 @@ export async function assignTask(caller: Agent, opts: AssignTaskOpts, run: Kanba
   if (status === 'done' || status === 'archived') throw new OrgError(`card ${opts.taskId} is ${status}; give ${to.name} a new card instead`);
   if (status === 'running') throw new OrgError(`card ${opts.taskId} is running; wait for the worker or reclaim it first`);
   await run(['kanban', '--board', board, 'assign', opts.taskId, to.name]);
-  await run(['kanban', '--board', board, 'comment', '--author', caller.name, '--', opts.taskId, cardHeader(caller, to, { title, project: opts.project, feature: opts.feature, board })]);
+  await run(['kanban', '--board', board, 'comment', '--author', caller.name, '--', opts.taskId, cardHeader(caller, to, { title, project: opts.project, feature: opts.feature, board, repo })]);
   await query(`SELECT org_task_link($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`, [
     opts.taskId, board, title, opts.project, opts.feature ?? null, to.name, caller.name, null, null, 'work', 0, checkWorkType(opts.type),
   ]);

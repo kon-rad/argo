@@ -76,8 +76,10 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   agents                                   the org chart (no identity needed)
   wakeups [--all]                          open wakeups for you (or everyone with --all)
   import <org.json>                        load the compiled org file (agents, teams, channels); idempotent
-  task create <bot> "<title>" --project p [--feature f] [--type t] [--needs cap] [--ship-now] [--body "..."] [--board exo] [--priority N]
-  task assign <card> <bot> --project p [--feature f] [--type t] [--needs cap] [--ship-now] [--board exo]   an existing card becomes the bot's
+  task create <bot> "<title>" --project p [--feature f] [--type t] [--needs cap] [--repo r] [--ship-now] [--body "..."] [--board exo] [--priority N]
+  task assign <card> <bot> --project p [--feature f] [--type t] [--needs cap] [--repo r] [--ship-now] [--board exo]   an existing card becomes the bot's
+      --repo: where the code lives; a coding card must name a repo the bots reach. Vault code: <bot> is m4 (Claude Code
+      on Konrad's M4, never a bot) with --repo vault; leads, the dispatch bot and Konrad give m4 cards
       --type: research | coding | design | media | writing | sales | education | ops (what the card's tokens count as on /usage;
       default: the bot's team). coding needs the code capability, ops deploy, research web; --needs names one outright
       (code | review | merge | deploy | m1 | web). A bot without it is refused. --ship-now (owner only): merge and deploy
@@ -414,7 +416,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         const project = str(opts.project);
         if (!assignee || !title || !project) throw new OrgError('task create <bot> "<title>" --project <slug> [--feature f] [--body "..."]');
         const r = await createTask(await me(), {
-          assignee, title, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true,
+          assignee, title, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, repo: str(opts.repo),
           body: str(opts.body), board: str(opts.board), priority: num(opts.priority, 'priority'), run,
         }, kanbanRunner());
         if (json) out(JSON.stringify(r));
@@ -426,7 +428,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         const project = str(opts.project);
         if (!card || !assignee || !project) throw new OrgError('task assign <card> <bot> --project <slug> [--feature f] [--board exo]');
         const r = await assignTask(await me(), {
-          taskId: card, assignee, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, board: str(opts.board), run,
+          taskId: card, assignee, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, repo: str(opts.repo), board: str(opts.board), run,
         }, kanbanRunner());
         if (json) out(JSON.stringify(r));
         else out(`card ${r.task_id} now ${r.link.assignee}'s: ${r.link.title} (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
