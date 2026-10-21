@@ -9,6 +9,7 @@ Type=oneshot
 User=@APP_USER@
 Group=@APP_USER@
 WorkingDirectory=@APP_DIR@
+EnvironmentFile=@ENV_FILE@
 Environment=HERMES_HOME=@HERMES_HOME@
 ExecStart=/usr/bin/node --no-warnings server/dist/cli-projects.js roadmap
 TimeoutStartSec=90

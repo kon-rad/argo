@@ -85,7 +85,8 @@ id "$APP_USER" >/dev/null || { echo "user $APP_USER missing: create it and give 
 [ -d "$VAULT" ] || { echo "vault missing at $VAULT"; exit 1; }
 APP_HOME="$(getent passwd "$APP_USER" | cut -d: -f6)"
 HERMES_HOME_REMOTE="${HERMES_HOME_REMOTE:-$APP_HOME/.hermes}"
-render() { sed -e "s#@APP_USER@#$APP_USER#g" -e "s#@APP_DIR@#$APP_DIR#g" -e "s#@VAULT_DIR@#$VAULT#g" -e "s#@HERMES_HOME@#$HERMES_HOME_REMOTE#g" -e "s#@APP_HOME@#$APP_HOME#g" "$1"; }
+ENV_FILE=/etc/secondbrain/env # public-ok
+render() { sed -e "s#@ENV_FILE@#$ENV_FILE#g" -e "s#@APP_USER@#$APP_USER#g" -e "s#@APP_DIR@#$APP_DIR#g" -e "s#@VAULT_DIR@#$VAULT#g" -e "s#@HERMES_HOME@#$HERMES_HOME_REMOTE#g" -e "s#@APP_HOME@#$APP_HOME#g" "$1"; }
 has() { [[ ",$MODS," == *",$1,"* ]]; }
 # A unit pair: the .service rendered, the .timer copied as is.
 unit() {
