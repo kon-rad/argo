@@ -56,6 +56,7 @@ Everything beyond browse, search and the database page is an optional module, of
 | `voice` | Read notes aloud with a local speech server |
 | `livestream` | Stream stats for YouTube, Twitch and Kick |
 | `ring` | Wearable ring data, stored next to your notes |
+| `fund` | A read-only page for an agentic fund: wallet balances, transactions, pending approvals, committee health |
 
 Details for each: [docs/modules.md](docs/modules.md).
 

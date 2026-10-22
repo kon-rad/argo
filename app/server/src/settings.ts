@@ -73,6 +73,16 @@ const Settings = z.object({
       kick: z.string().optional(),
     })
     .prefault({}),
+  fund: z
+    .object({
+      /** Vault-relative folder the fund keeps its state in (`state/config.json`, proposals, meetings, runs). */
+      dir: z.string().default('fund'),
+      /** Safe Transaction Service for the fund's chain: lists the Safe's incoming and outgoing transfers. */
+      txService: z.string().url().default('https://api.safe.global/tx-service/base'),
+      /** Block explorer the page links hashes and addresses to. */
+      explorer: z.string().url().default('https://basescan.org'),
+    })
+    .prefault({}),
   projects: z
     .object({
       /** Vault-relative file `cli-projects render` writes the report to. */

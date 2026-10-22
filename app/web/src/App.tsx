@@ -15,6 +15,7 @@ import NavMenu, { type NavItem } from './components/NavMenu.js';
 import Projects from './routes/Projects.js';
 import Tv from './routes/Tv.js';
 import Media from './routes/Media.js';
+import Fund from './routes/Fund.js';
 // three.js is large: the map loads only when it's opened.
 const MapPage = lazy(() => import('./routes/Map.js'));
 import Org from './routes/org/Org.js';
@@ -186,6 +187,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           {modules.has('org') && <Route path="/org/*" element={<Org />} />}
           {modules.has('tv') && <Route path="/tv" element={<Tv />} />}
           {modules.has('media') && <Route path="/media" element={<Media />} />}
+          {modules.has('fund') && <Route path="/fund" element={<Fund />} />}
           {/* The page was /argo-tv before the engine port; old kiosk URLs land on /tv. */}
           {modules.has('tv') && <Route path="/argo-tv" element={<Navigate to={`/tv${location.search}`} replace />} />}
           {modules.has('map') && (
@@ -219,6 +221,7 @@ function menus(modules: Set<string>, meta: AppMeta | undefined): [string, NavIte
   const work: NavItem[] = [
     ...on('projects', { to: '/projects', label: 'Projects' }),
     ...on('org', { to: '/org', label: 'Org' }),
+    ...on('fund', { to: '/fund', label: 'Fund' }),
     ...on('agents', { to: '/agents', label: 'Agents' }),
     ...on('usage', { to: '/usage', label: 'Usage' }),
     ...on('agents', { to: '/cron', label: 'Cron' }),

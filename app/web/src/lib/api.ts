@@ -153,6 +153,56 @@ export interface SystemInfo {
   embeddings: EmbeddingInfo;
 }
 
+export interface FundTokenBalance { symbol: string; amount: number; usd: number | null }
+export interface FundWallet {
+  key: 'safe' | 'agent' | 'deck' | 'phone' | 'savings';
+  label: string;
+  role: string;
+  address: string | null;
+  balances: FundTokenBalance[];
+  usd: number | null;
+  partial: boolean;
+  error: string | null;
+}
+export interface FundVote { partner: string; vote: string; reason: string }
+export interface FundProposal {
+  id: string; created: string; kind: string; title: string; status: string; tally: string; meeting: string;
+  votes: FundVote[]; txHash: string | null; result: string | null;
+}
+export interface FundTransaction {
+  when: string;
+  kind: 'swap' | 'withdraw' | 'transfer-in' | 'transfer-out' | 'failed' | 'refused' | 'expired';
+  title: string;
+  hash: string | null;
+  proposal: string | null;
+  confirmed: boolean | null;
+  gasEth: number | null;
+}
+export interface FundFileItem { name: string; path: string; title: string; note: string }
+export interface FundRun { skill: string; at: string; failed: boolean; reason: string | null; file: string }
+export interface FundOverview {
+  configured: boolean;
+  dir: string;
+  chainId: number | null;
+  explorer: string;
+  threshold: number | null;
+  ethUsd: number | null;
+  navUsd: number | null;
+  navPartial: boolean;
+  wallets: FundWallet[];
+  pending: FundProposal[];
+  proposals: FundProposal[];
+  transactions: FundTransaction[];
+  meetings: FundFileItem[];
+  research: FundFileItem[];
+  reviews: FundFileItem[];
+  harness: { header: string[]; rows: string[][] };
+  runs: FundRun[];
+  warnings: string[];
+  chainErrors: string[];
+  asOf: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -203,7 +253,7 @@ export interface RingNight {
 
 /** What this install has turned on (server: GET /api/meta). */
 export interface AppMeta {
-  modules: ('ring' | 'agents' | 'projects' | 'org' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'media')[];
+  modules: ('ring' | 'agents' | 'projects' | 'org' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund')[];
   owner: string;
   devLogPath: string | null;
   docsPath: string | null;
@@ -874,6 +924,7 @@ export const api = {
     request<ClaudeChat>(`/hub/chats/${id}/messages`, undefined, json('POST', { text })),
   stopClaudeChat: (id: string) => request<{ ok: true }>(`/hub/chats/${id}/interrupt`, undefined, { method: 'POST' }),
   meta: () => request<AppMeta>('/meta'),
+  fund: (refresh = false) => request<FundOverview>('/fund', refresh ? { refresh: '1' } : undefined),
   projectsReport: () => request<TrackerReport>('/projects/report'),
   projectsMarkdown: () => request<{ text: string; as_of: string | null }>('/projects/report', { format: 'markdown' }),
   orgChart: () => request<OrgChart>('/org/chart'),

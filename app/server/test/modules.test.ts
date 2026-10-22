@@ -7,6 +7,7 @@ describe('optional modules', () => {
   it('parses a comma list and drops unknown names', () => {
     expect([...parseModules('ring, agents ,bogus,')]).toEqual(['ring', 'agents']);
     expect([...parseModules('tv,map,org,projects,usage,voice,livestream,media,social')]).toEqual(['projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream', 'media', 'social']);
+    expect([...parseModules('fund,bogus')]).toEqual(['fund']);
     expect(parseModules('').size).toBe(0);
   });
 
@@ -15,7 +16,7 @@ describe('optional modules', () => {
     const paths = [
       '/api/ring', '/api/agents/chats', '/api/hub/telegram', '/api/usage/plan', '/api/projects/report',
       '/api/feed/projects', '/api/org/channels', '/api/map/graph', '/api/tv/episodes', '/api/voice/status', '/api/media',
-      '/api/social/accounts',
+      '/api/social/accounts', '/api/fund',
     ];
     for (const path of paths) {
       const res = await request(app).get(path);
