@@ -170,7 +170,14 @@ export function createApp(opts: AppOptions = {}): express.Express {
   app.use('/api/file', fileRouter(vaultRoot));
   app.use('/api/raw', rawRouter(vaultRoot));
   app.use('/api/b2', b2Router(vaultRoot, opts.b2 ?? { serveUrl: config.b2ServeUrl }));
-  app.use('/api/search', searchRouter(opts.embeddingProvider ?? defaultEmbeddingProvider));
+  app.use(
+    '/api/search',
+    searchRouter(opts.embeddingProvider ?? defaultEmbeddingProvider, [
+      'notes',
+      'records',
+      ...(modules.has('agents') || modules.has('usage') ? (['agents'] as const) : []),
+    ]),
+  );
   app.use('/api/sources', sourcesRouter(opts.connectors ?? defaultConnectors));
   app.use('/api/runs', runsRouter());
   app.use('/api/db', databaseRouter(opts.sqlGenerator ?? defaultSqlGenerator));

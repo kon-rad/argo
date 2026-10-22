@@ -76,6 +76,47 @@ export interface SearchResponse {
   degraded?: boolean;
 }
 
+export type SearchScope = 'notes' | 'records' | 'agents';
+
+export interface RecordHit {
+  table: string;
+  label: string;
+  id: string;
+  title: string;
+  snippet: string;
+  notes_path: string | null;
+}
+
+export interface AgentHit {
+  host: string;
+  source: string;
+  external_id: string;
+  harness: string | null;
+  session_title: string | null;
+  step: string | null;
+  role: string;
+  seq: number;
+  ts: string | null;
+  snippet: string;
+}
+
+export interface SearchSection<T> {
+  results: T[];
+  total: number;
+  has_more: boolean;
+  error?: string;
+  degraded?: boolean;
+}
+
+export interface GlobalSearchResponse {
+  q: string;
+  mode: SearchMode;
+  available: SearchScope[];
+  notes?: SearchSection<SearchHit>;
+  records?: SearchSection<RecordHit>;
+  agents?: SearchSection<AgentHit>;
+}
+
 export interface Run {
   id: number;
   source_id: number;
@@ -760,6 +801,8 @@ export const api = {
     ),
   search: (q: string, source?: string, offset = 0, limit = 25, mode: SearchMode = 'keyword') =>
     request<SearchResponse>('/search', { q, source, offset, limit, mode }),
+  globalSearch: (q: string, scopes: SearchScope[], mode: SearchMode, offset = 0, limit = 10) =>
+    request<GlobalSearchResponse>('/search/global', { q, scopes: scopes.join(','), mode, offset, limit }),
   sources: () => request<{ sources: Source[] }>('/sources'),
   runs: (params: { active?: boolean; source_id?: number; limit?: number } = {}) =>
     request<{ runs: Run[] }>('/runs', {

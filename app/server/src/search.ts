@@ -37,8 +37,8 @@ const SNIPPET_CONTEXT = 80;
  * what stops a note that happens to contain a <script> tag from executing when
  * it turns up in search results. No text file carries U+0001 or U+0002.
  */
-const HL_START = "\u0001";
-const HL_STOP = "\u0002";
+export const HL_START = "\u0001";
+export const HL_STOP = "\u0002";
 
 /** Shared with the semantic branch, which renders chunk text into the same field. */
 export function escapeHtml(input: string): string {
@@ -50,14 +50,14 @@ export function escapeHtml(input: string): string {
     .replaceAll("'", "&#39;");
 }
 
-function toSafeSnippet(raw: string): string {
+export function toSafeSnippet(raw: string): string {
   return escapeHtml(raw)
     .replaceAll(HL_START, "<b>")
     .replaceAll(HL_STOP, "</b>");
 }
 
 /** `%`, `_` and `\` are ordinary characters in a search box, not wildcards. */
-function escapeLike(input: string): string {
+export function escapeLike(input: string): string {
   return input.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
