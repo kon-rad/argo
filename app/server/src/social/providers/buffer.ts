@@ -1,5 +1,5 @@
 import { HttpError } from '../../routes/http.js';
-import type { PostMedia, ProviderName, PublishResult, QueuedPost, RelayStatus, SocialProvider, StoredAccount } from './types.js';
+import type { PostMedia, PostOptions, ProviderName, PublishResult, QueuedPost, RelayStatus, SocialProvider, StoredAccount } from './types.js';
 import { isVideo } from './types.js';
 
 // Buffer as a relay: one personal API key (env) reaches every channel the
@@ -92,9 +92,19 @@ export function bufferMetadata(provider: ProviderName, post: Pick<QueuedPost, 'b
   }
 }
 
-function asset(m: PostMedia, provider: ProviderName, title: string | undefined): Record<string, unknown> {
+/**
+ * One asset by public URL. A video's cover can't be an uploaded image (Buffer rejects
+ * `thumbnailUrl`); `metadata.thumbnailOffset` picks a frame instead, on Instagram only.
+ */
+export function asset(m: PostMedia, provider: ProviderName, options: Pick<PostOptions, 'title' | 'coverAt'>): Record<string, unknown> {
   if (!m.publicUrl) throw new HttpError(500, `${m.filename} has no public URL; the scheduler mints one before a relay publishes`);
-  if (isVideo(m)) return { video: { url: m.publicUrl, ...(provider === 'youtube' && title ? { metadata: { title } } : {}) } };
+  if (isVideo(m)) {
+    const metadata = {
+      ...(provider === 'youtube' && options.title ? { title: options.title } : {}),
+      ...(provider === 'instagram' && options.coverAt !== undefined ? { thumbnailOffset: Math.round(options.coverAt * 1000) } : {}),
+    };
+    return { video: { url: m.publicUrl, ...(Object.keys(metadata).length ? { metadata } : {}) } };
+  }
   return { image: { url: m.publicUrl } };
 }
 
@@ -154,7 +164,7 @@ export function bufferProvider(opts: BufferOptions): SocialProvider & { listChan
         mode: 'shareNow',
         needsApproval: false,
         source: 'secondbrain',
-        assets: post.media.map((m) => asset(m, account.provider, post.options.title)),
+        assets: post.media.map((m) => asset(m, account.provider, post.options)),
         ...(metadata ? { metadata } : {}),
       };
       const data = await gql<CreatePostData>(
