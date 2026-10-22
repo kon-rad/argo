@@ -32,7 +32,7 @@ export function mediaScheduleRouter(vaultRoot: string): Router {
         if (!cal) throw new HttpError(404, `no brand "${slug}"`);
         res.json(cal);
       } catch (err) {
-        if (err instanceof BrandLoadError) throw new HttpError(422, err.message, { error: err.detail });
+        if (err instanceof BrandLoadError) throw new HttpError(422, err.message, { file: err.detail.file, line: err.detail.line });
         throw err;
       }
     }),

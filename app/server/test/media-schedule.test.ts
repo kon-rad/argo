@@ -160,6 +160,8 @@ describe('calendar and API', () => {
     const app = createApp({ modules: new Set(['social']), vaultRoot: vault, social: { providers: {}, tokenEncKey: undefined, redirectBaseUrl: 'http://x', xMaxChars: 280 } });
     const res = await request(app).get('/api/media/brands/argo/calendar?from=2026-10-01T00:00:00Z&to=2026-11-01T00:00:00Z').expect(422);
     expect(res.body.error.file).toBe('media/media-brand.md');
+    expect(res.body.error.line).toBeGreaterThan(0);
+    expect(res.body.error.message).toContain('media/media-brand.md');
     expect((await request(app).get('/api/media/brands').expect(200)).body.brands[0]).toMatchObject({ ok: false });
   });
 
