@@ -58,6 +58,12 @@ const Settings = z.object({
     })
     .prefault({}),
   metrics: z.array(Metric).default([]),
+  /** The media schedule page: one entry per brand, each pointing at its `media-brand.md` (see media-schedule.ts). */
+  media: z
+    .object({
+      brands: z.array(z.object({ slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,47}$/), config: z.string().min(1) })).default([]),
+    })
+    .prefault({}),
   tv: z
     .object({
       /** Vault-relative folder of episodes, one subfolder each with an episode.md. */

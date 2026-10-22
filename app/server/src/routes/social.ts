@@ -44,7 +44,14 @@ export const PostOptionsSchema = z
   .partial()
   .strict();
 
-const QueuePostBody = z.object({
+export const CARD_ID = /^t_[0-9a-f]{6,32}$/;
+/** A vault-relative path: no leading slash, no `..`. */
+export const SourcePath = z
+  .string()
+  .max(500)
+  .refine((p) => !p.startsWith('/') && !p.split('/').includes('..'), 'a vault-relative path');
+
+const QueuePostBody =z.object({
   accountId: z.coerce.number().int().positive(),
   body: z.string().trim().min(1).max(MAX_ANY_BODY),
   /** Images in post order; the bytes travel as base64 (the JSON limit for this route is raised in app.ts). */
@@ -56,6 +63,21 @@ const QueuePostBody = z.object({
   options: PostOptionsSchema.default({}),
   /** A draft waits for POST /posts/:id/approve. */
   draft: z.boolean().default(false),
+  /** The kanban card and the vault draft file behind the post (shown on the media schedule page). */
+  cardId: z.string().regex(CARD_ID, 'a card id like t_0944bc6c').optional(),
+  sourcePath: SourcePath.optional(),
+});
+
+const ListQuery = z.object({
+  status: z.string().optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  /** Comma-separated account ids. */
+  account_ids: z
+    .string()
+    .regex(/^\d+(,\d+)*$/, 'comma-separated account ids')
+    .transform((s) => s.split(',').map(Number))
+    .optional(),
 });
 
 const ApproveBody = z.object({ scheduledFor: z.coerce.date().optional() });
@@ -180,8 +202,8 @@ export function socialRouter(opts: SocialOptions): Router {
   router.get(
     '/posts',
     wrap(async (req, res) => {
-      const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-      res.json({ posts: await listPosts(status) });
+      const q = parseOr400(ListQuery, req.query);
+      res.json({ posts: await listPosts({ status: q.status, from: q.from, to: q.to, accountIds: q.account_ids }) });
     }),
   );
 
@@ -195,7 +217,10 @@ export function socialRouter(opts: SocialOptions): Router {
       const media = body.media.map((m) => toPostMedia(m.filename, Buffer.from(m.dataBase64, 'base64'), m.altText));
       const options = body.options as PostOptions;
       checkPost(account.provider, body.body, media, options, { xMaxChars: opts.xMaxChars });
-      const post = await queuePost(body.accountId, body.body, media, body.scheduledFor, options, body.draft ? 'draft' : 'queued');
+      const post = await queuePost(body.accountId, body.body, media, body.scheduledFor, options, body.draft ? 'draft' : 'queued', {
+        cardId: body.cardId,
+        sourcePath: body.sourcePath,
+      });
       res.status(201).json({ post });
     }),
   );
