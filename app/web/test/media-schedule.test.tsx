@@ -82,8 +82,9 @@ describe('MediaSchedule', () => {
   it('shows channels with posting badges, links and an unconfirmed profile, and asks for the brand calendar', async () => {
     mount('/media-schedule?brand=argo&view=list&date=2026-10-21');
     expect(await screen.findByText('@argo')).toBeTruthy();
-    expect(screen.getByText('api: buffer')).toBeTruthy();
-    expect(screen.getByText(/profile not confirmed/)).toBeTruthy();
+    // Both channels post by Buffer, and the unconfirmed profile is named in the row and in the warnings.
+    expect(screen.getAllByText('api: buffer')).toHaveLength(2);
+    expect(screen.getAllByText(/profile not confirmed/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole('link', { name: '@argo' }).getAttribute('href')).toBe('https://www.instagram.com/argo/');
     expect(screen.getAllByRole('link', { name: 'style guide' })[0]!.getAttribute('href')).toBe('/file/media/reel.md');
     await waitFor(() => expect(calls.some((c) => c.url.includes('/api/media/brands/argo/calendar?from='))).toBe(true));
