@@ -155,7 +155,7 @@ describe('fund overview', () => {
     write('areas/fund/reviews/2026-W43.md', '# Weekly review\n');
     write('areas/fund/state/harness/ledger.tsv', 'date\truns_ok\n2026-10-19\t3/3\n2026-10-22\t2/3\n');
     write('areas/fund/state/runs/fund-committee-20261020-0000.jsonl', '{"type":"result","is_error":false}\n');
-    write('areas/fund/state/runs/fund-committee-20261021-0000.jsonl', '{"type":"result","is_error":true,"result":"Claude usage limit reached"}\n');
+    write('areas/fund/state/runs/fund-committee-20261021-0000.jsonl', '{"type":"result","is_error":true,"api_error_status":429,"api_error":"usage_limit_reached","result":"You\'ve hit your weekly limit"}\n');
     write('areas/fund/state/runs/fund-research-20261021-2300.jsonl', '{"type":"result","is_error":false}\n');
     const o = await buildOverview(vault, fakeDeps());
     expect(o.meetings[0]).toMatchObject({ name: '2026-10-21.md', note: 'Hold: no motion tabled. Nothing waits.' });
@@ -165,7 +165,7 @@ describe('fund overview', () => {
     const runs = Object.fromEntries(readRuns(vault, 'areas/fund').map((r) => [r.skill, r]));
     expect(runs['fund-committee']).toMatchObject({ failed: true, reason: 'usage limit' });
     expect(runs['fund-research']!.failed).toBe(false);
-    expect(o.warnings.join(' ')).toMatch(/fund-committee: last run failed \(usage limit\)/);
+    expect(o.warnings.join(' ')).toMatch(/fund-committee: last run \(2026-10-21\) failed \(usage limit\)/);
   });
 
   it('a settings dir that climbs out of the vault is ignored', async () => {

@@ -169,7 +169,7 @@ export function readRuns(root: string, dir: string): RunItem[] {
     const m = /^(.+)-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})\.jsonl$/.exec(f);
     if (!m || latest.has(m[1]!)) continue;
     const t = tail(join(base, f), 6000);
-    const limit = /usage limit|rate limit|limit reached/i.test(t);
+    const limit = /usage[ _]limit|weekly limit|rate limit|limit reached|"api_error_status"\s*:\s*429/i.test(t);
     const failed = limit || /"is_error"\s*:\s*true/.test(t);
     latest.set(m[1]!, {
       skill: m[1]!, at: `${m[2]}-${m[3]}-${m[4]}T${m[5]}:${m[6]}:00Z`, failed,
@@ -328,7 +328,7 @@ export async function buildOverview(vaultRoot: string, deps: FundDeps = defaultF
   const agentEth = agent?.balances.find((b) => b.symbol === 'ETH')?.amount;
   if (agent?.address && agentEth != null && agentEth < 0.0003) warnings.push('The agent wallet is low on ETH for gas.');
   for (const r of runs) {
-    if (r.failed) warnings.push(`${r.skill}: last run failed (${r.reason}).`);
+    if (r.failed) warnings.push(`${r.skill}: last run (${r.at.slice(0, 10)}) failed (${r.reason}).`);
     else if (r.skill === 'fund-committee' && deps.now() - Date.parse(r.at) > 36 * 3600_000) warnings.push('The committee has not run in over 36 hours.');
   }
 
