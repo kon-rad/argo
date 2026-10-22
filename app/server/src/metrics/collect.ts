@@ -69,19 +69,27 @@ export const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const BASE_RPC = process.env.BASE_RPC_URL ?? 'https://mainnet.base.org';
 
 export type RpcCall = (method: string, params: unknown[]) => Promise<string>;
+/** Like RpcCall, but the result may be an object (a transaction receipt). */
+export type RpcAny = (method: string, params: unknown[]) => Promise<unknown>;
 
-export const curlRpc: RpcCall = (method, params) =>
+export const curlRpcAny: RpcAny = (method, params) =>
   new Promise((resolve, reject) => {
     const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
     execFile('curl', ['-sS', '-m', '20', '-H', 'content-type: application/json', '-d', body, BASE_RPC], (err, stdout) => {
       if (err) return reject(new Error(`rpc: ${err.message.split('\n')[0]}`));
       try {
-        const j = JSON.parse(stdout) as { result?: string; error?: { message: string } };
-        if (j.error || typeof j.result !== 'string') return reject(new Error(`rpc ${method}: ${j.error?.message ?? 'no result'}`));
+        const j = JSON.parse(stdout) as { result?: unknown; error?: { message: string } };
+        if (j.error || j.result === undefined) return reject(new Error(`rpc ${method}: ${j.error?.message ?? 'no result'}`));
         resolve(j.result);
       } catch { reject(new Error(`rpc ${method}: bad JSON`)); }
     });
   });
+
+export const curlRpc: RpcCall = async (method, params) => {
+  const r = await curlRpcAny(method, params);
+  if (typeof r !== 'string') throw new Error(`rpc ${method}: no result`);
+  return r;
+};
 
 /** A vault JSON file's `safe` field (e.g. a fund's state file); null until it holds an address. */
 export function addressFromFile(vaultRoot: string, file: string): string | null {
@@ -93,14 +101,20 @@ export function addressFromFile(vaultRoot: string, file: string): string | null 
   }
 }
 
+/** ETH in USD from Coinbase's public spot price. */
+export async function ethUsdPrice(get: HttpGet): Promise<number> {
+  const price = JSON.parse(ok(await get('https://api.coinbase.com/v2/prices/ETH-USD/spot'), 'coinbase')) as { data?: { amount?: string } };
+  const ethUsd = Number(price.data?.amount);
+  if (!Number.isFinite(ethUsd) || ethUsd <= 0) throw new Error('coinbase: no ETH-USD price');
+  return ethUsd;
+}
+
 /** ETH + USDC on Base, in USD. ETH priced from Coinbase's public spot price; USDC at 1. */
 export async function baseBalanceUsd(safe: string, rpc: RpcCall, get: HttpGet): Promise<{ usd: number; eth: number; usdc: number; ethUsd: number }> {
   const wei = BigInt(await rpc('eth_getBalance', [safe, 'latest']));
   const data = `0x70a08231${safe.slice(2).toLowerCase().padStart(64, '0')}`;
   const usdcRaw = BigInt(await rpc('eth_call', [{ to: BASE_USDC, data }, 'latest']));
-  const price = JSON.parse(ok(await get('https://api.coinbase.com/v2/prices/ETH-USD/spot'), 'coinbase')) as { data?: { amount?: string } };
-  const ethUsd = Number(price.data?.amount);
-  if (!Number.isFinite(ethUsd) || ethUsd <= 0) throw new Error('coinbase: no ETH-USD price');
+  const ethUsd = await ethUsdPrice(get);
   const eth = Number(wei) / 1e18;
   const usdc = Number(usdcRaw) / 1e6;
   return { usd: Math.round((eth * ethUsd + usdc) * 100) / 100, eth, usdc, ethUsd };

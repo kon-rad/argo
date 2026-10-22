@@ -19,6 +19,7 @@ A module that is off mounts no API routes, shows no nav link and gets no timers 
 | [`voice`](#voice) | (a Listen button) | Read a note aloud through a local speech server |
 | [`livestream`](#livestream) | (a public JSON) | Stream stats for YouTube, Twitch and Kick |
 | [`ring`](#ring) | `/ring` | Data from a wearable ring, pushed in by a client |
+| [`fund`](#fund) | `/fund` | A read-only view of an agentic fund: wallet balances, transactions, pending approvals, committee and run health |
 | [`social`](#social) | (connect + queue, no page UI yet) | Schedule and publish posts with images to LinkedIn (more platforms planned) |
 
 ## projects
@@ -120,6 +121,19 @@ Stores data from a wearable ring that a separate client pushes in, next to your 
 | Page | `/ring` |
 | CLI | `secondbrain ring-pull` (mirror a server's ring tables) |
 | Settings | `RING_PULL_SSH_HOST`, `RING_PULL_DB` |
+
+## fund
+
+A read-only page for a fund that keeps its state as files in your vault: balances of its wallets, its transaction history, trades waiting for approval, the committee's meetings and the health of its scheduled runs. It never signs, proposes or approves; approval stays on the fund's own device or wallet.
+
+| | |
+|---|---|
+| Page | `/fund` (Work menu) |
+| API | `GET /api/fund` (cached 30 seconds; `?refresh=1` re-reads) |
+| Settings | `fund.dir` (vault folder of the fund's state, default `fund`), `fund.txService` (Safe Transaction Service for the chain, default Base), `fund.explorer` (block explorer links, default basescan.org) in `secondbrain.json`; `BASE_RPC_URL` for the chain node |
+| Reads | `<dir>/state/config.json` (`chain_id`, `safe`, `threshold`, `owners.{agent,deck,phone}`, `savings`, `tokens`), `state/proposals/*.json`, `state/runs/*.jsonl`, `state/harness/ledger.tsv`, `meetings/`, `research/`, `reviews/` |
+
+Balances (ETH, USDC and any token in `config.json`) are read from the chain; a failed read shows an error, never zero. ETH is priced from a public spot price, other tokens show as unpriced rather than guessed. Transfers into and out of the Safe come from the Safe Transaction Service, merged with the fund's own trades, each executed hash checked against its transaction receipt.
 
 ## social
 

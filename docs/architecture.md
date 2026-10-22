@@ -78,7 +78,7 @@ One machine can also be a **client** of another's database: set `SECONDBRAIN_DB_
 
 ## 4. Modules
 
-Everything beyond browse, search, the database page and the editor is a module: `ring`, `agents`, `projects`, `org`, `usage`, `map`, `tv`, `voice`, `livestream`. A module that is not listed in `MODULES`:
+Everything beyond browse, search, the database page and the editor is a module: `ring`, `agents`, `projects`, `org`, `usage`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`. A module that is not listed in `MODULES`:
 
 - mounts no API routes (`app/server/src/app.ts`),
 - shows no nav link,

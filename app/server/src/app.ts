@@ -16,6 +16,8 @@ import { ingestRouter } from './routes/ingest.js';
 import { hubRouter, type HubOptions } from './routes/hub.js';
 import { mapRouter } from './routes/map.js';
 import { mediaRouter } from './routes/media.js';
+import { fundRouter } from './routes/fund.js';
+import type { FundDeps } from './fund.js';
 import { orgRouter } from './routes/org.js';
 import { friendlyRouter, type FriendlyOptions } from './routes/friendly.js';
 import { rawRouter } from './routes/raw.js';
@@ -35,6 +37,8 @@ import type { SocialProvider } from './social/providers/types.js';
 import { togetherSqlGenerator, type SqlGenerator } from './sqlgen.js';
 
 export interface AppOptions {
+  /** Overridden in tests so the fund page reads a fake chain and a fake Safe service. */
+  fund?: Partial<FundDeps>;
   /** Overridden in tests so a run can be held open and inspected mid-flight. */
   connectors?: ConnectorRegistry;
   /** Overridden in tests so routes read a fixture tree, not the real vault. */
@@ -204,6 +208,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
   if (modules.has('map')) app.use('/api/map', mapRouter());
   if (modules.has('tv')) app.use('/api/tv', tvRouter(vaultRoot));
   if (modules.has('media')) app.use('/api/media', mediaRouter(vaultRoot));
+  if (modules.has('fund')) app.use('/api/fund', fundRouter(vaultRoot, opts.fund));
   if (socialOpts) app.use('/api/social', socialRouter(socialOpts));
   // Local-only: one spawns a shell script, the other stops the process. Neither
   // belongs on an internet-facing box, logged in or not.
