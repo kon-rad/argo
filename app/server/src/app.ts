@@ -35,6 +35,7 @@ import { linkedinProvider } from './social/providers/linkedin.js';
 import { BUFFER_PROVIDER_KEY } from './social/scheduler.js';
 import type { SocialProvider } from './social/providers/types.js';
 import { togetherSqlGenerator, type SqlGenerator } from './sqlgen.js';
+import { readBuildInfo, type BuildInfo } from './version.js';
 
 export interface AppOptions {
   /** Overridden in tests so the fund page reads a fake chain and a fake Safe service. */
@@ -63,6 +64,8 @@ export interface AppOptions {
   timers?: () => Promise<{ available: boolean; timers: unknown[] }>;
   /** Optional features to mount. Defaults to the MODULES env var. */
   modules?: ReadonlySet<ModuleName>;
+  /** Overridden in tests so /api/meta reports a fixed version and commit. */
+  buildInfo?: BuildInfo;
   /** Overridden in tests with a fake agent-hub. */
   hub?: HubOptions;
   /** Overridden in tests; otherwise PROJECTS_FEED_TOKEN. */
@@ -161,6 +164,8 @@ export function createApp(opts: AppOptions = {}): express.Express {
     });
   }
   // What the web app shows: optional pages and the vault notes the nav links to.
+  // The version and commit are read once: they cannot change while this process runs.
+  const buildInfo = opts.buildInfo ?? readBuildInfo(config.appRoot);
   app.get('/api/meta', (_req, res) => {
     res.json({
       modules: [...modules],
@@ -168,6 +173,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
       devLogPath: config.devLogPath,
       docsPath: config.docsPath,
       robot: !remote && Boolean(config.robotLaunchScript),
+      ...buildInfo,
     });
   });
   app.use('/api/tree', treeRouter(vaultRoot));

@@ -1,11 +1,14 @@
 import { useEffect, useId, useRef } from 'react';
 import { HELP_CODE, keyLabel, type Shortcut } from '../lib/shortcuts.js';
+import type { AppMeta } from '../lib/api.js';
 
 /** The ⓘ button at the right of the header and the list of keyboard shortcuts it opens. */
-export default function ShortcutsHelp({ shortcuts, open, onOpenChange }: {
+export default function ShortcutsHelp({ shortcuts, open, onOpenChange, build }: {
   shortcuts: Shortcut[];
   open: boolean;
   onOpenChange(open: boolean): void;
+  /** Version and commit of the running app, from /api/meta. */
+  build?: Pick<AppMeta, 'version' | 'commit' | 'commitShort' | 'builtAt'>;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const panelId = useId();
@@ -58,6 +61,18 @@ export default function ShortcutsHelp({ shortcuts, open, onOpenChange }: {
             </tbody>
           </table>
           <p className="mt-2 text-xs text-[var(--ink-dim)]">On a PC or Jelly Comb keyboard, Win is the ⌘ key.</p>
+          {build?.version && (
+            <p
+              className="mt-2 border-t border-[var(--rule)] pt-1.5 text-xs text-[var(--ink-dim)]"
+              title={[
+                build.commit ? `commit ${build.commit}` : null,
+                build.builtAt ? `built ${new Date(build.builtAt).toLocaleString()}` : null,
+              ].filter(Boolean).join(' · ') || undefined}
+            >
+              Second Brain v{build.version}
+              {build.commitShort ? ` · ${build.commitShort}` : ''}
+            </p>
+          )}
         </div>
       )}
     </div>

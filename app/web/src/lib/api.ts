@@ -258,6 +258,11 @@ export interface AppMeta {
   devLogPath: string | null;
   docsPath: string | null;
   robot: boolean;
+  /** The app's own version, from package.json, and the commit it was built from. */
+  version: string;
+  commit: string | null;
+  commitShort: string | null;
+  builtAt: string | null;
 }
 
 export interface AgentSession {

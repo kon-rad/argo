@@ -165,7 +165,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         </div>
 
         <div className="ml-auto shrink-0">
-          <ShortcutsHelp shortcuts={shortcuts} open={helpOpen} onOpenChange={setHelpOpen} />
+          <ShortcutsHelp shortcuts={shortcuts} open={helpOpen} onOpenChange={setHelpOpen} build={meta.data} />
         </div>
       </header>
 
