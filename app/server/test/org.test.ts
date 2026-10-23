@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { formatMessage, identityName, main, notifyOwner, parseArgs, parseSince } from '../src/cli-org.js';
+import { config } from '../src/config.js';
 import { query } from '../src/db.js';
 import {
   addWakeup,
@@ -13,6 +14,7 @@ import {
   getSession,
   releaseClaimed,
   setSession,
+  taskWakeHold,
   dmSlug,
   getAgent,
   getThread,
@@ -408,14 +410,65 @@ describe('dispatcher side: claim, finish, add, session', () => {
   });
 
   it('remembers and clears the session', async () => {
-    expect(await getSession('rune')).toEqual({ session_id: null, session_started: null });
+    expect(await getSession('rune')).toEqual({ session_id: null, session_started: null, session_runs: 0 });
     await setSession('rune', 'sess-abc');
     const s = await getSession('rune');
     expect(s.session_id).toBe('sess-abc');
     expect(s.session_started).toBeInstanceOf(Date);
+    expect(s.session_runs).toBe(1);
     expect((await orgChart()).agents.find((a) => a.name === 'rune')?.session_id).toBe('sess-abc');
     await setSession('rune', null);
-    expect(await getSession('rune')).toEqual({ session_id: null, session_started: null });
+    expect(await getSession('rune')).toEqual({ session_id: null, session_started: null, session_runs: 0 });
+  });
+
+  it('drops a session once it has carried ORG_SESSION_MAX_RUNS runs, so the next wake starts fresh', async () => {
+    expect(config.orgSessionMaxRuns).toBe(3);
+    expect((await setSession('rune', 's1')).session_runs).toBe(1);
+    expect((await setSession('rune', 's1')).session_runs).toBe(2);
+    expect(await setSession('rune', 's1')).toEqual({ session_id: null, session_started: null, session_runs: 0 });
+    expect(await setSession('rune', 's2')).toMatchObject({ session_id: 's2', session_runs: 1 });
+    const saved = config.orgSessionMaxRuns;
+    config.orgSessionMaxRuns = 1;
+    try {
+      expect((await setSession('atlas', 's3')).session_id).toBeNull();
+    } finally {
+      config.orgSessionMaxRuns = saved;
+    }
+  });
+
+  it('backs off a card that keeps waking its bot, then holds it for a person', async () => {
+    expect([config.orgTaskWakeRetries, config.orgTaskWakeBackoffMinutes]).toEqual([2, 15]);
+    const runOnce = async (): Promise<void> => {
+      const [w] = await claimWakeups('rune', 'r');
+      await finishWakeups([w!.id]);
+    };
+    // Pretend the last finished wake for the card ended this many minutes ago.
+    const age = (minutes: number): Promise<unknown> =>
+      query(`UPDATE org_wakeups SET done_at = now() - make_interval(mins => $1) WHERE ref = 't_9' AND done_at IS NOT NULL`, [minutes]);
+
+    expect(await addWakeup('rune', 'task', 't_9')).toEqual(expect.any(Number));
+    await runOnce();
+    expect(await addWakeup('rune', 'task', 't_9')).toBeNull();
+    expect(await taskWakeHold('rune', 't_9')).toMatchObject({ reason: 'backoff', runs: 1 });
+    await age(16);
+    expect(await addWakeup('rune', 'task', 't_9')).toEqual(expect.any(Number));
+    await runOnce();
+    await age(16);
+    expect(await taskWakeHold('rune', 't_9')).toMatchObject({ reason: 'backoff', runs: 2 }); // 30 min now
+    await age(31);
+    expect(await addWakeup('rune', 'task', 't_9')).toEqual(expect.any(Number));
+    await runOnce();
+    await age(600);
+    expect(await taskWakeHold('rune', 't_9')).toEqual({ reason: 'cap', runs: 3, until: null });
+    expect(await addWakeup('rune', 'task', 't_9')).toBeNull();
+    expect(await addWakeup('rune', 'task', 't_9')).toBeNull();
+    const { rows } = await query<{ body: string }>(`SELECT body FROM org_messages WHERE author = 'rune' AND task_id = 't_9'`);
+    expect(rows.map((r) => r.body)).toEqual([expect.stringMatching(/^held: card t_9 woke rune 3 times in 24 h/)]);
+    // Other cards, routines and the owner's nudge are not held.
+    expect(await addWakeup('rune', 'task', 't_10')).toEqual(expect.any(Number));
+    expect(await addWakeup('rune', 'owner', 't_9')).toEqual(expect.any(Number));
+    await age(24 * 60 + 1);
+    expect(await taskWakeHold('rune', 't_9')).toBeNull();
   });
 
   it('cli: wake-claim, wake-done, wake-add, session', async () => {
@@ -433,10 +486,15 @@ describe('dispatcher side: claim, finish, add, session', () => {
     expect(lines[0]).toMatch(/^wakeup \d+ for rune$/);
     lines.length = 0;
     expect(await main(['session', 'rune', '--set', 's1'], out)).toBe(0);
-    expect(lines[0]).toMatch(/^rune: session s1 since \d{4}-\d{2}-\d{2}$/);
+    expect(lines[0]).toMatch(/^rune: session s1 since \d{4}-\d{2}-\d{2}, 1 run\(s\)$/);
     lines.length = 0;
     expect(await main(['session', 'rune', '--clear'], out)).toBe(0);
     expect(lines[0]).toBe('rune: no session');
+    lines.length = 0;
+    expect(await main(['wake-add', 'rune', '--reason', 'task', '--ref', 't_5'], out)).toBe(0);
+    await finishWakeups((await claimWakeups('rune', 'r5')).map((w) => w.id));
+    expect(await main(['wake-add', 'rune', '--reason', 'task', '--ref', 't_5'], out)).toBe(0);
+    expect(lines[1]).toMatch(/^rune: card t_5 held until \d{4}-.*Z \(1 run\(s\) in 24 h\)$/);
     await expect(main(['wake-done', 'x'], out)).rejects.toThrow(/wake-done/);
   });
 });

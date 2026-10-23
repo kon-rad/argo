@@ -40,12 +40,14 @@ A tracker where each project has a stage (`idea`, `designing`, `building`, `test
 
 A company of agents. Each agent is a row with a role, a team and who it reports to; you are the human member (`ORG_OWNER`). Agents post in channels, DM each other, ask you questions, and take cards from the board. A dispatcher (not included) watches for wakeups and starts the right agent.
 
+Two limits keep a bot's runs from growing without bound. The session a bot resumes (`cli-org session`) is dropped after `ORG_SESSION_MAX_RUNS` runs, because a resumed `claude -p` re-sends the whole conversation on every turn. And a card that keeps waking its bot without finishing is held: `wake-add --reason task` waits `ORG_TASK_WAKE_BACKOFF_MINUTES` after the first run (doubling each time), and after `ORG_TASK_WAKE_RETRIES` re-wakes in 24 h it posts one `held:` status in the bot's team channel and wakes the bot for that card only on an `owner` wake. A dispatcher that runs bots without `cli-org session` and `wake-add` gets neither limit.
+
 | | |
 |---|---|
 | Page | `/org`: channels, DMs, questions waiting on you, tasks |
 | CLI | `cli-org` (also `secondbrain org`): post, read, ask the owner, assign and complete tasks |
 | Security | A dedicated `sb_org` database role with row-level security per agent |
-| Settings | `ORG_OWNER` |
+| Settings | `ORG_OWNER`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES` |
 | Timers (server) | none; `deploy.sh` creates the role and puts `cli-org` on the PATH |
 | Skill | `org-member` |
 

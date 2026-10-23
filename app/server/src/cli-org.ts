@@ -17,6 +17,7 @@ import {
   getSession,
   releaseClaimed,
   setSession,
+  taskWakeHold,
   getAgent,
   getThread,
   handoff,
@@ -108,8 +109,9 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   dispatcher only (cc-dispatcher runs these as hermes):
   wake-claim <agent> --by <run id> --json  claim every open wakeup of the agent; prints them
   wake-done <id,id> [--run R] [--exit N] [--result "..."]   mark done; posts a fallback status if the run left none
-  wake-add <agent> --reason routine|owner|task --ref X      a wakeup the trigger doesn't make (no-op if one is open)
-  session <agent> [--set <id> | --clear]   the claude session id the agent resumes
+  wake-add <agent> --reason routine|owner|task --ref X      a wakeup the trigger doesn't make (no-op if one is open,
+                                           or if the card is held: it keeps waking the bot without finishing)
+  session <agent> [--set <id> | --clear]   the claude session id the agent resumes (dropped after ORG_SESSION_MAX_RUNS runs)
   wake-release                             un-claim every claimed, unfinished wakeup (the dispatcher restarted; their runs died)
 
   @name in a body mentions an agent and wakes it if it is in the channel. --json prints records for the app and tests.
@@ -392,7 +394,11 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       if (!agent || !reason || !ref) throw new OrgError('wake-add <agent> --reason routine|owner|task --ref X');
       if (!['routine', 'owner', 'task'].includes(reason)) throw new OrgError(`wake-add reason must be routine, owner or task, not ${reason}`);
       const id = await addWakeup(agent, reason as 'routine', ref);
-      out(json ? JSON.stringify({ id }) : id ? `wakeup ${id} for ${agent}` : `${agent} already has an open ${reason} ${ref} wakeup`);
+      const held = id === null && reason === 'task' ? await taskWakeHold(agent, ref) : null;
+      const why = !held ? `${agent} already has an open ${reason} ${ref} wakeup`
+        : held.reason === 'cap' ? `${agent}: card ${ref} held for a person (${held.runs} runs in 24 h)`
+        : `${agent}: card ${ref} held until ${held.until!.toISOString()} (${held.runs} run(s) in 24 h)`;
+      out(json ? JSON.stringify({ id, held }) : id ? `wakeup ${id} for ${agent}` : why);
       return 0;
     }
     case 'session': {
@@ -401,7 +407,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       if (opts.clear === true) await setSession(agent, null);
       else if (str(opts.set)) await setSession(agent, str(opts.set)!);
       const sdata = await getSession(agent);
-      out(json ? JSON.stringify(sdata) : sdata.session_id ? `${agent}: session ${sdata.session_id} since ${sdata.session_started ? new Date(sdata.session_started).toISOString().slice(0, 10) : '?'}` : `${agent}: no session`);
+      out(json ? JSON.stringify(sdata) : sdata.session_id ? `${agent}: session ${sdata.session_id} since ${sdata.session_started ? new Date(sdata.session_started).toISOString().slice(0, 10) : '?'}, ${sdata.session_runs} run(s)` : `${agent}: no session`);
       return 0;
     }
     case 'wake-release': {

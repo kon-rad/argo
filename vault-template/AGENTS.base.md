@@ -81,6 +81,15 @@ Text the owner will paste somewhere else (emails, replies, posts, form answers) 
 - State currencies and units explicitly.
 - Never fabricate a figure to fill a table cell. Mark it unknown and list it as an open question.
 
+## Context budget
+
+Every turn re-sends the whole conversation, so one large output is paid for on every turn after it. In headless runs (`claude -p`, Hermes cron, board wakes) this is most of the bill.
+
+- Cap command output: `| head -n 50`, `| tail -n 50`, `grep -m 20`, `git log --oneline -n 20`, `git diff --stat` before `git diff`. For a long build or test run, send everything to a file (`npm test > /tmp/test.log 2>&1; tail -n 40 /tmp/test.log`) and grep the file for failures.
+- Read files with an offset and limit once they pass a few hundred lines. Never read `node_modules/`, `dist/`, `build/`, `.git/`, virtualenvs, lockfiles, database dumps or media.
+- Don't print what you already have: re-reading a file you just wrote, or dumping JSON to scan for one field (use `jq`).
+- One task per run. When a task splits into steps, write the steps to a file (or cards on the board), finish the first, and stop. The next run starts with a clean context and reads the file.
+
 ---
 
 ## Long tasks: completion contracts

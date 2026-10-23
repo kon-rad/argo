@@ -1,4 +1,8 @@
 {
+  "env": {
+    "BASH_MAX_OUTPUT_LENGTH": "12000",
+    "MAX_MCP_OUTPUT_TOKENS": "10000"
+  },
   "permissions": {
     "deny": [
       "Read(**/.env)",
@@ -6,7 +10,23 @@
       "Edit(**/.env)",
       "Edit(**/.env.*)",
       "Read(**/auth.json)",
-      "Read(**/.credentials.json)"
+      "Read(**/.credentials.json)",
+      "Read(**/node_modules/**)",
+      "Read(**/dist/**)",
+      "Read(**/build/**)",
+      "Read(**/.git/objects/**)",
+      "Read(**/.venv/**)",
+      "Read(**/venv/**)",
+      "Read(**/__pycache__/**)",
+      "Read(**/.next/**)",
+      "Read(**/.cache/**)",
+      "Read(**/coverage/**)",
+      "Read(**/*.min.js)",
+      "Read(**/*.map)",
+      "Read(**/*.sqlite)",
+      "Read(**/*.db)",
+      "Read(**/*.dump)",
+      "Read(**/*.sql.gz)"
     ]
   },
   "hooks": {
