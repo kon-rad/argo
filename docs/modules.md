@@ -163,13 +163,13 @@ A standard LinkedIn app gets a 60-day access token and **no refresh token** (Lin
 | | |
 |---|---|
 | API | `GET/DELETE /api/social/accounts`, `GET /api/social/accounts/:provider/connect` + `/callback`, `GET/POST/DELETE /api/social/posts`, `POST /api/social/posts/:id/approve`, public `GET /api/social/media/:token/:filename` |
-| CLI | `cli-social` (on the app user's PATH): no command = one pass (publish due posts, check on posts handed to Buffer, then the reauth check); `accounts`, `connect-buffer`, `posts [--status S]`, `queue --body-file F [--image P --alt T]... | [--video P] [--account ID or network] [--at ISO] [--draft] [--option k=v]... [--options-file F]`, `approve ID [--at ISO]`, `cancel ID` |
+| CLI | `cli-social` (on the app user's PATH): no command = one pass (publish due posts, check on posts handed to Buffer, then the reauth check); `accounts`, `connect-buffer`, `posts [--status S]`, `queue --body-file F [--image P --alt T]... | [--video P] [--account ID or network] [--at ISO] [--draft] [--option k=v]... [--options-file F]`, `approve ID [--at ISO]`, `cancel ID`, `move ID... --account ID or network` |
 | Settings | `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `SOCIAL_REDIRECT_BASE_URL`, `SOCIAL_TOKEN_ENC_KEY`, `BUFFER_API_KEY`, `SOCIAL_MEDIA_BASE_URL`, `SOCIAL_X_MAX_CHARS` |
 | Timers (server) | the minute publisher/reauth-check (`secondbrain-social`) |
 | Design | `Projects/secondbrain-app/social-linkedin-plan.md` and `social-buffer-plan.md` in the vault |
 | OAuth callback | Served before the login check (the session cookie is SameSite=Strict, so LinkedIn's redirect arrives without it); the one-time `state` from a logged-in `/connect` guards it |
 
-**Setting up Buffer.** Connect each account in Buffer once (the free plan has 3 channels and a lifetime limit on new connections, so don't connect test accounts). Instagram must be a Business or Creator account for automatic publishing. Put `BUFFER_API_KEY` in the server's env, then run `cli-social connect-buffer`: it adds one account per Instagram, YouTube and X channel and skips the rest.
+**Setting up Buffer.** Connect each account in Buffer once (the free plan has 3 channels and a lifetime limit on new connections, so don't connect test accounts). Instagram must be a Business or Creator account for automatic publishing. Put `BUFFER_API_KEY` in the server's env, then run `cli-social connect-buffer`: it adds one account per Instagram, YouTube and X channel and skips the rest. **Swapping a channel** (say, Shorts to another YouTube channel): disconnect the old one in Buffer, connect the new one, then run `connect-buffer` again. The old account is marked disconnected here, and the command names any drafts or queued posts still on it. Re-point those with `cli-social move <ids> --account youtube`; their time, text and video stay. Until then they fail when they come due.
 
 ## Adding a module
 
