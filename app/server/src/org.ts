@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { config } from './config.js';
 import { query, withTransaction, type TxClient } from './db.js';
 
 /**
@@ -598,10 +599,22 @@ export async function finishWakeups(
   return { done: rows.length, fallback_posted };
 }
 
-/** A wakeup the trigger doesn't make: a routine from the clock, a kanban task, or the owner's nudge. Null when one is already open. */
+/**
+ * A wakeup the trigger doesn't make: a routine from the clock, a kanban task, or the owner's nudge. Null when one
+ * is already open, or when a card wake is held (taskWakeHold): a card that keeps waking its bot without finishing
+ * waits longer each time, and after ORG_TASK_WAKE_RETRIES re-wakes in 24 h it waits for a person. The first time a
+ * card is held for good, the bot's team channel gets one status saying so.
+ */
 export async function addWakeup(agentName: string, reason: 'routine' | 'owner' | 'task', ref: string): Promise<number | null> {
   const agent = await getAgent(agentName);
   if (agent.runtime === 'human') throw new OrgError(`${agentName} is human; nothing wakes the owner`);
+  if (reason === 'task') {
+    const hold = await taskWakeHold(agentName, ref);
+    if (hold) {
+      if (hold.reason === 'cap') await postHeld(agent, ref, hold.runs);
+      return null;
+    }
+  }
   const { rows } = await query<{ id: number }>(
     `INSERT INTO org_wakeups (agent_name, reason, ref) VALUES ($1,$2,$3)
      ON CONFLICT (agent_name, reason, ref) WHERE done_at IS NULL DO NOTHING RETURNING id`,
@@ -610,17 +623,68 @@ export async function addWakeup(agentName: string, reason: 'routine' | 'owner' |
   return rows[0]?.id ?? null;
 }
 
-export async function setSession(agentName: string, sessionId: string | null): Promise<void> {
-  await getAgent(agentName);
-  await query(
-    `UPDATE org_agents SET session_id = $2, session_started = CASE WHEN $2::text IS NULL THEN NULL ELSE current_date END, updated_at = now() WHERE name = $1`,
-    [agentName, sessionId],
-  );
+export interface WakeHold {
+  /** `backoff`: wait until `until`. `cap`: re-woken too often; only a person (an `owner` wake) moves it now. */
+  reason: 'backoff' | 'cap';
+  /** Finished wakes of this bot for this card in the last 24 h. */
+  runs: number;
+  until: Date | null;
 }
 
-export async function getSession(agentName: string): Promise<{ session_id: string | null; session_started: Date | null }> {
+/** Why a card wake for this bot must wait, or null when it may run now. Every run of a card reloads its context. */
+export async function taskWakeHold(agentName: string, ref: string): Promise<WakeHold | null> {
+  const { rows } = await query<{ runs: number; last: Date | null }>(
+    `SELECT count(*)::int AS runs, max(done_at) AS last FROM org_wakeups
+      WHERE agent_name = $1 AND reason = 'task' AND ref = $2 AND done_at > now() - interval '24 hours'`,
+    [agentName, ref],
+  );
+  const { runs, last } = rows[0]!;
+  if (!runs || !last) return null;
+  if (runs > config.orgTaskWakeRetries) return { reason: 'cap', runs, until: null };
+  const until = new Date(last.getTime() + config.orgTaskWakeBackoffMinutes * 60_000 * 2 ** (runs - 1));
+  return until.getTime() > Date.now() ? { reason: 'backoff', runs, until } : null;
+}
+
+const HELD_PREFIX = 'held: ';
+
+async function postHeld(agent: Agent, ref: string, runs: number): Promise<void> {
+  if (!agent.team_slug) return;
+  const { rowCount } = await query(
+    `SELECT 1 FROM org_messages WHERE author = $1 AND task_id = $2 AND kind = 'status' AND body LIKE $3 AND created_at > now() - interval '24 hours'`,
+    [agent.name, ref, `${HELD_PREFIX}%`],
+  );
+  if (rowCount) return;
+  const body = `${HELD_PREFIX}card ${ref} woke ${agent.name} ${runs} times in 24 h without finishing; no more wakes for it until a person looks (an owner wake still runs)`;
+  await withTransaction((tx) => insertMessage(tx, agent, agent.team_slug!, 'status', body, { task: ref, mentions: [] }));
+}
+
+export interface Session {
+  session_id: string | null;
+  session_started: Date | null;
+  /** Runs the session has carried; at ORG_SESSION_MAX_RUNS it is dropped and the next wake starts fresh. */
+  session_runs: number;
+}
+
+/**
+ * Remembers the session a run used (null forgets it). Each set counts one more run on the stored session; the run
+ * that reaches ORG_SESSION_MAX_RUNS drops it, so no session is resumed forever: a resumed `claude -p` sends the
+ * whole conversation again on every turn.
+ */
+export async function setSession(agentName: string, sessionId: string | null): Promise<Session> {
+  const cur = await getSession(agentName);
+  const runs = sessionId === null ? 0 : cur.session_id ? cur.session_runs + 1 : 1;
+  const keep = sessionId !== null && runs < config.orgSessionMaxRuns;
+  await query(
+    `UPDATE org_agents SET session_id = $2, session_started = CASE WHEN $2::text IS NULL THEN NULL ELSE current_date END,
+            session_runs = $3, updated_at = now() WHERE name = $1`,
+    [agentName, keep ? sessionId : null, keep ? runs : 0],
+  );
+  return getSession(agentName);
+}
+
+export async function getSession(agentName: string): Promise<Session> {
   await getAgent(agentName);
-  const { rows } = await query<{ session_id: string | null; session_started: Date | null }>(`SELECT session_id, session_started FROM org_agents WHERE name = $1`, [agentName]);
+  const { rows } = await query<Session>(`SELECT session_id, session_started, session_runs FROM org_agents WHERE name = $1`, [agentName]);
   return rows[0]!;
 }
 

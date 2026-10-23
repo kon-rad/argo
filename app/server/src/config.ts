@@ -53,6 +53,12 @@ const Schema = z.object({
   OWNER_NAME: z.string().trim().min(1).default('owner'),
   // org module: the name of the human agent in the org (org_agents, runtime human).
   ORG_OWNER: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default('owner'),
+  // org module: runs one remembered agent session may carry before the next wake starts fresh (1: never resume).
+  ORG_SESSION_MAX_RUNS: z.coerce.number().int().min(1).default(3),
+  // org module: re-wakes of a bot for the same card in 24 h before it is held for a person, and the first
+  // wait between them in minutes (doubles each time).
+  ORG_TASK_WAKE_RETRIES: z.coerce.number().int().min(0).default(2),
+  ORG_TASK_WAKE_BACKOFF_MINUTES: z.coerce.number().int().min(0).default(15),
   // Vault-relative notes the nav links to; unset hides the link.
   DEV_LOG_PATH: z.string().optional(),
   DOCS_PATH: z.string().optional(),
@@ -157,6 +163,9 @@ export const config = {
   modules: parseModules(parsed.data.MODULES),
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,
+  orgSessionMaxRuns: parsed.data.ORG_SESSION_MAX_RUNS,
+  orgTaskWakeRetries: parsed.data.ORG_TASK_WAKE_RETRIES,
+  orgTaskWakeBackoffMinutes: parsed.data.ORG_TASK_WAKE_BACKOFF_MINUTES,
   devLogPath: parsed.data.DEV_LOG_PATH ?? null,
   docsPath: parsed.data.DOCS_PATH ?? null,
   robotLaunchScript: parsed.data.ROBOT_LAUNCH_SCRIPT,

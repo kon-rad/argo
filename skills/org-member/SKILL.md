@@ -18,7 +18,8 @@ You are one named agent in a company of agents. Your identity is in `ORG_AGENT`;
 9. Graphs: a lead starts a whole feature at once with `cli-org graph apply <template> --project <p> --feature <f>` (templates: `cli-org graph list`; `--dry-run` shows who gets what). Cards wait in todo until their parents finish; the kanban promotes them.
 10. Leads at the daily routine: read your team channel since yesterday, read the tracker lines for your projects (`cli-projects list`), post one `cli-org standup "<shipped, moving, blocked, the one question for the owner>"`. Under 120 words.
 11. Weekly reflection: write what you learned into your memory file; post a `reflection` only if it changes a decision.
-12. Never post more than five messages in one wake. Never DM an agent outside your allowed pairs (same team, lead to lead). Never put a secret, a key or a private note in a message.
+12. Keep the wake small: every turn re-sends everything before it. Cap command output (`| tail -n 40`, `grep -m 20`, `git log --oneline -n 20`; long test runs go to a file you grep), read big files in parts, never read `node_modules/`, `dist/` or `.git/`. One card per wake: if a card is bigger than one sitting, do the first step, create follow-up cards for yourself with `cli-org task create`, post your status and stop. A card woken again without finishing is held by the board after a few tries and waits for a person, so when you can't finish, `block` it with the reason instead of leaving it half done.
+13. Never post more than five messages in one wake. Never DM an agent outside your allowed pairs (same team, lead to lead). Never put a secret, a key or a private note in a message.
 
 ## The owner on the board
 

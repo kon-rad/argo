@@ -78,7 +78,11 @@ The point is a record a person can read: what changed, why, how it was tested. T
 
 - `PreToolUse` on `Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit` runs `guard.py`;
 - `Stop` runs `devlog_gate.py`;
-- `permissions.deny` also blocks reading or editing `.env`, `.env.*`, `auth.json` and `.credentials.json` at the Claude Code level.
+- `permissions.deny` also blocks reading or editing `.env`, `.env.*`, `auth.json` and `.credentials.json` at the Claude Code level;
+- `permissions.deny` keeps Read, Grep and Glob out of `node_modules/`, `dist/`, `build/`, `.git/objects/`, virtualenvs, caches, minified bundles, source maps and database files (Claude Code has no `.claudeignore`; this is how it ignores paths);
+- `env` caps a Bash result at 12,000 characters (`BASH_MAX_OUTPUT_LENGTH`) and an MCP result at 10,000 tokens (`MAX_MCP_OUTPUT_TOKENS`). Each turn re-sends the whole conversation, so one big output costs again on every later turn.
+
+`init` copies the file only into a new vault. An existing vault picks up these rules by copying `harness/claude/settings.json` over its `.claude/settings.json` again (keep any lines you added).
 
 The commands use `$CLAUDE_PROJECT_DIR/.secondbrain/harness/hooks/`, so they follow your engine pin.
 
