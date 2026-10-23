@@ -397,6 +397,11 @@ cmd_usage_sync() {
   ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-usage-sync.js"
 }
+cmd_plan_alert() {
+  # Telegram alert at 60/80/90% of the five-hour and seven-day plan windows. `--dry-run` prints what would be sent.
+  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-plan-alert.js" "$@"
+}
 cmd_usage_push() {
   # Mac -> droplet: new Claude Code transcript bytes and plan readings over one SSH call.
   ensure_node; ensure_build
@@ -486,6 +491,7 @@ secondbrain ingest-device  (server) device tokens for ledgers: add <host> | list
 secondbrain archive-steps  fill step columns of old archive rows (--redact: remove stored keys; --dry-run)
 secondbrain agents-sync  copy Hermes chats and cron history into Postgres
 secondbrain usage-sync   this machine's Claude Code usage into the ledger
+secondbrain plan-alert   [--dry-run] Telegram alert at 60/80/90% of the plan windows (usage-sync runs it on the droplet)
 secondbrain usage-push   send new Claude Code usage to the droplet ledger (Mac)
 secondbrain usage-backfill  wire lines for archived Mac sessions (pipe to the droplet importer)
 secondbrain credits    show | set <provider> <balance> | sync  prepaid API credit balances
@@ -521,6 +527,7 @@ case "${1:-start}" in
   ring-pull)     cmd_ring_pull ;;
   agents-sync)   cmd_agents_sync ;;
   usage-sync)    cmd_usage_sync ;;
+  plan-alert)    cmd_plan_alert "${@:2}" ;;
   usage-push)    cmd_usage_push ;;
   usage-backfill) cmd_usage_backfill ;;
   auth-setup)    cmd_auth_setup ;;
