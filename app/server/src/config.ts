@@ -105,6 +105,12 @@ const Schema = z.object({
   // Shorts and X through the channels connected in that Buffer account;
   // unset = no Buffer relay.
   BUFFER_API_KEY: z.string().min(1).optional(),
+  // YouTube Data API v3 key (Google Cloud, restricted to that API) for the
+  // daily metrics collectors; unset = YouTube API collectors are skipped.
+  YOUTUBE_API_KEY: z.string().min(1).optional(),
+  // Instagram API with Instagram Login: a long-lived (60-day) user token for
+  // the account. Seeds the stored token; later refreshes live in metrics_tokens.
+  INSTAGRAM_ACCESS_TOKEN: z.string().min(1).optional(),
   // Public base URL Buffer fetches post media from (it has no upload), e.g.
   // https://brain.example.com. Must be reachable from the internet.
   // Defaults to SOCIAL_REDIRECT_BASE_URL.
@@ -188,5 +194,7 @@ export const config = {
   ).replace(/\/+$/, ''),
   socialTokenEncKey: parsed.data.SOCIAL_TOKEN_ENC_KEY,
   bufferApiKey: parsed.data.BUFFER_API_KEY,
+  youtubeApiKey: parsed.data.YOUTUBE_API_KEY,
+  instagramAccessToken: parsed.data.INSTAGRAM_ACCESS_TOKEN,
   socialXMaxChars: parsed.data.SOCIAL_X_MAX_CHARS,
 } as const;

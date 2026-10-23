@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { config } from '../config.js';
 import { query } from '../db.js';
+import { instagramFollowers, instagramToken, scrub, youtubeChannel, youtubeSubscribers } from './posts.js';
 import { metricDef, metrics, type MetricDef } from './registry.js';
 
 /**
@@ -142,6 +144,19 @@ export function collectors(
         // The link-preview crawler's user agent gets the server-rendered meta tags without a login wall.
         return [{ metric: m.key, source: 'instagram-meta',
           run: async () => ({ value: parseInstagramMeta(ok(await get(`https://www.instagram.com/${c.handle}/`, { 'user-agent': 'facebookexternalhit/1.1' }), 'Instagram')) }) }];
+      case 'youtube-api':
+        // Official API; subscriber counts above 1,000 are rounded to 3 significant figures by YouTube.
+        return [{ metric: m.key, source: 'youtube-data-api',
+          run: async () => {
+            if (!config.youtubeApiKey) throw new Error('YOUTUBE_API_KEY is not set');
+            return { value: youtubeSubscribers(await youtubeChannel(get, config.youtubeApiKey, c.channelId)) };
+          } }];
+      case 'instagram-api':
+        return [{ metric: m.key, source: 'instagram-api',
+          run: async () => {
+            const r = await instagramFollowers(get, await instagramToken(get, config.instagramAccessToken));
+            return { value: r.followers, raw: { username: r.username } };
+          } }];
       case 'base-balance':
         return [{ metric: m.key, source: 'base-rpc',
           run: async () => {
@@ -164,7 +179,7 @@ export async function collectAll(list: Collector[], write = true): Promise<Colle
       if (write) await insertSample({ metric: c.metric, source: c.source, value, raw });
       out.push({ metric: c.metric, value });
     } catch (err) {
-      out.push({ metric: c.metric, error: (err as Error).message });
+      out.push({ metric: c.metric, error: scrub((err as Error).message, [config.youtubeApiKey, config.instagramAccessToken]) });
     }
   }
   return out;

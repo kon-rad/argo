@@ -18,6 +18,9 @@ const Collect = z.discriminatedUnion('type', [
   z.object({ type: z.literal('youtube'), handle: z.string().min(1) }),
   z.object({ type: z.literal('x'), handle: z.string().min(1) }),
   z.object({ type: z.literal('instagram'), handle: z.string().min(1) }),
+  // Official APIs (keys in env): subscribers of one channel; followers of the token's Instagram account.
+  z.object({ type: z.literal('youtube-api'), channelId: z.string().min(1) }),
+  z.object({ type: z.literal('instagram-api') }),
   // A Safe (or any account) on Base: ETH + USDC in USD. `address`, or a vault
   // JSON file whose `safe` field holds it (empty until the Safe exists).
   z.object({ type: z.literal('base-balance'), address: z.string().optional(), addressFile: z.string().optional() }),
@@ -58,6 +61,17 @@ const Settings = z.object({
     })
     .prefault({}),
   metrics: z.array(Metric).default([]),
+  /** Per-post daily stats (social_post_stats): which accounts `cli-metrics collect` reads posts from. */
+  postStats: z
+    .object({
+      /** YouTube channels (ids like UC..., or @handles); needs YOUTUBE_API_KEY. */
+      youtube: z.object({ channelIds: z.array(z.string()).default([]), handles: z.array(z.string()).default([]) }).prefault({}),
+      /** The Instagram account behind INSTAGRAM_ACCESS_TOKEN. */
+      instagram: z.boolean().default(false),
+      /** X accounts whose posts we published (social_posts with an x.com status URL), read through fxtwitter. */
+      x: z.object({ handles: z.array(z.string()).default([]) }).prefault({}),
+    })
+    .prefault({}),
   tv: z
     .object({
       /** Vault-relative folder of episodes, one subfolder each with an episode.md. */

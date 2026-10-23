@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { pool } from './db.js';
 import { collectAll, collectors, insertSample, metricViews } from './metrics/collect.js';
+import { collectPostStats, postSources } from './metrics/posts.js';
 import { metrics } from './metrics/registry.js';
 
 // `cli-metrics collect [--dry-run]`  fetch every public source once, write one row each (daily timer)
@@ -13,8 +14,13 @@ try {
     const dry = args.includes('--dry-run');
     const res = await collectAll(collectors(config.vaultRoot), !dry);
     for (const r of res) console.log(`${r.metric}\t${r.error ? `FAILED: ${r.error}` : r.value}`);
+    // Per-post stats (social_post_stats): networks without a key or account are skipped, not failed.
+    const { sources, skipped } = postSources();
+    const posts = await collectPostStats(sources, { write: !dry });
+    for (const s of skipped) console.log(`posts:${s.source}\tskipped: ${s.skipped}`);
+    for (const r of posts) console.log(`posts:${r.source}\t${r.error ? `FAILED: ${r.error}` : `${r.rows} posts`}`);
     // Exit 2 = some sources failed (the rest were written); not a unit failure.
-    code = res.some((r) => r.error) ? 2 : 0;
+    code = res.some((r) => r.error) || posts.some((r) => r.error) ? 2 : 0;
   } else if (cmd === 'set') {
     const [metric, raw] = args;
     const value = Number(raw);
