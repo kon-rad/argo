@@ -336,7 +336,7 @@ describe('sync to the server', () => {
 
   it('accepts messages that arrive before their session row', async () => {
     // A forked session copies a subagent file under a second parent: the session row changes, takes a
-    // later seq, and the first sync sends that session's earlier messages first (seen on real M4 data).
+    // later seq, and the first sync sends that session's earlier messages first (seen on a real laptop's data).
     ledger.put('message', 'claude-code|late|m1', { sessionExternalId: 'late', seq: 1, externalId: 'm1', parentExternalId: null,
       role: 'user', kind: 'user', ts: '2026-10-19T01:00:00Z', contentText: 'hello', raw: { type: 'user' }, rawSha: 'x', isSidechain: true });
     ledger.put('session', 'claude-code|late', { source: 'claude-code', externalId: 'late', parentExternalId: 'p2', project: '-work', title: 'Late' });

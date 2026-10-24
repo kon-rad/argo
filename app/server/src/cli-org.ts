@@ -79,8 +79,9 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   import <org.json>                        load the compiled org file (agents, teams, channels); idempotent
   task create <bot> "<title>" --project p [--feature f] [--type t] [--needs cap] [--repo r] [--ship-now] [--body "..."] [--board exo] [--priority N]
   task assign <card> <bot> --project p [--feature f] [--type t] [--needs cap] [--repo r] [--ship-now] [--board exo]   an existing card becomes the bot's
-      --repo: where the code lives; a coding card must name a repo the bots reach. Vault code: <bot> is m4 (Claude Code
-      on Konrad's M4, never a bot) with --repo vault; leads, the dispatch bot and Konrad give m4 cards
+      --repo: where the code lives; a coding card must name a repo the bots reach. Vault code: <bot> is the vault
+      assignee (ORG_VAULT_ASSIGNEE, default vault-session: a Claude Code session on the owner's machine, never a bot)
+      with --repo vault; leads, the dispatch bot and the owner give it cards
       --type: research | coding | design | media | writing | sales | education | ops (what the card's tokens count as on /usage;
       default: the bot's team). coding needs the code capability, ops deploy, research web; --needs names one outright
       (code | review | merge | deploy | m1 | web). A bot without it is refused. --ship-now (owner only): merge and deploy
