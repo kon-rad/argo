@@ -86,6 +86,19 @@ Deploy settings (`DEPLOY_*`) are read by `deploy.sh` only: see [deployment.md](d
 | `TTS_URL`, `TTS_MODEL` | `voice` | `http://127.0.0.1:8880`, a Kokoro model | A local OpenAI-compatible speech server. Never used on a server |
 | `ROBOT_LAUNCH_SCRIPT` | none (local only) | unset | A script the "start robot" button runs. Unset: the route isn't mounted |
 
+## Vault sync
+
+Per-machine settings for `secondbrain-vault sync` ([sync.md](sync.md)); the shared policy lives in `secondbrain.json`, below.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SYNC_ROLE` | `owner` | `owner` (you edit here; a conflict stops and alerts) or `agent` (a server; a conflict keeps both versions) |
+| `SYNC_MACHINE` | the hostname | Name in sync commit messages and conflict copies |
+| `SYNC_INTERVAL_MIN` | `60` | Minutes between runs, used by `sync install` |
+| `SYNC_CONFLICTS` | by role | `stop` or `both` |
+| `SYNC_ALERT` | `desktop` | `desktop`, `log`, or an `https://` webhook URL |
+| `SYNC_STATE_DIR` | `~/.local/state/secondbrain` | Where `sync.json` and `sync.log` are written and where the app reads the sync chip from |
+
 ## Agent hooks
 
 | Variable | Purpose |
@@ -112,6 +125,9 @@ Settings that don't fit on one env line. Every section is optional; a file that 
 | `chat.defaultProvider` | `chat` | The preset provider the chat starts on, when its key is set |
 | `chat.systemPrompt` | `chat` | Replaces the engine's base system prompt (still editable in the app's settings modal) |
 | `chat.providers.<id>` | `chat` | Per preset provider: `models` to add (`[{ "id", "label" }]`), another `default` model, another `baseUrl` |
+| `sync.remote`, `sync.branch` | vault sync | What every machine syncs with (default `origin`, `main`) |
+| `sync.agentOwned` | vault sync | Files only `agent`-role machines commit, e.g. a rendered report |
+| `sync.embeddedRepos`, `sync.maxFileMB`, `sync.settleSeconds`, `sync.heartbeat` | vault sync | `ignore` or `record` nested repos' pointers; largest file to commit (20); recent-write wait (90); write `.sync/<machine>.json` with each commit (off). See [sync.md](sync.md#settings) |
 
 Example:
 

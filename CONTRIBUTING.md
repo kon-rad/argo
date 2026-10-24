@@ -191,6 +191,7 @@ An add-on runs outside the app (a device, a separate service). It lives in `addo
 | The guard, the gate, or agent wiring | [docs/agent-harness.md](docs/agent-harness.md) |
 | `deploy.sh` or server units | [docs/deployment.md](docs/deployment.md) |
 | The template or `secondbrain-vault` | [docs/vault.md](docs/vault.md) |
+| Vault sync (`secondbrain-vault sync`) | [docs/sync.md](docs/sync.md) |
 | How the parts fit together | [docs/architecture.md](docs/architecture.md) |
 
 Write plainly, use tables for options and settings, use example values (never real ones), and make every command copy-pasteable.

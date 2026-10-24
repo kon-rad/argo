@@ -33,6 +33,7 @@ The vault it acts on is `--vault`, else the folder that holds the engine as `.se
 - `rules --check` exits non-zero if `AGENTS.md` is stale or was edited by hand. Useful in a pre-commit hook.
 - `rules --force` overwrites a hand-edited `AGENTS.md`.
 - `link-skills` never replaces a real folder: if you have your own skill with the same name as a shared one, yours wins.
+- `sync run|install|status|resolve` keeps this checkout in step with your other machines by git, on a timer: [sync.md](sync.md).
 
 ## Rules for agents, in layers
 

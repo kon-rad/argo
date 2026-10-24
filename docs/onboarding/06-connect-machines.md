@@ -13,7 +13,7 @@ One vault, several machines. This page is the map of which machine does what, an
 
 Whatever the shape, three rules hold:
 
-1. **The vault moves by git.** Every machine has a checkout of the private vault repo. The server's is kept current by a pull on a timer; your laptop's by you.
+1. **The vault moves by git.** Every machine has a checkout of the private vault repo. `secondbrain-vault sync` keeps each one committed, pulled and pushed on a timer ([sync.md](../sync.md)); the simplest server setup is a pull on a timer.
 2. **One machine writes the index.** Two scanners over two checkouts fight over the database. The authoritative checkout (usually the server's) scans and embeds; every other machine either has its own database or is a read-only client of that one.
 3. **Secrets never travel by git.** Each machine has its own env file, written by hand once. The vault's `.env` is gitignored from the first commit.
 
@@ -28,6 +28,8 @@ What you need: an Ubuntu box you can reach as root over ssh (an `~/.ssh/config` 
 ```
 
 The server never needs push access, and never needs access to the engine's GitHub repo: `deploy.sh` ships the engine source from your laptop with rsync.
+
+If agents on the server write notes you want back on your laptop, give the app user push access instead and set `DEPLOY_VAULT_SYNC=1`: the deploy installs a timer that commits, pulls and pushes as `SYNC_ROLE=agent`, and `secondbrain-vault sync install` does the same on each of your computers ([sync.md](../sync.md)).
 
 **2. Create the login, on your laptop.** One user, password plus authenticator app:
 

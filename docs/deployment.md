@@ -8,7 +8,7 @@ The same app can run on a server, over a checkout of your vault that a git sync 
 |---|---|
 | A server | Ubuntu, reachable as root over ssh (an `~/.ssh/config` alias is easiest) |
 | A name | A domain pointed at the server (recommended), or its bare IP |
-| A vault checkout on the server | Kept current by your own git sync (a cron or timer that pulls) |
+| A vault checkout on the server | Kept current by `DEPLOY_VAULT_SYNC=1` ([sync.md](sync.md)), or by your own cron or timer that pulls |
 | Your laptop | With the vault and the engine, and Node 22 for `auth-setup` |
 
 `deploy.sh` installs Node, Postgres with pgvector, and Caddy on first run.
@@ -66,6 +66,7 @@ The app refuses to start in server mode without `AUTH_PASSWORD_HASH`, `AUTH_TOTP
 | `DEPLOY_NO_ROLLBACK=1` | | off | Leave a deploy in place when it does not come up. By default the previous build goes back |
 | `DEPLOY_EMBED=1` | | off | Install the nightly embed timer (needs a local Ollama on the server) |
 | `DEPLOY_DB_BACKUP=1` | | off | Install the nightly `pg_dump` backup timer (needs `b2store` for the app user) |
+| `DEPLOY_VAULT_SYNC=1` | | off | Install the vault sync timer: the server commits what its agents write, pulls and pushes every 15 minutes as `SYNC_ROLE=agent` ([sync.md](sync.md)). The app user needs push access to the vault repo |
 
 ## What runs on the server
 
@@ -80,6 +81,7 @@ The app refuses to start in server mode without `AUTH_PASSWORD_HASH`, `AUTH_TOTP
 | `secondbrain-livestream.timer` | Every minute | `livestream` |
 | `secondbrain-embed.timer` | Daily 02:30 UTC | `DEPLOY_EMBED=1` |
 | `secondbrain-db-backup.timer` | Daily 03:30 UTC | `DEPLOY_DB_BACKUP=1` |
+| `secondbrain-vault-sync.timer` | Every 15 minutes | `DEPLOY_VAULT_SYNC=1` |
 
 ## Which version is live
 

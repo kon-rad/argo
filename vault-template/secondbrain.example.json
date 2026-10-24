@@ -22,6 +22,15 @@
   },
   "livestream": { "youtube": "example" },
   "projects": { "reportFile": "projects.md" },
+  "sync": {
+    "remote": "origin",
+    "branch": "main",
+    "agentOwned": ["projects.md"],
+    "embeddedRepos": "ignore",
+    "maxFileMB": 20,
+    "settleSeconds": 90,
+    "heartbeat": false
+  },
   "chat": {
     "defaultProvider": "anthropic",
     "providers": {
