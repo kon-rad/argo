@@ -51,10 +51,11 @@ Two limits keep a bot's runs from growing without bound. The session a `claude-c
 | Page | `/org`: channels, DMs, questions waiting on you, tasks |
 | CLI | `cli-org` (also `secondbrain org`): post, read, ask the owner, assign and complete tasks |
 | Security | A dedicated `sb_org` database role with row-level security per agent |
-| Settings | `ORG_OWNER`, `ORG_VAULT_ASSIGNEE`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES`, `ORG_TZ`; the dispatcher's `ORG_DISPATCH`, `ORG_DISPATCH_TICK_SECONDS`, `ORG_DISPATCH_PARALLEL`, `ORG_DISPATCH_QUIET`, `ORG_DISPATCH_DAILY_TOKENS`, `ORG_ZEN_COMMAND`; the classify step's `CLASSIFY_PROVIDER`, `CLASSIFY_DAILY_TOKENS`, `TYPESAFE_API_KEY` (or `OPENROUTER_API_KEY`); `secondbrain.json` `classify` and `dispatch` |
+| Settings | `ORG_OWNER`, `ORG_VAULT_ASSIGNEE`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES`, `ORG_TZ`, `ORG_REFLECT_MODEL`, `ORG_REFLECT_MAX_PER_DAY`; the dispatcher's `ORG_DISPATCH`, `ORG_DISPATCH_TICK_SECONDS`, `ORG_DISPATCH_PARALLEL`, `ORG_DISPATCH_QUIET`, `ORG_DISPATCH_DAILY_TOKENS`, `ORG_ZEN_COMMAND`; the classify step's `CLASSIFY_PROVIDER`, `CLASSIFY_DAILY_TOKENS`, `TYPESAFE_API_KEY` (or `OPENROUTER_API_KEY`); `secondbrain.json` `classify` and `dispatch` |
 | CLI | also `secondbrain org-dispatch tick|routines` and `secondbrain classify <decision> --state-file f | label <id> right|wrong | recent` |
 | Timers (server) | `dispatch` when `ORG_DISPATCH=on`; `deploy.sh` creates the role and puts `cli-org` on the PATH |
 | Skill | `org-member` |
+| Memory | Each bot keeps its own: an episode per finished wake, first-person lessons distilled by a cheap model after `wake-done`, a generated core block under a token budget, and self-improvement cards a person applies ([agent-memory.md](agent-memory.md)) |
 
 ## board
 

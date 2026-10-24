@@ -1044,6 +1044,59 @@ export interface OrgAgentPage {
   prompt: string | null;
   memory: string | null;
   memory_path: string;
+  core: string | null;
+  core_path: string;
+  memory_rows: OrgMemoryRow[];
+  episodes: OrgEpisode[];
+  proposals: (OrgMemoryRow & { card_status: string | null; card_title: string | null })[];
+  memory_stats: OrgMemoryStats;
+  memory_config: { core_budget_tokens: number; reflect: { enabled: boolean; min_turns: number }; self_improvement: { enabled: boolean; repeat_threshold: number; max_proposals_per_week: number } } | null;
+}
+
+export interface OrgMemoryRow {
+  id: number;
+  agent_name: string;
+  kind: 'lesson' | 'anti_pattern' | 'preference' | 'friction';
+  content: string;
+  evidence_episode_ids: number[];
+  occurrences: number;
+  active: boolean;
+  retired_why: string | null;
+  supersedes: number | null;
+  promoted_to_proposal: boolean;
+  proposal_task_id: string | null;
+  proposed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrgEpisode {
+  id: number;
+  run_id: string;
+  task_id: string | null;
+  reason: string;
+  outcome: 'done' | 'blocked' | 'request_changes' | 'no_report' | 'error';
+  corrected: boolean;
+  turn_count: number | null;
+  cost_usd: string | null;
+  duration_s: number | null;
+  summary: string;
+  log_path: string | null;
+  reflected_at: string | null;
+  created_at: string;
+}
+
+export interface OrgMemoryStats {
+  days: number;
+  episodes: number;
+  done: number;
+  corrected: number;
+  corrections_per_done: number | null;
+  cost_per_done: number | null;
+  avg_turns: number | null;
+  reflected: number;
+  memory: { active: number; by_kind: Record<string, number> };
+  proposals: number;
 }
 
 export const api = {

@@ -75,6 +75,7 @@ nav:
       - Modules: modules.md
       - Retrieval and the chat module: rag.md
       - Agent harness: agent-harness.md
+      - Agent persona memory: agent-memory.md
       - Deployment: deployment.md
       - Privacy (engine): privacy.md
       - Self-improving orchestration (proposal): self-improvement.md

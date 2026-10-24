@@ -23,6 +23,7 @@ import {
   type Kind,
 } from '../org.js';
 import { listApprovals, listFacts, shipDecide } from '../org-powers.js';
+import { corePath, listEpisodes, listMemory, listProposals, memorySettingsFor, memoryStats } from '../org-memory.js';
 import { config } from '../config.js';
 import { HttpError, intParam, parseOr400, wrap } from './http.js';
 
@@ -180,14 +181,25 @@ export function orgRouter(vaultRoot: string): Router {
     wrap(async (req, res) => {
       const name = parseOr400(Name, req.params['name']);
       const agent = await orgErrors(() => getAgent(name));
-      const [who, runs, posts, limits, prompt, memory] = await Promise.all([
+      const [who, runs, posts, limits, prompt, memory, core, memoryRows, episodes, proposals, stats] = await Promise.all([
         whoami(agent),
         agentRuns(name),
         messagesBy(owner(res), name),
         caps(),
         readText(join(vaultRoot, '.claude', 'agents', `${name}.md`)),
         readText(join(vaultRoot, '.agents', 'org', 'memory', `${name}.md`)),
+        readText(corePath(vaultRoot, name)),
+        listMemory(name, { limit: 100 }),
+        listEpisodes(name, 20),
+        listProposals(name, 20),
+        memoryStats(name, 14),
       ]);
+      let memoryConfig: unknown = null;
+      try {
+        memoryConfig = memorySettingsFor(vaultRoot, name).memory;
+      } catch {
+        /* a bad block in the compiled org file: the page still renders */
+      }
       res.json({
         agent: who.agent,
         team: who.team,
@@ -202,6 +214,15 @@ export function orgRouter(vaultRoot: string): Router {
         prompt: prompt ? prompt.replace(/^---\n[\s\S]*?\n---\n/, '').trim() : null,
         memory,
         memory_path: `.agents/org/memory/${name}.md`,
+        // The persona memory (docs/agent-memory.md): the generated core block, its rows, the episodes behind them,
+        // the self-improvement proposals it filed, and the numbers the ledger reads.
+        core,
+        core_path: `.agents/org/memory/${name}/core.md`,
+        memory_rows: memoryRows,
+        episodes,
+        proposals,
+        memory_stats: stats,
+        memory_config: memoryConfig,
       });
     }),
   );

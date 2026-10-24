@@ -490,6 +490,7 @@ Memory is where the loop's gains accumulate between runs, so it deserves its own
 | **Semantic**: `memory_facts` | Sourced claims, confirmed or inferred, superseded when wrong | Any agent, `cli-org remember` | `cli-org recall` | Until retired |
 | **Procedural**: skills | How to do a kind of task | PR | Agents, by trigger | Until replaced |
 | **Working**: the bot's playbook `.agents/org/memory/<bot>.md` | Lessons for this role, short | The bot (reflection), the curator | `recall`, and read in full at wake | Curated |
+| **Persona** (built, [agent-memory.md](agent-memory.md)): `org_agent_episodes`, `org_agent_memory`, the generated `.agents/org/memory/<bot>/core.md` | One row per finished wake; first-person lessons with counts; the active rows under a budget | `cli-org wake-done` (mechanical) and its reflect step (one cheap-model call); the owner or a lead corrects a line | The wake prompt (core block), `recall`, `/org/agents/<name>` | Closed, never deleted |
 | **Handoff**: the Resume block | Where a project stands | The agent finishing a session | The next agent | Overwritten each session |
 
 The rule that connects them: **a lesson moves up when it recurs**. A recovery seen in three episodes becomes a playbook bullet; a bullet marked helpful ten times with no harmful mark becomes a proposal for a skill paragraph or an `AGENTS.local.md` rule; a fact cited by several runs is promoted to a confirmed fact with the runs as sources. Each promotion is a proposal with a record, not an automatic write.

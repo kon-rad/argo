@@ -372,7 +372,8 @@ describe('dispatcher side: claim, finish, add, session', () => {
     expect(await claimWakeups('atlas', 'run-2')).toEqual([]);
     expect((await openWakeups('atlas')).every((w) => w.claimed_at)).toBe(true);
     const r = await finishWakeups(claimed.map((w) => w.id), { run: 'run-1', exit: 1, result: 'Error: boom' });
-    expect(r).toEqual({ done: 2, fallback_posted: true });
+    expect(r).toMatchObject({ done: 2, fallback_posted: true, agent: 'atlas' });
+    expect(r.wakeups.map((w) => w.reason)).toEqual(['dm', 'dm']);
     expect(await openWakeups('atlas')).toEqual([]);
     const last = (await readMessages(await getAgent('vera'), { channel: 'platform', unreadOnly: false })).at(-1)!;
     expect(last).toMatchObject({ author: 'atlas', kind: 'status', run_id: 'run-1' });
@@ -381,7 +382,7 @@ describe('dispatcher side: claim, finish, add, session', () => {
     const c = await dm(rune, 'atlas', 'three');
     const again = await claimWakeups('atlas', 'run-3');
     await post(atlas, 'platform', 'did the thing', { kind: 'status', run: 'run-3' });
-    expect(await finishWakeups(again.map((w) => w.id), { run: 'run-3', exit: 0 })).toEqual({ done: 1, fallback_posted: false });
+    expect(await finishWakeups(again.map((w) => w.id), { run: 'run-3', exit: 0 })).toMatchObject({ done: 1, fallback_posted: false });
     void c;
     await expect(finishWakeups([], {})).rejects.toThrow(/at least one/);
   });

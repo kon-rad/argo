@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { query, withTransaction } from './db.js';
 import { getAgent, OrgError, type Agent, type Message } from './org.js';
@@ -268,26 +268,30 @@ export function terms(q: string): string[] {
 }
 
 /**
- * Lines of the bots' memory files (`.agents/org/memory/<bot>.md`) that share words with the query, best first.
+ * Lines of the bots' memory files that share words with the query, best first: the hand-written
+ * `.agents/org/memory/<bot>.md` and the generated core block `.agents/org/memory/<bot>/core.md` (org-memory.ts).
  * Plain scoring: the share of the query's words a line contains. These files are small (tens of KB in all).
  */
 export function recallMemoryFiles(vaultRoot: string, q: string, limit = 5): RecallHit[] {
   const words = terms(q);
   if (!words.length) return [];
   const dir = join(vaultRoot, '.agents', 'org', 'memory');
-  let files: string[] = [];
+  let files: { rel: string; title: string }[] = [];
   try {
-    files = readdirSync(dir).filter((f) => f.endsWith('.md'));
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.isFile() && e.name.endsWith('.md')) files.push({ rel: e.name, title: e.name.replace(/\.md$/, '') });
+      else if (e.isDirectory() && existsSync(join(dir, e.name, 'core.md'))) files.push({ rel: `${e.name}/core.md`, title: e.name });
+    }
   } catch {
     return [];
   }
   const hits: RecallHit[] = [];
   for (const f of files) {
-    const lines = readFileSync(join(dir, f), 'utf8').split('\n');
+    const lines = readFileSync(join(dir, f.rel), 'utf8').split('\n');
     lines.forEach((line, i) => {
       const l = line.toLowerCase();
       const n = words.filter((w) => l.includes(w)).length;
-      if (n && line.trim().length > 3) hits.push({ source: 'memory', ref: `.agents/org/memory/${f}:${i + 1}`, title: f.replace(/\.md$/, ''), text: line.trim().slice(0, 400), score: n / words.length });
+      if (n && line.trim().length > 3) hits.push({ source: 'memory', ref: `.agents/org/memory/${f.rel}:${i + 1}`, title: f.title, text: line.trim().slice(0, 400), score: n / words.length });
     });
   }
   return hits.sort((a, b) => b.score - a.score).slice(0, limit);
