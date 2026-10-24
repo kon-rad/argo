@@ -87,7 +87,8 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   const mobileMenuId = useId();
-  const sections = menus(modules, meta.data);
+  const openChat = useCallback(() => setChatOpen(true), []);
+  const sections = menus(modules, meta.data, openChat);
 
   async function logout(): Promise<void> {
     await api.logout().catch(() => {});
@@ -200,11 +201,6 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         search={<SearchBox inputRef={mobileSearchRef} onSubmit={(q) => navigate(`/search?q=${encodeURIComponent(q)}`)} />}
         footer={
           <>
-            {modules.has('chat') && (
-              <button type="button" onClick={() => { closeMenu(); setChatOpen(true); }} className="min-h-11 rounded border border-[var(--rule)] px-3 text-left text-base">
-                Ask your second brain
-              </button>
-            )}
             {modules.has('usage') && <UsageChip />}
             {modules.has('agents') && <AgentToggle />}
             <div className="text-xs"><IndexStatus /></div>
@@ -256,10 +252,12 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
 }
 
 /** The header menus for this install: core pages plus whichever modules are on. */
-function menus(modules: Set<string>, meta: AppMeta | undefined): [string, NavItem[]][] {
+function menus(modules: Set<string>, meta: AppMeta | undefined, openChat: () => void): [string, NavItem[]][] {
   const on = (m: string, item: NavItem): NavItem[] => (modules.has(m) ? [item] : []);
   const vault: NavItem[] = [
     { to: '/', label: 'Browse', end: true },
+    // The chat panel opens over the current page rather than navigating; the header button does the same.
+    ...on('chat', { label: 'Ask your second brain', onSelect: openChat }),
     ...on('map', { to: '/map', label: 'Brain map' }),
     ...on('media', { to: '/media', label: 'Media' }),
     { to: '/vector-search', label: 'Vector Search' },
