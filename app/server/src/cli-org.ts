@@ -58,6 +58,22 @@ import {
   type Fact,
   type RecallHit,
 } from './org-powers.js';
+import {
+  EPISODE_REASONS,
+  OUTCOMES,
+  editMemory,
+  listEpisodes,
+  listMemory,
+  memorySettingsFor,
+  memoryStats,
+  proposeImprovement,
+  reflect,
+  retireMemory,
+  writeCore,
+  type MemoryRow,
+  type Outcome,
+  type ReflectResult,
+} from './org-memory.js';
 import { search } from './search.js';
 import { hybridSearch } from './semantic.js';
 import { defaultEmbeddingProvider, loadEmbeddingConfig } from './embeddings/factory.js';
@@ -108,9 +124,21 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   facts [--subject s] [--project p] [--author a] [--all] [--json]
   forget <id> "<why>"                                    close a fact (its author, the author's lead or the owner)
 
+  persona memory (docs/agent-memory.md; each bot's own, written by the reflect step after its wakes, read on /org/agents/<name>):
+  memory <agent> [--all] [--json]          the bot's active lessons (its core block's rows); --all includes closed ones
+  memory episodes <agent> [--limit N]      its finished wakes: outcome, corrected, turns, cost
+  memory stats <agent> [--days N]          corrections and cost per completed card (the ledger's metric), memory counts
+  memory edit <id> "<new text>"            the owner or the bot's lead corrects a line (the old row is closed, never deleted)
+  memory retire <id> "<why>"               close a line that no longer holds
+  reflect <agent> --run R [--wakeups 1,2] [--task t_..] [--reason task|chat|..] [--outcome done|blocked|..] [--exit N]
+          [--result "..."] [--turns N] [--cost USD] [--duration S] [--log path] [--transcript path] [--dry-run]
+                                           record the episode and, when configured, the cheap-model reflection (wake-done does this)
+  propose-improvement <agent> --memory-id <id> [--dry-run]   one self-improvement card from a recurring friction; a human applies it
+
   dispatcher only (cc-dispatcher runs these as hermes):
   wake-claim <agent> --by <run id> --json  claim every open wakeup of the agent; prints them
-  wake-done <id,id> [--run R] [--exit N] [--result "..."]   mark done; posts a fallback status if the run left none
+  wake-done <id,id> [--run R] [--exit N] [--result "..."] [--turns N] [--cost USD] [--duration S] [--log path] [--transcript path]
+                                           mark done; posts a fallback status if the run left none; records the episode and reflects
   wake-add <agent> --reason routine|owner|task --ref X      a wakeup the trigger doesn't make (no-op if one is open,
                                            or if the card is held: it keeps waking the bot without finishing)
   session <agent> [--set <id> | --clear]   the claude session id the agent resumes (dropped after ORG_SESSION_MAX_RUNS runs)
@@ -187,8 +215,45 @@ function num(v: string | true | undefined, flag: string): number | undefined {
   return Number(v);
 }
 
+function dec(v: string | true | undefined, flag: string): number | undefined {
+  if (v === undefined) return undefined;
+  if (v === true || !/^\d+(\.\d+)?$/.test(v)) throw new OrgError(`--${flag} needs a number`);
+  return Number(v);
+}
+
 function here(): string {
   return resolve(fileURLToPath(import.meta.url), '..');
+}
+
+function formatMemory(m: MemoryRow): string {
+  return `#${m.id} [${m.kind}, ×${m.occurrences}, ${when(new Date(m.updated_at))}${m.active ? '' : `, closed: ${m.retired_why ?? ''}`}${m.proposal_task_id ? `, proposed ${m.proposal_task_id}` : ''}] ${m.content}`;
+}
+
+/** What wake-done and reflect print: the episode, then what the reflection did, or why it did nothing. */
+export function formatReflect(r: ReflectResult): string {
+  const lines = [`episode #${r.episode.id} ${r.created ? 'recorded' : 'already recorded'} (${r.episode.outcome}${r.episode.turn_count !== null ? `, ${r.episode.turn_count} turns` : ''})`];
+  if (r.skipped) lines.push(`reflect: skipped (${r.skipped})`);
+  else if (r.applied) {
+    const a = r.applied;
+    lines.push(`reflect: ${a.added.length} added, ${a.bumped.length} bumped, ${a.superseded.length} reworded, ${a.retired.length} closed${a.dropped.length ? `; dropped: ${a.dropped.join('; ')}` : ''}`);
+    for (const m of [...a.added, ...a.bumped, ...a.superseded]) lines.push(`  ${formatMemory(m)}`);
+  } else lines.push(`reflect (dry run): ${JSON.stringify(r.ops)}`);
+  if (r.core) lines.push(`core: ${r.core.path} (${r.core.kept.length} lines${r.core.dropped.length ? `, ${r.core.dropped.length} over budget` : ''})`);
+  for (const p of r.proposals) lines.push(p.card ? `proposal: card ${p.card.id} (memory #${p.memory_id})` : `proposal for memory #${p.memory_id}: ${p.refused}`);
+  return lines.join('\n');
+}
+
+export function reflectSummary(r: ReflectResult): Record<string, unknown> {
+  return {
+    episode_id: r.episode.id, created: r.created, outcome: r.episode.outcome, reflected: r.reflected, skipped: r.skipped, ops: r.ops,
+    added: r.applied?.added.map((m) => m.id) ?? [], bumped: r.applied?.bumped.map((m) => m.id) ?? [], superseded: r.applied?.superseded.map((m) => m.id) ?? [],
+    retired: r.applied?.retired ?? [], dropped: r.applied?.dropped ?? [], core: r.core, proposals: r.proposals.map((p) => ({ memory_id: p.memory_id, card: p.card?.id ?? null, refused: p.refused })),
+  };
+}
+
+/** After an edit the generated core block is stale; re-render it from the rows (a no-op without the vault here). */
+async function rerenderCore(agent: string): Promise<void> {
+  await writeCore(config.vaultRoot, agent, memorySettingsFor(config.vaultRoot, agent).memory.core_budget_tokens).catch(() => null);
 }
 
 /** The Hermes projection runner when this machine mirrors cards into the Hermes board (BOARD_HERMES_PROJECTION=on or ORG_KANBAN_CMD), else null. */
@@ -377,8 +442,95 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       const ids = (pos[0] ?? '').split(',').map((x) => x.trim()).filter(Boolean);
       if (!ids.length || ids.some((x) => !/^\d+$/.test(x))) throw new OrgError('wake-done <id,id> [--run R] [--exit N] [--result "..."]');
       const r = await finishWakeups(ids.map(Number), { run: str(opts.run), exit: num(opts.exit, 'exit'), result: str(opts.result) });
-      out(json ? JSON.stringify(r) : `done ${r.done} wakeup(s)${r.fallback_posted ? '; posted a fallback status' : ''}`);
+      // The memory write pipeline, after the wake is closed: never before it, never fatal to it.
+      let reflected: ReflectResult | null = null;
+      let reflectErr: string | null = null;
+      if (r.agent && str(opts.run)) {
+        try {
+          const task = r.wakeups.find((w) => w.reason === 'task' && w.ref)?.ref ?? str(opts.task);
+          reflected = await reflect(await getAgent(r.agent), {
+            run: str(opts.run)!, wakeupIds: r.wakeups.map((w) => w.id), task: task ?? undefined, reason: r.wakeups[0]?.reason ?? (task ? 'task' : 'owner'),
+            exit: num(opts.exit, 'exit'), result: str(opts.result), noReport: r.fallback_posted, turns: num(opts.turns, 'turns'), cost: dec(opts.cost, 'cost'),
+            duration: num(opts.duration, 'duration'), log: str(opts.log), transcript: str(opts.transcript),
+          });
+        } catch (err) {
+          reflectErr = err instanceof Error ? err.message : String(err);
+        }
+      }
+      if (json) out(JSON.stringify({ ...r, reflect: reflected ? reflectSummary(reflected) : null, reflect_error: reflectErr }));
+      else {
+        out(`done ${r.done} wakeup(s)${r.fallback_posted ? '; posted a fallback status' : ''}`);
+        if (reflected) out(formatReflect(reflected));
+        if (reflectErr) out(`reflect: skipped (${reflectErr})`);
+      }
       return 0;
+    }
+    case 'reflect': {
+      const [agent] = pos;
+      const runId = str(opts.run);
+      if (!agent || !runId) throw new OrgError('reflect <agent> --run <run id> [--task t_..] [--reason r] [--outcome o] [--exit N] [--result "..."] [--turns N] [--cost USD] [--duration S] [--log path] [--transcript path] [--dry-run]');
+      const reason = str(opts.reason);
+      if (reason && !(EPISODE_REASONS as readonly string[]).includes(reason)) throw new OrgError(`--reason is one of ${EPISODE_REASONS.join(', ')}`);
+      const outcome = str(opts.outcome);
+      if (outcome && !(OUTCOMES as readonly string[]).includes(outcome)) throw new OrgError(`--outcome is one of ${OUTCOMES.join(', ')}`);
+      const r = await reflect(await getAgent(agent), {
+        run: runId, wakeupIds: str(opts.wakeups)?.split(',').map((x) => x.trim()).filter((x) => /^\d+$/.test(x)).map(Number), task: str(opts.task), reason,
+        outcome: outcome as Outcome | undefined, exit: num(opts.exit, 'exit'), result: str(opts.result), turns: num(opts.turns, 'turns'), cost: dec(opts.cost, 'cost'),
+        duration: num(opts.duration, 'duration'), log: str(opts.log), transcript: str(opts.transcript), dryRun: opts['dry-run'] === true,
+      });
+      out(json ? JSON.stringify(reflectSummary(r)) : formatReflect(r));
+      return 0;
+    }
+    case 'memory': {
+      const [sub] = pos;
+      if (sub === 'edit' || sub === 'retire') {
+        const id = num(pos[1], 'id');
+        if (id === undefined || !pos[2]) throw new OrgError(`memory ${sub} <id> "<${sub === 'edit' ? 'new text' : 'why'}>"`);
+        if (sub === 'edit') {
+          const row = await editMemory(await me(), id, pos[2]);
+          await rerenderCore(row.agent_name);
+          out(json ? JSON.stringify(row) : `memory #${id} closed; #${row.id} replaces it`);
+        } else {
+          const agentName = await retireMemory(await me(), id, pos[2]);
+          await rerenderCore(agentName);
+          out(`memory #${id} closed`);
+        }
+        return 0;
+      }
+      const agent = sub === 'episodes' || sub === 'stats' ? pos[1] : sub;
+      if (!agent) throw new OrgError('memory <agent> [--all] | memory episodes <agent> | memory stats <agent> [--days N] | memory edit <id> "<text>" | memory retire <id> "<why>"');
+      await getAgent(agent);
+      if (sub === 'episodes') {
+        const es = await listEpisodes(agent, num(opts.limit, 'limit') ?? 20);
+        if (json) return (out(JSON.stringify(es, null, 2)), 0);
+        out(es.length ? es.map((e) => `#${e.id} ${when(new Date(e.created_at))} ${e.reason.padEnd(7)} ${e.outcome.padEnd(15)}${e.corrected ? ' corrected' : ''}${e.turn_count !== null ? ` ${e.turn_count}t` : ''}${e.cost_usd !== null ? ` $${e.cost_usd}` : ''}${e.task_id ? ` ${e.task_id}` : ''} run ${e.run_id}${e.reflected_at ? ' [reflected]' : ''}\n  ${e.summary}`).join('\n') : `no episodes for ${agent} yet`);
+        return 0;
+      }
+      if (sub === 'stats') {
+        const st = await memoryStats(agent, num(opts.days, 'days') ?? 14);
+        if (json) return (out(JSON.stringify(st, null, 2)), 0);
+        out(`${agent}, last ${st.days} days: ${st.episodes} episodes, ${st.done} done, ${st.corrected} corrected (${st.corrections_per_done ?? '-'} per done), cost per done ${st.cost_per_done ?? '-'}, avg turns ${st.avg_turns ?? '-'}, ${st.reflected} reflected`);
+        out(`memory: ${st.memory.active} active (${Object.entries(st.memory.by_kind).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'}); proposals filed: ${st.proposals}`);
+        return 0;
+      }
+      const rows = await listMemory(agent, { all: opts.all === true, limit: num(opts.limit, 'limit') });
+      if (json) return (out(JSON.stringify(rows, null, 2)), 0);
+      out(rows.length ? rows.map(formatMemory).join('\n') : `no memory for ${agent} yet (it is written by cli-org reflect after its wakes)`);
+      return 0;
+    }
+    case 'propose-improvement': {
+      const [agent] = pos;
+      const id = num(opts['memory-id'], 'memory-id');
+      if (!agent || id === undefined) throw new OrgError('propose-improvement <agent> --memory-id <id> [--dry-run]');
+      const r = await proposeImprovement(await getAgent(agent), id, { dryRun: opts['dry-run'] === true });
+      if (json) return (out(JSON.stringify(r)), r.refused ? 3 : 0);
+      if (r.refused) out(`not proposed: ${r.refused}`);
+      else {
+        out(r.card ? `card ${r.card.id} for the owner: ${r.card.title}` : `would propose against ${r.target?.path} (dry run)`);
+        if (r.rationale) out(`rationale: ${r.rationale}`);
+        if (r.diff) out(r.diff);
+      }
+      return r.refused ? 3 : 0;
     }
     case 'wake-add': {
       const [agent] = pos;

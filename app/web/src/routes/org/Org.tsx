@@ -601,6 +601,46 @@ function AgentPage() {
         ))}
         <div className="lg:col-span-2">{section('Posts', <MessageList messages={[...p.posts].reverse()} teams={teams} showChannel />)}</div>
         <div className="lg:col-span-2">
+          {section(`Memory (${p.memory_rows.length} active lines${p.memory_config ? `, budget ${p.memory_config.core_budget_tokens} tokens` : ''})`, (
+            <div className="space-y-2 text-sm">
+              <p className="text-xs text-[var(--ink-dim)]">
+                Written by the bot's reflect step after its wakes, from its own point of view; corrected with <code>cli-org memory edit|retire</code>. Last {p.memory_stats.days} days: {p.memory_stats.episodes} episodes, {p.memory_stats.done} done, {p.memory_stats.corrected} corrected
+                {p.memory_stats.corrections_per_done !== null ? ` (${p.memory_stats.corrections_per_done} per done)` : ''}{p.memory_stats.cost_per_done !== null ? `, $${p.memory_stats.cost_per_done} per done` : ''}.
+                {p.memory_config && !p.memory_config.reflect.enabled ? ' Reflect is off for this agent.' : ''}
+              </p>
+              {p.memory_rows.length ? (
+                <ul className="space-y-1">
+                  {p.memory_rows.map((m) => (
+                    <li key={m.id}><span className="text-xs text-[var(--ink-faint)]">m-{m.id} · {m.kind.replace('_', ' ')} · ×{m.occurrences}{m.proposal_task_id ? <> · <Link className="text-[var(--accent)]" to={`/board/${m.proposal_task_id}`}>proposed</Link></> : null}</span> {m.content}</li>
+                  ))}
+                </ul>
+              ) : <p className="text-[var(--ink-faint)]">Nothing durable yet{p.core_path ? ` (the core block ${p.core_path} is generated from these lines)` : ''}.</p>}
+            </div>
+          ))}
+        </div>
+        {section(`Episodes (${p.episodes.length})`, p.episodes.length ? (
+          <ul className="space-y-1 text-xs">
+            {p.episodes.map((e) => (
+              <li key={e.id}>
+                <span className="text-[var(--ink-faint)]">{ago(e.created_at)}</span> <b>{e.outcome.replace('_', ' ')}</b>{e.corrected ? ' · corrected' : ''}{e.turn_count !== null ? ` · ${e.turn_count} turns` : ''}{e.cost_usd ? ` · $${e.cost_usd}` : ''}{e.task_id ? <> · <Link className="text-[var(--accent)]" to={`/board/${e.task_id}`}>{e.task_id}</Link></> : null}{e.reflected_at ? ' · reflected' : ''}
+                <div className="ml-3 text-[var(--ink-dim)]">{e.summary.slice(0, 240)}</div>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="text-sm text-[var(--ink-faint)]">No finished wakes recorded yet.</p>)}
+        {section(`Proposals (${p.proposals.length})`, p.proposals.length ? (
+          <ul className="space-y-1 text-sm">
+            {p.proposals.map((m) => (
+              <li key={m.id}>
+                {m.proposal_task_id ? <Link className="text-[var(--accent)]" to={`/board/${m.proposal_task_id}`}>{m.card_title ?? m.proposal_task_id}</Link> : m.content}
+                <span className="text-xs text-[var(--ink-dim)]"> {m.card_status ?? ''}{m.proposed_at ? ` · ${ago(m.proposed_at)}` : ''} · from m-{m.id} (×{m.occurrences})</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-[var(--ink-faint)]">None. A friction seen {p.memory_config?.self_improvement.repeat_threshold ?? 2} times becomes one card for you to apply or close; a bot never applies a change to itself.</p>
+        ))}
+        <div className="lg:col-span-2">
           {section(`Memory file (${p.memory_path}, read-only)`, p.memory ? (
             <article className="prose max-w-none text-sm"><ReactMarkdown remarkPlugins={[remarkGfm]}>{p.memory}</ReactMarkdown></article>
           ) : (

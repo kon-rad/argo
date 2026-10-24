@@ -71,6 +71,11 @@ const Schema = z.object({
   // wait between them in minutes (doubles each time).
   ORG_TASK_WAKE_RETRIES: z.coerce.number().int().min(0).default(2),
   ORG_TASK_WAKE_BACKOFF_MINUTES: z.coerce.number().int().min(0).default(15),
+  // org module: the cheap model the reflect step calls after a bot's wake (docs/agent-memory.md): `cheap` (the local
+  // Ollama first, then the default keyed chat provider), `off` (episodes only, no model call), or <provider>/<model>.
+  ORG_REFLECT_MODEL: z.string().trim().min(1).default('cheap'),
+  // org module: reflect model calls allowed per day across every bot; past it, wakes still record their episode.
+  ORG_REFLECT_MAX_PER_DAY: z.coerce.number().int().min(0).default(200),
   // Vault-relative notes the nav links to; unset hides the link.
   DEV_LOG_PATH: z.string().optional(),
   DOCS_PATH: z.string().optional(),
@@ -188,6 +193,8 @@ export const config = {
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,
   orgVaultAssignee: parsed.data.ORG_VAULT_ASSIGNEE,
+  orgReflectModel: parsed.data.ORG_REFLECT_MODEL,
+  orgReflectMaxPerDay: parsed.data.ORG_REFLECT_MAX_PER_DAY,
   orgSessionMaxRuns: parsed.data.ORG_SESSION_MAX_RUNS,
   orgTaskWakeRetries: parsed.data.ORG_TASK_WAKE_RETRIES,
   orgTaskWakeBackoffMinutes: parsed.data.ORG_TASK_WAKE_BACKOFF_MINUTES,

@@ -29,6 +29,7 @@ New here? Start with the [onboarding path](onboarding/README.md): ten short page
 | [configuration.md](configuration.md) | You need a setting: every env variable and every `secondbrain.json` key |
 | [modules.md](modules.md) | You want an optional feature (tracker, org board, kanban board, map, TV, usage, voice, livestream, ring, agents, chat) |
 | [rag.md](rag.md) | You want to know how notes become searchable passages and how the chat answers from them: chunking, embedding, hybrid retrieval, reranking, providers |
+| [agent-memory.md](agent-memory.md) | You run the org module's bots and want each one to keep a bounded memory of its own wakes, and to propose (never apply) changes to its own prompt or skills |
 | [agent-harness.md](agent-harness.md) | You run Claude Code or Hermes in the vault and want to know what the guard and the dev-log gate do |
 | [deployment.md](deployment.md) | You want the app on a server behind a login |
 | [privacy.md](privacy.md) | You want to know how the engine stays free of personal data, and how to keep your fork that way |

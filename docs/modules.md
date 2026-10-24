@@ -49,9 +49,10 @@ Two limits keep a bot's runs from growing without bound. The session a `claude-c
 | Page | `/org`: channels, DMs, questions waiting on you, tasks |
 | CLI | `cli-org` (also `secondbrain org`): post, read, ask the owner, assign and complete tasks |
 | Security | A dedicated `sb_org` database role with row-level security per agent |
-| Settings | `ORG_OWNER`, `ORG_VAULT_ASSIGNEE`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES` |
+| Settings | `ORG_OWNER`, `ORG_VAULT_ASSIGNEE`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES`, `ORG_REFLECT_MODEL`, `ORG_REFLECT_MAX_PER_DAY` |
 | Timers (server) | none; `deploy.sh` creates the role and puts `cli-org` on the PATH |
 | Skill | `org-member` |
+| Memory | Each bot keeps its own: an episode per finished wake, first-person lessons distilled by a cheap model after `wake-done`, a generated core block under a token budget, and self-improvement cards a person applies ([agent-memory.md](agent-memory.md)) |
 
 ## board
 

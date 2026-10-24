@@ -587,10 +587,10 @@ export async function claimWakeups(agentName: string, by: string): Promise<Wakeu
 export async function finishWakeups(
   ids: number[],
   opts: { run?: string; exit?: number; result?: string } = {},
-): Promise<{ done: number; fallback_posted: boolean }> {
+): Promise<{ done: number; fallback_posted: boolean; agent: string | null; wakeups: { id: number; reason: string; ref: string | null }[] }> {
   if (!ids.length) throw new OrgError('wake-done needs at least one wakeup id');
-  const { rows } = await query<{ id: number; agent_name: string }>(
-    `UPDATE org_wakeups SET done_at = now(), result = $2 WHERE id = ANY ($1) AND done_at IS NULL RETURNING id, agent_name`,
+  const { rows } = await query<{ id: number; agent_name: string; reason: string; ref: string | null }>(
+    `UPDATE org_wakeups SET done_at = now(), result = $2 WHERE id = ANY ($1) AND done_at IS NULL RETURNING id, agent_name, reason, ref`,
     [ids, opts.result?.slice(0, 2000) ?? null],
   );
   let fallback_posted = false;
@@ -606,7 +606,7 @@ export async function finishWakeups(
       }
     }
   }
-  return { done: rows.length, fallback_posted };
+  return { done: rows.length, fallback_posted, agent: agentName ?? null, wakeups: rows.map((r) => ({ id: r.id, reason: r.reason, ref: r.ref })) };
 }
 
 /**
@@ -1423,6 +1423,11 @@ export async function redoTask(caller: Agent, reviewId: string, changes: string,
     extra: `Review card: ${reviewId} (it reopens when this round is done).`,
   }, run);
   await linkCards(caller.name, reviewId, task_id).catch(boardErr);
+  // The builder's latest episode on the reviewed card was corrected: the per-agent metric the memory ledger reads.
+  await query(
+    `UPDATE org_agent_episodes SET corrected = true WHERE id = (SELECT id FROM org_agent_episodes WHERE agent_name = $1 AND task_id = $2 ORDER BY id DESC LIMIT 1)`,
+    [builder.name, reviewed.id],
+  ).catch(() => undefined);
   await moveCard(caller.name, reviewId, 'blocked', `changes requested (round ${rounds}); waits for ${task_id}`).catch(boardErr);
   await query(`UPDATE cards SET block_kind = 'dependency', rounds = $2 WHERE id = $1`, [reviewId, rounds]);
   if (run) {
