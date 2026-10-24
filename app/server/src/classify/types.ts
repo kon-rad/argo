@@ -14,6 +14,14 @@ export interface DecisionSchema {
   question: string;
   /** Choice primitive: the options; the first is the "do the old thing" answer. */
   options?: string[];
+  /**
+   * What each answer means, in the classifier's own format: choice `{ option: description }`, bool
+   * `{ true: ..., false: ... }`, score a list of rubric levels (the score is the index). Options without a
+   * criterion get their name as the description.
+   */
+  criteria?: Record<string, string> | string[];
+  /** Choice primitive: options that mean "nothing to do". Their summed probability at or above `act` is a `skip`. */
+  skipOptions?: string[];
   /** Score primitive: inclusive bounds. */
   min?: number;
   max?: number;
@@ -25,6 +33,8 @@ export interface DecisionSchema {
   privacy: 'public' | 'shared';
   /** `provider/model` pin; the settings' default when absent. */
   model?: string;
+  /** USD per million input tokens, for cost_usd; the classifier's output is free. */
+  priceUsdPerMInput?: number;
 }
 
 export type Action = 'act' | 'skip' | 'escalate' | 'fallthrough';
@@ -56,4 +66,6 @@ export interface ClassifyResult {
   cached: boolean;
   /** The classify_decisions row, when one was written. */
   id: number | null;
+  /** True when the confidence fell under the schema's `escalate` line: a person should look before anyone acts. */
+  review?: boolean;
 }
