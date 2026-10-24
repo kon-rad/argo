@@ -92,6 +92,7 @@ The keys, in the order you are likely to touch them:
 zen-agent run "Summarise Areas/goals.md in five lines"            # answer on stdout, tool calls on stderr
 zen-agent run --persona atlas --task "Review only; do not edit" --file brief.md
 zen-agent chat --persona bolt --model ollama/qwen3:8b             # a conversation; /quit to leave
+ZEN_SERVE_TOKEN=... zen-agent serve                              # the chat host for the engine's chat page (section 3.6)
 zen-agent wake t_3f9a12 --persona bolt --json                    # the card is the task; always a fresh session
 zen-agent wake t_3f9a12 --persona bolt --fetch tracker,github    # with two context fetchers, whatever zen.json says
 ORG_AGENT=bolt zen-agent run --task "You were woken by a DM; answer in the thread." --thread 47 "Reply."
@@ -142,6 +143,29 @@ console.log(r.text, r.stopped, r.usage.total, r.sessionPath);
 ```
 
 Everything is exported: the guard (`decide`), the assembler (`buildSystemPrompt`), the compaction policy (`compact`), the session reader (`Session.load`), the tool sets (`buildTools`, `TOOL_SETS`), the kanban and knowledge clients. Tests pass pi-ai's `fauxProvider()` as `models`, so a run can be scripted without a key, which is how the suite runs in CI.
+
+### 3.6 As a chat host
+
+`zen-agent serve` turns the library into a chat transport for the engine's Agents page (the Chat tab's harness switch; the `agents` module). It is the only long-lived process in the package: one live `ZenAgent` per open chat, held in memory, and a small JSON API on `127.0.0.1:8791` with a bearer token (`ZEN_SERVE_TOKEN`). The app server never runs an agent itself: it is sandboxed (read-only home, no new privileges) and only forwards an allowlist of these routes under `/api/zen` with the token, the way it forwards agent-hub's routes for Claude Code chats. The host should run as a dedicated user, as section 8 says of every zen-agent run.
+
+```
+browser  ──HTTPS, the app's login──▶  app server (/api/zen: allowlist + token)  ──loopback──▶  zen-agent serve
+                                                                                               ├─ ZenAgent per chat ── pi agent core ── pi-ai ──▶ any provider in zen.json or the environment
+                                                                                               └─ .zen/chats/<id>.json, .zen/sessions/<session>.jsonl
+```
+
+What the page gets, and where it comes from:
+
+| Need | How |
+|---|---|
+| Pick a provider and model | `GET /zen/models`: every model with `configured` (its key resolves in the environment; the key itself never leaves the host) and, for `zen.json` providers, `key_env`, `base_url` and `reachable`, a `GET <baseUrl>/models` probe with a short timeout. A laptop that serves a local model over Tailscale shows as unreachable while it sleeps instead of failing on the first message. Adding a provider stays an edit to `zen.json` and the host's environment: no key passes through a web form |
+| Pick a persona, a tool-access level, a thinking level | `GET /zen/personas` (the roster); `tools: "full"` (the config's sets) or `"read-only"` (`skills`, `knowledge`), or a list of sets; `thinking` as the CLI flag takes it. The page proposes read-only for any custom endpoint until the model has been watched making tool calls correctly |
+| Follow the run like a terminal | `GET /zen/chats/:id/events?offset=N`: the trace as it is written (meta with the part sizes and tool loadout, every message, each tool call with its timing, `blocked` when the guard or a hook refuses, `compaction`, `end` with turns, tokens and cost) plus `delta` lines while the model types text or thinking, `steer` lines, and host `error` lines. The page renders it with the same component that renders Claude Code's stream-json |
+| Steer or stop | `POST /zen/chats/:id/steer` while a run is on (read after the current step, as `ZenAgent.steer`); `POST /zen/chats/:id/interrupt` aborts it |
+| Change persona, model or tools | Not on a running chat. A chat's config is fixed when `POST /zen/chats` checks it (an unknown model or persona is a 400 then, not an error on the first message), because `ZenAgent` bakes the model and the system prompt into the agent's initial state, and a transcript whose earlier turns were produced under another model or persona is misleading to the reader and to the model. "Continue as new session" is `POST /zen/chats` with `from`: the old chat's messages are replayed into a new session (its own id and trace, `meta.resumed` naming the old one, the prompt built fresh from today's rule and persona files); the old chat is untouched and still listed |
+| Survive a restart | Chat records are JSON files in `.zen/chats/`; on start the host lists them, rebuilds each event log from its trace (deltas are not kept; the log's `epoch` changes so a reader starts over) and resumes the session on the next message. A run that was in flight when the process died is lost, nothing else |
+
+The traces land in the same `.zen/sessions/` folder as every other run, so the `usage` module's sync (section 7) shows a chat next to the bot wakes, with the same part sizes and cost.
 
 ---
 
@@ -258,7 +282,7 @@ The comparison uses what the research in [self-improvement.md, section 14](self-
 | Trace | One JSONL file per run with every message, tool call and part size | `stream-json` output; a complete trace needs a capture proxy for the prompt | Its SQLite state, synced by the engine | Session trees in JSONL | Messages via the SDK |
 | Board and knowledge base | Typed tools (`card_*`, `search_notes`, `org_*`) | Shell commands described in a skill | Native kanban (`hermes kanban`) | Shell | Shell or MCP |
 | Sub-agents | `delegate` with objective and budget, one level | Native subagents | Not a concept here | Extension packages | Native |
-| Interactive use | `chat` in a terminal, plain | Full TUI, the owner's daily tool | Chat over Telegram and others | Full TUI | Whatever you build |
+| Interactive use | `chat` in a terminal; `serve` for the engine's chat page, which shows the trace live (section 3.6) | Full TUI, the owner's daily tool | Chat over Telegram and others | Full TUI | Whatever you build |
 | Maintained by | This repo (small) over pi (weekly releases, MIT; owned by Earendil since 2026) | Anthropic | The Hermes project | Earendil | Anthropic |
 
 In one line each: Claude Code is the right harness for the owner and the wrong size for a bot wake; Hermes owns its own loop and the engine syncs its outputs; the pi coding agent is a complete agent with its own conventions, where zen-agent wants only the core so the vault's conventions stay the vault's; the Claude Agent SDK would keep the context-assembly and tool-list concerns that motivate the pilot.
@@ -277,7 +301,7 @@ Against general frameworks (LangGraph, the OpenAI Agents SDK and their kind): th
 | **The roster** | Reads the compiled `org.json` (or `org.yaml`) the vault already keeps; the chart's `model` field is honoured | `runtime: zen-agent` in `OrgDoc` next to `claude-code`, `hermes` and `codex`, so the dispatcher can route a bot's wakes here |
 | **The dispatcher** | `ORG_AGENT=<bot> zen-agent wake <card> --json` for a card wake; `ORG_AGENT=<bot> zen-agent run --task "<standing orders>" --thread <message id> "<prompt>"` for a DM, handoff or mention wake (the wakeup's `ref` is the message id). Neither call takes a session id: every wake is fresh, so the dispatcher never stores one and `cli-org session` is not part of this lane | In the vault: `runtime: zen-agent` as the default in `org.yaml` (per-agent `claude-code` stays available), the dispatcher routing wakes to these two calls and reading the JSON result into `wake-done`, and the `session_id` column left unused by this lane |
 | **The hooks** | The guard ported; `guard.py` and `devlog_gate.py` run as hook commands | Shared replay cases in `harness/evals/` that both the Python suite and the TypeScript suite run (today the TypeScript tests carry a copy of the Python cases) |
-| **The archive** | Session files are one JSONL format with every message | A collector that reads `.zen/sessions/` into the archive like the Claude Code and Hermes collectors |
+| **The archive** | Session files are one JSONL format with every message; the `usage` module's sync reads `.zen/sessions/` into the archive and the ledger (`ZEN_SESSIONS_DIR`), chats from `serve` included | A collector on another machine than the server (today the sync reads the folder the server sees) |
 
 ---
 
@@ -285,9 +309,9 @@ Against general frameworks (LangGraph, the OpenAI Agents SDK and their kind): th
 
 - **The guard is text matching.** Like the Python one, it reads the tool call, not the effect. A script the agent writes can do what the agent cannot. Run bot wakes under a user that cannot read what matters.
 - **Token estimates are estimates.** Part sizes and the compaction trigger use four characters per token; billed usage comes from the provider and is what the budget counts.
-- **Resume keeps the old prompt.** A resumed session (`run --resume`, `chat`) replays its leading system message, so a changed rule file applies to the next fresh run, not to a resumed one. Wakes never resume, so they always run under the current rules.
+- **Resume keeps the old prompt.** A resumed session (`run --resume`, `chat`, a `serve` chat after a restart) replays its leading system message, so a changed rule file applies to the next fresh run, not to a resumed one. Wakes never resume, so they always run under the current rules; a `serve` chat continued as a new session (`from`) is a fresh run too.
 - **The fetchers read what the card says.** `tracker`, `github` and `recall` key off the card's header (`Project:`, `Repo:`, `Branch:`, a PR URL, the title); a card without them brings nothing. They are not a retrieval pipeline: `recall` is the existing `cli-org recall`, promoted from a tool call the model may make to a part it always gets when the policy says so.
-- **No chat transport, no scheduler, no MCP.** One process per run is the interface; cron, the dispatcher or systemd timers drive it. pi has an MCP package whose tools can be passed in as `tools`.
+- **No scheduler, no MCP, no chat platform.** One process per run is the interface for bots; cron, the dispatcher or systemd timers drive it. `serve` (section 3.6) is a plain HTTP host for the engine's own chat page, not a Telegram or Slack transport. pi has an MCP package whose tools can be passed in as `tools`.
 - **Subscription billing is an open question.** The proposal's note stands: assume API credits for the pilot until Anthropic's terms on third-party runtimes are read.
 
 The pilot is judged on the proposal's metrics: tokens per finished card, first-wake finish rate and trace completeness against the `claude -p` bots on the same graph nodes. The trace is built so those numbers fall out of it.

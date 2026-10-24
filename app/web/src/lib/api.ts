@@ -514,6 +514,62 @@ export interface EventPage {
   events: StreamEvent[];
   offset: number;
   size: number;
+  /** Set by hosts whose log lives in memory: a new value means the log was rebuilt (a restart) and the reader starts over. */
+  epoch?: string;
+}
+
+/** `zen-agent serve` behind /api/zen: one row per provider and per model, with what the pickers grey out. */
+export interface ZenProvider {
+  id: string;
+  name: string;
+  /** From zen.json's `providers` (a local or custom endpoint), not one pi-ai ships. */
+  custom: boolean;
+  /** A key (or keyless auth) resolves on the server. Never the key itself. */
+  configured: boolean;
+  /** The environment variable a custom endpoint's key comes from. */
+  key_env: string | null;
+  key_name: string | null;
+  base_url: string | null;
+  /** Custom endpoints only: the host's liveness probe answered. */
+  reachable: boolean | null;
+}
+export interface ZenModel {
+  provider: string;
+  id: string;
+  name: string;
+  context_window: number;
+  reasoning: boolean;
+  configured: boolean;
+  reachable: boolean | null;
+}
+export interface ZenPersona { name: string; role: string; team: string | null; runtime: string }
+export const ZEN_THINKING = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ZenThinking = (typeof ZEN_THINKING)[number];
+export interface ZenUsage { input: number; output: number; cacheRead: number; cacheWrite: number; total: number; cost: number }
+/** A zen-agent chat: its config is fixed for its life; "continue as a new session" makes another with `from` set. */
+export interface ZenChat {
+  id: string;
+  title: string;
+  session_id: string;
+  persona: string | null;
+  model: string;
+  tools: string[];
+  thinking: ZenThinking;
+  from: string | null;
+  created_at: string;
+  updated_at: string;
+  status: 'idle' | 'working' | 'error';
+  error: string | null;
+  turns: number;
+  usage: ZenUsage;
+}
+export interface NewZenChat {
+  persona?: string | null;
+  model?: string;
+  tools?: 'full' | 'read-only' | string[];
+  thinking?: ZenThinking;
+  title?: string;
+  from?: string;
 }
 
 export interface ClaudeChat {
@@ -1195,6 +1251,16 @@ export const api = {
   sendClaudeChat: (id: string, text: string) =>
     request<ClaudeChat>(`/hub/chats/${id}/messages`, undefined, json('POST', { text })),
   stopClaudeChat: (id: string) => request<{ ok: true }>(`/hub/chats/${id}/interrupt`, undefined, { method: 'POST' }),
+  zenModels: () => request<{ providers: ZenProvider[]; models: ZenModel[] }>('/zen/models'),
+  zenPersonas: () => request<{ personas: ZenPersona[] }>('/zen/personas'),
+  zenChats: () => request<{ chats: ZenChat[] }>('/zen/chats'),
+  newZenChat: (body: NewZenChat) => request<ZenChat>('/zen/chats', undefined, json('POST', body)),
+  zenChat: (id: string) => request<ZenChat>(`/zen/chats/${id}`),
+  zenChatEvents: (id: string, offset: number) =>
+    request<EventPage & { chat: ZenChat; epoch: string }>(`/zen/chats/${id}/events`, { offset }),
+  sendZenChat: (id: string, text: string) => request<ZenChat>(`/zen/chats/${id}/messages`, undefined, json('POST', { text })),
+  steerZenChat: (id: string, text: string) => request<ZenChat>(`/zen/chats/${id}/steer`, undefined, json('POST', { text })),
+  stopZenChat: (id: string) => request<{ ok: true; chat: ZenChat }>(`/zen/chats/${id}/interrupt`, undefined, { method: 'POST' }),
   meta: () => request<AppMeta>('/meta'),
   syncState: () => request<SyncState>('/sync'),
   fund: (refresh = false) => request<FundOverview>('/fund', refresh ? { refresh: '1' } : undefined),

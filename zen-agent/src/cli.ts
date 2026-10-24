@@ -10,6 +10,7 @@ import { decide, findLocalRules, loadLocalRules } from './guard.js';
 import { availableProviders, buildModels } from './models.js';
 import { listPersonas, loadPersona } from './persona.js';
 import { Session } from './session.js';
+import { startServer } from './serve.js';
 import { discoverSkills } from './skills.js';
 import { makeKanban } from './tools/kanban.js';
 import { runWake, wakeContext } from './wake.js';
@@ -18,6 +19,9 @@ const USAGE = `zen-agent: a minimal agent harness
 
   zen-agent run [prompt] [--file f]      one task, final answer on stdout
   zen-agent chat                         interactive session
+  zen-agent serve [--port 8791] [--host 127.0.0.1]
+                                         the chat host: live sessions over HTTP for the second brain's chat page
+                                         (bearer token from ZEN_SERVE_TOKEN; loopback only unless --host says otherwise)
   zen-agent wake <card-id>               work one kanban card (the card is the task; always a fresh session)
   zen-agent lane [--runtime zen-agent|--agent name] [--once] [--interval 30]
                                          claim ready cards from the engine's board and wake for each (the zen-agent lane)
@@ -61,6 +65,8 @@ interface Flags {
   runtime?: string;
   interval?: string;
   once?: boolean;
+  port?: string;
+  host?: string;
   'max-turns'?: string;
   'max-tokens'?: string;
   'max-minutes'?: string;
@@ -95,6 +101,8 @@ function parse(argv: string[]): { command: string; positionals: string[]; flags:
       runtime: { type: 'string' },
       interval: { type: 'string' },
       once: { type: 'boolean' },
+      port: { type: 'string' },
+      host: { type: 'string' },
       'max-turns': { type: 'string' },
       'max-tokens': { type: 'string' },
       'max-minutes': { type: 'string' },
@@ -245,6 +253,19 @@ async function main(argv: string[]): Promise<number> {
         if (r.error) process.stderr.write(`error: ${r.error}\n`);
       }
       rl.close();
+      return 0;
+    }
+    case 'serve': {
+      const token = process.env['ZEN_SERVE_TOKEN'] ?? '';
+      if (!token) throw new Error('serve needs ZEN_SERVE_TOKEN in the environment (a long random string the proxy sends back)');
+      const port = flags.port === undefined ? 8791 : Number(flags.port);
+      if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('--port must be a port number');
+      const { url, host } = await startServer({ config: config(flags), token, port, host: flags.host ?? '127.0.0.1' });
+      process.stderr.write(`zen-agent serve: ${url} (chats in ${host.chatsDir}, ${host.list().length} known). Ctrl-C to stop.\n`);
+      await new Promise<void>((resolve) => {
+        process.once('SIGINT', () => resolve());
+        process.once('SIGTERM', () => resolve());
+      });
       return 0;
     }
     case 'wake': {

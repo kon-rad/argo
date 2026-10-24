@@ -76,6 +76,7 @@ Secrets come from the environment only: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `
 zen-agent run "Summarise Areas/goals.md in five lines"           # one task, answer on stdout, tool calls on stderr
 zen-agent run --persona atlas --task "Review only; do not edit" --file brief.md
 zen-agent chat --persona bolt --model openrouter/openai/gpt-5.2  # a conversation; /quit to leave
+ZEN_SERVE_TOKEN=$(openssl rand -hex 32) zen-agent serve          # the chat host: sessions over HTTP on 127.0.0.1:8791 for the engine's chat page
 zen-agent wake t_3f9a12 --persona bolt                           # the card is the task; always a fresh session
 zen-agent wake t_3f9a12 --persona bolt --fetch tracker,github    # with two context fetchers, whatever zen.json says
 ORG_AGENT=bolt zen-agent run --task "You were woken by a DM; answer in the thread." --thread 47 "Reply."
@@ -123,6 +124,23 @@ console.log(r.text, r.stopped, r.usage.total, r.sessionPath);
 ```
 
 Everything is exported from `zen-agent`: the guard (`decide`), the context assembler (`buildSystemPrompt`), the compaction policy (`compact`), the session reader (`Session.load`), the tool sets (`buildTools`, `TOOL_SETS`), the kanban and knowledge clients. Tests pass a `fauxProvider()` from pi-ai as `models`, so a run can be scripted without a key.
+
+### As a chat host
+
+`zen-agent serve` is the one long-lived process in the package: it keeps a live `ZenAgent` per open chat and speaks a small JSON API on loopback, bearer token in `ZEN_SERVE_TOKEN`, so a browser (through the engine's allowlisted `/api/zen` proxy) can start a session, send and steer messages, stop a run and follow its trace as it is written. Run it as a dedicated user next to the vault, the way the Security section says bot wakes should run; never as the owner.
+
+| Route | Does |
+|---|---|
+| `GET /zen/models` | Providers and models: `configured` (a key resolves in the environment; never the key), for `zen.json` providers also `key_env`, `base_url` and `reachable` (a `GET <baseUrl>/models` probe with a short timeout, so a laptop that is asleep is greyed out before anyone picks it) |
+| `GET /zen/personas`, `GET /zen/skills` | What the roster and the skill folders offer |
+| `GET /zen/chats`, `GET /zen/chats/:id` | The chats, newest first |
+| `POST /zen/chats` | A new chat: `{ persona?, model?, tools?: "full" \| "read-only" \| [...sets], thinking?, budget?, title?, from? }`. The config is checked here (unknown model or persona: 400) and fixed for the chat's life. `from` seeds it with another chat's messages: a new session id and trace whose `meta.resumed` names the old one, which stays untouched |
+| `POST /zen/chats/:id/messages` | `{ text }`: one turn; 409 while one is running |
+| `POST /zen/chats/:id/steer` | `{ text }` while it runs: read after the current step |
+| `POST /zen/chats/:id/interrupt` | Aborts the run; the trace ends with `stopped: aborted` |
+| `GET /zen/chats/:id/events?offset=N` | The event log from N: every trace line (meta, message, tool, blocked, compaction, end) plus `delta` lines while the model types (text or thinking, coalesced), `steer` and host `error` lines; `offset` and `size` for polling, `epoch` so a reader notices a restart |
+
+Chat records are JSON files in `.zen/chats/` next to the sessions; a restart lists them again and rebuilds each log from its trace (the deltas are not kept), and the next message resumes the session. `read-only` is `skills,knowledge`: the default the engine's page proposes for a local or custom endpoint until someone has watched that model make tool calls correctly, because a small quantised model with shell access is a worse failure than a wrong answer.
 
 ## How it is built
 
@@ -196,7 +214,7 @@ The package has no path that points back into the engine; `zen.example.json` ref
 
 ## Not here, on purpose
 
-- No Telegram or chat transport, no cron scheduler: the CLI is one process per run, so any scheduler (systemd timers, Hermes cron, the org dispatcher) drives it with `--json`.
+- No Telegram transport, no cron scheduler: the CLI is one process per run, so any scheduler (systemd timers, Hermes cron, the org dispatcher) drives it with `--json`. The one long-lived process is `serve`, a plain HTTP host for a browser chat; it does not post anywhere.
 - No permission prompts (see Security), no plan mode, no MCP. pi has `@earendil-works/pi-mcp` if you want MCP tools; wrap them as `AgentTool`s and pass `tools`.
 - No vector store of its own: the knowledge tools call the engine's retrieval, which already does hybrid search, reranking and contextual chunks.
 

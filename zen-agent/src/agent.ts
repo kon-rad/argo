@@ -11,7 +11,7 @@ import { decide, findLocalRules, loadLocalRules, logBlock, toolPayload, type Loc
 import { runHooks, writeClaudeTranscript } from './hooks.js';
 import { buildModels, pickModel } from './models.js';
 import { loadPersona, type Persona } from './persona.js';
-import { newSessionId, Session, TRACE_VERSION, ZERO_USAGE, type UsageTotals } from './session.js';
+import { newSessionId, Session, TRACE_VERSION, ZERO_USAGE, type SessionLine, type UsageTotals } from './session.js';
 import { discoverSkills, type Skill } from './skills.js';
 import { buildTools, type ToolContext } from './tools/index.js';
 
@@ -58,11 +58,17 @@ export interface ZenAgentOptions {
   parts?: Part[];
   /** What each fetcher did, for the trace; the parts' sizes land in `parts` like every other part. */
   fetchers?: FetcherStat[];
-  /** Continue an earlier session (its messages are replayed). Explicit only: `run` and `chat` take it, a wake never does. */
+  /**
+   * Continue an earlier session (its messages are replayed). Explicit only: `run` and `chat` take it, a wake never does.
+   * Alone, the run appends to that session's trace; with `sessionId` too, the messages are replayed into a new trace
+   * (a fork: the chat host's "continue as a new session"), and the meta line's `resumed` names where they came from.
+   */
   resume?: string;
   sessionId?: string;
   /** Streaming events for a UI; the session file gets everything regardless. */
   onEvent?: (event: AgentEvent) => void;
+  /** Every line as it is written to the trace (meta, message, tool, blocked, compaction, end): the chat host's event log. */
+  onTrace?: (line: SessionLine) => void;
   /** Shared catalogue (tests pass a faux provider). */
   models?: Models;
   tools?: AgentTool<any>[];
@@ -136,7 +142,7 @@ export class ZenAgent {
     this.skills = discoverSkills(cfg.skills);
     this.rules = loadLocalRules(findLocalRules(cfg.workdir, cfg.guard.local, this.env));
 
-    const id = opts.resume ?? opts.sessionId ?? newSessionId(this.persona?.name ?? null);
+    const id = opts.sessionId ?? opts.resume ?? newSessionId(this.persona?.name ?? null);
     this.session = new Session(cfg.sessionsDir, id);
 
     this.prompt = buildSystemPrompt({
@@ -191,7 +197,7 @@ export class ZenAgent {
         }
         if (!reason) return undefined;
         logBlock(cfg.guard.log, 'zen-agent', payload.tool_name, reason);
-        this.session.write({ type: 'blocked', at: now(), name: toolCall.name, reason });
+        this.trace({ type: 'blocked', at: now(), name: toolCall.name, reason });
         return { block: true, reason };
       },
       prepareRequest: async ({ context }, signal) => {
@@ -205,7 +211,7 @@ export class ZenAgent {
           summarize: opts.summarize,
         });
         if (!r.compacted) return undefined;
-        this.session.write({ type: 'compaction', at: now(), before: r.before, after: r.after, dropped: r.dropped });
+        this.trace({ type: 'compaction', at: now(), before: r.before, after: r.after, dropped: r.dropped });
         this.agent.state.messages = r.messages as AgentMessage[];
         return { context: { ...context, messages: r.messages as AgentMessage[] } };
       },
@@ -223,14 +229,14 @@ export class ZenAgent {
     });
 
     this.agent.subscribe((event) => {
-      if (event.type === 'message_end') this.session.write({ type: 'message', at: now(), message: event.message });
+      if (event.type === 'message_end') this.trace({ type: 'message', at: now(), message: event.message });
       else if (event.type === 'tool_execution_end') {
-        this.session.write({ type: 'tool', at: now(), toolCallId: event.toolCallId, name: event.toolName, args: argsOf(this.agent.state.messages, event.toolCallId), isError: event.isError, durationMs: event.durationMs ?? null });
+        this.trace({ type: 'tool', at: now(), toolCallId: event.toolCallId, name: event.toolName, args: argsOf(this.agent.state.messages, event.toolCallId), isError: event.isError, durationMs: event.durationMs ?? null });
       }
       opts.onEvent?.(event);
     });
 
-    this.session.write({
+    this.trace({
       type: 'meta',
       version: TRACE_VERSION,
       id,
@@ -259,7 +265,7 @@ export class ZenAgent {
       const nudge = await this.stopHooks(false);
       if (nudge) {
         this.nudged = true;
-        this.session.write({ type: 'blocked', at: now(), name: 'stop', reason: nudge });
+        this.trace({ type: 'blocked', at: now(), name: 'stop', reason: nudge });
         await this.agent.prompt(nudge);
         await this.afterRun();
         await this.stopHooks(true); // The second answer always passes; the hook is told so.
@@ -291,9 +297,15 @@ export class ZenAgent {
     return r;
   }
 
+  /** The trace line goes to the session file and to whoever follows the run live. */
+  private trace(line: SessionLine): void {
+    this.session.write(line);
+    this.opts.onTrace?.(line);
+  }
+
   private async afterRun(): Promise<void> {
     const r = this.result();
-    this.session.write({ type: 'end', at: now(), stopped: r.stopped, turns: r.turns, usage: r.usage, ...(r.error ? { error: r.error } : {}) });
+    this.trace({ type: 'end', at: now(), stopped: r.stopped, turns: r.turns, usage: r.usage, ...(r.error ? { error: r.error } : {}) });
   }
 
   private async stopHooks(active: boolean): Promise<string | null> {
@@ -326,6 +338,7 @@ export class ZenAgent {
       sessionId: undefined,
       tools: undefined,
       onEvent: undefined,
+      onTrace: undefined,
       depth: this.depth + 1,
       parentSession: this.session.id,
       models: this.models,

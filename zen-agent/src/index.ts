@@ -16,3 +16,4 @@ export { fsTools, resolveIn } from './tools/fs.js';
 export { runShell, shellTools } from './tools/shell.js';
 export { cardBudget, runWake, wakeContext, wakePrompt, type WakeContextInput, type WakeInput, type WakeResult, type WakeRun } from './wake.js';
 export { cardMeta, execCommand, FETCHERS, fetchParts, fetchersFor, type CardMeta, type Exec, type FetchInput, type Fetcher, type FetcherStat } from './fetchers.js';
+export { ChatHost, CHAT_BUDGET, READ_ONLY_TOOL_SETS, parseCreate, requestHandler, startServer, type ChatEvent, type ChatRecord, type ChatStatus, type CreateChat, type ModelRow, type ProviderRow, type ServeOptions } from './serve.js';
