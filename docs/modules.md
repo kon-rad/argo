@@ -48,7 +48,7 @@ Two limits keep a bot's runs from growing without bound. The session a bot resum
 | Page | `/org`: channels, DMs, questions waiting on you, tasks |
 | CLI | `cli-org` (also `secondbrain org`): post, read, ask the owner, assign and complete tasks |
 | Security | A dedicated `sb_org` database role with row-level security per agent |
-| Settings | `ORG_OWNER`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES` |
+| Settings | `ORG_OWNER`, `ORG_VAULT_ASSIGNEE`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES` |
 | Timers (server) | none; `deploy.sh` creates the role and puts `cli-org` on the PATH |
 | Skill | `org-member` |
 
@@ -174,17 +174,17 @@ A standard LinkedIn app gets a 60-day access token and **no refresh token** (Lin
 
 ## Adding a module
 
-A new optional feature is a new module, off by default. The checklist is in [`../CONTRIBUTING.md`](../CONTRIBUTING.md#adding-a-module).
+A new optional feature is a new module, off by default. The checklist is in [`CONTRIBUTING.md`](https://github.com/kon-rad/secondbrain/blob/main/CONTRIBUTING.md#adding-a-module).
 
 ## chat
 
-Ask your second brain. A speech-bubble button at the right of the header opens a panel over any page: your conversations on the left, the current one in the centre. Each question is answered from passages retrieved from the vault (keyword and meaning fused at chunk level, optionally reranked), the answer cites them as `[1]`, `[2]`, and the sources are listed under it with a preview. The pipeline is described in [rag.md](rag.md).
+Ask your second brain. Turn it on with `chat` in `MODULES`; then a speech-bubble button at the right of the header (and an entry in the Vault menu) opens a panel over any page: your conversations on the left, the current one in the centre. Each question is answered from passages retrieved from the vault (keyword and meaning fused at chunk level, optionally reranked), the answer cites them as `[1]`, `[2]`, and the sources are listed under it with a preview. The pipeline is described in [rag.md](rag.md).
 
 The settings modal (the gear, or the model chip) picks the provider and model, the persona, the base system prompt and the retrieval knobs. Only providers whose key is set on the server can be chosen; the models offered for each come from `app/config/llm-presets.json`, extended by the vault's `secondbrain.json`. Personas are the default assistant plus every agent of the `org` module's chart; an agent answers with its compiled definition (`.claude/agents/<name>.md`) added to the system prompt.
 
 | | |
 |---|---|
-| UI | The header button; on a phone, "Ask your second brain" in the menu |
+| UI | The speech-bubble button at the right of the header, and "Ask your second brain" in the Vault menu (desktop and phone). Both open the same panel |
 | API | `/api/chat/options`, `/api/chat/settings`, `/api/chat/conversations`, `/api/chat/conversations/:id/messages` (server-sent events) |
 | Settings | One of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `TOGETHER_API_KEY`, `OPENROUTER_API_KEY` (or a local Ollama); `RERANK_URL`, `RERANK_API_KEY`, `RERANK_MODEL` for reranking; `chat.*` in `secondbrain.json` for presets |
 | Tables | `chat_conversations`, `chat_messages`, `chat_settings` (module data: not rebuilt from markdown) |
