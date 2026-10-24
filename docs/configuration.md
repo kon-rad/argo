@@ -80,7 +80,7 @@ Deploy settings (`DEPLOY_*`) are read by `deploy.sh` only: see [deployment.md](d
 | `PROJECTS_FEED_TOKEN` | `projects` | unset | Read-only bearer token for `GET /api/feed/projects` (a kiosk panel). Unset: the route doesn't exist. `deploy.sh` generates one |
 | `ORG_OWNER` | `org` | `owner` | Your handle on the agent board (lowercase, `a-z0-9-`) |
 | `ORG_VAULT_ASSIGNEE` | `org` | `vault-session` | The kanban assignee for vault work: a Claude Code session on your machine that no dispatcher spawns (lowercase, `a-z0-9-`). Cards on boards that still use the old slug `m4` keep working |
-| `ORG_SESSION_MAX_RUNS` | `org` | `3` | Runs one remembered agent session carries before the next wake starts fresh. `1` never resumes |
+| `ORG_SESSION_MAX_RUNS` | `org` | `3` | Runs one remembered `claude-code` agent session carries before the next wake starts fresh. `1` never resumes. Not used by the `zen-agent` lane, whose wakes are always fresh |
 | `BOARD_LEASE_MINUTES` | `board` | `60` | How long a claimed card stays a lane's without a heartbeat before the `board-reclaim` sweep puts it back to ready |
 | `BOARD_HERMES_PROJECTION` | `board` | `off` | `on` mirrors every card the engine makes into the Hermes board with `hermes kanban` (`ORG_KANBAN_CMD` names the binary), while Hermes still runs the bots |
 | `BOARD_URL`, `BOARD_TOKEN` | `board` | unset | On a machine that is not the server: `cli-board` and agents reach the board over HTTPS as the roster member the token names (`cli-board token create <agent>`). Unset: the database connection is used |
