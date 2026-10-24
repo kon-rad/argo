@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compact } from './compaction.js';
 import type { Budget, ZenConfig } from './config.js';
-import { buildSystemPrompt, type Assembled } from './context.js';
+import { buildSystemPrompt, type Assembled, type Part } from './context.js';
+import type { FetcherStat } from './fetchers.js';
 import { decide, findLocalRules, loadLocalRules, logBlock, toolPayload, type LocalRules } from './guard.js';
 import { runHooks, writeClaudeTranscript } from './hooks.js';
 import { buildModels, pickModel } from './models.js';
@@ -41,7 +42,11 @@ export interface ZenAgentOptions {
   budget?: Partial<Budget>;
   /** Extra standing orders for this run, a part of the system prompt with its own cap. */
   task?: string;
-  /** Continue an earlier session (its messages are replayed). */
+  /** Fetched prompt parts (a thread, the tracker row, PR status, recall hits), built by `wakeContext` before the run. */
+  parts?: Part[];
+  /** What each fetcher did, for the trace; the parts' sizes land in `parts` like every other part. */
+  fetchers?: FetcherStat[];
+  /** Continue an earlier session (its messages are replayed). Explicit only: `run` and `chat` take it, a wake never does. */
   resume?: string;
   sessionId?: string;
   /** Streaming events for a UI; the session file gets everything regardless. */
@@ -128,6 +133,7 @@ export class ZenAgent {
       skills: this.skills,
       caps: cfg.context.parts,
       task: opts.task,
+      extra: opts.parts ?? [],
       environment: {
         'working directory': cfg.workdir,
         vault: cfg.vault,
@@ -218,6 +224,7 @@ export class ZenAgent {
       persona: this.persona?.name ?? null,
       model: `${this.model.provider}/${this.model.id}`,
       parts: this.prompt.parts,
+      fetchers: opts.fetchers ?? [],
       parent: opts.parentSession ?? null,
       budget: this.budget,
       tools: this.tools.map((t) => t.name),
@@ -293,6 +300,8 @@ export class ZenAgent {
       persona: d.persona ?? this.persona,
       budget: { ...this.budget, turns: Math.min(this.budget.turns, 15), ...stripUndefined(d.budget ?? {}) },
       task: undefined,
+      parts: undefined,
+      fetchers: undefined,
       resume: undefined,
       sessionId: undefined,
       tools: undefined,

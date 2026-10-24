@@ -66,6 +66,8 @@ export interface PromptInputs {
   environment: Record<string, string>;
   /** Extra instructions for this run (a wake's standing orders), kept apart from the task itself. */
   task?: string;
+  /** Fetched parts (a thread, the tracker row, PR status, recall hits), each already named and capped by its fetcher. */
+  extra?: Part[];
 }
 
 export const DEFAULT_IDENTITY =
@@ -93,6 +95,7 @@ export function buildSystemPrompt(input: PromptInputs): Assembled {
     { name: 'playbook', text: input.persona?.playbook ?? '', cap: cap('playbook') },
     { name: 'skills', text: skills, cap: cap('skills') },
     { name: 'task', text: input.task ?? '', cap: cap('task') },
+    ...(input.extra ?? []),
     { name: 'environment', text: env, cap: 0 },
   ]);
 }

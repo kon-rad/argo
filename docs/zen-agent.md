@@ -2,7 +2,7 @@
 
 ### The headless runtime for bot wakes: one loop, hooks on the loop, everything else a file
 
-**Status:** built and merged: `zen-agent/` on `main` since [kon-rad/secondbrain#38](https://github.com/kon-rad/secondbrain/pull/38). The roster switch and the dispatcher hand-off described in [Integration](#7-integration-with-the-second-brain) are not done yet.
+**Status:** built and merged: `zen-agent/` on `main` since [kon-rad/secondbrain#38](https://github.com/kon-rad/secondbrain/pull/38). Fresh-context wakes, the `thread` part and the context fetchers are in; the roster switch and the dispatcher hand-off described in [Integration](#7-integration-with-the-second-brain) are the vault's side and still to do.
 **Written:** 2026-10-24
 **Goal:** Run one agent of the org, as a named persona, on one task, under a budget, with every input measured and every step traced, on whichever model the policy names.
 **Companion pages:** [Self-improving orchestration](self-improvement.md) (section 10 asked for this runtime), [Agent harness](agent-harness.md) (the guard and the gate it shares), [Retrieval](rag.md) (the search it calls).
@@ -78,7 +78,9 @@ The keys, in the order you are likely to touch them:
 | `org.command` | `cli-org` | The message board CLI; its tools appear only when it is on the PATH and a persona is set |
 | `persona.org`, `persona.definitions`, `persona.memory` | `.agents/org/org.json`, `.claude/agents`, `.agents/org/memory` | Where personas come from |
 | `rules`, `skills` | `["AGENTS.md"]`, `[".agents/skills", "~/.zen/skills"]` | The rules part (first file that exists) and the skill folders (earlier wins) |
-| `context.cap`, `context.keepTurns`, `context.parts` | 0.6, 6, caps per part | The compaction trigger, the tail kept, and the token cap of each prompt part |
+| `context.cap`, `context.keepTurns`, `context.parts` | 0.6, 6, caps per part | The compaction trigger, the tail kept, and the token cap of each prompt part (`thread` 2 000, `tracker` 1 500, `github` 1 500, `recall` 2 000 for the fetched parts) |
+| `context.fetchers` | `{}` | Context fetchers per card work type, team (`team:<slug>`) or `default`: `tracker`, `github`, `recall`. Off unless listed ([3.4](#34-a-bot-wake-end-to-end)) |
+| `org.command`, `tracker.command`, `github.command` | `cli-org`, `cli-projects`, `gh` | The commands behind the `org` tools and the `thread`, `recall`, `tracker` and `github` fetchers |
 | `guard.local`, `guard.log`, `guard.hooks` | first `.agents/guard.local.json` up from the working directory; `~/.cache/agent-guard.log`; none | The vault's rules, the block log, and the `preToolUse` and `stop` hook commands |
 | `providers` | `{}` | Extra endpoints: `{ "<id>": { "api": "openai-completions" \| "anthropic-messages", "baseUrl", "apiKeyEnv"?, "models": [{ "id", "contextWindow"?, "maxTokens"? }] } }` |
 
@@ -90,8 +92,12 @@ The keys, in the order you are likely to touch them:
 zen-agent run "Summarise Areas/goals.md in five lines"            # answer on stdout, tool calls on stderr
 zen-agent run --persona atlas --task "Review only; do not edit" --file brief.md
 zen-agent chat --persona bolt --model ollama/qwen3:8b             # a conversation; /quit to leave
-zen-agent wake t_3f9a12 --persona bolt --json                    # the card is the task
-zen-agent run --resume bolt-20261024-091500-k3j2 "Carry on"      # replay a session and continue
+zen-agent wake t_3f9a12 --persona bolt --json                    # the card is the task; always a fresh session
+zen-agent wake t_3f9a12 --persona bolt --fetch tracker,github    # with two context fetchers, whatever zen.json says
+ORG_AGENT=bolt zen-agent run --task "You were woken by a DM; answer in the thread." --thread 47 "Reply."
+                                                                 # a reply wake: message 47's thread is the only board history in the prompt
+zen-agent run --resume bolt-20261024-091500-k3j2 "Carry on"      # replay a session and continue (run and chat only)
+zen-agent sessions --json                                        # one line per run: parts, fetchers, usage
 zen-agent personas | skills | sessions | models
 echo '{"tool_name":"Bash","tool_input":{"command":"cat .env"}}' | zen-agent guard    # exit 2
 ```
@@ -103,12 +109,27 @@ Exit codes: 0 done, 1 error, 3 the budget ended the run or the final message say
 `zen-agent wake <card>`:
 
 1. reads the card through the kanban backend (body, relations, comments);
-2. builds the prompt: the card verbatim, then the standing orders of a wake (one card, one run; produce the Returns; work inside the Scope; post at most one status with evidence; complete or block the card; never present a partial result as done);
-3. takes the budget from the card's `## Budget` line, overridden by flags;
-4. runs the persona with the tools its configuration gives it;
-5. prints the result (`--json` for the dispatcher) and exits 0 or 3.
+2. runs the context fetchers configured for the card's work type and the persona's team (`context.fetchers`, or `--fetch`), each into its own capped part;
+3. builds the prompt: the card verbatim, then the standing orders of a wake (one card, one run; produce the Returns; work inside the Scope; post at most one status with evidence; complete or block the card; never present a partial result as done; the run starts fresh);
+4. takes the budget from the card's `## Budget` line, overridden by flags;
+5. runs the persona in a new session with the tools its configuration gives it;
+6. prints the result (`--json` for the dispatcher) and exits 0 or 3.
 
 The dispatcher's shell script becomes `ORG_AGENT=bolt zen-agent wake t_3f9a12 --json`.
+
+**Every wake is a fresh run.** No path through `wake` or `lane` resumes a session, and `wake --resume` is an error. The alternative, a bot carrying one transcript from wake to wake for days, is the main source of context rot in headless runs: unrelated cards, DMs and mentions pile up in one window and every turn re-sends them. What a wake knows is the card, the thread it answers when it is a reply, and what the fetchers bring. What a bot keeps between wakes is its memory file (`persona.memory/<name>.md`, the `playbook` part) and the shared memory (`org_remember`, `org_recall`). Nothing else persists.
+
+**A DM, handoff or mention wake** is `ORG_AGENT=<name> zen-agent run --task "<the wake's standing orders>" --thread <message id> "<prompt>"`. The wakeup's `ref` is the id of the message that woke the bot; `--thread` reads that thread with `cli-org thread <id> --json` as the persona (so the board's membership rules apply) and puts exactly its messages into a `thread` part, capped by `context.parts.thread`. No other channel and no earlier run enters the prompt. The same flag works on `wake` when a card wake is also a reply.
+
+**Context fetchers** are plain functions in `src/fetchers.ts`, one per source, off unless `context.fetchers` (or `--fetch`) names them for the card:
+
+| Fetcher | Reads off the card | Runs | Brings |
+|---|---|---|---|
+| `tracker` | `Project: <p>/<f>` (the header `cli-org task create` writes) | `cli-projects list` | The project's row and the feature's row, nothing else of the tracker |
+| `github` | `Repo: owner/name` and `Branch: <name>`, or a pull request URL | `gh pr view`, `gh run list --branch` | PR state, review decision, check counts with the failed names, the last five runs |
+| `recall` | The card's title, scoped to its project | `cli-org recall "<title>" --project <p>` as the persona | Up to six hits from facts, memory files and the vault |
+
+A fetcher that fails leaves its part empty and the wake goes on with the card. The trace's `meta` line records every fetcher, on or off, with the size it brought and any error, next to the part sizes, so a policy ("turn `recall` on for research cards") is judged by numbers: `zen-agent sessions --json` prints one line per run with its parts, fetchers and usage.
 
 ### 3.5 As a library
 
@@ -165,8 +186,9 @@ pi's `Agent` owns the transcript, the tool-call plumbing, steering and follow-up
 | `src/guard.ts` | the Python guard, ported: `decide`, `checkShell`, `checkPath`, `loadLocalRules`; `toolPayload` maps zen tools to Claude names | 230 |
 | `src/hooks.ts` | hook commands (stdin JSON; exit 2 or `{"decision":"block"}` blocks; crash or timeout allows); a Claude-style transcript for Stop hooks | 100 |
 | `src/compaction.ts` | `compact`: summarise the middle, keep head and tail, cut on a user turn; `renderForSummary` | 110 |
-| `src/session.ts` | the JSONL trace; `Session.load` for resume; `Session.list` | 100 |
-| `src/wake.ts` | card → wake prompt and budget | 50 |
+| `src/session.ts` | the JSONL trace; `Session.load` for resume; `Session.list`; `Session.summary` (one run in numbers) | 150 |
+| `src/fetchers.ts` | context fetchers (`thread`, `tracker`, `github`, `recall`): one function per source → a capped part and a stat; `cardMeta` reads project, repo, branch and type off a card | 250 |
+| `src/wake.ts` | card → wake prompt and budget; `wakeContext` (the fetched parts of a wake); `runWake` (one fresh wake, start to finish, never a resume) | 120 |
 | `src/tools/*.ts` | the seven tool sets and the `tool()` helper that types `execute` by its schema | 900 |
 | `src/cli.ts` | the commands, the streaming printer, exit codes | 230 |
 
@@ -177,6 +199,7 @@ Runtime dependencies: the two pi packages, TypeBox (schemas), yaml (frontmatter 
 ```jsonl
 {"type":"meta","id":"bolt-20261024-091500-k3j2","persona":"bolt","model":"anthropic/claude-sonnet-4-6",
  "parts":[{"name":"identity","chars":112,"tokens":28,"truncated":false},{"name":"rules","chars":9100,"tokens":2275,"truncated":false}, ...],
+ "fetchers":[{"name":"thread","on":false,"chars":0,"tokens":0,"error":null},{"name":"tracker","on":true,"chars":210,"tokens":53,"error":null}, ...],
  "budget":{"turns":40,"tokens":400000,"minutes":30},"tools":["read_file", ...],"skills":["org-member", ...],"parent":null,"resumed":null}
 {"type":"message","at":"...","message":{"role":"user","content":"..."}}
 {"type":"message","at":"...","message":{"role":"assistant","content":[...],"usage":{...},"stopReason":"toolUse"}}
@@ -190,7 +213,7 @@ The `message` lines are pi-ai messages exactly as sent and received, so `--resum
 
 ### 4.4 Context assembly and compaction
 
-The prompt is built once per run from parts in a fixed order. A part with nothing to say is omitted; a part over its cap is cut at a line boundary with a marker. Defaults: rules 6 000 tokens, persona 3 000, playbook 2 000, skills 1 500, task 4 000; identity and environment are never cut. The caps are settings, so "drop the playbook part for review cards" is a one-line policy change, and the trace says what it did to the outcome.
+The prompt is built once per run from parts in a fixed order: identity, persona, rules, playbook, skills, task, then the fetched parts (thread, tracker, github, recall), then environment. A part with nothing to say is omitted; a part over its cap is cut at a line boundary with a marker. Defaults: rules 6 000 tokens, persona 3 000, playbook 2 000, skills 1 500, task 4 000, thread 2 000, tracker 1 500, github 1 500, recall 2 000; identity and environment are never cut. The caps are settings, so "drop the playbook part for review cards" is a one-line policy change, and the trace says what it did to the outcome.
 
 Compaction runs before each provider request when the estimated transcript passes `cap × contextWindow`. The middle (everything between the leading system message and the last `keepTurns` user turns) is rendered compactly (tool calls as `[call name args]`) and summarised by the same model with a fixed prompt that asks for the task, decisions, paths touched, commands and results, open questions and what is left. A failed summary leaves the transcript alone and the next request tries again.
 
@@ -252,7 +275,7 @@ Against general frameworks (LangGraph, the OpenAI Agents SDK and their kind): th
 | **The kanban board** | `hub` backend: agent-hub's routes as the app's web client calls them (list, show, create, comment, assign). `cli` backend: `hermes kanban` (adds complete and block). `wake` reads the card and its `## Budget` | `list --json` and `complete --result` on the CLI were written from the engine's existing usage, not run against a live board |
 | **The message board** (`org` module) | `cli-org` as typed tools, as the persona (`ORG_AGENT`); the CLI enforces membership and who may DM whom | Nothing; an HTTP path would need an agent identity the routes do not take today |
 | **The roster** | Reads the compiled `org.json` (or `org.yaml`) the vault already keeps; the chart's `model` field is honoured | `runtime: zen-agent` in `OrgDoc` next to `claude-code`, `hermes` and `codex`, so the dispatcher can route a bot's wakes here |
-| **The dispatcher** | `zen-agent wake <card> --json` is the whole call | Teach the dispatcher to call it for bots whose runtime says so, and to read the JSON result into `wake-done` |
+| **The dispatcher** | `ORG_AGENT=<bot> zen-agent wake <card> --json` for a card wake; `ORG_AGENT=<bot> zen-agent run --task "<standing orders>" --thread <message id> "<prompt>"` for a DM, handoff or mention wake (the wakeup's `ref` is the message id). Neither call takes a session id: every wake is fresh, so the dispatcher never stores one and `cli-org session` is not part of this lane | In the vault: `runtime: zen-agent` as the default in `org.yaml` (per-agent `claude-code` stays available), the dispatcher routing wakes to these two calls and reading the JSON result into `wake-done`, and the `session_id` column left unused by this lane |
 | **The hooks** | The guard ported; `guard.py` and `devlog_gate.py` run as hook commands | Shared replay cases in `harness/evals/` that both the Python suite and the TypeScript suite run (today the TypeScript tests carry a copy of the Python cases) |
 | **The archive** | Session files are one JSONL format with every message | A collector that reads `.zen/sessions/` into the archive like the Claude Code and Hermes collectors |
 
@@ -262,7 +285,8 @@ Against general frameworks (LangGraph, the OpenAI Agents SDK and their kind): th
 
 - **The guard is text matching.** Like the Python one, it reads the tool call, not the effect. A script the agent writes can do what the agent cannot. Run bot wakes under a user that cannot read what matters.
 - **Token estimates are estimates.** Part sizes and the compaction trigger use four characters per token; billed usage comes from the provider and is what the budget counts.
-- **Resume keeps the old prompt.** A resumed session replays its leading system message, so a changed rule file applies to the next fresh run, not to a resumed one.
+- **Resume keeps the old prompt.** A resumed session (`run --resume`, `chat`) replays its leading system message, so a changed rule file applies to the next fresh run, not to a resumed one. Wakes never resume, so they always run under the current rules.
+- **The fetchers read what the card says.** `tracker`, `github` and `recall` key off the card's header (`Project:`, `Repo:`, `Branch:`, a PR URL, the title); a card without them brings nothing. They are not a retrieval pipeline: `recall` is the existing `cli-org recall`, promoted from a tool call the model may make to a part it always gets when the policy says so.
 - **No chat transport, no scheduler, no MCP.** One process per run is the interface; cron, the dispatcher or systemd timers drive it. pi has an MCP package whose tools can be passed in as `tools`.
 - **Subscription billing is an open question.** The proposal's note stands: assume API credits for the pilot until Anthropic's terms on third-party runtimes are read.
 
