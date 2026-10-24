@@ -20,14 +20,25 @@ import { query, withTransaction, type TxClient } from './db.js';
 
 export class OrgError extends Error {}
 
-export const KINDS = ['message', 'status', 'decision', 'handoff', 'question-for-owner', 'standup', 'reflection', 'reply'] as const;
+export const KINDS = ['message', 'status', 'decision', 'handoff', 'question-for-owner', 'standup', 'reflection', 'reply', 'ack'] as const;
 export type Kind = (typeof KINDS)[number];
 /** Kinds a plain `post` may use; the others have their own commands with their own rules. */
-export const POST_KINDS = ['message', 'status', 'decision', 'reflection', 'reply'] as const;
+/** `ack` is "read, nothing to do": it wakes nobody, so two bots cannot wake each other with acknowledgements. */
+export const POST_KINDS = ['message', 'status', 'decision', 'reflection', 'reply', 'ack'] as const;
 export const URGENT_PER_DAY = 3;
 
 const Name = z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/, 'lowercase letters, digits and dashes');
 const Body = z.string().trim().min(1).max(8000);
+
+/** A roster routine: `at` is HH:MM in ORG_TZ; `days` are ISO weekdays (1 Monday .. 7 Sunday), all when absent. */
+export const Routine = z.object({
+  name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/, 'lowercase letters, digits and dashes'),
+  at: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'HH:MM'),
+  days: z.array(z.number().int().min(1).max(7)).optional(),
+  /** Vault-relative file whose text is the run's task. */
+  task_file: z.string().min(1),
+});
+export type RoutineT = z.infer<typeof Routine>;
 
 export const OrgDoc = z.object({
   version: z.string().min(1),
@@ -36,7 +47,7 @@ export const OrgDoc = z.object({
   agents: z.record(
     Name,
     z.object({
-      runtime: z.enum(['claude-code', 'hermes', 'codex', 'human']).default('claude-code'),
+      runtime: z.enum(['claude-code', 'hermes', 'codex', 'zen-agent', 'human']).default('claude-code'),
       role: z.string().min(1),
       team: Name.optional(),
       reports_to: Name.optional(),
@@ -45,6 +56,8 @@ export const OrgDoc = z.object({
       work: z.enum(['research', 'coding', 'design', 'media', 'writing', 'sales', 'education', 'ops']).optional(),
       capabilities: z.array(z.enum(['code', 'review', 'merge', 'deploy', 'm1', 'web', 'dispatch'])).optional(),
       channels: z.array(z.string()).optional(),
+      /** Scheduled wakes the engine's dispatcher adds as `routine` wakeups, once per local day (ORG_TZ). */
+      routines: z.array(Routine).optional(),
     }),
   ),
   teams: z.record(
@@ -141,12 +154,13 @@ export async function importOrg(input: unknown): Promise<{ agents: number; teams
     // Two passes: reports_to is a self-reference.
     for (const [name, a] of Object.entries(doc.agents)) {
       await tx.query(
-        `INSERT INTO org_agents (name, team_slug, runtime, role, model, expertise, org_version, work, capabilities)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        `INSERT INTO org_agents (name, team_slug, runtime, role, model, expertise, org_version, work, capabilities, routines)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
          ON CONFLICT (name) DO UPDATE SET team_slug = EXCLUDED.team_slug, runtime = EXCLUDED.runtime, role = EXCLUDED.role,
            model = EXCLUDED.model, expertise = EXCLUDED.expertise, org_version = EXCLUDED.org_version, work = EXCLUDED.work,
-           capabilities = EXCLUDED.capabilities, retired_at = NULL, updated_at = now()`,
-        [name, a.team ?? null, a.runtime, a.role, a.model ?? null, a.expertise ?? null, doc.version, a.work ?? null, [...new Set(a.capabilities ?? [])]],
+           capabilities = EXCLUDED.capabilities, routines = EXCLUDED.routines, retired_at = NULL, updated_at = now()`,
+        [name, a.team ?? null, a.runtime, a.role, a.model ?? null, a.expertise ?? null, doc.version, a.work ?? null, [...new Set(a.capabilities ?? [])],
+          JSON.stringify(a.routines ?? [])],
       );
     }
     for (const [name, a] of Object.entries(doc.agents)) {
@@ -412,7 +426,7 @@ export async function dm(from: Agent, toName: string, body: string, opts: PostOp
   const to = await getAgent(toName);
   await assertDmAllowed(from, to);
   const kind: Kind = opts.kind ?? 'message';
-  if (!['message', 'handoff', 'reply', 'status', 'decision'].includes(kind)) throw new OrgError(`a DM can't be a ${kind}`);
+  if (!['message', 'handoff', 'reply', 'status', 'decision', 'ack'].includes(kind)) throw new OrgError(`a DM can't be a ${kind}`);
   const slug = dmSlug(from.name, to.name);
   return withTransaction(async (tx) => {
     // SECURITY DEFINER: the one write to channels and memberships an agent makes (the RLS role can't insert them itself).
@@ -615,12 +629,27 @@ export async function addWakeup(agentName: string, reason: 'routine' | 'owner' |
       return null;
     }
   }
+  if (reason === 'routine' && (await routineRanToday(agentName, ref))) return null;
   const { rows } = await query<{ id: number }>(
     `INSERT INTO org_wakeups (agent_name, reason, ref) VALUES ($1,$2,$3)
      ON CONFLICT (agent_name, reason, ref) WHERE done_at IS NULL DO NOTHING RETURNING id`,
     [agentName, reason, ref],
   );
   return rows[0]?.id ?? null;
+}
+
+/**
+ * One routine per local day: a routine wakeup already created today in ORG_TZ (open or done) means the next
+ * one waits for tomorrow. Judged in the zone the routine is scheduled in, so a run just after midnight UTC
+ * and one the same evening are not two days.
+ */
+export async function routineRanToday(agentName: string, ref: string, tz = config.orgTz): Promise<boolean> {
+  const { rowCount } = await query(
+    `SELECT 1 FROM org_wakeups WHERE agent_name = $1 AND reason = 'routine' AND ref = $2
+       AND (created_at AT TIME ZONE $3)::date = (now() AT TIME ZONE $3)::date LIMIT 1`,
+    [agentName, ref, tz],
+  );
+  return (rowCount ?? 0) > 0;
 }
 
 export interface WakeHold {
