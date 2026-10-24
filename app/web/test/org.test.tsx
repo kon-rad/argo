@@ -46,9 +46,23 @@ const AGENT_PAGE = {
   prompt: '# atlas\n\n**Personality.** Calm, exact.',
   memory: '- 2026-10-15: learned the board',
   memory_path: '.agents/org/memory/atlas.md',
+  core: '# atlas: core memory\n\n## Lessons\n- [m-3 ×2 · 2026-10-15] I post the stand-up before reading the backlog.',
+  core_path: '.agents/org/memory/atlas/core.md',
+  memory_rows: [
+    { id: 3, agent_name: 'atlas', kind: 'lesson', content: 'I post the stand-up before reading the backlog.', evidence_episode_ids: [1, 2], occurrences: 2, active: true, retired_why: null, supersedes: null, promoted_to_proposal: false, proposal_task_id: null, proposed_at: null, created_at: '2026-10-14T05:00:00Z', updated_at: '2026-10-15T05:00:00Z' },
+    { id: 4, agent_name: 'atlas', kind: 'friction', content: 'I get sent back when a review card has no PR link.', evidence_episode_ids: [2, 5], occurrences: 2, active: true, retired_why: null, supersedes: null, promoted_to_proposal: true, proposal_task_id: 't_prop001', proposed_at: '2026-10-15T06:00:00Z', created_at: '2026-10-14T05:00:00Z', updated_at: '2026-10-15T05:00:00Z' },
+  ],
+  episodes: [
+    { id: 5, run_id: 'org-atlas-1', task_id: 't_abc123', reason: 'task', outcome: 'request_changes', corrected: true, turn_count: 14, cost_usd: '0.4200', duration_s: 300, summary: 'Worked card t_abc123. Sent back with changes requested.', log_path: null, reflected_at: '2026-10-15T04:23:00Z', created_at: '2026-10-15T04:22:00Z' },
+  ],
+  proposals: [
+    { id: 4, agent_name: 'atlas', kind: 'friction', content: 'I get sent back when a review card has no PR link.', evidence_episode_ids: [2, 5], occurrences: 2, active: true, retired_why: null, supersedes: null, promoted_to_proposal: true, proposal_task_id: 't_prop001', proposed_at: '2026-10-15T06:00:00Z', created_at: '2026-10-14T05:00:00Z', updated_at: '2026-10-15T05:00:00Z', card_status: 'triage', card_title: 'self-improvement: atlas, I get sent back when a review card has no PR link.' },
+  ],
+  memory_stats: { days: 14, episodes: 1, done: 0, corrected: 0, corrections_per_done: null, cost_per_done: null, avg_turns: 14, reflected: 1, memory: { active: 2, by_kind: { lesson: 1, friction: 1 } }, proposals: 1 },
+  memory_config: { core_budget_tokens: 1500, reflect: { enabled: true, min_turns: 2 }, self_improvement: { enabled: true, repeat_threshold: 2, max_proposals_per_week: 1 } },
 };
 
-function mount(path: string) {
+function mount(path: string, over: { agentPage?: unknown } = {}) {
   const calls: { url: string; init?: RequestInit }[] = [];
   vi.stubGlobal(
     'fetch',
@@ -68,7 +82,7 @@ function mount(path: string) {
       if (u.pathname === '/api/org/search') return Response.json({ messages: [msg(3, 'platform', 'rune', 'tests 29/29', { kind: 'status' })] });
       if (u.pathname === '/api/org/post') return Response.json(msg(5, 'all-hands', 'owner', 'posted'), { status: 201 });
       if (u.pathname === '/api/org/dm') return Response.json(msg(6, 'dm:atlas:owner', 'owner', 'hi'), { status: 201 });
-      if (u.pathname === '/api/org/agents/atlas') return Response.json(AGENT_PAGE);
+      if (u.pathname === '/api/org/agents/atlas') return Response.json(over.agentPage ?? AGENT_PAGE);
       if (u.pathname === '/api/board/cards' && init?.method === 'POST') return Response.json({ card: { id: 't_new000', title: 'Ship it', status: 'ready', assignee: 'atlas' }, message: null }, { status: 201 });
       if (u.pathname === '/api/board/cards') return Response.json({ cards: [{ id: 't_abc123', board_slug: 'exo', title: 'Wire the tasks route', status: 'ready', assignee: 'atlas', project_slug: 'secondbrain-app', feature_slug: 'org-page', created_by: 'owner', kind: 'work', priority: 3, contract: {}, created_at: '2026-10-15T05:00:00Z' }] });
       if (u.pathname === '/api/org/tasks') return Response.json({ tasks: [{ task_id: 't_abc123', board: 'exo', title: 'Wire the tasks route', project_slug: 'secondbrain-app', feature_slug: 'org-page', assignee: 'atlas', created_by: 'owner', rounds: 0, created_at: '2026-10-15T05:00:00Z' }] });
@@ -172,6 +186,11 @@ describe('Org page', () => {
     expect(rows.some((t) => /routine daily-standup · done · org-atlas-1/.test(t))).toBe(true);
     expect(screen.getByText('posted the stand-up')).toBeTruthy();
     expect(screen.getByText('learned the board', { exact: false })).toBeTruthy();
+    // The persona memory: its lines, the episode behind them, and the proposal card it filed.
+    expect(screen.getByText('Memory (2 active lines, budget 1500 tokens)')).toBeTruthy();
+    expect(rows.some((t) => /m-3 · lesson · ×2 I post the stand-up/.test(t))).toBe(true);
+    expect(rows.some((t) => /request changes · corrected · 14 turns · \$0\.4200/.test(t))).toBe(true);
+    expect(screen.getByRole('link', { name: 'self-improvement: atlas, I get sent back when a review card has no PR link.' }).getAttribute('href')).toBe('/board/t_prop001');
     // Cards come from the link rows even when the kanban (agent-hub) is unreachable, with their project and feature.
     expect(screen.getByRole('link', { name: 'Wire the tasks route' }).getAttribute('href')).toBe('/board/t_abc123');
     expect(screen.getByRole('link', { name: 'secondbrain-app/org-page' })).toBeTruthy();
@@ -179,6 +198,15 @@ describe('Org page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/org/dm'))).toBe(true));
     expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/org/dm'))!.init?.body))).toEqual({ to: 'atlas', body: 'hold the deploy' });
+  });
+
+  it('renders an agent page from a server that predates the persona memory', async () => {
+    const { core, core_path, memory_rows, episodes, proposals, memory_stats, memory_config, ...older } = AGENT_PAGE;
+    void core; void core_path; void memory_rows; void episodes; void proposals; void memory_stats; void memory_config;
+    mount('/org/agents/atlas', { agentPage: older });
+    await screen.findByText('Head of Platform');
+    expect(screen.getByText('Memory (0 active lines)')).toBeTruthy();
+    expect(screen.getByText('No finished wakes recorded yet.')).toBeTruthy();
   });
 
   it('gives a bot a card from its page: one card, one bot, one project', async () => {
