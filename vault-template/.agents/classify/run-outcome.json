@@ -1,0 +1,17 @@
+{
+  "$comment": "What a bot run amounted to, from its final text (docs/zen-runtime.md, decision 3). Log only: the dispatcher writes the answer to usage_runs.outcome and nothing changes. `act` means the label is confident enough to count in the no-op rate; `escalate` means a person should look before it counts.",
+  "decision": "run-outcome",
+  "version": "1",
+  "privacy": "shared",
+  "primitive": "choice",
+  "question": "An AI agent's final report after one run is in state.result (its stop reason in state.stopped). Label what the run amounted to.",
+  "options": ["did-work", "no-op", "blocked", "failed"],
+  "criteria": {
+    "did-work": "The agent changed, wrote, posted, reviewed or decided something and says what.",
+    "no-op": "The agent found nothing to do: nothing addressed to it, only acknowledgements, a duplicate routine, no change.",
+    "blocked": "The agent stopped on purpose because it needs a person, a decision or a missing input; it says what it waits for.",
+    "failed": "The run ended in an error, ran out of budget, or the agent reports it could not do the work."
+  },
+  "act": 0.5,
+  "escalate": 0.3
+}

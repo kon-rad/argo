@@ -1,6 +1,6 @@
 {
-  "$comment": "zen-agent configuration. Copy to zen.json next to your vault (or ~/.zen/zen.json). Paths are relative to the vault. Secrets are never here: name the environment variable that holds them.",
-  "model": "anthropic/claude-sonnet-4-6",
+  "$comment": "zen-agent configuration. Copy to zen.json next to your vault (or ~/.zen/zen.json). Paths are relative to the vault. Secrets are never here: name the environment variable that holds them. The model is the cheap default for bot wakes (OPENROUTER_API_KEY); openrouter/deepseek/deepseek-v4-flash is the alternative, and a persona's model field or --model overrides it per run.",
+  "model": "openrouter/deepseek/deepseek-v4.1-flash",
   "thinking": "off",
   "vault": ".",
   "sessionsDir": ".zen/sessions",
@@ -12,7 +12,7 @@
   "context": {
     "cap": 0.6,
     "keepTurns": 6,
-    "parts": { "rules": 6000, "persona": 3000, "playbook": 2000, "skills": 1500, "task": 4000 }
+    "parts": { "rules": 6000, "persona": 3000, "playbook": 2000, "skills": 1500, "handoff": 500, "task": 4000 }
   },
   "guard": {
     "local": ".agents/guard.local.json",

@@ -6,6 +6,7 @@ CLAUDE.local.md
 
 # Databases and caches
 *.db
+.zen/sessions/
 *.db-*
 node_modules/
 __pycache__/
