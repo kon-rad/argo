@@ -37,6 +37,7 @@ npm test
 cd ..
 python3 -m pip install pytest
 python3 -m pytest harness tools addons
+cd zen-agent && npm ci && npm test && cd ..   # the standalone agent runtime; no Postgres, no keys
 ```
 
 The app tests run against a **real** Postgres: they connect with the standard `PG*` variables (`PGHOST`, `PGUSER`, `PGPASSWORD`) and rebuild a `secondbrain_test` database (override with `SB_TEST_DB`) from the migrations on every run. No mocked `pg`. Your user needs permission to create databases.
@@ -58,6 +59,7 @@ Put a few fake notes in it. If you want a realistic shape, write fake notes in t
 | `app/web/` | React UI | TypeScript, React 19, Tailwind |
 | `app/db/migrations/` | Schema, forward-only | SQL (node-pg-migrate) |
 | `app/deploy/` | `deploy.sh`, systemd units, Caddy template, server env example | Bash |
+| `zen-agent/` | Standalone agent runtime on the pi agent core; own `package.json`, tests (`node --test`) and README | TypeScript (ESM, strict) |
 | `app/bin/secondbrain` | The launcher CLI | Bash |
 | `harness/hooks/` | `guard.py`, `devlog_gate.py` and their tests | Python, stdlib only |
 | `harness/claude/` | Claude Code settings and agents copied into new vaults | JSON, markdown |

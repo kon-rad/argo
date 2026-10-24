@@ -630,6 +630,8 @@ The headless mode is where the loop's levers (context assembly, budgets, tool co
 
 Pilot a thin headless runtime for bot wakes only, built on a minimal, well-maintained agent core rather than written from scratch, behind a per-bot switch in the roster (`runtime: sb-agent` next to `claude-code` and `hermes`, which `org_agents.runtime` already models). Keep Claude Code for the owner and Hermes for cron. Judge the pilot at the end of phase 5 on tokens per finished card, first-wake finish rate and trace completeness against the `claude -p` bots on the same graph nodes. The concrete candidate cores and their trade-offs are in section 14, which also records what could and could not be verified about them.
 
+**Status (2026-10-24):** the pilot runtime exists as [`zen-agent/`](https://github.com/kon-rad/secondbrain/blob/main/zen-agent/README.md), a standalone package on `@earendil-works/pi-agent-core`: personas from the roster, skills, any provider, the board and the retrieval API as typed tools, the guard in process, budgets in the loop, context assembled from capped named parts, compaction as policy and one JSONL trace per run. What is not yet done: the `runtime: zen-agent` switch in the roster schema and the dispatcher calling `zen-agent wake`, and the archive collector reading its traces.
+
 ---
 
 ## 11. Phases

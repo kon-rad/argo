@@ -45,6 +45,21 @@ jobs:
       - run: pip install pytest
       - run: python -m pytest harness tools addons
 
+  zen-agent:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zen-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: zen-agent/package-lock.json
+      - run: npm ci
+      - run: npm test
+
   leaks:
     runs-on: ubuntu-latest
     steps:
