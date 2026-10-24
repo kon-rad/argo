@@ -190,3 +190,46 @@ describe('oversized chunks', () => {
     ).rejects.toThrow(/unauthorized/);
   });
 });
+
+describe('contextual enrichment', () => {
+  it('stores the context the contextualizer wrote and embeds it in front of the chunk', async () => {
+    const { contextPrompt, parseContexts } = await import('../src/embeddings/contextualize.js');
+    await addFile('heater.md', 'Garage Heater', '## Decision\n\nWe picked the electric unit over diesel.');
+    const provider = fakeProvider();
+    const seen: string[] = [];
+    const embed = provider.embed.bind(provider);
+    provider.embed = async (texts) => {
+      seen.push(...texts);
+      return embed(texts);
+    };
+    const stats = await embedVault({
+      provider,
+      maxChunkTokens: 100,
+      overlapTokens: 20,
+      batchSize: 4,
+      contextualizer: async (note, chunks) => {
+        expect(note.path).toBe('heater.md');
+        expect(contextPrompt(note, chunks)).toContain('Garage Heater');
+        return chunks.map(() => 'From the garage heater note: the diesel-versus-electric decision.');
+      },
+    });
+    expect(stats.filesContextualized).toBe(1);
+    expect(seen[0]).toMatch(/^From the garage heater note.*\n\nGarage Heater > Decision/s);
+    const { rows } = await query<{ context: string; content: string }>(`SELECT context, content FROM vault_chunks`);
+    expect(rows[0]!.context).toContain('diesel-versus-electric');
+    expect(rows[0]!.content.startsWith('Garage Heater >')).toBe(true);
+    // The keyword arm sees the context too.
+    const { rows: hit } = await query(`SELECT 1 FROM vault_chunks WHERE tsv @@ websearch_to_tsquery('english', 'versus')`);
+    expect(hit).toHaveLength(1);
+    expect(parseContexts('```json\n["a","b"]\n```', 2)).toEqual(['a', 'b']);
+    expect(parseContexts('["a"]', 2)).toBeNull();
+  });
+
+  it('a contextualizer that returns empty lines leaves the chunks plain', async () => {
+    await addFile('a.md', 'A', 'Plain text.');
+    const stats = await embedVault({ provider: fakeProvider(), maxChunkTokens: 100, overlapTokens: 20, batchSize: 4, contextualizer: async (_n, c) => c.map(() => '') });
+    expect(stats.filesContextualized).toBe(0);
+    const { rows } = await query<{ context: string }>(`SELECT context FROM vault_chunks`);
+    expect(rows[0]!.context).toBe('');
+  });
+});

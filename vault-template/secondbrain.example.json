@@ -21,5 +21,11 @@
     "shows": { "weekly": "The weekly report" }
   },
   "livestream": { "youtube": "example" },
-  "projects": { "reportFile": "projects.md" }
+  "projects": { "reportFile": "projects.md" },
+  "chat": {
+    "defaultProvider": "anthropic",
+    "providers": {
+      "together": { "models": [{ "id": "example-org/example-model", "label": "Example model" }] }
+    }
+  }
 }

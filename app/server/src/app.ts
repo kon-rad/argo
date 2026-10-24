@@ -9,6 +9,7 @@ import { agentsRouter } from './routes/agents.js';
 import { tvRouter } from './routes/tv.js';
 import { usageRouter } from './routes/usage.js';
 import { b2Router, type B2Options } from './routes/b2.js';
+import { chatRouter, type ChatOptions } from './routes/chat.js';
 import { errorHandlerFor } from './routes/http.js';
 import { databaseRouter } from './routes/database.js';
 import { fileRouter } from './routes/file.js';
@@ -74,6 +75,8 @@ export interface AppOptions {
   voice?: Partial<VoiceOptions>;
   /** Overridden in tests with fake providers and a fixed encryption key. */
   social?: Partial<SocialOptions>;
+  /** Overridden in tests with a fake chat model and a fixed provider catalog. */
+  chat?: Partial<ChatOptions>;
 }
 
 function defaultSqlGenerator(): SqlGenerator {
@@ -216,6 +219,13 @@ export function createApp(opts: AppOptions = {}): express.Express {
   if (modules.has('media')) app.use('/api/media', mediaRouter(vaultRoot));
   if (modules.has('fund')) app.use('/api/fund', fundRouter(vaultRoot, opts.fund));
   if (socialOpts) app.use('/api/social', socialRouter(socialOpts));
+  // Ask the vault: retrieval over the same index the search uses, answered by a chat model.
+  if (modules.has('chat')) {
+    app.use(
+      '/api/chat',
+      chatRouter({ vaultRoot, embeddingProvider: opts.embeddingProvider ?? defaultEmbeddingProvider, ...opts.chat }),
+    );
+  }
   // Local-only: one spawns a shell script, the other stops the process. Neither
   // belongs on an internet-facing box, logged in or not.
   const robotScript = opts.friendly?.script ?? config.robotLaunchScript;

@@ -44,7 +44,25 @@ const Metric = z.object({
   derived: z.literal('livestream-hours-30d').optional(),
 });
 
+/** `chat.providers.<id>`: extra models for a preset provider, or another default or base URL. */
+const ChatProviderOverride = z.object({
+  models: z.array(z.object({ id: z.string().min(1), label: z.string().min(1).optional() })).optional(),
+  default: z.string().min(1).optional(),
+  baseUrl: z.string().min(1).optional(),
+});
+
+const Chat = z
+  .object({
+    /** Preset provider id the chat starts on (when its key is set). */
+    defaultProvider: z.string().optional(),
+    /** Replaces the engine's base system prompt (still editable in the app). */
+    systemPrompt: z.string().min(1).optional(),
+    providers: z.record(z.string(), ChatProviderOverride).default({}),
+  })
+  .prefault({});
+
 const Settings = z.object({
+  chat: Chat,
   /** Vault-relative goals file: tables of `| W1 | Goal | Measure | Due | Status |` (see projects.parseGoals). */
   goalsFile: z.string().optional(),
   /** Vault-relative note the map's mission node opens. */
@@ -92,6 +110,7 @@ const Settings = z.object({
 });
 
 export type SecondBrainSettings = z.infer<typeof Settings>;
+export type ChatSettingsOverrides = z.infer<typeof Chat>;
 export type MetricSetting = z.infer<typeof Metric>;
 
 export function parseSettings(raw: unknown): SecondBrainSettings {
