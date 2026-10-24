@@ -38,8 +38,11 @@ ENGINE_ROOT="$(cd "$APP_ROOT/.." && pwd)"
 if [[ "$(basename "$ENGINE_ROOT")" == ".secondbrain" ]]; then VAULT_ROOT_LOCAL="$(dirname "$ENGINE_ROOT")"; else VAULT_ROOT_LOCAL="$ENGINE_ROOT"; fi
 VAULT_ROOT_LOCAL="${VAULT_ROOT:-$VAULT_ROOT_LOCAL}"
 # The commit this deploy is shipping, written into the app's build-info file so
-# the running app can say which version is live. Empty when this is not a checkout.
-ENGINE_COMMIT="$(git -C "$APP_ROOT" rev-parse HEAD 2>/dev/null || true)"
+# the running app can say which version is live. A caller that already knows which
+# commit it shipped wins (the droplet's deploy watcher does); otherwise this asks
+# the checkout, with safe.directory set for the case where the deploy runs as root
+# over a checkout another user owns. Empty when this is not a checkout at all.
+ENGINE_COMMIT="${ENGINE_COMMIT:-$(git -c safe.directory="$ENGINE_ROOT" -C "$APP_ROOT" rev-parse HEAD 2>/dev/null || true)}"
 # Read only the settings this script uses, literally: the vault's env file holds
 # keys and hashes whose `$` sequences a shell `source` would expand (or trip
 # set -u on). A value already in the environment wins.
