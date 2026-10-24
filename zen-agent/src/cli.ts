@@ -8,17 +8,17 @@ import { ZenAgent, type RunResult } from './agent.js';
 import { loadConfig, THINKING_LEVELS, type Budget, type ThinkingLevel, type ZenConfig } from './config.js';
 import { decide, findLocalRules, loadLocalRules } from './guard.js';
 import { availableProviders, buildModels } from './models.js';
-import { listPersonas } from './persona.js';
+import { listPersonas, loadPersona } from './persona.js';
 import { Session } from './session.js';
 import { discoverSkills } from './skills.js';
 import { makeKanban } from './tools/kanban.js';
-import { cardBudget, wakePrompt } from './wake.js';
+import { runWake, wakeContext } from './wake.js';
 
 const USAGE = `zen-agent: a minimal agent harness
 
   zen-agent run [prompt] [--file f]      one task, final answer on stdout
   zen-agent chat                         interactive session
-  zen-agent wake <card-id>               work one kanban card (the card is the task)
+  zen-agent wake <card-id>               work one kanban card (the card is the task; always a fresh session)
   zen-agent lane [--runtime zen-agent|--agent name] [--once] [--interval 30]
                                          claim ready cards from the engine's board and wake for each (the zen-agent lane)
   zen-agent models [--available]         providers and models
@@ -29,9 +29,13 @@ const USAGE = `zen-agent: a minimal agent harness
 Options: --persona <name>  --model <provider/model>  --thinking <level>  --config <zen.json>
          --workdir <dir>  --task "<standing orders>"  --task-file <f>  --handoff-file <f>
          --tools fs,shell,...  --meta key=value (repeatable)  --meta-json '{...}'
-         --resume <session>  --max-turns N  --max-tokens N  --max-minutes N  --board <slug>
-         --json  --quiet
+         --max-turns N  --max-tokens N  --max-minutes N  --board <slug>  --json  --quiet
+         --thread <message id>  the thread this run answers (a DM, handoff or mention wake): its messages become the
+                                thread part of the prompt, nothing else of the board does
+         --fetch a,b | none     context fetchers for this wake (tracker, github, recall); default: context.fetchers
+         --resume <session>     run and chat only: continue a session. A wake never resumes
          lane: --runtime <r> | --agent <name>  --once  --interval <seconds>
+         sessions: --json       one summary line per session (parts, fetchers, usage) for comparing runs
 A dispatcher's flags: --tools picks this run's tool sets, --handoff-file is the previous run's conclusion
 (the handoff part), --meta labels land in the trace's meta line under "dispatch".
 Secrets come from the environment only (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...; see README).`;
@@ -49,6 +53,8 @@ interface Flags {
   meta?: string[];
   'meta-json'?: string;
   resume?: string;
+  thread?: string;
+  fetch?: string;
   file?: string;
   board?: string;
   agent?: string;
@@ -81,6 +87,8 @@ function parse(argv: string[]): { command: string; positionals: string[]; flags:
       meta: { type: 'string', multiple: true },
       'meta-json': { type: 'string' },
       resume: { type: 'string' },
+      thread: { type: 'string' },
+      fetch: { type: 'string' },
       file: { type: 'string', short: 'f' },
       board: { type: 'string' },
       agent: { type: 'string' },
@@ -154,6 +162,24 @@ function runOptions(f: Flags): { task?: string; handoff?: string; toolSets?: str
   };
 }
 
+function threadFlag(f: Flags): number | null {
+  if (f.thread === undefined) return null;
+  if (!/^\d+$/.test(f.thread)) throw new Error('--thread takes a message id (a number)');
+  return Number(f.thread);
+}
+
+/** `--fetch a,b` names the fetchers; `--fetch none` turns them all off; no flag means the configured ones. */
+function fetchFlag(f: Flags): string[] | null {
+  if (f.fetch === undefined) return null;
+  const names = f.fetch.split(',').map((s) => s.trim()).filter(Boolean);
+  return names.length === 1 && names[0] === 'none' ? [] : names;
+}
+
+/** The persona of this run: the flag, else what the dispatcher sets (ORG_AGENT), else ZEN_PERSONA. */
+function personaOf(f: Flags): string | null {
+  return f.persona ?? process.env['ZEN_PERSONA'] ?? process.env['ORG_AGENT'] ?? null;
+}
+
 /** Streams the model's text to stdout and the tool calls to stderr, so a pipe gets only the answer. */
 function printer(quiet: boolean): (e: AgentEvent) => void {
   const starts = new Map<string, number>();
@@ -199,11 +225,16 @@ async function main(argv: string[]): Promise<number> {
     case 'run': {
       const prompt = (await readPrompt(positionals, flags)).trim();
       if (!prompt) throw new Error('empty prompt');
-      const zen = new ZenAgent({ config: config(flags), persona: flags.persona ?? process.env['ZEN_PERSONA'] ?? null, budget: budgetFlags(flags), ...runOptions(flags), resume: flags.resume, onEvent: flags.json ? undefined : printer(flags.quiet === true) });
+      const cfg = config(flags);
+      const name = personaOf(flags);
+      const persona = name ? loadPersona(cfg, name) : null;
+      // A DM, handoff or mention wake: the thread it answers is the only board history in the prompt.
+      const ctx = await wakeContext({ cfg, card: null, persona, thread: threadFlag(flags), fetchers: fetchFlag(flags) ?? [] });
+      const zen = new ZenAgent({ config: cfg, persona, budget: budgetFlags(flags), ...runOptions(flags), parts: ctx.parts, fetchers: ctx.fetchers, resume: flags.resume, onEvent: flags.json ? undefined : printer(flags.quiet === true) });
       return report(await zen.run(prompt), flags);
     }
     case 'chat': {
-      const zen = new ZenAgent({ config: config(flags), persona: flags.persona ?? process.env['ZEN_PERSONA'] ?? null, budget: { turns: 10_000, tokens: 50_000_000, minutes: 100_000, ...budgetFlags(flags) }, ...runOptions(flags), resume: flags.resume, onEvent: printer(flags.quiet === true) });
+      const zen = new ZenAgent({ config: config(flags), persona: personaOf(flags), budget: { turns: 10_000, tokens: 50_000_000, minutes: 100_000, ...budgetFlags(flags) }, ...runOptions(flags), resume: flags.resume, onEvent: printer(flags.quiet === true) });
       const rl = createInterface({ input: process.stdin, output: process.stderr });
       process.stderr.write(`zen-agent chat: ${zen.persona?.name ?? 'default'} on ${zen.model.provider}/${zen.model.id}; session ${zen.session.id}. /quit to leave.\n`);
       for (;;) {
@@ -219,21 +250,20 @@ async function main(argv: string[]): Promise<number> {
     case 'wake': {
       const [cardId] = positionals;
       if (!cardId) throw new Error('wake <card-id>');
+      if (flags.resume !== undefined) throw new Error('wake never resumes a session: every wake is a fresh run (continuity is the memory file and org_remember). --resume is for run and chat.');
       const cfg = config(flags);
-      const persona = flags.persona ?? process.env['ZEN_PERSONA'] ?? process.env['ORG_AGENT'] ?? null;
+      const persona = personaOf(flags);
       const kb = makeKanban(cfg.kanban, process.env, fetch, persona ?? 'zen-agent');
-      if (!kb) throw new Error('wake needs a kanban backend in zen.json ("kanban": {"kind": "cli" | "hub", ...})');
-      const card = await kb.show(cardId, flags.board);
-      const budget = { ...cardBudget(card.task.body), ...budgetFlags(flags) };
-      const zen = new ZenAgent({ config: cfg, persona, budget, ...runOptions(flags), onEvent: flags.json ? undefined : printer(flags.quiet === true) });
-      return report(await zen.run(wakePrompt({ card, persona, canComplete: Boolean(kb.complete) })), flags);
+      if (!kb) throw new Error('wake needs a kanban backend in zen.json ("kanban": {"kind": "board" | "cli" | "hub", ...})');
+      const r = await runWake({ cfg, kb, cardId, board: flags.board, persona, budget: budgetFlags(flags), ...runOptions(flags), thread: threadFlag(flags), fetchers: fetchFlag(flags), onEvent: flags.json ? undefined : printer(flags.quiet === true) });
+      return report(r, flags);
     }
     case 'lane': {
       // The lane loop of docs/board-design.md section 7: claim, run the wake, heartbeat while it runs, report. Only the
       // engine's board can be claimed from; the card's own tools finish or block it, and a run that ends without doing so
       // releases the card so the next wake finds it ready.
       const cfg = config(flags);
-      const persona = flags.persona ?? process.env['ZEN_PERSONA'] ?? process.env['ORG_AGENT'] ?? null;
+      const persona = personaOf(flags);
       const kb = makeKanban(cfg.kanban, process.env, fetch, persona ?? 'zen-agent');
       if (!kb?.claim) throw new Error('lane needs the engine\'s board in zen.json ("kanban": {"kind": "board", ...})');
       const agent = flags.agent ?? (flags.runtime ? undefined : persona ?? undefined);
@@ -247,14 +277,11 @@ async function main(argv: string[]): Promise<number> {
           await new Promise((r) => setTimeout(r, interval));
           continue;
         }
-        const card = await kb.show(claimed.id, flags.board);
-        const budget = { ...cardBudget(card.task.body), ...budgetFlags(flags) };
         const who = claimed.assignee ?? persona;
-        const zen = new ZenAgent({ config: cfg, persona: who, budget, task: flags.task, onEvent: flags.json ? undefined : printer(flags.quiet === true) });
         const beat = setInterval(() => void kb.heartbeat?.(claimed.id, {}).catch(() => {}), 60_000);
         let r: RunResult;
         try {
-          r = await zen.run(wakePrompt({ card, persona: who, canComplete: true }));
+          r = await runWake({ cfg, kb, cardId: claimed.id, board: flags.board, persona: who, budget: budgetFlags(flags), task: flags.task, fetchers: fetchFlag(flags), canComplete: true, onEvent: flags.json ? undefined : printer(flags.quiet === true) });
         } finally {
           clearInterval(beat);
         }
@@ -294,7 +321,13 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'sessions': {
       const cfg = config(flags);
-      for (const id of Session.list(cfg.sessionsDir)) console.log(id);
+      for (const id of Session.list(cfg.sessionsDir)) {
+        if (!flags.json) console.log(id);
+        else {
+          const s = Session.summary(cfg.sessionsDir, id);
+          console.log(JSON.stringify({ ...s, parts: Object.fromEntries(s.parts.map((p) => [p.name, p.tokens])), fetchers: s.fetchers.filter((f) => f.on).map((f) => f.name) }));
+        }
+      }
       return 0;
     }
     case 'config': {

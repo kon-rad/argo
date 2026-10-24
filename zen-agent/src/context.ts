@@ -68,6 +68,8 @@ export interface PromptInputs {
   task?: string;
   /** What the previous run concluded (its end line and last words), so a fresh run needs no resumed transcript. */
   handoff?: string;
+  /** Fetched parts (a thread, the tracker row, PR status, recall hits), each already named and capped by its fetcher. */
+  extra?: Part[];
 }
 
 export const DEFAULT_IDENTITY =
@@ -96,6 +98,7 @@ export function buildSystemPrompt(input: PromptInputs): Assembled {
     { name: 'skills', text: skills, cap: cap('skills') },
     { name: 'handoff', text: input.handoff ?? '', cap: cap('handoff') },
     { name: 'task', text: input.task ?? '', cap: cap('task') },
+    ...(input.extra ?? []),
     { name: 'environment', text: env, cap: 0 },
   ]);
 }

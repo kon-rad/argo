@@ -66,8 +66,15 @@ export interface ZenConfig {
     cap: number;
     /** User turns kept verbatim after a compaction. */
     keepTurns: number;
-    /** Token caps per system-prompt part. */
+    /** Token caps per system-prompt part (the fetched parts `thread`, `tracker`, `github`, `recall` included). */
     parts: Record<string, number>;
+    /**
+     * Context fetchers a wake runs before the model sees the card, by card work type (`coding`, `research`, ...),
+     * by team (`team:<slug>`) or for every card (`default`); the matching lists are united. Each name is a function
+     * in fetchers.ts that reads one source (the tracker, GitHub, recall) into its own capped part. Empty by default:
+     * nothing but the card enters the prompt unless the vault says so.
+     */
+    fetchers: Record<string, string[]>;
   };
   guard: {
     local: string | null;
@@ -79,6 +86,10 @@ export interface ZenConfig {
   knowledge: KnowledgeConfig;
   kanban: KanbanConfig;
   org: { command: string };
+  /** The project tracker CLI (the `tracker` fetcher). */
+  tracker: { command: string };
+  /** GitHub's CLI (the `github` fetcher). */
+  github: { command: string };
   providers: Record<string, ProviderConfig>;
 }
 
@@ -96,7 +107,8 @@ export const DEFAULTS: ZenConfig = {
   context: {
     cap: 0.6,
     keepTurns: 6,
-    parts: { rules: 6000, persona: 3000, playbook: 2000, skills: 1500, handoff: 500, task: 4000 },
+    parts: { rules: 6000, persona: 3000, playbook: 2000, skills: 1500, handoff: 500, task: 4000, thread: 2000, tracker: 1500, github: 1500, recall: 2000 },
+    fetchers: {},
   },
   guard: { local: null, log: '~/.cache/agent-guard.log', hooks: { preToolUse: [], stop: [] } },
   fs: { roots: [], maxRead: 200_000 },
@@ -104,6 +116,8 @@ export const DEFAULTS: ZenConfig = {
   knowledge: { kind: 'none' },
   kanban: { kind: 'none' },
   org: { command: 'cli-org' },
+  tracker: { command: 'cli-projects' },
+  github: { command: 'gh' },
   providers: {},
 };
 

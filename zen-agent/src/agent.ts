@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compact } from './compaction.js';
 import type { Budget, ThinkingLevel, ZenConfig } from './config.js';
-import { buildSystemPrompt, type Assembled, type PartStat } from './context.js';
+import { buildSystemPrompt, type Assembled, type Part, type PartStat } from './context.js';
+import type { FetcherStat } from './fetchers.js';
 import { decide, findLocalRules, loadLocalRules, logBlock, toolPayload, type LocalRules } from './guard.js';
 import { runHooks, writeClaudeTranscript } from './hooks.js';
 import { buildModels, pickModel } from './models.js';
@@ -53,7 +54,11 @@ export interface ZenAgentOptions {
   thinking?: ThinkingLevel;
   /** A dispatcher's labels (run id, wake reasons, card, tier, ...), written into the trace's meta line as `dispatch`. */
   dispatch?: Record<string, unknown>;
-  /** Continue an earlier session (its messages are replayed). */
+  /** Fetched prompt parts (a thread, the tracker row, PR status, recall hits), built by `wakeContext` before the run. */
+  parts?: Part[];
+  /** What each fetcher did, for the trace; the parts' sizes land in `parts` like every other part. */
+  fetchers?: FetcherStat[];
+  /** Continue an earlier session (its messages are replayed). Explicit only: `run` and `chat` take it, a wake never does. */
   resume?: string;
   sessionId?: string;
   /** Streaming events for a UI; the session file gets everything regardless. */
@@ -141,6 +146,7 @@ export class ZenAgent {
       caps: cfg.context.parts,
       task: opts.task,
       handoff: opts.handoff,
+      extra: opts.parts ?? [],
       environment: {
         'working directory': cfg.workdir,
         vault: cfg.vault,
@@ -232,6 +238,7 @@ export class ZenAgent {
       persona: this.persona?.name ?? null,
       model: `${this.model.provider}/${this.model.id}`,
       parts: this.prompt.parts,
+      fetchers: opts.fetchers ?? [],
       parent: opts.parentSession ?? null,
       budget: this.budget,
       tools: this.tools.map((t) => t.name),
@@ -313,6 +320,8 @@ export class ZenAgent {
       task: undefined,
       handoff: undefined,
       dispatch: undefined,
+      parts: undefined,
+      fetchers: undefined,
       resume: undefined,
       sessionId: undefined,
       tools: undefined,

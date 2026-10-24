@@ -6,7 +6,7 @@ export { checkPath, checkShell, decide, findLocalRules, isSecretPath, loadLocalR
 export { runHook, runHooks, writeClaudeTranscript, type HookResult } from './hooks.js';
 export { availableProviders, buildModels, customProvider, pickModel } from './models.js';
 export { listPersonas, loadPersona, personaHeader, readOrg, type Persona } from './persona.js';
-export { newSessionId, Session, type SessionLine, type UsageTotals } from './session.js';
+export { newSessionId, Session, type SessionLine, type SessionSummary, type UsageTotals } from './session.js';
 export { discoverSkills, skillBody, skillsIndex, splitFrontmatter, type Skill } from './skills.js';
 export { buildTools, TOOL_SETS, type ToolContext, type ToolSet } from './tools/index.js';
 export { BoardKanban, CliKanban, HubKanban, formatCard, formatDetail, kanbanTools, makeKanban, type Card, type CardDetail, type KanbanBackend } from './tools/kanban.js';
@@ -14,4 +14,5 @@ export { Knowledge, formatHits, knowledgeTools } from './tools/knowledge.js';
 export { orgTools } from './tools/org.js';
 export { fsTools, resolveIn } from './tools/fs.js';
 export { runShell, shellTools } from './tools/shell.js';
-export { wakePrompt, type WakeInput } from './wake.js';
+export { cardBudget, runWake, wakeContext, wakePrompt, type WakeContextInput, type WakeInput, type WakeResult, type WakeRun } from './wake.js';
+export { cardMeta, execCommand, FETCHERS, fetchParts, fetchersFor, type CardMeta, type Exec, type FetchInput, type Fetcher, type FetcherStat } from './fetchers.js';

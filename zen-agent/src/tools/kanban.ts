@@ -23,6 +23,8 @@ export interface Card {
   created_by?: string | null;
   created_at?: number;
   result?: string | null;
+  /** The kind of work (research, coding, design, media, writing, sales, education, ops) when the board records it. */
+  work_type?: string | null;
 }
 
 export interface CardDetail {
@@ -116,11 +118,12 @@ interface EngineCard {
   block_kind: string | null;
   block_reason: string | null;
   contract: Record<string, unknown>;
+  work_type?: string | null;
 }
 
 const toCard = (c: EngineCard): Card => ({
   id: c.id, title: c.title, body: c.body, assignee: c.assignee, status: c.status, priority: c.priority, created_by: c.created_by,
-  created_at: Math.floor(Date.parse(c.created_at) / 1000), result: c.result,
+  created_at: Math.floor(Date.parse(c.created_at) / 1000), result: c.result, work_type: c.work_type ?? null,
 });
 
 export class BoardKanban implements KanbanBackend {
