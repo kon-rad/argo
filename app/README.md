@@ -72,6 +72,8 @@ In `local` mode there is no authentication: the server binds loopback only, and 
 | **Local alternative** | Ollama (`nomic-embed-text`, `bge-m3`) | Set the embeddings source `provider` to `ollama`. Nothing leaves the machine; works the same on an Ubuntu server |
 | **Chunking** | Heading-aware, ~400 tokens, 60-token overlap | Chunks never straddle a section; code fences are never split unbalanced |
 | **Query prefix** | Per model family | e5-instruct, e5 and bge each want a different query-side prefix. Omitting it costs recall and raises no error |
+| **Chunk context** | Optional, `contextualize: true` on the source | A chat model writes one line placing each chunk in its note; it is embedded and keyword-indexed with the chunk (contextual retrieval, see `docs/rag.md`) |
+| **Chunk `tsv`** | Generated column, GIN | The chat's retrieval fuses keyword and vector ranks at chunk level in one SQL statement |
 
 ### Frontend
 
@@ -128,6 +130,8 @@ Configuration comes from the **vault-root** `.env`, never a copy inside the engi
 | `DATABASE_URL` | `postgres://localhost:5432/secondbrain` | |
 | `PORT` | `5123` | |
 | `TOGETHER_API_KEY` | — | Optional. Without it, semantic search reports 503 and everything else works |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | — | chat module: a provider is offered when its key is set (Together's key counts too; Ollama needs none) |
+| `RERANK_URL`, `RERANK_API_KEY`, `RERANK_MODEL` | — | chat module: a Cohere-compatible reranker for retrieval; unset keeps the switch off |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | For the local embedding provider |
 | `ORG_OWNER` | `owner` | org module: your name on the agent message board (the human agent) |
 | `TTS_URL`, `TTS_MODEL` | `http://127.0.0.1:8880`, Kokoro | voice module: the local OpenAI-compatible speech server |
@@ -149,6 +153,7 @@ Everything beyond browse, search and the database page is a module. A module tha
 | `tv` | A player for rendered video episodes kept in the vault, on `/tv` |
 | `voice` | Read a note aloud through a local speech server (never on a server) |
 | `livestream` | A minute poller of your YouTube, Twitch and Kick channels and a public summary JSON |
+| `chat` | A chat panel that answers questions from retrieved passages, with citations; any provider's model; org agents as personas (see `docs/rag.md`) |
 | `media` | A gallery of every image, video and audio file in the vault on `/media`, with a lightbox player; `.b2.md` stubs play from B2 where the original isn't on disk |
 
 ### Agent ledger (every machine that runs agents)

@@ -19,7 +19,7 @@ The app reads `<vault>/.env` at start (`app/server/src/config.ts`), validates ev
 | `PORT` | `5123` | HTTP port (always bound to `127.0.0.1`) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `DEPLOYMENT` | `local` | `local` (no login, loopback) or `server` (login required). See [deployment.md](deployment.md) |
-| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `usage`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`. Unknown names are ignored |
+| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `usage`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`. Unknown names are ignored |
 | `OWNER_NAME` | `owner` | Your name in the authenticator app and as a comment author |
 | `DEV_LOG_PATH`, `DOCS_PATH` | unset | Vault-relative notes the nav bar links to; unset hides the link |
 | `SCAN_INTERVAL_MINUTES` | `0` | Rescan and re-embed every N minutes; `0` means only when asked |
@@ -33,6 +33,22 @@ The app reads `<vault>/.env` at start (`app/server/src/config.ts`), validates ev
 | `TOGETHER_API_KEY` | unset | Embeddings for semantic search, and the database page's question-to-SQL box. Without it, semantic search falls back to Ollama or returns 503; keyword search always works |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Local embeddings, when the embeddings source's provider is `ollama` |
 | `SQL_MODEL` | a Together-hosted model | The model that writes SQL for the database page. Queries run read-only |
+
+## Chat providers
+
+Used by the `chat` module and by the embedder's optional contextual-enrichment step. A provider is offered in the app only when its key is set; which models each one lists comes from `app/config/llm-presets.json` plus the vault's `chat.providers` (below).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | unset | Anthropic (Claude) |
+| `OPENAI_API_KEY` | unset | OpenAI |
+| `TOGETHER_API_KEY` | unset | Together AI (shared with embeddings and the database page) |
+| `OPENROUTER_API_KEY` | unset | OpenRouter |
+| `OLLAMA_URL` | `http://127.0.0.1:11434` | A local Ollama needs no key and is always offered |
+| `RERANK_URL`, `RERANK_API_KEY` | unset | A Cohere-compatible `/rerank` endpoint (Together, Cohere, Jina) for the chat's optional reranking step. Unset: the switch is off |
+| `RERANK_MODEL` | `Salesforce/Llama-Rank-V1` | The reranker model at that endpoint |
+
+The Embeddings source's config (Sources page) takes `contextualize` (boolean), `context_provider` and `context_model` for the enrichment step; see [rag.md](rag.md).
 
 ## Server and login
 
@@ -92,6 +108,9 @@ Settings that don't fit on one env line. Every section is optional; a file that 
 | `livestream.youtube`, `.twitch`, `.kick` | `livestream` | Your channel handle on each platform |
 | `fund.dir`, `fund.txService`, `fund.explorer` | `fund` | Vault folder of the fund's state (default `fund`), the Safe Transaction Service URL and the block explorer for its chain (defaults: Base) |
 | `projects.reportFile` | `projects` | Where `cli-projects render` writes the markdown report (default `projects.md`) |
+| `chat.defaultProvider` | `chat` | The preset provider the chat starts on, when its key is set |
+| `chat.systemPrompt` | `chat` | Replaces the engine's base system prompt (still editable in the app's settings modal) |
+| `chat.providers.<id>` | `chat` | Per preset provider: `models` to add (`[{ "id", "label" }]`), another `default` model, another `baseUrl` |
 
 Example:
 

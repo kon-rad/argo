@@ -253,7 +253,7 @@ export interface RingNight {
 
 /** What this install has turned on (server: GET /api/meta). */
 export interface AppMeta {
-  modules: ('ring' | 'agents' | 'projects' | 'org' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund')[];
+  modules: ('ring' | 'agents' | 'projects' | 'org' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat')[];
   owner: string;
   devLogPath: string | null;
   docsPath: string | null;
@@ -626,6 +626,90 @@ export interface TrackerReport {
   projects: TrackerProject[];
 }
 
+// ---- the chat module (/api/chat) ----
+
+export interface ChatProviderOption {
+  id: string;
+  label: string;
+  configured: boolean;
+  env: string | null;
+  default: string;
+  models: { id: string; label?: string }[];
+}
+
+export interface ChatPersona {
+  id: string;
+  name: string;
+  role: string;
+  team: string | null;
+  builtin: boolean;
+}
+
+export interface ChatRetrieval {
+  top_k: number;
+  multi_query: boolean;
+  rerank: boolean;
+}
+
+export interface ChatSettings {
+  provider: string | null;
+  model: string | null;
+  persona: string;
+  system_prompt: string | null;
+  retrieval: ChatRetrieval;
+  resolved: { provider: string | null; model: string | null; system_prompt: string; rerank_available: boolean; embeddings: boolean };
+}
+
+export interface ChatSettingsPatch {
+  provider?: string | null;
+  model?: string | null;
+  persona?: string;
+  system_prompt?: string | null;
+  retrieval?: Partial<ChatRetrieval>;
+}
+
+export interface ChatOptions {
+  providers: ChatProviderOption[];
+  default_provider: string;
+  default_system_prompt: string;
+  personas: ChatPersona[];
+  settings: ChatSettings;
+  embeddings: { chunks: number; model: string | null; configured: boolean };
+  rerank: { available: boolean; model: string };
+}
+
+export interface ChatConversation {
+  id: number;
+  title: string;
+  persona: string;
+  provider: string | null;
+  model: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface ChatSource {
+  n: number;
+  path: string;
+  title: string;
+  heading_path: string;
+  chunk_from: number;
+  chunk_to: number;
+  score: number;
+  snippet: string;
+}
+
+export interface ChatMessage {
+  id: number;
+  conversation_id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  sources: ChatSource[];
+  meta: { provider?: string; model?: string; persona?: string; error?: string; partial?: boolean; retrieval?: { queries?: string[]; vector?: boolean; keyword?: boolean; reranked?: boolean; ms?: number } };
+  created_at: string;
+}
+
 export const AUTH_EXPIRED_EVENT = 'secondbrain:auth-expired';
 
 export async function request<T>(path: string, params?: Params, init?: RequestInit): Promise<T> {
@@ -846,6 +930,19 @@ export interface OrgAgentPage {
 }
 
 export const api = {
+  chatOptions: () => request<ChatOptions>('/chat/options'),
+  chatSettings: () => request<{ settings: ChatSettings }>('/chat/settings'),
+  putChatSettings: (patch: ChatSettingsPatch) => request<{ settings: ChatSettings }>('/chat/settings', undefined, json('PUT', patch)),
+  chatConversations: () => request<{ conversations: ChatConversation[] }>('/chat/conversations'),
+  newChatConversation: (body: { persona?: string } = {}) =>
+    request<{ conversation: ChatConversation }>('/chat/conversations', undefined, json('POST', body)),
+  chatConversation: (id: number) => request<{ conversation: ChatConversation; messages: ChatMessage[] }>(`/chat/conversations/${id}`),
+  patchChatConversation: (id: number, patch: { title?: string; persona?: string }) =>
+    request<{ conversation: ChatConversation }>(`/chat/conversations/${id}`, undefined, json('PATCH', patch)),
+  deleteChatConversation: async (id: number): Promise<void> => {
+    const res = await fetch(url(`/chat/conversations/${id}`), { method: 'DELETE', credentials: 'same-origin' });
+    if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  },
   tree: (path: string, offset = 0, limit = 200) =>
     request<TreeResponse>('/tree', { path, offset, limit }),
   file: (path: string) => request<FileResponse>('/file', { path }),

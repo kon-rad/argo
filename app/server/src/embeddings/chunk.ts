@@ -2,8 +2,10 @@ export interface Chunk {
   chunkIndex: number;
   /** "Section > Subsection" at the point the chunk starts; '' at top level. */
   headingPath: string;
-  /** Exactly what gets embedded — context prefix included. */
+  /** The chunk text with its `Title > Heading` prefix. Embedded after `context`, when there is one. */
   content: string;
+  /** Optional contextual-retrieval line written at embed time (see contextualize.ts). */
+  context?: string;
   tokenEstimate: number;
   charStart: number;
   charEnd: number;

@@ -364,6 +364,7 @@ cmd_embed() {
           maxChunkTokens: c.max_chunk_tokens ?? 450,
           overlapTokens: c.overlap_tokens ?? 60,
           batchSize: c.batch_size ?? 32,
+          contextualizer: m.contextualizerFromConfig(c),
           onProgress: (p) => process.stderr.write(`\r  ${p.filesDone}/${p.filesTotal} ${p.currentPath.slice(0, 60)}          `),
         });
         process.stderr.write("\n");

@@ -53,7 +53,7 @@ Run all of them before you open a PR. Say in the PR which ones you ran and what 
 
 ## Modules
 
-Optional features sit behind `MODULES` (comma list in env). A module that is off must not mount its API routes or show its nav link, and `deploy.sh` installs a module's timers only when it is on. Today: `ring`, `agents`, `projects`, `org`, `usage`, `map`, `tv`, `voice`, `livestream` (see `app/README.md`). A new optional feature is a new module, off by default.
+Optional features sit behind `MODULES` (comma list in env). A module that is off must not mount its API routes or show its nav link, and `deploy.sh` installs a module's timers only when it is on. Today: `ring`, `agents`, `projects`, `org`, `usage`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat` (see `app/README.md`). A new optional feature is a new module, off by default.
 
 Structured personal settings (which accounts to track, folder-to-division maps, show names, channel handles) go in the vault's `secondbrain.json`, read through `app/server/src/settings.ts`, with an empty default. Never a list of someone's accounts in code.
 
