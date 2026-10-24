@@ -291,3 +291,51 @@ Stage 1 alone makes every zen run anyone has already done on the server visible 
 3. **Show dollar cost for zen runs?** Yes, for non-Claude-Code sources only (5.3).
 4. **Should `/zen` fold into `/agents`?** No: `/agents` is a view over agent-hub, which is a separate service and may be off. `/zen` stands on the engine alone.
 5. **Where does the daemon go if process-per-turn is too slow?** A `zen-agent serve` subcommand on a Unix socket, speaking the same NDJSON. The supervisor's interface (start, steer, stop, events) is written so that swap stays inside `app/server/src/zen/`.
+
+## 9. Routing: switching harness, provider and model per card, bot and conversation
+
+### 9.1 One vocabulary
+
+A **route** is `{ runtime, model, thinking?, budget? }`: `runtime` one of `claude-code`, `hermes`, `zen-agent`, `codex`, `retrieval` (the chat module's no-tools answer); `model` as `provider/model`, the spelling zen-agent and the chat module already use; `thinking` one of zen-agent's levels; `budget` the shape `contract.budget` already has. A route may also be a **policy name** that the vault's `secondbrain.json` maps to a concrete route:
+
+```json
+{ "routes": { "cheap": { "runtime": "zen-agent", "model": "openrouter/qwen/qwen3-coder" },
+              "default": { "runtime": "zen-agent", "model": "anthropic/claude-sonnet-4-6" },
+              "strong": { "runtime": "claude-code", "model": "anthropic/claude-opus-4-1" } } }
+```
+
+Read through `settings.ts` with an empty default, so no model choice is in the engine. A card that says `cheap` keeps saying it when the owner changes what cheap means.
+
+Most specific wins:
+
+| Level | Where | Today |
+|---|---|---|
+| A message | `provider`, `model`, `persona` on one chat message | Exists (chat module) |
+| A conversation or a card | `chat_conversations.provider/model` plus a new `runtime`; `contract.route` on a card; the `route` column of a `/zen` or Telegram conversation | Cards, `/zen`, Telegram: new |
+| A persona | `org.json` `agents.<name>.runtime` and `.model`; add `thinking` and `budget` | Exists; zen-agent honours `model` |
+| A runtime's default | `zen.json` `model`; the chat settings row; a Hermes profile's own config | Exists |
+
+Whatever resolves is what the run records (`meta.model` in a zen trace, `usage_runs.model`, `archive_sessions.model` and `provider`), so `/usage` can compare the same card under two routes with the filters it has.
+
+### 9.2 Cards
+
+- `contract.route` next to `contract.budget`; no migration, `contract` is JSON. The body may carry it as a `## Route` heading the way `## Budget` works, for cards written by hand.
+- `board_card_claim` picks cards by `coalesce(contract->'route'->>'runtime', a.runtime)` instead of the assignee's runtime alone, so a card assigned to a Claude Code bot and routed to `zen-agent` is claimed by the zen lane, as that persona, under the card's model. `card_runs.runtime` already records which lane took it.
+- Lanes honour `route.model`: `zen-agent lane` passes it to `ZenAgent({ model })` (the persona's model is the fallback); the Claude Code dispatcher passes `--model`, within the models that runtime serves; Hermes keeps its profile's model unless its CLI takes one per run, in which case the Hermes adapter passes it too. A route a lane cannot serve blocks the card with `missing-input` and a comment, never a silent fallback.
+- CLI: `cli-board create ... --route cheap` or `--runtime zen-agent --model openrouter/...`; `cli-board route <card> [--runtime r] [--model m] [--thinking t]` as a `board_card_flags`-style function, allowed to the owner, a dispatch-capable bot and the card's author. Page: a Route section on the card panel with a runtime picker and a model picker from the catalogue in 9.5. A graph template (self-improvement.md) sets a route per node the same way.
+
+### 9.3 Telegram bots
+
+A Telegram bot is a Hermes profile today: its token, its model and its provider are Hermes's own config, which the engine reads and never writes. Switching that bot's model is Hermes's own command; switching its harness means a different bot.
+
+For per-chat switching with the same vocabulary, the `zen` module gets a Telegram bridge: `secondbrain-zen-telegram.service` running `cli-zen-telegram`, one long-poll loop on `ZEN_TELEGRAM_TOKEN` (set: on; unset: off), one `zen_conversations` row per chat id with a `route`, and the commands `/harness`, `/model`, `/persona`, `/budget`, `/new`. It drives `zen-agent` through the supervisor of section 4 and Claude Code through the agent-hub chat routes the hub proxy already allows (`POST /chats`, `/messages`, `/events`), so one bot can answer as a zen persona now and as Claude Code after `/harness claude-code`. Hermes bots stay Hermes. Only chat ids the owner allowlists in `secondbrain.json` are answered, the way the social module keys its accounts there.
+
+### 9.4 Chat instances
+
+- The chat module's conversations gain `runtime`: `retrieval` (today's answer from passages, no tools), `zen-agent`, `claude-code`. The model chip becomes a route chip. A `zen-agent` or `claude-code` conversation is served by the section 4 supervisor or the hub proxy; `retrieval` stays in process. The `/zen` conversation table gets the same `route` column, so the two pages read one shape.
+- Changing the model mid-conversation on `zen-agent` works as is: `--resume` replays pi-ai messages, which are provider-neutral, under the new model. Changing the runtime starts a new session on the new runtime with the transcript so far passed as a `task` part (zen-agent) or the opening message (Claude Code), and the page says where the old session ended.
+- Per-message overrides stay as they are in the chat module and are added to `/zen` for `model` and `thinking`.
+
+### 9.5 One catalogue
+
+`GET /api/models` answers, per runtime, the models this install can serve: zen-agent's `models --available --json` (any provider with a key, plus `zen.json` providers); the chat presets with a key; Claude Code's tiers on the subscription; each Hermes profile's configured model as read by `agents-sync`. Every picker reads it, every write that stores a route validates the `(runtime, model)` pair against it, and the policy names from `secondbrain.json` are listed first. A route that names a model nobody can serve is refused with the list of what can.
