@@ -2,6 +2,9 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from
 import { join } from 'node:path';
 import type { PartStat } from './context.js';
 
+/** The trace format version a reader checks before it parses; bump when a line's shape changes. */
+export const TRACE_VERSION = 1;
+
 /**
  * One JSONL file per run: the trace. Every message as the model saw it, every
  * tool call with its timing, the size of each system-prompt part, and the
@@ -9,7 +12,7 @@ import type { PartStat } from './context.js';
  * replays, and what an eval diffs; nothing is captured by proxy.
  */
 export type SessionLine =
-  | { type: 'meta'; id: string; at: string; persona: string | null; model: string; parts: PartStat[]; parent: string | null; [k: string]: unknown }
+  | { type: 'meta'; version: number; id: string; at: string; persona: string | null; model: string; parts: PartStat[]; parent: string | null; dispatch: Record<string, unknown>; [k: string]: unknown }
   | { type: 'message'; at: string; message: unknown }
   | { type: 'tool'; at: string; toolCallId: string; name: string; args: unknown; isError: boolean; durationMs: number | null }
   | { type: 'blocked'; at: string; name: string; reason: string }

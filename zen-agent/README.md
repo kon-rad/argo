@@ -11,8 +11,8 @@ A minimal agent harness: one loop, hooks on the loop, and everything else a file
 | **Knowledge base** | The second brain's retrieval API as tools: `search_notes` (hybrid keyword + vector), `search_everything` (notes, records, transcripts), `read_note` |
 | **Message board** | `cli-org` as typed tools: whoami, read, post, dm, handoff, ask-owner, tasks, recall, remember, under the persona's identity |
 | **Budgets** | Turns, tokens and minutes, enforced in the loop. A run that hits one ends with `stopped: budget` and exit code 3 |
-| **Context as code** | The system prompt is assembled from named parts (identity, persona, rules, playbook, skills, task, environment) plus the fetched parts a wake is configured to bring (the thread it answers, the card's tracker row, its PR and CI status, recall hits), each with a token cap; every part's size is in the trace |
-| **Fresh wakes** | Every `wake` is a new session: the card, the thread it answers (when it is a reply) and the fetched parts are all the context there is. Nothing of an earlier run is replayed; a bot's continuity is its memory file and `org_remember`/`org_recall`. `--resume` exists for `run` and `chat` only |
+| **Context as code** | The system prompt is assembled from named parts (identity, persona, rules, playbook, skills, handoff, task, environment) plus the fetched parts a wake is configured to bring (the thread it answers, the card's tracker row, its PR and CI status, recall hits), each with a token cap; every part's size is in the trace |
+| **Fresh wakes** | Every `wake` is a new session: the card, the thread it answers (when it is a reply), the fetched parts and the `handoff` part a dispatcher passes (`--handoff-file`: what the previous run concluded) are all the context there is. Nothing of an earlier run is replayed; a bot's continuity is its memory file and `org_remember`/`org_recall`. `--resume` exists for `run` and `chat` only |
 | **Compaction as policy** | Past a fraction of the model's window, older turns are summarised into one message and the last N user turns kept; the cut never parts a tool call from its result; every compaction is in the trace |
 | **Guard** | The engine's tool guard, ported and run in process on every tool call, reading the same `.agents/guard.local.json`; plus any hook command in the Claude Code contract (`guard.py`, `devlog_gate.py` run unchanged) |
 | **Traces** | One JSONL file per run: every message, every tool call with timing, blocks, compactions, totals. Resume a session by id |
@@ -54,7 +54,7 @@ Secrets come from the environment only: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `
 | `budget` | 40 turns, 400 000 tokens, 30 minutes | Per run. `--max-turns`, `--max-tokens`, `--max-minutes`, or a card's `## Budget` line |
 | `context.cap` | `0.6` | Fraction of the model's context window that triggers compaction |
 | `context.keepTurns` | `6` | User turns kept verbatim after a compaction |
-| `context.parts` | rules 6000, persona 3000, playbook 2000, skills 1500, task 4000, thread 2000, tracker 1500, github 1500, recall 2000 | Token caps per prompt part, the fetched parts included; 0 is unlimited |
+| `context.parts` | rules 6000, persona 3000, playbook 2000, skills 1500, handoff 500, task 4000, thread 2000, tracker 1500, github 1500, recall 2000 | Token caps per prompt part, the fetched parts included; 0 is unlimited. `handoff` is what the previous run concluded (`--handoff-file`), so a fresh run needs no resumed transcript |
 | `context.fetchers` | `{}` | Which context fetchers a wake runs, by card work type (`coding`, `research`, ...), by team (`team:<slug>`) or for every card (`default`); the matching lists are united. Names: `tracker` (the card's project and feature rows from `cli-projects list`), `github` (PR and CI status for the card's branch, when the card names a repo), `recall` (`cli-org recall` for the card's title). All off unless listed; `--fetch a,b` and `--fetch none` override per run |
 | `guard.local` | first `.agents/guard.local.json` up from the working directory | The vault's extra rules (`protected_dirs`, `no_delete`, `readonly`, `disable`); `$SB_GUARD_LOCAL` wins |
 | `guard.log` | `~/.cache/agent-guard.log` | Where blocks are appended, like the Python guard |
@@ -82,12 +82,25 @@ ORG_AGENT=bolt zen-agent run --task "You were woken by a DM; answer in the threa
                                                                  # a DM, handoff or mention wake: message 47's thread is the only board history in the prompt
 zen-agent lane --runtime zen-agent                               # claim ready cards from the engine's board, wake for each
 zen-agent run --resume bolt-20261024-091500-k3j2 "Continue"      # replay a session and go on
+ORG_AGENT=bolt zen-agent wake t_3f9a12 --json --tools kanban,org,fs,shell --thinking low \
+  --handoff-file /tmp/bolt-last.md --meta run_id=bolt-20261024-120000 --meta-json '{"reasons":[{"reason":"task","ref":"t_3f9a12"}]}'
 zen-agent personas | skills | sessions | models
 zen-agent sessions --json                                        # one line per run: parts, fetchers, usage, for comparing wakes
 echo '{"tool_name":"Bash","tool_input":{"command":"cat .env"}}' | zen-agent guard   # exit 2: a PreToolUse hook
 ```
 
-Exit codes: 0 done, 1 error, 3 the budget ended the run or the final message says `BLOCKED:`. `--json` prints the run result (text, stop reason, turns, usage, session path) as one JSON object for a dispatcher.
+Exit codes: 0 done, 1 error, 3 the budget ended the run or the final message says `BLOCKED:`. `--json` prints the run result (text, stop reason, turns, usage, model, the size of every prompt part, session id and path) as one JSON object for a dispatcher.
+
+The flags a dispatcher uses, on `run` and `wake` (and `chat`):
+
+| Flag | Does |
+|---|---|
+| `--tools fs,org,...` | This run's tool sets instead of `zen.json`'s: a DM answer gets `org,skills,knowledge`, a card gets everything |
+| `--task-file <f>` | Standing orders read from a file (joined after `--task`): the `task` part |
+| `--handoff-file <f>` | The previous run's conclusion (its end line, last words, open statuses): the `handoff` part, capped at `context.parts.handoff` |
+| `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max` for this run |
+| `--meta key=value` | Repeatable. Labels for the ledger (run id, wake reasons, card, tier); they land in the trace's `meta` line under `dispatch` and change nothing about the run |
+| `--meta-json '{...}'` | The same as one JSON object (for values that are not strings); `--meta` pairs win on a clash |
 
 The `board` backend speaks the engine's `/api/board` (docs/board-design.md section 5.1): list, show, create, comment, assign, finish (complete and block), claim and heartbeat. The `cli` kanban backend calls the Hermes board's command line the way the engine's `cli-org` already does (`show --json`, `create`, `comment`, `assign`, `block`); `list --json` and `complete --result` follow the same shape and were written from that usage, not run against a live board. The `hub` backend follows agent-hub's routes as the app's web client calls them.
 
@@ -145,10 +158,11 @@ Tools execute sequentially, so the guard's view of the world is the model's. Too
 ### What the trace holds
 
 ```
-{"type":"meta","id":"bolt-20261024-091500-k3j2","persona":"bolt","model":"anthropic/claude-sonnet-4-6",
+{"type":"meta","version":1,"id":"bolt-20261024-091500-k3j2","persona":"bolt","model":"openrouter/deepseek/deepseek-v4.1-flash",
  "parts":[{"name":"identity","chars":112,"tokens":28,"truncated":false},{"name":"rules","chars":9100,"tokens":2275,"truncated":false},...],
  "fetchers":[{"name":"thread","on":false,"chars":0,"tokens":0,"error":null},{"name":"tracker","on":true,"chars":210,"tokens":53,"error":null},...],
- "budget":{"turns":40,"tokens":400000,"minutes":30},"tools":["read_file",...],"skills":["org-member",...],"parent":null,"resumed":null}
+ "budget":{"turns":40,"tokens":400000,"minutes":30},"tools":["read_file",...],"skills":["org-member",...],"parent":null,"resumed":null,
+ "dispatch":{"run_id":"bolt-20261024-091500","reasons":[{"reason":"task","ref":"t_3f9a12"}],"tier":"flash-low"}}
 {"type":"message","at":"...","message":{"role":"user","content":"..."}}
 {"type":"message","at":"...","message":{"role":"assistant","content":[...],"usage":{...},"stopReason":"toolUse"}}
 {"type":"tool","at":"...","toolCallId":"...","name":"bash","args":{"command":"npm test | tail -n 20"},"isError":false,"durationMs":4120}
@@ -157,7 +171,7 @@ Tools execute sequentially, so the guard's view of the world is the model's. Too
 {"type":"end","at":"...","stopped":"done","turns":9,"usage":{"input":...,"output":...,"cacheRead":...,"cacheWrite":...,"total":...,"cost":0.41}}
 ```
 
-The `message` lines are pi-ai messages as sent and received, so `Session.load` can hand them straight back to a new agent (`run --resume`), and an archive collector or an eval reads one format for every run. `zen-agent sessions --json` prints `Session.summary` per run (persona, `resumed`, part sizes, the fetchers that ran, turns, usage), so comparing tokens per wake before and after a change of policy is one pipe over the sessions folder:
+The `message` lines are pi-ai messages as sent and received, so `Session.load` can hand them straight back to a new agent (`run --resume`), and an archive collector or an eval reads one format for every run. The `meta` line's `version` is the trace format's version (1 today); a reader checks it before parsing, and it changes when a line's shape does. `dispatch` is whatever `--meta` and `--meta-json` carried: the dispatcher's labels, nothing the run used. `zen-agent sessions --json` prints `Session.summary` per run (persona, `resumed`, part sizes, the fetchers that ran, turns, usage), so comparing tokens per wake before and after a change of policy is one pipe over the sessions folder:
 
 ```bash
 zen-agent sessions --json | jq -s '[.[] | select(.persona == "bolt" and .usage)] | (map(.usage.total) | add / length)'

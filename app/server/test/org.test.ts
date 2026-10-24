@@ -394,6 +394,9 @@ describe('dispatcher side: claim, finish, add, session', () => {
     await expect(addWakeup('ghost', 'task', 't_1')).rejects.toThrow(/unknown agent/);
     const [w] = await claimWakeups('atlas', 'r');
     await finishWakeups([w!.id]);
+    // One routine per local day (ORG_TZ): the finished one still counts until tomorrow.
+    expect(await addWakeup('atlas', 'routine', 'daily-standup')).toBeNull();
+    await query(`UPDATE org_wakeups SET created_at = created_at - interval '1 day' WHERE id = $1`, [w!.id]);
     expect(await addWakeup('atlas', 'routine', 'daily-standup')).toEqual(expect.any(Number));
   });
 

@@ -9,7 +9,8 @@ import { isAbsolute, resolve } from 'node:path';
  * vault, and the vault defaults to the working directory.
  */
 
-export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export interface ProviderModelConfig {
   id: string;
@@ -106,7 +107,7 @@ export const DEFAULTS: ZenConfig = {
   context: {
     cap: 0.6,
     keepTurns: 6,
-    parts: { rules: 6000, persona: 3000, playbook: 2000, skills: 1500, task: 4000, thread: 2000, tracker: 1500, github: 1500, recall: 2000 },
+    parts: { rules: 6000, persona: 3000, playbook: 2000, skills: 1500, handoff: 500, task: 4000, thread: 2000, tracker: 1500, github: 1500, recall: 2000 },
     fetchers: {},
   },
   guard: { local: null, log: '~/.cache/agent-guard.log', hooks: { preToolUse: [], stop: [] } },

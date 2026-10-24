@@ -61,8 +61,41 @@ const Chat = z
   })
   .prefault({});
 
+/** One card tier the dispatcher may route to: a `provider/model` zen-agent knows and a thinking level. */
+const Tier = z.object({
+  model: z.string().min(1).optional(),
+  thinking: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
+});
+const BudgetSetting = z.object({ turns: z.number().int().positive(), tokens: z.number().int().positive(), minutes: z.number().int().positive() });
+
+/** The classify step (docs/zen-runtime.md, section 4.2). Nothing leaves the machine until `allow` names what may. */
+const Classify = z
+  .object({
+    /** Channel slugs and vault folders (prefixes) whose text may be sent to the classifier. Empty: every call falls through. */
+    allow: z.array(z.string().min(1)).default([]),
+    /** `provider/model` for the classifier when a schema does not pin one. */
+    model: z.string().min(1).default('openrouter/typesafe/jev-1.14'),
+    /** Vault-relative folder of decision schemas (`<decision>.yaml`); the engine's defaults fill in what is missing. */
+    schemasDir: z.string().default('.agents/classify'),
+  })
+  .prefault({});
+
+/** The engine's dispatcher (docs/zen-runtime.md, sections 5 and 8). Every default is zen-agent's own. */
+const Dispatch = z
+  .object({
+    /** Card tiers the card-tier decision maps to. Unset tiers use zen.json's model. */
+    tiers: z.partialRecord(z.enum(['flash-low', 'flash-high', 'mid', 'strong']), Tier).default({}),
+    /** Budgets by wake reason: dm, mention, handoff, task, routine, owner. */
+    budgets: z.record(z.string(), BudgetSetting).default({}),
+    /** zen-agent tool sets by wake reason (fs, shell, skills, knowledge, kanban, org, subagent). */
+    tools: z.record(z.string(), z.array(z.string().min(1))).default({}),
+  })
+  .prefault({});
+
 const Settings = z.object({
   chat: Chat,
+  classify: Classify,
+  dispatch: Dispatch,
   /** Vault-relative goals file: tables of `| W1 | Goal | Measure | Due | Status |` (see projects.parseGoals). */
   goalsFile: z.string().optional(),
   /** Vault-relative note the map's mission node opens. */
@@ -111,6 +144,8 @@ const Settings = z.object({
 
 export type SecondBrainSettings = z.infer<typeof Settings>;
 export type ChatSettingsOverrides = z.infer<typeof Chat>;
+export type ClassifySettings = z.infer<typeof Classify>;
+export type DispatchSettings = z.infer<typeof Dispatch>;
 export type MetricSetting = z.infer<typeof Metric>;
 
 export function parseSettings(raw: unknown): SecondBrainSettings {

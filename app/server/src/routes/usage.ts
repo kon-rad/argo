@@ -94,7 +94,7 @@ function eventsSql(filters: Filters, params: unknown[]): string {
   WITH claude AS (
     SELECT f.ts, f.model, f.host, f.sid, f.source, f.surface, f.headless, f.agent_name, f.team_slug, f.reason, f.action,
       f.work_type, f.project_slug, f.feature_slug, f.task_id, f.lane, f.run_id,
-      f.input, f.cache_write, f.cache_read, f.output, 1 AS calls, NULL::double precision AS cost_usd
+      f.input, f.cache_write, f.cache_read, f.output, 1 AS calls, f.cost_usd
     FROM usage_facts f
     WHERE f.ts >= $1 AND f.ts < $2${where}),
   hermes_all AS (
@@ -129,7 +129,7 @@ async function sessionRows(from: Date, to: Date, limit: number, only: SessionFil
      SELECT e.source, e.host, e.sid AS external_id, min(e.surface) AS surface, min(e.ts) AS started_at, max(e.ts) AS ended_at,
             sum(e.calls)::bigint AS calls, sum(e.input)::bigint AS input, sum(e.cache_write)::bigint AS cache_write,
             sum(e.cache_read)::bigint AS cache_read, sum(e.output)::bigint AS output,
-            sum(e.cost_usd) AS cost_usd,                -- Hermes only; Claude Code has no dollar figure
+            sum(e.cost_usd) AS cost_usd,                -- Hermes and zen-agent; Claude Code has no dollar figure
             max(e.agent_name) AS agent_name, max(e.task_id) AS task_id, max(e.lane) AS lane, max(e.project_slug) AS project_slug,
             max(e.work_type) AS work_type, count(DISTINCT e.run_id)::int AS runs,
             max(a.title) AS title, max(a.id) AS archive_id
@@ -157,7 +157,9 @@ const RUNS_CTE = `
                     a.work) AS work_type,
            tl.project_slug, tl.feature_slug, tl.title AS card_title,
            CASE WHEN r.agent_name IS NOT NULL THEN 'bot' ELSE 'cc-lane' END AS surface,
-           'claude-code' AS source, true AS headless
+           r.runtime AS source, r.runtime, r.tier, r.outcome, r.compactions, r.blocked, true AS headless,
+           -- Real dollars only where the runtime priced them; the subscription's API-equivalent figure is never shown.
+           CASE WHEN r.runtime = 'claude-code' THEN NULL ELSE r.total_cost_usd END AS cost_usd
     FROM usage_runs r
     LEFT JOIN org_agents a ON a.name = r.agent_name
     LEFT JOIN task_links tl ON tl.task_id = r.task_id
@@ -265,7 +267,7 @@ export function usageRouter(): Router {
 
   router.get('/sessions/:host/:externalId', wrap(async (req, res) => {
     const host = parseOr400(z.string().regex(HOST_RE), req.params.host);
-    const source = parseOr400(z.enum(['claude-code', 'hermes']).default('claude-code'), req.query.source);
+    const source = parseOr400(z.enum(['claude-code', 'hermes', 'zen-agent']).default('claude-code'), req.query.source);
     const sid = String(req.params.externalId);
     const a = await query<{ archive_id: number }>(
       `SELECT a.id AS archive_id FROM archive_sessions a WHERE a.host=$1 AND a.external_id=$2
@@ -286,10 +288,12 @@ export function usageRouter(): Router {
               length(m.content_text) AS length, m.is_sidechain,
               CASE WHEN c.id IS NULL THEN NULL ELSE json_build_object('model', c.model, 'input', c.input_tokens,
                 'cache_write', c.cache_write_tokens, 'cache_read', c.cache_read_tokens, 'output', c.output_tokens,
-                'action', c.action, 'tool', c.tool, 'run_id', c.run_id) END AS call
+                'action', c.action, 'tool', c.tool, 'run_id', c.run_id,
+                'cost_usd', CASE WHEN c.source = 'claude-code' THEN NULL ELSE c.cost_usd END) END AS call
        FROM archive_messages m
-       LEFT JOIN usage_calls c ON c.host=$2 AND c.message_external_id=m.external_id
-       WHERE m.session_id=$1 ORDER BY m.seq LIMIT 5000`, [a.rows[0].archive_id, host])).rows : [];
+       -- A Claude message id is unique on its own; a zen-agent trace numbers its lines, so its calls match within the session.
+       LEFT JOIN usage_calls c ON c.host=$2 AND c.message_external_id=m.external_id AND (c.source <> 'zen-agent' OR c.session_external_id=$3)
+       WHERE m.session_id=$1 ORDER BY m.seq LIMIT 5000`, [a.rows[0].archive_id, host, sid])).rows : [];
     res.json({
       session,
       run: runs.rows[runs.rows.length - 1] ?? null,
@@ -340,7 +344,7 @@ export function usageRouter(): Router {
     res.json({ agents: rows });
   }));
 
-  // One row per `claude -p` run (a bot's wake or a lane's card), with its labels and token sums.
+  // One row per headless run (a bot's wake on claude-code or zen-agent, or a lane's card), with its labels and token sums.
   router.get('/runs', wrap(async (req, res) => {
     const q = parseOr400(range.extend({ limit: z.coerce.number().int().min(1).max(1000).default(500) }), req.query);
     const [from, to] = span(q, 7);

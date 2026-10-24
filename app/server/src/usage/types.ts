@@ -26,6 +26,8 @@ export interface UsageCall {
   provider?: string | null;
   /** Hermes only: the plugin's key (tool-call ids or a text hash) that ties the call to its stored response. */
   matchKey?: string | null;
+  /** Real dollars priced by the runtime from its provider catalogue (zen-agent); null for the subscription. */
+  costUsd?: number | null;
 }
 
 export type Action = 'dm' | 'post' | 'ticket' | 'card' | 'tracker' | 'write' | 'read' | 'shell' | 'reply';
@@ -68,6 +70,16 @@ export interface RunRecord {
   modelUsage: unknown;
   verify: VerifyRecord | null;
   logPath: string;
+  /** 'claude-code' (the default) or 'zen-agent'. */
+  runtime?: 'claude-code' | 'zen-agent';
+  /** The classify step's label of the run's result. */
+  outcome?: 'did-work' | 'no-op' | 'blocked' | 'failed' | null;
+  /** zen-agent: the size of every system-prompt part, the budget, the card tier, and how often it compacted or was blocked. */
+  parts?: unknown;
+  budget?: unknown;
+  tier?: string | null;
+  compactions?: number | null;
+  blocked?: number | null;
 }
 
 export type PlanWindow = 'five_hour' | 'seven_day';

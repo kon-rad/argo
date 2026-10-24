@@ -4,14 +4,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { compact } from './compaction.js';
-import type { Budget, ZenConfig } from './config.js';
-import { buildSystemPrompt, type Assembled, type Part } from './context.js';
+import type { Budget, ThinkingLevel, ZenConfig } from './config.js';
+import { buildSystemPrompt, type Assembled, type Part, type PartStat } from './context.js';
 import type { FetcherStat } from './fetchers.js';
 import { decide, findLocalRules, loadLocalRules, logBlock, toolPayload, type LocalRules } from './guard.js';
 import { runHooks, writeClaudeTranscript } from './hooks.js';
 import { buildModels, pickModel } from './models.js';
 import { loadPersona, type Persona } from './persona.js';
-import { newSessionId, Session, ZERO_USAGE, type UsageTotals } from './session.js';
+import { newSessionId, Session, TRACE_VERSION, ZERO_USAGE, type UsageTotals } from './session.js';
 import { discoverSkills, type Skill } from './skills.js';
 import { buildTools, type ToolContext } from './tools/index.js';
 
@@ -28,6 +28,10 @@ export interface RunResult {
   stopped: Stopped;
   turns: number;
   usage: UsageTotals;
+  /** `provider/id`, so a dispatcher's --json gets it without reading the trace. */
+  model: string;
+  /** The size of every system-prompt part, as the trace's meta line has it. */
+  parts: PartStat[];
   sessionId: string;
   sessionPath: string;
   error?: string;
@@ -42,6 +46,14 @@ export interface ZenAgentOptions {
   budget?: Partial<Budget>;
   /** Extra standing orders for this run, a part of the system prompt with its own cap. */
   task?: string;
+  /** The previous run's conclusion, the `handoff` part (replaces resuming a transcript). */
+  handoff?: string;
+  /** Tool set names for this run, instead of the config's. */
+  toolSets?: string[];
+  /** Thinking level for this run, instead of the config's. */
+  thinking?: ThinkingLevel;
+  /** A dispatcher's labels (run id, wake reasons, card, tier, ...), written into the trace's meta line as `dispatch`. */
+  dispatch?: Record<string, unknown>;
   /** Fetched prompt parts (a thread, the tracker row, PR status, recall hits), built by `wakeContext` before the run. */
   parts?: Part[];
   /** What each fetcher did, for the trace; the parts' sizes land in `parts` like every other part. */
@@ -133,6 +145,7 @@ export class ZenAgent {
       skills: this.skills,
       caps: cfg.context.parts,
       task: opts.task,
+      handoff: opts.handoff,
       extra: opts.parts ?? [],
       environment: {
         'working directory': cfg.workdir,
@@ -153,14 +166,14 @@ export class ZenAgent {
       fetch: opts.fetch ?? fetch,
       delegate: (d) => this.delegate(d),
     };
-    this.tools = opts.tools ?? buildTools(toolCtx);
+    this.tools = opts.tools ?? buildTools(toolCtx, opts.toolSets ?? cfg.tools);
 
     const resumed = opts.resume ? Session.load(cfg.sessionsDir, opts.resume).messages : [];
     this.agent = new Agent({
       initialState: {
         systemPrompt: this.prompt.prompt,
         model: this.model,
-        thinkingLevel: cfg.thinking,
+        thinkingLevel: opts.thinking ?? cfg.thinking,
         tools: this.tools,
         messages: resumed as AgentMessage[],
       },
@@ -219,6 +232,7 @@ export class ZenAgent {
 
     this.session.write({
       type: 'meta',
+      version: TRACE_VERSION,
       id,
       at: now(),
       persona: this.persona?.name ?? null,
@@ -231,6 +245,7 @@ export class ZenAgent {
       skills: this.skills.map((s) => s.name),
       resumed: opts.resume ?? null,
       workdir: cfg.workdir,
+      dispatch: opts.dispatch ?? {},
     });
   }
 
@@ -268,7 +283,10 @@ export class ZenAgent {
     const usage = sumUsage(messages);
     const err = this.agent.state.errorMessage;
     const stopped: Stopped = this.stopped !== 'done' ? this.stopped : err ? 'error' : 'done';
-    const r: RunResult = { text: lastText(messages), stopped, turns: this.turns, usage, sessionId: this.session.id, sessionPath: this.session.path };
+    const r: RunResult = {
+      text: lastText(messages), stopped, turns: this.turns, usage, model: `${this.model.provider}/${this.model.id}`, parts: this.prompt.parts,
+      sessionId: this.session.id, sessionPath: this.session.path,
+    };
     if (err) r.error = err;
     return r;
   }
@@ -300,6 +318,8 @@ export class ZenAgent {
       persona: d.persona ?? this.persona,
       budget: { ...this.budget, turns: Math.min(this.budget.turns, 15), ...stripUndefined(d.budget ?? {}) },
       task: undefined,
+      handoff: undefined,
+      dispatch: undefined,
       parts: undefined,
       fetchers: undefined,
       resume: undefined,

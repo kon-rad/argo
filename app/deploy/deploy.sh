@@ -23,6 +23,8 @@
 #   DEPLOY_NO_ROLLBACK=1 leave a failed deploy in place instead of putting the previous build back
 #   DEPLOY_EMBED=1       install the nightly embed timer (needs a local Ollama service)
 #   DEPLOY_DB_BACKUP=1   install the nightly pg_dump-to-B2 timer (needs b2store for the app user)
+#   ORG_DISPATCH=on      install the org-dispatch timer (zen-agent bots; docs/zen-runtime.md). Also read from
+#                        the server's /etc/secondbrain/env, so setting it there is enough
 #   DEPLOY_MODULES       the server's module list, when it differs from this machine's MODULES
 #                        (e.g. voice here, livestream there); else MODULES. Each module installs its own timers:
 #                        agents: agents-sync · usage: usage-sync, credits-sync, the usage importer
@@ -57,7 +59,7 @@ read_env() {
 }
 for k in DEPLOY_HOST DEPLOY_PUBLIC_HOST DEPLOY_VAULT_DIR DEPLOY_APP_USER DEPLOY_APP_DIR DEPLOY_HERMES_HOME \
          EXTRA_CADDY_IMPORT DEPLOY_REDIRECT_FROM DEPLOY_PAUSE_FILE DEPLOY_EMBED DEPLOY_DB_BACKUP DEPLOY_MODULES MODULES \
-         DEPLOY_NO_ROLLBACK; do
+         DEPLOY_NO_ROLLBACK ORG_DISPATCH; do
   read_env "$k"
 done
 
@@ -73,9 +75,10 @@ PAUSE_FILE="${DEPLOY_PAUSE_FILE:-}"
 WITH_EMBED="${DEPLOY_EMBED:-0}"
 WITH_BACKUP="${DEPLOY_DB_BACKUP:-0}"
 NO_ROLLBACK="${DEPLOY_NO_ROLLBACK:-0}"
+WITH_DISPATCH="${ORG_DISPATCH:-off}"
 # The module list without spaces, so it travels to the server as one safe word.
 MODS="$(printf '%s' "${DEPLOY_MODULES:-${MODULES:-}}" | tr -d ' ')"
-for v in "$APP_USER" "$APP_DIR" "$VAULT_DIR" "$PUBLIC_HOST" "$HERMES_HOME_REMOTE" "$EXTRA_IMPORT" "$REDIRECT_FROM" "$PAUSE_FILE" "$MODS" "$WITH_EMBED" "$WITH_BACKUP" "$ENGINE_COMMIT" "$NO_ROLLBACK"; do
+for v in "$APP_USER" "$APP_DIR" "$VAULT_DIR" "$PUBLIC_HOST" "$HERMES_HOME_REMOTE" "$EXTRA_IMPORT" "$REDIRECT_FROM" "$PAUSE_FILE" "$MODS" "$WITH_EMBED" "$WITH_BACKUP" "$WITH_DISPATCH" "$ENGINE_COMMIT" "$NO_ROLLBACK"; do
   [[ "$v" =~ ^[A-Za-z0-9._/@:,-]*$ ]] || { echo "unsafe character in setting: $v"; exit 1; }
 done
 
@@ -87,7 +90,7 @@ rsync -az --delete \
   "$APP_ROOT/" "$HOST:$APP_DIR/"
 
 echo "→ provisioning and restarting"
-ssh "$HOST" "APP_DIR=$APP_DIR VAULT=$VAULT_DIR APP_USER=$APP_USER PUBLIC_HOST=$PUBLIC_HOST HERMES_HOME_REMOTE=$HERMES_HOME_REMOTE EXTRA_IMPORT=$EXTRA_IMPORT REDIRECT_FROM=$REDIRECT_FROM PAUSE_FILE=$PAUSE_FILE MODS=$MODS WITH_EMBED=$WITH_EMBED WITH_BACKUP=$WITH_BACKUP ENGINE_COMMIT=$ENGINE_COMMIT NO_ROLLBACK=$NO_ROLLBACK bash -s" <<'REMOTE'
+ssh "$HOST" "APP_DIR=$APP_DIR VAULT=$VAULT_DIR APP_USER=$APP_USER PUBLIC_HOST=$PUBLIC_HOST HERMES_HOME_REMOTE=$HERMES_HOME_REMOTE EXTRA_IMPORT=$EXTRA_IMPORT REDIRECT_FROM=$REDIRECT_FROM PAUSE_FILE=$PAUSE_FILE MODS=$MODS WITH_EMBED=$WITH_EMBED WITH_BACKUP=$WITH_BACKUP WITH_DISPATCH=$WITH_DISPATCH ENGINE_COMMIT=$ENGINE_COMMIT NO_ROLLBACK=$NO_ROLLBACK bash -s" <<'REMOTE'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 id "$APP_USER" >/dev/null || { echo "user $APP_USER missing: create it and give it the vault checkout"; exit 1; }
@@ -310,6 +313,9 @@ has projects && unit secondbrain-projects-render
 if has map; then unit secondbrain-map-build; unit secondbrain-metrics; fi
 has livestream && unit secondbrain-livestream
 has social && unit secondbrain-social
+# org-dispatch: only with the org module and ORG_DISPATCH=on (here or in the server's env file).
+grep -qsE '^ORG_DISPATCH=on$' /etc/secondbrain/env && WITH_DISPATCH=on
+if has org && [ "$WITH_DISPATCH" = on ]; then unit secondbrain-dispatch; fi
 [ "$WITH_EMBED" = 1 ] && unit secondbrain-embed
 [ "$WITH_BACKUP" = 1 ] && unit secondbrain-db-backup
 

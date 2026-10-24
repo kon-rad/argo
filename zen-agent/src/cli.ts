@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import type { AgentEvent } from '@earendil-works/pi-agent-core';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { ZenAgent, type RunResult } from './agent.js';
-import { loadConfig, type Budget, type ZenConfig } from './config.js';
+import { loadConfig, THINKING_LEVELS, type Budget, type ThinkingLevel, type ZenConfig } from './config.js';
 import { decide, findLocalRules, loadLocalRules } from './guard.js';
 import { availableProviders, buildModels } from './models.js';
 import { listPersonas, loadPersona } from './persona.js';
@@ -25,15 +26,18 @@ const USAGE = `zen-agent: a minimal agent harness
   zen-agent config                       the effective configuration
   zen-agent guard                        a PreToolUse hook: payload on stdin, exit 2 blocks
 
-Options: --persona <name>  --model <provider/model>  --config <zen.json>  --workdir <dir>
-         --task "<standing orders>"  --max-turns N  --max-tokens N  --max-minutes N
-         --board <slug>  --json  --quiet
+Options: --persona <name>  --model <provider/model>  --thinking <level>  --config <zen.json>
+         --workdir <dir>  --task "<standing orders>"  --task-file <f>  --handoff-file <f>
+         --tools fs,shell,...  --meta key=value (repeatable)  --meta-json '{...}'
+         --max-turns N  --max-tokens N  --max-minutes N  --board <slug>  --json  --quiet
          --thread <message id>  the thread this run answers (a DM, handoff or mention wake): its messages become the
                                 thread part of the prompt, nothing else of the board does
          --fetch a,b | none     context fetchers for this wake (tracker, github, recall); default: context.fetchers
          --resume <session>     run and chat only: continue a session. A wake never resumes
          lane: --runtime <r> | --agent <name>  --once  --interval <seconds>
          sessions: --json       one summary line per session (parts, fetchers, usage) for comparing runs
+A dispatcher's flags: --tools picks this run's tool sets, --handoff-file is the previous run's conclusion
+(the handoff part), --meta labels land in the trace's meta line under "dispatch".
 Secrets come from the environment only (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...; see README).`;
 
 interface Flags {
@@ -42,6 +46,12 @@ interface Flags {
   config?: string;
   workdir?: string;
   task?: string;
+  'task-file'?: string;
+  'handoff-file'?: string;
+  tools?: string;
+  thinking?: string;
+  meta?: string[];
+  'meta-json'?: string;
   resume?: string;
   thread?: string;
   fetch?: string;
@@ -70,6 +80,12 @@ function parse(argv: string[]): { command: string; positionals: string[]; flags:
       config: { type: 'string', short: 'c' },
       workdir: { type: 'string', short: 'C' },
       task: { type: 'string' },
+      'task-file': { type: 'string' },
+      'handoff-file': { type: 'string' },
+      tools: { type: 'string' },
+      thinking: { type: 'string' },
+      meta: { type: 'string', multiple: true },
+      'meta-json': { type: 'string' },
       resume: { type: 'string' },
       thread: { type: 'string' },
       fetch: { type: 'string' },
@@ -102,6 +118,48 @@ function budgetFlags(f: Flags): Partial<Budget> {
 
 function config(f: Flags): ZenConfig {
   return loadConfig({ path: f.config, workdir: f.workdir, overrides: f.model ? { model: f.model } : {} });
+}
+
+/** `--meta key=value` pairs and `--meta-json` merged into one object: the dispatcher's labels for the trace. */
+export function parseMeta(pairs: string[] = [], json?: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (json) {
+    const parsed = JSON.parse(json) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('--meta-json must be a JSON object');
+    Object.assign(out, parsed);
+  }
+  for (const p of pairs) {
+    const eq = p.indexOf('=');
+    if (eq <= 0) throw new Error(`--meta expects key=value, got "${p}"`);
+    out[p.slice(0, eq)] = p.slice(eq + 1);
+  }
+  return out;
+}
+
+export function parseThinking(level?: string): ThinkingLevel | undefined {
+  if (level === undefined) return undefined;
+  if (!(THINKING_LEVELS as readonly string[]).includes(level)) throw new Error(`--thinking must be one of ${THINKING_LEVELS.join(', ')}`);
+  return level as ThinkingLevel;
+}
+
+export function parseTools(list?: string): string[] | undefined {
+  if (list === undefined) return undefined;
+  const names = list.split(',').map((s) => s.trim()).filter(Boolean);
+  if (!names.length) throw new Error('--tools expects a comma list of tool sets');
+  return names;
+}
+
+/** The per-run options every command shares: standing orders (inline or from a file), the handoff, tools, thinking, labels. */
+function runOptions(f: Flags): { task?: string; handoff?: string; toolSets?: string[]; thinking?: ThinkingLevel; dispatch: Record<string, unknown> } {
+  const fromFile = f['task-file'] ? readFileSync(f['task-file'], 'utf8').trim() : undefined;
+  const task = [f.task, fromFile].filter((s): s is string => Boolean(s && s.trim())).join('\n\n') || undefined;
+  return {
+    task,
+    handoff: f['handoff-file'] ? readFileSync(f['handoff-file'], 'utf8').trim() || undefined : undefined,
+    toolSets: parseTools(f.tools),
+    thinking: parseThinking(f.thinking),
+    dispatch: parseMeta(f.meta, f['meta-json']),
+  };
 }
 
 function threadFlag(f: Flags): number | null {
@@ -172,11 +230,11 @@ async function main(argv: string[]): Promise<number> {
       const persona = name ? loadPersona(cfg, name) : null;
       // A DM, handoff or mention wake: the thread it answers is the only board history in the prompt.
       const ctx = await wakeContext({ cfg, card: null, persona, thread: threadFlag(flags), fetchers: fetchFlag(flags) ?? [] });
-      const zen = new ZenAgent({ config: cfg, persona, budget: budgetFlags(flags), task: flags.task, parts: ctx.parts, fetchers: ctx.fetchers, resume: flags.resume, onEvent: flags.json ? undefined : printer(flags.quiet === true) });
+      const zen = new ZenAgent({ config: cfg, persona, budget: budgetFlags(flags), ...runOptions(flags), parts: ctx.parts, fetchers: ctx.fetchers, resume: flags.resume, onEvent: flags.json ? undefined : printer(flags.quiet === true) });
       return report(await zen.run(prompt), flags);
     }
     case 'chat': {
-      const zen = new ZenAgent({ config: config(flags), persona: personaOf(flags), budget: { turns: 10_000, tokens: 50_000_000, minutes: 100_000, ...budgetFlags(flags) }, task: flags.task, resume: flags.resume, onEvent: printer(flags.quiet === true) });
+      const zen = new ZenAgent({ config: config(flags), persona: personaOf(flags), budget: { turns: 10_000, tokens: 50_000_000, minutes: 100_000, ...budgetFlags(flags) }, ...runOptions(flags), resume: flags.resume, onEvent: printer(flags.quiet === true) });
       const rl = createInterface({ input: process.stdin, output: process.stderr });
       process.stderr.write(`zen-agent chat: ${zen.persona?.name ?? 'default'} on ${zen.model.provider}/${zen.model.id}; session ${zen.session.id}. /quit to leave.\n`);
       for (;;) {
@@ -197,7 +255,7 @@ async function main(argv: string[]): Promise<number> {
       const persona = personaOf(flags);
       const kb = makeKanban(cfg.kanban, process.env, fetch, persona ?? 'zen-agent');
       if (!kb) throw new Error('wake needs a kanban backend in zen.json ("kanban": {"kind": "board" | "cli" | "hub", ...})');
-      const r = await runWake({ cfg, kb, cardId, board: flags.board, persona, budget: budgetFlags(flags), task: flags.task, thread: threadFlag(flags), fetchers: fetchFlag(flags), onEvent: flags.json ? undefined : printer(flags.quiet === true) });
+      const r = await runWake({ cfg, kb, cardId, board: flags.board, persona, budget: budgetFlags(flags), ...runOptions(flags), thread: threadFlag(flags), fetchers: fetchFlag(flags), onEvent: flags.json ? undefined : printer(flags.quiet === true) });
       return report(r, flags);
     }
     case 'lane': {
@@ -296,10 +354,20 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-main(process.argv.slice(2)).then(
-  (code) => process.exit(code),
-  (err) => {
-    console.error(`zen-agent: ${(err as Error).message}`);
-    process.exit(1);
-  },
-);
+// Run only as the command (not when a test imports the parsers above).
+function isMain(): boolean {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]!) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+if (isMain()) {
+  main(process.argv.slice(2)).then(
+    (code) => process.exit(code),
+    (err) => {
+      console.error(`zen-agent: ${(err as Error).message}`);
+      process.exit(1);
+    },
+  );
+}

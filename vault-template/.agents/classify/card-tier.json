@@ -1,0 +1,17 @@
+{
+  "$comment": "Which model tier a card needs (docs/zen-runtime.md, section 6.2). `act` when the classifier's confidence in its tier is at least `act`: the dispatcher routes the run to that tier's model and thinking level from secondbrain.json dispatch.tiers. Below `act` the action is `escalate` and the lane default stays. Cards with a verify: line or a retry history keep the default regardless (a dispatcher rule, not this schema).",
+  "decision": "card-tier",
+  "version": "1",
+  "privacy": "shared",
+  "primitive": "choice",
+  "question": "A kanban card for an AI agent is in state (title, body, lane, parents). Pick the smallest model tier that can finish it well on the first run.",
+  "options": ["flash-low", "flash-high", "mid", "strong"],
+  "criteria": {
+    "flash-low": "A short, well-specified task: one file, one message, a lookup, a summary of given text. No design decisions.",
+    "flash-high": "A bounded task with a few steps and a clear check: a script, a note from sources, a small fix with a test to run.",
+    "mid": "Several files or steps, some judgement about approach, or reading a lot of context before changing anything.",
+    "strong": "Open-ended design, cross-cutting refactors, subtle bugs, or work where a wrong answer is expensive to undo."
+  },
+  "act": 0.85,
+  "escalate": 0.5
+}
