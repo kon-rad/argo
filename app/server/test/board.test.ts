@@ -151,6 +151,22 @@ describe('the record', () => {
     expect(after.events.map((e) => e.kind)).toContain('reclaimed');
   });
 
+  it('claim by task_id: a lane that already picked a card claims that exact one, or fails without taking another', async () => {
+    const a = await createCard('owner', { title: 'Picked by the lane', assignee: 'rune', priority: 1 });
+    const b = await createCard('owner', { title: 'Also ready', assignee: 'rune', priority: 2 });
+    // Someone else takes it first: the named claim fails and must not fall back to a different ready card.
+    await claimCard(null, { agent: 'rune', taskId: a.id });
+    expect(await claimCard(null, { runtime: 'zen-agent', taskId: a.id })).toBeNull();
+    expect((await getCard(b.id)).card.status).toBe('ready'); // b is untouched, not grabbed as a consolation prize
+    // The exact card claims cleanly when it is still ready.
+    const got = await claimCard(null, { agent: 'rune', taskId: b.id });
+    expect(got!.id).toBe(b.id);
+    expect((await getCard(b.id)).card.status).toBe('running');
+    // A bot naming a card is still bound by "only its own cards" (rune has no dispatch capability here).
+    const c = await createCard('owner', { title: "Not vera's", assignee: 'vera' });
+    await expect(claimCard('rune', { runtime: 'hermes', taskId: c.id })).rejects.toThrow(/only its own cards/);
+  });
+
   it('finish: only the assignee or a human; done writes the result and the verification; blocked needs a kind; budget and partial', async () => {
     const c = await createCard('owner', { title: 'Verify the board', assignee: 'rune', project: 'secondbrain-app', feature: 'board', kind: 'verify' });
     await claimCard(null, { agent: 'rune' });

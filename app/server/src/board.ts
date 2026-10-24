@@ -284,13 +284,18 @@ export interface ClaimOpts {
   board?: string;
   leaseMinutes?: number;
   wakeup?: number;
+  /** Claim this exact card, not just the next ready one: a lane (cc-dispatcher) that already picked a task from its
+   * own sorted, filtered list needs the same "claim this one or fail" guarantee Hermes's `kanban claim <id>` gives. */
+  taskId?: string;
 }
 
-/** The next ready card for a lane, now running with a lease; null when nothing waits. `by` null is the owner's own process. */
+/** The next ready card for a lane, now running with a lease; null when nothing waits. `by` null is the owner's own process.
+ * With `taskId`, claims that exact card instead (null if it is not `ready` or was claimed first). */
 export async function claimCard(by: string | null, o: ClaimOpts): Promise<Card | null> {
   if (!o.runtime && !o.agent) throw new BoardError('claim needs --runtime or --agent');
+  if (o.taskId) checkId(o.taskId);
   try {
-    const { rows } = await query<Card>(`SELECT * FROM board_card_claim($1,$2,$3,$4,$5,$6)`, [by, o.runtime ?? null, o.agent ?? null, o.leaseMinutes ?? config.boardLeaseMinutes, o.board ?? null, o.wakeup ?? null]);
+    const { rows } = await query<Card>(`SELECT * FROM board_card_claim($1,$2,$3,$4,$5,$6,$7)`, [by, o.runtime ?? null, o.agent ?? null, o.leaseMinutes ?? config.boardLeaseMinutes, o.board ?? null, o.wakeup ?? null, o.taskId ?? null]);
     return rows[0]?.id ? rows[0] : null;
   } catch (err) {
     return translate(err);

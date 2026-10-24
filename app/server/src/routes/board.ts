@@ -53,7 +53,7 @@ const CommentBody = z.object({ body: z.string().trim().min(1).max(8000) });
 const MoveBody = z.object({ status: z.enum(STATUSES), note: z.string().trim().max(2000).optional() });
 const LinkBody = z.object({ depends_on: Id });
 const FlagsBody = z.object({ ship_now: z.boolean().optional(), needs: z.enum(['code', 'review', 'merge', 'deploy', 'm1', 'web']).optional() });
-const ClaimBody = z.object({ runtime: z.string().regex(/^[a-z-]{1,20}$/).optional(), agent: Name.optional(), board: BoardSlug.optional(), lease_minutes: z.number().int().min(1).max(1440).optional(), wakeup: z.number().int().positive().optional() });
+const ClaimBody = z.object({ runtime: z.string().regex(/^[a-z-]{1,20}$/).optional(), agent: Name.optional(), board: BoardSlug.optional(), lease_minutes: z.number().int().min(1).max(1440).optional(), wakeup: z.number().int().positive().optional(), task_id: Id.optional() });
 const HeartbeatBody = z.object({ tokens: z.number().int().nonnegative().optional(), turns: z.number().int().nonnegative().optional(), lease_minutes: z.number().int().min(1).max(1440).optional() });
 const FinishBody = z.object({
   outcome: z.enum(OUTCOMES), result: z.string().trim().max(4000).optional(), block_kind: z.enum(BLOCK_KINDS).optional(),
@@ -182,7 +182,7 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
     const b = parseOr400(ClaimBody, req.body ?? {});
     const c = caller(res);
     // The owner's session claims as the owner's process (any lane); a token claims as its agent (its own cards, or any with dispatch).
-    const card = await boardErrors(() => claimCard(c.viaToken ? c.name : null, { runtime: b.runtime, agent: b.agent, board: b.board, leaseMinutes: b.lease_minutes, wakeup: b.wakeup }));
+    const card = await boardErrors(() => claimCard(c.viaToken ? c.name : null, { runtime: b.runtime, agent: b.agent, board: b.board, leaseMinutes: b.lease_minutes, wakeup: b.wakeup, taskId: b.task_id }));
     if (!card) {
       res.status(204).end();
       return;
