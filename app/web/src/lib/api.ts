@@ -455,7 +455,7 @@ export interface UsageSessionRow {
   task_id: string | null; lane: string | null; archive_id: number | null;
   agent_name?: string | null; project_slug?: string | null; work_type?: string | null; runs?: number;
 }
-/** One `claude -p` run: a bot's wake or a lane's card, with its labels and token sums (tokens null when its calls are not in yet). */
+/** One headless run (claude-code or zen-agent): a bot's wake or a lane's card, with its labels and token sums (tokens null when its calls are not in yet). */
 export interface UsageRun {
   host: string; run_id?: string; session_id: string; task_id: string | null; lane: string | null; board: string | null; model: string | null;
   started_at: string | null; ended_at: string | null; duration_ms: number | null; num_turns: number | null; subtype: string | null;
@@ -464,6 +464,9 @@ export interface UsageRun {
   agent_name?: string | null; team_slug?: string | null; reason?: string | null; reasons?: { reason: string | null; ref: string | null }[];
   work_type?: string | null; project_slug?: string | null; feature_slug?: string | null; card_title?: string | null; resumed?: boolean | null;
   surface?: string; calls?: number | null; input?: number | null; cache_write?: number | null; cache_read?: number | null; output?: number | null;
+  /** 'claude-code' or 'zen-agent'; cost_usd is real dollars for an API runtime and null for the subscription. */
+  runtime?: string; source?: string; tier?: string | null; outcome?: string | null; cost_usd?: number | null;
+  compactions?: number | null; blocked?: number | null;
 }
 export interface OrgWakeRow {
   agent_name: string; team_slug: string | null; role: string; wakes: number; done: number; open: number; routine: number;
