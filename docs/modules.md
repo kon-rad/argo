@@ -173,4 +173,4 @@ A standard LinkedIn app gets a 60-day access token and **no refresh token** (Lin
 
 ## Adding a module
 
-A new optional feature is a new module, off by default. The checklist is in [`../CONTRIBUTING.md`](../CONTRIBUTING.md#adding-a-module).
+A new optional feature is a new module, off by default. The checklist is in [`CONTRIBUTING.md`](https://github.com/kon-rad/secondbrain/blob/main/CONTRIBUTING.md#adding-a-module).

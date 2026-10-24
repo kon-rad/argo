@@ -39,7 +39,7 @@ You don't need Exo to use secondbrain: it runs the same on a laptop or a small s
 | [`skills/`](skills/) | Shared agent skills (`SKILL.md`, used by both Claude Code and Hermes): `fact-check`, `ingest`, `company-report`, `org-member`, `livestream-x` |
 | `bin/secondbrain-vault` | Starts a vault, compiles its `AGENTS.md`, links the skills |
 | [`addons/tv-kiosk/`](addons/tv-kiosk/README.md) | Flash a Raspberry Pi that shows the app full screen on a TV |
-| [`docs/`](docs/README.md) | How it all works, how to set it up, every setting |
+| [`docs/`](docs/README.md) | How it all works, how to set it up, every setting. Also a site: [kon-rad.github.io/secondbrain](https://kon-rad.github.io/secondbrain/) |
 
 ### Modules
 
@@ -136,8 +136,11 @@ The launcher rebuilds and runs new migrations on the next start. More in [docs/v
 
 ## Documentation
 
+Everything below is also a site: **[kon-rad.github.io/secondbrain](https://kon-rad.github.io/secondbrain/)**, with search and navigation, built from `docs/` on every change.
+
 | Doc | |
 |---|---|
+| [Onboarding](docs/onboarding/README.md) | Ten short pages for a new user: what you get and what to borrow, set up a vault, connect Claude Code, Hermes or another harness, connect servers and computers, privacy, configuration and secrets, orchestrating agents, adapting it to your notes, app, business or startup |
 | [Getting started](docs/getting-started.md) | From nothing to a running vault |
 | [Architecture](docs/architecture.md) | Engine and vault, the app and its index, the harness, data flow |
 | [Your vault](docs/vault.md) | The template, `secondbrain-vault`, rules and skills, updating |
