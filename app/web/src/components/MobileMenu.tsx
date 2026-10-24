@@ -1,6 +1,6 @@
 import { useEffect, useId } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import type { NavItem } from './NavMenu.js';
+import { itemKey, type NavItem } from './NavMenu.js';
 
 /**
  * Phone navigation: a menu button in the header opens a slide-over with every
@@ -80,17 +80,24 @@ export default function MobileMenu({
             <div className="px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-faint)]">{label}</div>
             <ul>
               {items.map((i) => (
-                <li key={i.to}>
-                  <NavLink
-                    to={i.to}
-                    end={i.end}
-                    onClick={onClose}
-                    className={({ isActive }) =>
-                      `flex min-h-11 items-center rounded px-2 text-base ${isActive ? 'bg-[var(--paper-sunk)] font-medium text-[var(--ink)]' : 'text-[var(--ink-dim)]'}`
-                    }
-                  >
-                    {i.label}
-                  </NavLink>
+                <li key={itemKey(i)}>
+                  {i.to === undefined ? (
+                    <button type="button" onClick={() => { onClose(); i.onSelect(); }}
+                      className="flex min-h-11 w-full items-center rounded px-2 text-left text-base text-[var(--ink-dim)]">
+                      {i.label}
+                    </button>
+                  ) : (
+                    <NavLink
+                      to={i.to}
+                      end={i.end}
+                      onClick={onClose}
+                      className={({ isActive }) =>
+                        `flex min-h-11 items-center rounded px-2 text-base ${isActive ? 'bg-[var(--paper-sunk)] font-medium text-[var(--ink)]' : 'text-[var(--ink-dim)]'}`
+                      }
+                    >
+                      {i.label}
+                    </NavLink>
+                  )}
                 </li>
               ))}
             </ul>

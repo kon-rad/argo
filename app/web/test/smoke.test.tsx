@@ -130,6 +130,25 @@ describe('nav follows /api/meta', () => {
     expect(screen.getByRole('menuitem', { name: 'Devlog' }).getAttribute('href')).toBe('/file/Projects/dev-log.md');
     expect(screen.queryByRole('menuitem', { name: 'Docs' })).toBeNull();
   });
+
+  it('with the chat module on, the header button and the Vault menu entry open the chat panel', async () => {
+    META = { modules: ['chat'], owner: 'owner', devLogPath: null, docsPath: null, robot: false };
+    renderAt('/');
+    const button = await screen.findByRole('button', { name: 'Ask your second brain' });
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: /Vault/ }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Ask your second brain' }));
+    expect(await screen.findByRole('dialog', { name: 'Ask your second brain' })).toBeDefined();
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('without the chat module, neither the button nor the menu entry exists', async () => {
+    renderAt('/');
+    await screen.findByLabelText('Search the vault');
+    expect(screen.queryByRole('button', { name: 'Ask your second brain' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Vault/ }));
+    expect(screen.queryByRole('menuitem', { name: 'Ask your second brain' })).toBeNull();
+  });
 });
 
 describe('App', () => {
