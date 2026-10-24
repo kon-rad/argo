@@ -7,7 +7,7 @@ A minimal agent harness: one loop, hooks on the loop, and everything else a file
 | **Any persona** | A roster entry (`org.json` or `org.yaml`: role, team, lead, model, expertise, capabilities) plus its definition file and its playbook become the top of the system prompt. `--persona atlas` |
 | **Any provider, any model** | pi-ai's forty providers by key in the environment, plus any OpenAI-compatible or Anthropic-compatible endpoint from `zen.json`. `--model openrouter/anthropic/claude-sonnet-4-6`, `--model ollama/qwen3:8b` |
 | **Skills** | Agent Skills folders (`<dir>/<name>/SKILL.md`). The prompt lists names and descriptions; `read_skill` loads one on demand. A private skill shadows a shared one of the same name |
-| **Kanban board** | Typed tools over the board: list, show, create, comment, assign, complete, block. Two backends: agent-hub's HTTP API or the `hermes kanban` command line. `zen-agent wake <card>` makes the card the task and its `## Budget` the budget |
+| **Kanban board** | Typed tools over the board: list, show, create, comment, assign, complete, block. Three backends: the engine's own board (`/api/board` with a board token), agent-hub's HTTP API, or the `hermes kanban` command line. `zen-agent wake <card>` makes the card the task and its budget the run's; `zen-agent lane` claims ready cards from the engine's board and wakes for each |
 | **Knowledge base** | The second brain's retrieval API as tools: `search_notes` (hybrid keyword + vector), `search_everything` (notes, records, transcripts), `read_note` |
 | **Message board** | `cli-org` as typed tools: whoami, read, post, dm, handoff, ask-owner, tasks, recall, remember, under the persona's identity |
 | **Budgets** | Turns, tokens and minutes, enforced in the loop. A run that hits one ends with `stopped: budget` and exit code 3 |
@@ -61,7 +61,7 @@ Secrets come from the environment only: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `
 | `fs.roots` | the working directory and the vault | Where the file tools may read and write; `bash` is not confined |
 | `shell.timeoutS`, `shell.maxOutput` | 120, 12 000 | Command timeout and the output cap (head and tail kept) |
 | `knowledge` | `{ "kind": "none" }` | `{ "kind": "secondbrain", "url": "http://127.0.0.1:3000", "headersEnv": "ZEN_SB_HEADERS" }` |
-| `kanban` | `{ "kind": "none" }` | `{ "kind": "cli", "command": "hermes", "board": "exo" }` or `{ "kind": "hub", "url": "http://127.0.0.1:8787", "tokenEnv": "AGENT_HUB_TOKEN", "board": "exo" }` |
+| `kanban` | `{ "kind": "none" }` | `{ "kind": "board", "url": "http://127.0.0.1:5123", "tokenEnv": "BOARD_TOKEN", "board": "exo" }` (the engine's board; the token comes from `cli-board token create`), `{ "kind": "cli", "command": "hermes", "board": "exo" }` or `{ "kind": "hub", "url": "http://127.0.0.1:8787", "tokenEnv": "AGENT_HUB_TOKEN", "board": "exo" }` |
 | `org.command` | `cli-org` | The message board CLI; the `org` tools appear only when it is on the PATH and a persona is set |
 | `providers` | `{}` | Extra endpoints: `{ "<id>": { "api": "openai-completions" \| "anthropic-messages", "baseUrl", "apiKeyEnv"?, "models": [{ "id", "contextWindow"?, "maxTokens"?, "reasoning"? }] } }` |
 
@@ -74,6 +74,7 @@ zen-agent run "Summarise Areas/goals.md in five lines"           # one task, ans
 zen-agent run --persona atlas --task "Review only; do not edit" --file brief.md
 zen-agent chat --persona bolt --model openrouter/openai/gpt-5.2  # a conversation; /quit to leave
 zen-agent wake t_3f9a12 --persona bolt                           # the card is the task
+zen-agent lane --runtime zen-agent                               # claim ready cards from the engine's board, wake for each
 zen-agent run --resume bolt-20261024-091500-k3j2 "Continue"      # replay a session and go on
 ORG_AGENT=bolt zen-agent wake t_3f9a12 --json --tools kanban,org,fs,shell --thinking low \
   --handoff-file /tmp/bolt-last.md --meta run_id=bolt-20261024-120000 --meta-json '{"reasons":[{"reason":"task","ref":"t_3f9a12"}]}'
@@ -94,11 +95,11 @@ The flags a dispatcher uses, on `run` and `wake` (and `chat`):
 | `--meta key=value` | Repeatable. Labels for the ledger (run id, wake reasons, card, tier); they land in the trace's `meta` line under `dispatch` and change nothing about the run |
 | `--meta-json '{...}'` | The same as one JSON object (for values that are not strings); `--meta` pairs win on a clash |
 
-The `cli` kanban backend calls the board's command line the way the engine's `cli-org` already does (`show --json`, `create`, `comment`, `assign`, `block`); `list --json` and `complete --result` follow the same shape and were written from that usage, not run against a live board. The `hub` backend follows agent-hub's routes as the app's web client calls them.
+The `board` backend speaks the engine's `/api/board` (docs/board-design.md section 5.1): list, show, create, comment, assign, finish (complete and block), claim and heartbeat. The `cli` kanban backend calls the Hermes board's command line the way the engine's `cli-org` already does (`show --json`, `create`, `comment`, `assign`, `block`); `list --json` and `complete --result` follow the same shape and were written from that usage, not run against a live board. The `hub` backend follows agent-hub's routes as the app's web client calls them.
 
 ### A bot wake, end to end
 
-`zen-agent wake <card>` reads the card through the kanban backend, builds the prompt from the card verbatim (body and comments) plus the standing orders of a wake (one card, one run; produce the Returns; post one status with evidence; complete or block the card), takes the budget from the card's `## Budget` line, runs the persona, and exits 0 or 3. The dispatcher's shell script becomes `ORG_AGENT=bolt zen-agent wake t_3f9a12 --json`.
+`zen-agent wake <card>` reads the card through the kanban backend, builds the prompt from the card verbatim (body and comments) plus the standing orders of a wake (one card, one run; produce the Returns; post one status with evidence; complete or block the card), takes the budget from the card's `## Budget` line, runs the persona, and exits 0 or 3. The dispatcher's shell script becomes `ORG_AGENT=bolt zen-agent wake t_3f9a12 --json`. With the engine's board there is no dispatcher to write: `zen-agent lane --runtime zen-agent` claims the next ready card for any `runtime: zen-agent` agent on the roster (or `--agent <name>` for one), runs the wake as that persona, heartbeats every minute while it runs, and releases the card (back to ready, outcome partial) if the run ends without finishing it. `--once` works one card and exits (3 when nothing was ready).
 
 ### As a library
 
@@ -127,8 +128,8 @@ src/
   compaction.ts   compact(messages): summarise the middle, keep head and tail, cut on a user turn
   session.ts      JSONL trace per run; load for resume; list
   wake.ts         card → wake prompt and budget
-  tools/          fs, shell, skill, knowledge, kanban (hub | cli), org (cli-org), subagent (delegate)
-  cli.ts          run, chat, wake, models, personas, skills, sessions, config, guard
+  tools/          fs, shell, skill, knowledge, kanban (board | hub | cli), org (cli-org), subagent (delegate)
+  cli.ts          run, chat, wake, lane, models, personas, skills, sessions, config, guard
 ```
 
 The pi agent core's hooks carry everything:
@@ -165,7 +166,7 @@ The guard checks the text of tool calls, like the Python one; it is a guardrail,
 
 ## Using it from the second brain engine
 
-This folder is a standalone package inside the [secondbrain](https://github.com/kon-rad/secondbrain) repository: it imports nothing from `app/` and nothing imports it. It is the headless runtime the proposal in `docs/self-improvement.md` (section 10) asked for: bot wakes that cost a bounded, measured number of tokens, with the context assembled as code, the guard in process and a complete trace per run. The engine's `org_agents.runtime` already has room for `zen-agent` next to `claude-code` and `hermes`.
+This folder is a standalone package inside the [secondbrain](https://github.com/kon-rad/secondbrain) repository: it imports nothing from `app/` and nothing imports it. It is the headless runtime the proposal in `docs/self-improvement.md` (section 10) asked for: bot wakes that cost a bounded, measured number of tokens, with the context assembled as code, the guard in process and a complete trace per run. The engine's roster accepts `runtime: zen-agent` next to `claude-code` and `hermes`, and its board module lets this runtime claim cards (`zen-agent lane`).
 
 To give it its own repository, split the folder with history:
 

@@ -228,7 +228,9 @@ describe('tick', () => {
     h.setAnswer((i) => i.decision === 'card-tier'
       ? { ...fallthrough(i), action: 'act', answer: 'mid', confidence: 0.9, error: null }
       : fallthrough(i));
-    await query(`INSERT INTO task_links (task_id, board, title, assignee, created_by, work_type) VALUES ('t_abc123', 'exo', 'Fix the build', 'rune', 'atlas', 'coding')`);
+    // The board module's record: task_links is a view over cards, and truncateAll empties the seeded board.
+    await query(`INSERT INTO boards (slug, name) VALUES ('exo', 'Exo') ON CONFLICT DO NOTHING`);
+    await query(`INSERT INTO cards (id, board_slug, title, assignee, created_by, work_type) VALUES ('t_abc123', 'exo', 'Fix the build', 'rune', 'atlas', 'coding')`);
     await query(
       `INSERT INTO usage_runs (host, run_id, session_id, log_path, agent_name, runtime, task_id, started_at, ended_at, subtype, num_turns, total_cost_usd)
        VALUES ('droplet', 'rune-20261023-090000', 'rune-20261023-090000-ab12', '/srv/vault/.zen/sessions/x.jsonl', 'rune', 'zen-agent', 't_abc123',

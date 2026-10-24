@@ -9,7 +9,7 @@ export { listPersonas, loadPersona, personaHeader, readOrg, type Persona } from 
 export { newSessionId, Session, type SessionLine, type UsageTotals } from './session.js';
 export { discoverSkills, skillBody, skillsIndex, splitFrontmatter, type Skill } from './skills.js';
 export { buildTools, TOOL_SETS, type ToolContext, type ToolSet } from './tools/index.js';
-export { CliKanban, HubKanban, formatCard, formatDetail, kanbanTools, makeKanban, type Card, type CardDetail, type KanbanBackend } from './tools/kanban.js';
+export { BoardKanban, CliKanban, HubKanban, formatCard, formatDetail, kanbanTools, makeKanban, type Card, type CardDetail, type KanbanBackend } from './tools/kanban.js';
 export { Knowledge, formatHits, knowledgeTools } from './tools/knowledge.js';
 export { orgTools } from './tools/org.js';
 export { fsTools, resolveIn } from './tools/fs.js';

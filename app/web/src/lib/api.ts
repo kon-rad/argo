@@ -253,7 +253,7 @@ export interface RingNight {
 
 /** What this install has turned on (server: GET /api/meta). */
 export interface AppMeta {
-  modules: ('ring' | 'agents' | 'projects' | 'org' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat')[];
+  modules: ('ring' | 'agents' | 'projects' | 'org' | 'board' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat')[];
   owner: string;
   devLogPath: string | null;
   docsPath: string | null;
@@ -391,6 +391,102 @@ export interface KanbanTaskDetail {
   children: string[];
   comments: { author: string; body: string; created_at: number }[];
   events: { kind: string; payload: Record<string, unknown> | null; created_at: number }[];
+}
+
+// ---- the board module: the kanban record in the engine (/api/board) ----
+
+export const BOARD_STATUSES = ['triage', 'todo', 'scheduled', 'ready', 'running', 'review', 'blocked', 'done', 'archived'] as const;
+export type BoardStatus = (typeof BOARD_STATUSES)[number];
+
+export interface BoardContract {
+  objective?: string;
+  returns?: string[];
+  budget?: { turns?: number; tokens?: number; minutes?: number; wakes?: number };
+  scope?: string[];
+  verification?: string;
+}
+
+export interface BoardCard {
+  id: string;
+  board_slug: string;
+  title: string;
+  body: string | null;
+  contract: BoardContract;
+  status: BoardStatus;
+  priority: number;
+  assignee: string | null;
+  created_by: string;
+  project_slug: string | null;
+  feature_slug: string | null;
+  kind: string;
+  work_type: string | null;
+  needs: string | null;
+  ship_now: boolean;
+  repo: string | null;
+  graph: string | null;
+  node: string | null;
+  rounds: number;
+  scheduled_for: string | null;
+  block_kind: string | null;
+  block_reason: string | null;
+  result: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string;
+}
+
+export interface BoardCardDetail {
+  card: BoardCard;
+  comments: { id: number; author: string; body: string; created_at: string }[];
+  events: { id: number; kind: string; actor: string | null; payload: Record<string, unknown> | null; at: string }[];
+  depends_on: { id: string; title: string; status: string }[];
+  dependants: { id: string; title: string; status: string }[];
+  runs: { id: number; agent_name: string; runtime: string; claimed_at: string; lease_until: string; heartbeat_at: string | null; finished_at: string | null; outcome: string | null; tokens: number | null; turns: number | null }[];
+}
+
+export interface BoardInfo {
+  slug: string;
+  name: string;
+  team_slug: string | null;
+  open: number;
+}
+
+export interface BoardToken {
+  id: number;
+  agent_name: string;
+  label: string | null;
+  created_at: string;
+  last_seen_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface BoardCardFilter {
+  board?: string;
+  status?: string;
+  assignee?: string;
+  project?: string;
+  feature?: string;
+  kind?: string;
+  q?: string;
+  done_days?: number;
+}
+
+export interface NewBoardCard {
+  board?: string;
+  title: string;
+  body?: string;
+  contract?: BoardContract;
+  assignee?: string | null;
+  project?: string;
+  feature?: string;
+  kind?: string;
+  work?: string;
+  needs?: string;
+  repo?: string;
+  priority?: number;
+  deps?: string[];
+  ship_now?: boolean;
 }
 
 /** One line of a Claude Code stream-json log (or a line agent-hub added: "you", "hub"). */
@@ -1048,7 +1144,22 @@ export const api = {
   orgDecide: (id: number, decision: 'approve' | 'deny', note?: string) =>
     request<OrgApproval>(`/org/approvals/${id}/${decision}`, undefined, json('POST', { note })),
   orgFacts: () => request<OrgFact[]>('/org/facts'),
-  orgTasks: (f: { project?: string; feature?: string; agent?: string } = {}) => request<{ tasks: TaskLink[] }>('/org/tasks', f),
+  orgTasks: (f: { project?: string; feature?: string; agent?: string } = {}) => request<{ tasks: (TaskLink & { status?: string })[] }>('/org/tasks', f),
+
+  // The board module.
+  boardBoards: () => request<{ boards: BoardInfo[] }>('/board/boards'),
+  boardCards: (f: BoardCardFilter = {}) => request<{ cards: BoardCard[] }>('/board/cards', f as Params),
+  boardCard: (id: string) => request<BoardCardDetail>(`/board/cards/${id}`),
+  boardCreate: (c: NewBoardCard) => request<{ card: BoardCard; message: OrgMessage | null }>('/board/cards', undefined, json('POST', c)),
+  boardComment: (id: string, body: string) => request<{ comment: BoardCardDetail['comments'][number] }>(`/board/cards/${id}/comment`, undefined, json('POST', { body })),
+  boardAssign: (id: string, t: { assignee: string | null; project?: string; feature?: string }) => request<{ card: BoardCard }>(`/board/cards/${id}/assign`, undefined, json('POST', t)),
+  boardMove: (id: string, status: BoardStatus, note?: string) => request<{ card: BoardCard }>(`/board/cards/${id}/move`, undefined, json('POST', { status, note })),
+  boardFinish: (id: string, b: { outcome: 'done' | 'blocked' | 'partial' | 'budget'; result?: string; block_kind?: string }) => request<{ card: BoardCard }>(`/board/cards/${id}/finish`, undefined, json('POST', b)),
+  boardFlags: (id: string, b: { ship_now?: boolean; needs?: string }) => request<{ card: BoardCard }>(`/board/cards/${id}/flags`, undefined, json('POST', b)),
+  boardLink: (id: string, dependsOn: string) => request<{ ok: true }>(`/board/cards/${id}/link`, undefined, json('POST', { depends_on: dependsOn })),
+  boardLog: (id: string, offset: number) => request<EventPage>(`/board/cards/${id}/log`, { offset }),
+  boardTokens: () => request<{ tokens: BoardToken[] }>('/board/tokens'),
+  boardRevokeToken: (id: number) => request<{ ok: true }>(`/board/tokens/${id}/revoke`, undefined, { method: 'POST' }),
   setProject: (slug: string, patch: Record<string, unknown>) =>
     request<{ stage_changed: boolean }>(`/projects/${slug}`, undefined, json('PATCH', patch)),
   setFeature: (slug: string, feature: string, patch: Record<string, unknown>) =>

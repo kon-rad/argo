@@ -446,6 +446,11 @@ cmd_archive() {
   node --no-warnings "$APP_ROOT/server/dist/cli-archive.js" "$@"
 }
 
+cmd_board() {
+  # The kanban board (cards, board_* functions). Identity from ORG_AGENT, or BOARD_URL + BOARD_TOKEN elsewhere.
+  (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-board.js" "$@")
+}
+
 cmd_org() {
   # The agent company's message board (org_* tables). Identity from ORG_AGENT.
   (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-org.js" "$@")
@@ -505,6 +510,7 @@ secondbrain inventory  list/show/add/update gear rows and file their photos (inv
 secondbrain org        the agent company message board: whoami/read/post/dm/handoff/ask-owner/standup (org help)
 secondbrain org-dispatch  tick | routines: run zen-agent bots for their open wakeups (ORG_DISPATCH=on on a server)
 secondbrain classify   a calibrated decision about a message, card or run, logged (classify help)
+secondbrain board      the kanban board: list/show/create/comment/assign/move/claim/finish/token/import (board help)
 secondbrain backlinks  add a Related links block to each note (dry run; --write applies, --path limits)
 secondbrain map-build  rebuild the brain map's stored layout (droplet)
 secondbrain metrics    collect | set <metric> <value> | list  the brain map's numbers
@@ -530,6 +536,7 @@ case "${1:-start}" in
   org)           cmd_org "${@:2}" ;;
   org-dispatch)  cmd_org_dispatch "${@:2}" ;;
   classify)      cmd_classify "${@:2}" ;;
+  board)         cmd_board "${@:2}" ;;
   backlinks)     cmd_backlinks "${@:2}" ;;
   map-build)     cmd_map_build "${@:2}" ;;
   metrics)       cmd_metrics "${@:2}" ;;

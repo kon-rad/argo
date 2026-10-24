@@ -21,6 +21,7 @@ import {
   getAgent,
   getThread,
   handoff,
+  hermesProjection,
   importOrg,
   KINDS,
   listChannels,
@@ -77,8 +78,8 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   agents                                   the org chart (no identity needed)
   wakeups [--all]                          open wakeups for you (or everyone with --all)
   import <org.json>                        load the compiled org file (agents, teams, channels); idempotent
-  task create <bot> "<title>" --project p [--feature f] [--type t] [--needs cap] [--repo r] [--ship-now] [--body "..."] [--board exo] [--priority N]
-  task assign <card> <bot> --project p [--feature f] [--type t] [--needs cap] [--repo r] [--ship-now] [--board exo]   an existing card becomes the bot's
+  task create <bot|none> "<title>" [--project p] [--feature f] [--type t] [--needs cap] [--repo r] [--ship-now] [--body "..."] [--board exo] [--priority N] [--after t_..,t_..]
+  task assign <card> <bot> [--project p] [--feature f] [--type t] [--needs cap] [--repo r] [--ship-now]   an existing card becomes the bot's
       --repo: where the code lives; a coding card must name a repo the bots reach. Vault code: <bot> is the vault
       assignee (ORG_VAULT_ASSIGNEE, default vault-session: a Claude Code session on the owner's machine, never a bot)
       with --repo vault; leads, the dispatch bot and the owner give it cards
@@ -190,17 +191,8 @@ function here(): string {
   return resolve(fileURLToPath(import.meta.url), '..');
 }
 
-/** `hermes kanban …` for `task create`; ORG_KANBAN_CMD overrides the binary (tests, agent-hub). */
-export function kanbanRunner(env: NodeJS.ProcessEnv = process.env): KanbanRunner {
-  const cmd = env.ORG_KANBAN_CMD ?? 'hermes';
-  return (args) =>
-    new Promise((ok, fail) => {
-      execFile(cmd, args, { env, timeout: 30_000, maxBuffer: 4_000_000 }, (err, stdout, stderr) => {
-        if (err) fail(new OrgError(`kanban: ${(stderr || err.message).trim().slice(0, 300)}`));
-        else ok(stdout);
-      });
-    });
-}
+/** The Hermes projection runner when this machine mirrors cards into the Hermes board (BOARD_HERMES_PROJECTION=on or ORG_KANBAN_CMD), else null. */
+export const kanbanRunner = hermesProjection;
 
 function formatTask(t: TaskLink): string {
   return `${t.task_id}  ${t.assignee.padEnd(8)} ${(t.project_slug ?? '-') + (t.feature_slug ? `/${t.feature_slug}` : '')}${t.work_type ? `  [${t.work_type}]` : ''}  ${t.title}  (by ${t.created_by}, ${when(new Date(t.created_at))})`;
@@ -421,24 +413,24 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       if (sub === 'create') {
         const [, assignee, title] = pos;
         const project = str(opts.project);
-        if (!assignee || !title || !project) throw new OrgError('task create <bot> "<title>" --project <slug> [--feature f] [--body "..."]');
+        if (!assignee || !title) throw new OrgError('task create <bot|none> "<title>" [--project <slug>] [--feature f] [--body "..."]');
         const r = await createTask(await me(), {
-          assignee, title, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, repo: str(opts.repo),
-          body: str(opts.body), board: str(opts.board), priority: num(opts.priority, 'priority'), run,
+          assignee: assignee === 'none' ? null : assignee, title, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, repo: str(opts.repo),
+          body: str(opts.body), board: str(opts.board), priority: num(opts.priority, 'priority'), deps: str(opts.after)?.split(',').map((x) => x.trim()).filter(Boolean), run,
         }, kanbanRunner());
         if (json) out(JSON.stringify(r));
-        else out(`card ${r.task_id} for ${r.link.assignee}: ${r.link.title} (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
+        else out(`card ${r.task_id} ${r.link.assignee ? `for ${r.link.assignee}` : 'unassigned'}: ${r.link.title}${r.link.project_slug ? ` (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})` : ''} [${r.card.status}]${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
         return 0;
       }
       if (sub === 'assign') {
         const [, card, assignee] = pos;
         const project = str(opts.project);
-        if (!card || !assignee || !project) throw new OrgError('task assign <card> <bot> --project <slug> [--feature f] [--board exo]');
+        if (!card || !assignee) throw new OrgError('task assign <card> <bot> [--project <slug>] [--feature f]');
         const r = await assignTask(await me(), {
           taskId: card, assignee, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, repo: str(opts.repo), board: str(opts.board), run,
         }, kanbanRunner());
         if (json) out(JSON.stringify(r));
-        else out(`card ${r.task_id} now ${r.link.assignee}'s: ${r.link.title} (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
+        else out(`card ${r.task_id} now ${r.link.assignee}'s: ${r.link.title}${r.link.project_slug ? ` (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})` : ''}${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
         return 0;
       }
       if (sub === 'redo') {

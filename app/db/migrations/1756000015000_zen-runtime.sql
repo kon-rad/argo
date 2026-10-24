@@ -1,14 +1,11 @@
--- db/migrations/1756000014800_zen-runtime.sql
+-- db/migrations/1756000015000_zen-runtime.sql
 -- Up Migration
 
 -- Bots on zen-agent (docs/zen-runtime.md): a third bot runtime next to claude-code and hermes, the
 -- ledger rows its traces produce, the decisions a classify step makes in front of a wake, and two
 -- rules that stop wakes nobody needs (an acknowledgement, a routine repeated across a day boundary).
 
--- 1. The per-bot switch. The roster's `runtime: zen-agent` is what the dispatcher reads to choose the runner.
-ALTER TABLE org_agents DROP CONSTRAINT org_agents_runtime_check;
-ALTER TABLE org_agents ADD CONSTRAINT org_agents_runtime_check
-  CHECK (runtime IN ('claude-code','hermes','codex','zen-agent','human'));
+-- 1. The per-bot switch is the roster's `runtime: zen-agent`, which the board migration already admits.
 -- Scheduled wakes from the roster: [{ "name", "at": "HH:MM", "days": [1..7]?, "task_file" }], in ORG_TZ.
 ALTER TABLE org_agents ADD COLUMN routines jsonb NOT NULL DEFAULT '[]';
 
@@ -238,6 +235,3 @@ ALTER TABLE org_messages ADD CONSTRAINT org_messages_kind_check
   CHECK (kind IN ('message','status','decision','handoff','question-for-owner','standup','reflection','reply'));
 
 ALTER TABLE org_agents DROP COLUMN routines;
-UPDATE org_agents SET runtime = 'claude-code' WHERE runtime = 'zen-agent';
-ALTER TABLE org_agents DROP CONSTRAINT org_agents_runtime_check;
-ALTER TABLE org_agents ADD CONSTRAINT org_agents_runtime_check CHECK (runtime IN ('claude-code','hermes','codex','human'));

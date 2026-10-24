@@ -2,8 +2,8 @@
 
 ### How the harness, the skills, the board, the org, the cron jobs and the engine itself could learn from their own runs
 
-**Status:** proposal, not built. Nothing in this document is implemented; every path, table and command it names is a suggestion unless it is listed under "What exists today".
-**Written:** 2026-10-24
+**Status:** proposal; two of its pieces have since shipped outside the `improve` module itself. The headless-runtime pilot it asks for in section 10 is built as [`zen-agent/`](https://github.com/kon-rad/secondbrain/blob/main/zen-agent/README.md) ([zen-agent.md](zen-agent.md)); the kanban board it asks to bring into the engine in section 5.3 is built as the `board` module ([board-design.md](board-design.md)). Everything else — the stamp, `run_outcomes`, mining, the eval tiers, the harness-engineer bot, memory curation, the outer loop — is still a suggestion, not built, unless listed under "What exists today".
+**Written:** 2026-10-24 · **Updated:** 2026-10-25, after zen-agent and the board module landed
 **Goal:** Decide how to add a bounded, auditable self-improvement loop to the second brain: one that mines the traces the system already keeps, proposes changes to its own mutable surfaces, evaluates them before anything is promoted, and leaves a record a person can read and revert.
 **Scope:** The engine (this repo) and the vault files it reads. Model weights are out of scope: the models stay frozen behind Claude Code, Hermes and their APIs.
 
@@ -67,7 +67,7 @@ This section is the inventory the rest of the proposal builds on. Paths are real
 | Fact-checker subagent | `harness/claude/agents/fact-checker.md` | Claude Code | Engine PR | Yes | The tables it produces are not stored |
 | Org roster | `.agents/org/org.yaml` in the vault, compiled to `org.json`, imported with `cli-org import` | `org_agents`, `teams`, `org_channels` | The owner; the compiler lives in the vault, not the engine | `org_version` hash on each agent row | Per-bot activity on `/org` and `/usage` |
 | Graph templates | `.agents/org/graphs/*.yaml` → `.agents/org/graphs.json` (`loadGraphs` in `org.ts`) | `cli-org graph apply` | The owner; compiler in the vault | Vault commit; `task_links.graph` and `.node` tag every card | Rounds, time to done and tokens per node are derivable but nobody derives them |
-| Cards and their bodies | The kanban (agent-hub, outside the engine), mirrored in `task_links` | The dispatcher's wake prompt | Leads, members, the owner, graphs | Not versioned | `redo` rounds, `held:` statuses, `block` reasons, `wake-done` fallback statuses |
+| Cards and their bodies | The `board` module in the engine (migration, `board_*` functions, API, `cli-board`; see [board-design.md](board-design.md)), stage 0 still mirroring Hermes's own kanban while the rollout runs | The dispatcher's wake prompt, zen-agent's `board` backend | Leads, members, the owner, graphs | Not versioned; the contract fields (5.3) are not yet filled in by `task create` | `redo` rounds, `held:` statuses, `block` reasons, `wake-done` fallback statuses, and now `card_events`/`card_runs` once stage 1+ writes land |
 | Bot memory files | `.agents/org/memory/<bot>.md` | `cli-org recall` (line-level word match) | The bot, in its weekly reflection | Vault commit | None |
 | Shared facts | `memory_facts` (Postgres), `cli-org remember / recall / forget` | Any runtime | Any agent, with a source | Supersession chain | None: a fact is never scored on whether it was used or was right |
 | Cron jobs | Hermes `cron/jobs.json`, prompt per job; synced into `cron_jobs` | Hermes | The owner, in Hermes | `cron_jobs.raw`, `first_seen_at` | `cron_runs.status`, `cron_outputs` content. No grading |
@@ -76,7 +76,7 @@ This section is the inventory the rest of the proposal builds on. Paths are real
 | Context budget settings | `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES`, `BASH_MAX_OUTPUT_LENGTH`, `MAX_MCP_OUTPUT_TOKENS` | `config.ts`, Claude Code | The owner | Env, unversioned | Tokens per run on `/usage` |
 | The engine code | `app/`, `harness/`, `tools/` | Everything | PR with CI | Git | The test suites |
 
-Two things stand out. First, half of the surfaces that drive the agent company (the roster and graph compiler, the dispatcher, the kanban) live outside the engine, so the engine cannot validate, version or test them. Second, no surface has a signal attached to it. The signals exist (right column) but are never joined to the surface they would judge.
+Two things stand out. First, half of the surfaces that drive the agent company (the roster and graph compiler, the dispatcher) still live outside the engine, so the engine cannot validate, version or test them — though the kanban itself moved in as the `board` module (5.3, [board-design.md](board-design.md)), and the headless runtime those surfaces feed exists as zen-agent (10.4, [zen-agent.md](zen-agent.md)). Second, no surface has a signal attached to it. The signals exist (right column) but are never joined to the surface they would judge.
 
 ### 2.2 Trajectories ($D$) and outcome labels ($T$)
 
@@ -106,7 +106,7 @@ The labels we need are nearly all present: a run either produced a passing verif
 - **No contract on a card.** A card body is prose; nothing states the budget, the artifact to return or the scope. The dispatcher cannot enforce what is not written down.
 - **Memory is a flat file and a fact table.** Recall is a word match over `memory/<bot>.md` lines and a full-text query over facts. Nothing is scored, decayed, curated or promoted to a rule.
 - **Cron is outside the loop.** Hermes cron outputs are synced and displayed but never graded, and the prompts are not versioned by anything the engine sees.
-- **The orchestration surfaces are split across repos.** The roster compiler, the graph compiler, the dispatcher and the kanban live outside the engine. The engine imports their outputs and cannot test them.
+- **The orchestration surfaces are split across repos, less than before.** The kanban moved into the engine as the `board` module ([board-design.md](board-design.md)); the roster and graph compiler and the dispatcher are still outside it, and the engine imports their outputs and cannot test them.
 - **Guard blocks and gate nudges are invisible.** Both hooks log locally or not at all.
 - **Context cost is managed by rules of thumb** (`ORG_SESSION_MAX_RUNS`, output caps) with no measurement of what each rule saves.
 
@@ -368,9 +368,9 @@ nodes:
 
 ### 5.3 The kanban board
 
-**Today:** the board is agent-hub's (outside the engine), the engine mirrors cards in `task_links`, cards carry prose bodies, and the dispatcher wakes a bot with a prompt that says "follow the org-member skill".
+**Today:** the kanban is the `board` module in the engine — migration, `board_*` SECURITY DEFINER functions, three auth doors, `cli-board`, the page, a Hermes importer and projection, and zen-agent's `board` backend and `lane` loop (built; see [board-design.md](board-design.md) for the full design and the staged rollout in its section 8). Stage 0 (mirror, read-only) is what's running: the engine's cards mirror Hermes's own kanban while the Hermes dispatcher still claims and runs cards in its own SQLite. Cards still carry prose bodies — the contract fields below are not yet filled in by `task create` — and the dispatcher still wakes a bot with a prompt that says "follow the org-member skill".
 
-**Proposal:**
+**Proposal (on top of the built board module):**
 
 - **A card contract**, written into the body under fixed headings by `cli-org task create`, `graph apply` and `redo`, parsed by the dispatcher and by `cli-improve`:
 
@@ -392,7 +392,7 @@ The command or check and its expected result.
 - **Outcome labels on the card**: `task_links` gains `finished_at`, `wakes`, `tokens`, `result` (`done`, `blocked`, `held`, `escalated`), filled by `wake-done`. These are the per-card labels `run_outcomes` aggregates.
 - **Held and blocked reasons become structured**: `block <id> "<why>"` keeps the free text but the dispatcher's `held:` status and the review `redo` carry a reason code (`budget`, `missing-input`, `tool-error`, `needs-owner`, `review-changes`) that mining can cluster.
 - **What the loop may propose about the board**: default budgets per kind, the wake prompt text (once the dispatcher's prompt is a file the stamp covers), the review-round limit, the backoff settings. All become `policy.json` or env values with a record, not magic numbers.
-- **Bring the kanban closer to the engine** over time: the `hub` router already proxies an allowlist of agent-hub routes. A `cards` table owned by the engine, with the hub as one writer, would let the engine test graph application end to end. This is a larger change and is listed as an open question, not a phase.
+- **The board module's own rollout is the remaining work, not an open question.** [board-design.md](board-design.md) section 8 stages it: stage 0 (mirror, read-only, done) → stage 1 (engine writes, Hermes still runs) → stage 2 (record authoritative; `task_links` becomes a view) → stage 3 (runtime optional: `zen-agent` lanes carry real work, the hub's board routes and the old `task_links` table are deleted). The `cards` table, the functions and RLS already exist; what's left is pointing `cli-org task create`, `graph apply` and the dispatchers at it instead of at Hermes, and judging stage 3 by this proposal's metrics (10.4).
 
 ### 5.4 The project and org structure
 
@@ -628,9 +628,9 @@ The headless mode is where the loop's levers (context assembly, budgets, tool co
 
 ### 10.4 Recommendation
 
-Pilot a thin headless runtime for bot wakes only, built on a minimal, well-maintained agent core rather than written from scratch, behind a per-bot switch in the roster (`runtime: sb-agent` next to `claude-code` and `hermes`, which `org_agents.runtime` already models). Keep Claude Code for the owner and Hermes for cron. Judge the pilot at the end of phase 5 on tokens per finished card, first-wake finish rate and trace completeness against the `claude -p` bots on the same graph nodes. The concrete candidate cores and their trade-offs are in section 14, which also records what could and could not be verified about them.
+Pilot a thin headless runtime for bot wakes only, built on a minimal, well-maintained agent core rather than written from scratch, behind a per-bot switch in the roster (`runtime: zen-agent` next to `claude-code` and `hermes`, which `org_agents.runtime` already models). Keep Claude Code for the owner and Hermes for cron. Judge the pilot at the end of phase 5 on tokens per finished card, first-wake finish rate and trace completeness against the `claude -p` bots on the same graph nodes. The concrete candidate cores and their trade-offs are in section 14, which also records what could and could not be verified about them.
 
-**Status (2026-10-24):** the pilot runtime exists as [`zen-agent/`](https://github.com/kon-rad/secondbrain/blob/main/zen-agent/README.md), a standalone package on `@earendil-works/pi-agent-core`: personas from the roster, skills, any provider, the board and the retrieval API as typed tools, the guard in process, budgets in the loop, context assembled from capped named parts, compaction as policy and one JSONL trace per run. What is not yet done: the `runtime: zen-agent` switch in the roster schema and the dispatcher calling `zen-agent wake`, and the archive collector reading its traces. The plan for those three, plus rules and a classifier in front of every wake and a cheaper default model, is [zen-runtime.md](zen-runtime.md).
+**Status (2026-10-25):** the pilot runtime exists as [`zen-agent/`](https://github.com/kon-rad/secondbrain/blob/main/zen-agent/README.md) (described in [zen-agent.md](zen-agent.md)), a standalone package on `@earendil-works/pi-agent-core`: personas from the roster, skills, any provider, the board and the retrieval API as typed tools, the guard in process, budgets in the loop, context assembled from capped named parts, compaction as policy and one JSONL trace per run. It already has a `board` backend and a `lane` loop against the engine's `board` module ([board-design.md](board-design.md) section 7). What is not yet done: the `runtime: zen-agent` switch in the roster schema and the dispatcher calling `zen-agent wake`, and the archive collector reading its traces — so bots still run under `claude -p` today, and the pilot's comparison in 10.4 has not been run yet. The plan for the dispatcher, the ledger import, rules and a classifier in front of every wake and a cheaper default model is [zen-runtime.md](zen-runtime.md).
 
 ---
 
@@ -647,7 +647,7 @@ Each phase has a completion contract in the `AGENTS.base.md` sense. No phase dep
 | **4. The harness-engineer bot** | The `improve` skill, `cli-improve trace`, the readonly guard rules, card contracts on the board, budgets enforced by the dispatcher | Three bot-made proposals evaluated; at least one promoted and confirmed; zero escapes; eval cost under budget |
 | **5. Memory** | Playbook format and counters, measured facts, hybrid recall with more sources, the curator pass, skill compilation signature | Memory hit rate and repeated-mistake rate on the report; one compiled skill promoted |
 | **6. Outer loop** | `policy.json` proposals from the weekly report with backtest eval; longer canary | One policy change promoted on backtest and confirmed after 21 days |
-| **Pilot (parallel from phase 3)** | A headless runtime for bot wakes behind `runtime: sb-agent` | Decision at the end of phase 5 by the metrics in 10.4 |
+| **Pilot (parallel from phase 3)** | A headless runtime for bot wakes behind `runtime: zen-agent` | Decision at the end of phase 5 by the metrics in 10.4. The runtime itself is built ([zen-agent.md](zen-agent.md)); what's left for this phase is the roster switch, the dispatcher hand-off and the comparison run |
 
 Phases 0 to 2 cost no model tokens beyond what runs today. Phase 3 is the first with an eval budget.
 
@@ -679,12 +679,12 @@ Phases 0 to 2 cost no model tokens beyond what runs today. Phase 3 is the first 
 | `task_links` records graph, node, kind and rounds per card | That rounds and held statuses are clean enough labels without the reason codes proposed in 5.3 |
 | `memory_facts` has sources, confidence and supersession; recall is full text plus a line match | That counters and embeddings will raise the memory hit rate; this needs the phase-5 measurement |
 | The guard and the gate fail open and are stdlib-only | That writing one JSON line into the vault keeps them within their 5 s and 10 s timeouts (it should; it is one append) |
-| The roster and graph compiler and the dispatcher live outside the engine | That moving the compiler in is a small change; the dispatcher's size is unknown here |
+| The roster and graph compiler and the dispatcher live outside the engine | That moving the compiler in is a small change; the dispatcher's size is unknown here. The kanban half of this row is no longer inferred: it moved into the engine as the `board` module ([board-design.md](board-design.md)) |
 | Agents never merge their own PR; shipping needs the owner's approval | That these two rules are sufficient to call the recursion bounded |
 
 **Open questions, not researched here**
 
-- Should the kanban's cards move into an engine-owned table with agent-hub as one writer (5.3), and what does agent-hub need from the engine for that?
+- ~~Should the kanban's cards move into an engine-owned table with agent-hub as one writer (5.3), and what does agent-hub need from the engine for that?~~ Decided and built: the `cards` table, functions and RLS live in the engine as the `board` module ([board-design.md](board-design.md)). What remains is the staged rollout (its section 8) and the open questions it lists on its own section 10 (roster rows for lanes, where the Hermes projection lives mid-rollout, the `org_messages.task_id` foreign key, review as a status versus a card, lease length).
 - What is the right noise band? It can only be estimated once phase 3 has baseline-vs-baseline repeats.
 - How should cases that need a real repo state (a build card) be fixtured without copying personal code into the scratch vault? A per-case `fixture` commit in the owner's own repos is the current assumption.
 - Does the Claude subscription allow a third-party runtime to use it, and under what terms? This decides whether the pilot runs on the subscription or on API credits.
@@ -750,7 +750,7 @@ Checked against primary sources on 2026-10-24. Where a figure is a vendor's own,
 | **Hermes** | Already runs cron and chat here, with hooks and a skills directory | Already deployed; the usage-ledger plugin exists | Its loop is its own; the engine syncs its outputs rather than driving it |
 | **Our own loop on `pi-ai` only** | Use the provider layer, write the loop | Total control | Reinvents `pi-agent-core` for no gain; rejected |
 
-**Recommendation for the pilot:** build `sb-agent` on `@earendil-works/pi-agent-core` and `pi-ai` (not the full coding agent), inside the engine as a small package, with: the four pi tools plus typed `cli-org`, `cli-projects`, `cli-improve` tools; the guard and the dev-log gate as in-process checks that read the same rule files and are tested against the same payloads in `harness/evals/`; context assembly from the named parts in 7.5; the card contract's budget enforced in the loop; one JSONL session file per run written where the archive collector reads it. Run it under the deploy's app user in a container or a restricted Unix user, never as the owner. Treat the subscription-billing question as open until Anthropic's terms are read; budget the pilot on API credits.
+**Status (2026-10-25):** this recommendation was acted on. `zen-agent` is built on `@earendil-works/pi-agent-core` and `pi-ai` (not the full coding agent), as a standalone package in this repo's `zen-agent/` (own `package.json`, tests, README — extractable with `git subtree split`), with: the four pi tools plus typed `cli-org`, `kanban` (now including a `board` backend against the engine's `board` module) and knowledge-base tools; the guard and the dev-log gate as in-process checks that read the same rule files, tested against the Python suite's cases; context assembly from capped named parts; the card's `## Budget` line enforced in the loop; one JSONL session file per run. See [zen-agent.md](zen-agent.md) for the full design and what is still open (the roster switch, the dispatcher hand-off, the archive collector, and the subscription-billing question, which remains unresolved — budget it on API credits). It has not yet replaced `claude -p` for any bot's live wakes, so it is still run "under the deploy's app user in a container or a restricted Unix user" only in the sense that nothing has run it against real card traffic yet.
 
 ---
 
@@ -789,3 +789,7 @@ Primary sources were opened on 2026-10-24. Vendor figures are marked as such in 
 **pi**
 - Repository and docs: https://github.com/earendil-works/pi (the former `badlogic/pi-mono` redirects here) · https://pi.dev/ · https://pi.dev/news/2026/5/7/pi-has-a-new-home
 - Design posts: https://mariozechner.at/posts/2025-11-30-pi-coding-agent/ · https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/ · https://earendil.com/posts/pi-1-0/
+
+**This repo, since this document was written**
+- zen-agent (the headless-runtime pilot this document's section 10 asked for): [zen-agent.md](zen-agent.md) · [kon-rad/secondbrain#38](https://github.com/kon-rad/secondbrain/pull/38) · [#40](https://github.com/kon-rad/secondbrain/pull/40)
+- The board module (the kanban-in-the-engine design this document's section 5.3 asked for): [board-design.md](board-design.md) · [kon-rad/secondbrain#39](https://github.com/kon-rad/secondbrain/pull/39)
