@@ -29,6 +29,9 @@ import FriendlyButton from './components/FriendlyButton.js';
 import AgentToggle from './components/AgentToggle.js';
 import VoiceToggle from './components/VoiceToggle.js';
 import ShortcutsHelp from './components/ShortcutsHelp.js';
+import ChatButton from './components/chat/ChatButton.js';
+// Markdown rendering and the stream client are only needed once the panel opens.
+const ChatPanel = lazy(() => import('./components/chat/ChatPanel.js'));
 import { available, HELP_CODE, isChord, isKey, target } from './lib/shortcuts.js';
 
 const navClass = ({ isActive }: { isActive: boolean }): string =>
@@ -75,6 +78,8 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
   const moduleKey = (meta.data?.modules ?? []).join(',');
   const shortcuts = useMemo(() => available(new Set(moduleKey.split(','))), [moduleKey]);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const closeChat = useCallback(() => setChatOpen(false), []);
   const searchRef = useRef<HTMLInputElement>(null);
   const mobileSearchRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
@@ -175,11 +180,17 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           <IndexStatus />
         </div>
 
-        <div className="ml-auto shrink-0">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {/* chat module: the assistant over the vault, in a panel over any page. */}
+          {modules.has('chat') && <ChatButton open={chatOpen} onClick={() => setChatOpen((o) => !o)} />}
           <ShortcutsHelp shortcuts={shortcuts} open={helpOpen} onOpenChange={setHelpOpen} build={meta.data} />
         </div>
         </div>
       </header>
+
+      {modules.has('chat') && chatOpen && (
+        <Suspense fallback={null}><ChatPanel onClose={closeChat} /></Suspense>
+      )}
 
       <MobileMenu
         id={mobileMenuId}
@@ -189,6 +200,11 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         search={<SearchBox inputRef={mobileSearchRef} onSubmit={(q) => navigate(`/search?q=${encodeURIComponent(q)}`)} />}
         footer={
           <>
+            {modules.has('chat') && (
+              <button type="button" onClick={() => { closeMenu(); setChatOpen(true); }} className="min-h-11 rounded border border-[var(--rule)] px-3 text-left text-base">
+                Ask your second brain
+              </button>
+            )}
             {modules.has('usage') && <UsageChip />}
             {modules.has('agents') && <AgentToggle />}
             <div className="text-xs"><IndexStatus /></div>

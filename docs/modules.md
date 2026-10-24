@@ -21,6 +21,7 @@ A module that is off mounts no API routes, shows no nav link and gets no timers 
 | [`ring`](#ring) | `/ring` | Data from a wearable ring, pushed in by a client |
 | [`fund`](#fund) | `/fund` | A read-only view of an agentic fund: wallet balances, transactions, pending approvals, committee and run health |
 | [`social`](#social) | (connect + queue, no page UI yet) | Schedule and publish posts with images to LinkedIn (more platforms planned) |
+| [`chat`](#chat) | (a button in the header) | Ask your notes: conversations with an assistant that answers from retrieved passages, with citations, on the provider and model you pick |
 
 ## projects
 
@@ -47,7 +48,7 @@ Two limits keep a bot's runs from growing without bound. The session a bot resum
 | Page | `/org`: channels, DMs, questions waiting on you, tasks |
 | CLI | `cli-org` (also `secondbrain org`): post, read, ask the owner, assign and complete tasks |
 | Security | A dedicated `sb_org` database role with row-level security per agent |
-| Settings | `ORG_OWNER`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES` |
+| Settings | `ORG_OWNER`, `ORG_VAULT_ASSIGNEE`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES` |
 | Timers (server) | none; `deploy.sh` creates the role and puts `cli-org` on the PATH |
 | Skill | `org-member` |
 
@@ -173,4 +174,21 @@ A standard LinkedIn app gets a 60-day access token and **no refresh token** (Lin
 
 ## Adding a module
 
-A new optional feature is a new module, off by default. The checklist is in [`CONTRIBUTING.md`](https://github.com/kon-rad/secondbrain/blob/main/CONTRIBUTING.md#adding-a-module).
+A new optional feature is a new module, off by default. The checklist is in [`../CONTRIBUTING.md`](../CONTRIBUTING.md#adding-a-module).
+
+## chat
+
+Ask your second brain. A speech-bubble button at the right of the header opens a panel over any page: your conversations on the left, the current one in the centre. Each question is answered from passages retrieved from the vault (keyword and meaning fused at chunk level, optionally reranked), the answer cites them as `[1]`, `[2]`, and the sources are listed under it with a preview. The pipeline is described in [rag.md](rag.md).
+
+The settings modal (the gear, or the model chip) picks the provider and model, the persona, the base system prompt and the retrieval knobs. Only providers whose key is set on the server can be chosen; the models offered for each come from `app/config/llm-presets.json`, extended by the vault's `secondbrain.json`. Personas are the default assistant plus every agent of the `org` module's chart; an agent answers with its compiled definition (`.claude/agents/<name>.md`) added to the system prompt.
+
+| | |
+|---|---|
+| UI | The header button; on a phone, "Ask your second brain" in the menu |
+| API | `/api/chat/options`, `/api/chat/settings`, `/api/chat/conversations`, `/api/chat/conversations/:id/messages` (server-sent events) |
+| Settings | One of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `TOGETHER_API_KEY`, `OPENROUTER_API_KEY` (or a local Ollama); `RERANK_URL`, `RERANK_API_KEY`, `RERANK_MODEL` for reranking; `chat.*` in `secondbrain.json` for presets |
+| Tables | `chat_conversations`, `chat_messages`, `chat_settings` (module data: not rebuilt from markdown) |
+| Costs per turn | One embedding call, one small condensing call, the answer; reranking is opt-in |
+
+Semantic search is not required: without an embeddings provider the chat retrieves by keyword and says so. For better retrieval on dense notes, turn on contextual enrichment on the Embeddings source (`"contextualize": true` in its config on the Sources page): a model writes one line of context per chunk at embed time. It costs one chat-model call per changed note.
+

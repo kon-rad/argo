@@ -900,19 +900,32 @@ const CARD_ID = /^t_[0-9a-f]{6,32}$/;
 const BOARD_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
 
 /**
- * Vault code is worked by Claude Code on the owner's M4, never by a bot: the vault holds private notes and isn't a
- * bot repo (Konrad, 2026-10-21). `m4` is a kanban assignee no dispatcher spawns; its cards wait for a session there.
+ * Vault code is worked by a Claude Code session on the owner's machine, never by a bot: the vault holds private notes
+ * and isn't a bot repo (decided 2026-10-21). The vault assignee (ORG_VAULT_ASSIGNEE, default `vault-session`) is a
+ * kanban assignee no dispatcher spawns; its cards wait for a session there. Boards that predate the setting still use
+ * `m4`, which stays recognised.
  */
-export const M4_ASSIGNEE = 'm4';
+export const VAULT_ASSIGNEE = config.orgVaultAssignee;
+const LEGACY_VAULT_ASSIGNEE = 'm4';
 export const VAULT_REPO = 'vault';
-const M4_AGENT: Agent = {
-  name: M4_ASSIGNEE, team_slug: null, runtime: 'session', role: "Claude Code on Konrad's M4 (vault work)", reports_to: 'konrad',
-  model: null, expertise: 'vault code: skills, scripts, hooks, notes', capabilities: [], retired_at: null,
-};
+const VAULT_ROLE = "Claude Code session on the owner's machine (vault work)";
 
-/** The roster agent, or the M4 session for `m4`. */
+/** True for the configured vault assignee and the legacy slug. */
+export function isVaultAssignee(name: string): boolean {
+  return name === VAULT_ASSIGNEE || name === LEGACY_VAULT_ASSIGNEE;
+}
+
+/** The vault session as a pseudo-agent, under the slug the caller used so existing cards keep their assignee. */
+function vaultAgent(name: string): Agent {
+  return {
+    name, team_slug: null, runtime: 'session', role: VAULT_ROLE, reports_to: config.orgOwner,
+    model: null, expertise: 'vault code: skills, scripts, hooks, notes', capabilities: [], retired_at: null,
+  };
+}
+
+/** The roster agent, or the vault session for the vault assignee. */
 async function cardTarget(name: string): Promise<Agent> {
-  return name === M4_ASSIGNEE ? M4_AGENT : getAgent(name);
+  return isVaultAssignee(name) ? vaultAgent(name) : getAgent(name);
 }
 
 /** The repos a bot can branch and push in: the registry plus the ones the bots created. Null when this machine has no registry. */
@@ -937,38 +950,38 @@ export function botRepos(file = process.env.BOT_REPOS_FILE ?? '/etc/secondbrain/
 
 /**
  * Where a card's code lives decides who may get it (2026-10-21: a vault script given to rune dead-ended, t_47e2a857).
- * The M4 takes vault work only; vault work goes only to the M4; a bot's coding card for a bot names a repo the bots
- * reach (the owner may leave it out: the builder asks).
+ * The vault session takes vault work only; vault work goes only to the vault session; a bot's coding card for a bot
+ * names a repo the bots reach (the owner may leave it out: the builder asks).
  */
 export function checkRepo(caller: Agent, to: Agent, need: Capability | null, repo: string | undefined, repos: string[] | null = botRepos()): string | undefined {
-  if (to.name === M4_ASSIGNEE) {
-    if (repo !== undefined && repo !== VAULT_REPO) throw new OrgError(`${M4_ASSIGNEE} takes vault work only; give a ${repo} card to a bot with code`);
+  if (isVaultAssignee(to.name)) {
+    if (repo !== undefined && repo !== VAULT_REPO) throw new OrgError(`${to.name} takes vault work only; give a ${repo} card to a bot with code`);
     return VAULT_REPO;
   }
   if (repo === VAULT_REPO) {
-    throw new OrgError(`vault code is worked by Claude Code on Konrad's M4, not by a bot: cli-org task create ${M4_ASSIGNEE} "<title>" --project <p> --repo vault`);
+    throw new OrgError(`vault code is worked by a Claude Code session on the owner's machine, not by a bot: cli-org task create ${VAULT_ASSIGNEE} "<title>" --project <p> --repo vault`);
   }
   if (need !== 'code' || (!repo && caller.runtime === 'human')) return repo;
   if (!repo) {
-    throw new OrgError(`a coding card names its repo: --repo <name>${repos ? ` (one of ${repos.join(', ')})` : ''}; vault code goes to ${M4_ASSIGNEE} with --repo vault`);
+    throw new OrgError(`a coding card names its repo: --repo <name>${repos ? ` (one of ${repos.join(', ')})` : ''}; vault code goes to ${VAULT_ASSIGNEE} with --repo vault`);
   }
   if (repos && !repos.includes(repo)) {
-    throw new OrgError(`no bot can push to ${repo}: the bots reach ${repos.join(', ')}; vault code goes to ${M4_ASSIGNEE} with --repo vault, a new repo starts with cli-git repo create`);
+    throw new OrgError(`no bot can push to ${repo}: the bots reach ${repos.join(', ')}; vault code goes to ${VAULT_ASSIGNEE} with --repo vault, a new repo starts with cli-git repo create`);
   }
   return repo;
 }
 
 /**
  * Who may give whom a card: a human anyone on the roster; the bot with `dispatch` (the chief of staff) any bot; a lead
- * its own team; a member only itself. The M4 takes cards from a human, a lead or `dispatch`.
+ * its own team; a member only itself. The vault session takes cards from a human, a lead or `dispatch`.
  */
 export async function assertMayAssign(caller: Agent, to: Agent): Promise<void> {
   if (to.runtime === 'human') throw new OrgError(`${to.name} is not a bot; cards go to bots on the roster`);
   if (caller.runtime === 'human' || caller.name === to.name) return;
   if ((caller.capabilities ?? []).includes('dispatch')) return;
-  if (to.name === M4_ASSIGNEE) {
+  if (isVaultAssignee(to.name)) {
     if (await isLead(caller.name)) return;
-    throw new OrgError(`${caller.name} can't give the M4 a card: leads do; ask your lead`);
+    throw new OrgError(`${caller.name} can't give the vault session a card: leads do; ask your lead`);
   }
   if (caller.team_slug && caller.team_slug === to.team_slug && (await isLead(caller.name))) return;
   throw new OrgError(`${caller.name} can't give ${to.name} a card: a lead assigns inside its team, a member only to itself; ask your lead or hand off on the board`);
@@ -1004,10 +1017,10 @@ interface CardSpec {
 
 function cardHeader(caller: Agent, to: Agent, c: CardSpec): string {
   const ref = `${c.project}${c.feature ? `/${c.feature}` : ''}`;
-  if (to.name === M4_ASSIGNEE) {
+  if (isVaultAssignee(to.name)) {
     return [
       `Project: ${ref}`,
-      `Assigned by ${caller.name}. Repo: vault. Worked by Claude Code on Konrad's M4; no bot wakes for it.`,
+      `Assigned by ${caller.name}. Repo: vault. Worked by a Claude Code session on the owner's machine; no bot wakes for it.`,
       `When done: hermes kanban --board ${c.board ?? DEFAULT_BOARD} complete <this card> with the commits, plus a dev log as the vault rules ask.`,
       ...(c.extra ? [c.extra] : []),
     ].join('\n');
@@ -1065,7 +1078,7 @@ export interface CreateTaskOpts {
   needs?: string;
   /** The owner says ship without asking: merge and deploy skip the approval. Humans only. */
   shipNow?: boolean;
-  /** Where the code lives: a bot repo (required for coding cards) or `vault` (only for the M4). */
+  /** Where the code lives: a bot repo (required for coding cards) or `vault` (only for the vault session). */
   repo?: string;
   run?: string;
 }
@@ -1081,7 +1094,7 @@ export async function createTask(caller: Agent, opts: CreateTaskOpts, run: Kanba
   const to = await cardTarget(opts.assignee);
   await assertMayAssign(caller, to);
   if (opts.shipNow && caller.runtime !== 'human') throw new OrgError('only the owner can mark a card ship-now');
-  const need = to.name === M4_ASSIGNEE ? null : neededCapability(opts.type, opts.needs);
+  const need = isVaultAssignee(to.name) ? null : neededCapability(opts.type, opts.needs);
   await assertCapable(to, need);
   const repo = checkRepo(caller, to, need, opts.repo);
   await assertProject(opts.project, opts.feature);
@@ -1131,7 +1144,7 @@ export async function assignTask(caller: Agent, opts: AssignTaskOpts, run: Kanba
   const to = await cardTarget(opts.assignee);
   await assertMayAssign(caller, to);
   if (opts.shipNow && caller.runtime !== 'human') throw new OrgError('only the owner can mark a card ship-now');
-  const need = to.name === M4_ASSIGNEE ? null : neededCapability(opts.type, opts.needs);
+  const need = isVaultAssignee(to.name) ? null : neededCapability(opts.type, opts.needs);
   await assertCapable(to, need);
   const repo = checkRepo(caller, to, need, opts.repo);
   await assertProject(opts.project, opts.feature);

@@ -8,7 +8,7 @@ const T0 = new Date('2026-10-18T00:00:00Z');
 function account(overrides: Partial<Parameters<typeof store.saveConnectedAccount>[1]> = {}) {
   return {
     providerAccountId: 'urn:li:person:abc123',
-    displayName: 'Konrad Gnat',
+    displayName: 'Jane Example',
     tokens: { accessToken: 'tok1', accessTokenExpiresAt: new Date(T0.getTime() + 1000), refreshToken: null, refreshTokenExpiresAt: null },
     ...overrides,
   };
@@ -21,7 +21,7 @@ describe('social store: accounts', () => {
     const id = await store.saveConnectedAccount('linkedin', account(), KEY);
     const accounts = await store.listAccounts();
     expect(accounts).toEqual([
-      expect.objectContaining({ id, provider: 'linkedin', displayName: 'Konrad Gnat', hasRefreshToken: false }),
+      expect.objectContaining({ id, provider: 'linkedin', displayName: 'Jane Example', hasRefreshToken: false }),
     ]);
     expect(JSON.stringify(accounts)).not.toContain('tok1');
   });

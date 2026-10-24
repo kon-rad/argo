@@ -1,4 +1,4 @@
-/** A slug in usage_hosts: 'mac' (the M4 laptop), 'droplet', 'mac-m1', 'exo-pi', ... */
+/** A slug in usage_hosts: 'mac' (the owner's laptop), 'droplet', 'mac-m1', 'exo-pi', ... */
 export type Host = string;
 
 export interface ParsedMessage {

@@ -38,7 +38,7 @@ The rule that keeps this clean: **every value that differs between two users is 
                  ┌──────────────── your vault (markdown on disk) ────────────────┐
                  │                                                                │
   scan ──────────┤ walk → parse → upsert vault_files, vault_links, vault_tags     │
-  embed ─────────┤ chunk → embed → vault_chunks (pgvector)                        │
+  embed ─────────┤ chunk → (context) → embed → vault_chunks (pgvector + tsvector)   │
                  └────────────────────────────────────────────────────────────────┘
                                          │
                                Postgres (the index)
@@ -54,6 +54,7 @@ The rule that keeps this clean: **every value that differs between two users is 
 | Index | Postgres: `vault_files` (full text, weighted title + body), `vault_links`, `vault_tags`, `vault_chunks` (pgvector, HNSW, cosine) | `app/db/migrations/` |
 | Connectors | `{ id, configSchema, run(ctx) }`. `vault` (scan) and `embeddings` (embed) ship today; runs go through an in-process serial queue and are logged in `ingest_runs` | `app/server/src/connectors/` |
 | Search | `keyword` (Postgres full text), `semantic` (vector KNN), `hybrid` (reciprocal rank fusion, k=60) | `app/server/src/search.ts`, `semantic.ts` |
+| Retrieval for questions | Chunk-level hybrid search fused in SQL, optional condensing, reranking and neighbour expansion; the `chat` module answers from it. See [rag.md](rag.md) | `app/server/src/rag/`, `llm/` |
 | API | Express 5, JSON, loopback only in `local` mode | `app/server/src/routes/` |
 | Web | React 19, TanStack Query, React Router, Tailwind; wikilinks become in-app links | `app/web/src/` |
 | Launcher | `bin/secondbrain`: the single implementation of start, stop, scan, embed and the module CLIs | `app/bin/secondbrain` |
@@ -78,7 +79,7 @@ One machine can also be a **client** of another's database: set `SECONDBRAIN_DB_
 
 ## 4. Modules
 
-Everything beyond browse, search, the database page and the editor is a module: `ring`, `agents`, `projects`, `org`, `usage`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`. A module that is not listed in `MODULES`:
+Everything beyond browse, search, the database page and the editor is a module: `ring`, `agents`, `projects`, `org`, `usage`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`. A module that is not listed in `MODULES`:
 
 - mounts no API routes (`app/server/src/app.ts`),
 - shows no nav link,

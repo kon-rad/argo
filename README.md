@@ -57,6 +57,7 @@ Everything beyond browse, search and the database page is an optional module, of
 | `livestream` | Stream stats for YouTube, Twitch and Kick |
 | `ring` | Wearable ring data, stored next to your notes |
 | `fund` | A read-only page for an agentic fund: wallet balances, transactions, pending approvals, committee health |
+| `chat` | Ask your notes: a chat panel with conversation history, answers built from retrieved passages with citations, any provider's model, your org's agents as personas |
 
 Details for each: [docs/modules.md](docs/modules.md).
 
@@ -91,6 +92,7 @@ Markdown is the source of truth. Postgres is an index over it: drop the database
 - Node.js 22+
 - PostgreSQL 15+ with [pgvector](https://github.com/pgvector/pgvector) 0.8+
 - Optional: a [Together AI](https://together.ai) key or a local [Ollama](https://ollama.com) for semantic search
+- Optional: an Anthropic, OpenAI, Together or OpenRouter key (or Ollama) for the `chat` module
 - Optional: [Claude Code](https://claude.com/claude-code) or Hermes, for agents
 
 ## Quick start

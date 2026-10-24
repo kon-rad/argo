@@ -8,6 +8,7 @@ describe('optional modules', () => {
     expect([...parseModules('ring, agents ,bogus,')]).toEqual(['ring', 'agents']);
     expect([...parseModules('tv,map,org,projects,usage,voice,livestream,media,social')]).toEqual(['projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream', 'media', 'social']);
     expect([...parseModules('fund,bogus')]).toEqual(['fund']);
+    expect([...parseModules('chat')]).toEqual(['chat']);
     expect(parseModules('').size).toBe(0);
   });
 
@@ -16,7 +17,7 @@ describe('optional modules', () => {
     const paths = [
       '/api/ring', '/api/agents/chats', '/api/hub/telegram', '/api/usage/plan', '/api/projects/report',
       '/api/feed/projects', '/api/org/channels', '/api/map/graph', '/api/tv/episodes', '/api/voice/status', '/api/media',
-      '/api/social/accounts', '/api/fund',
+      '/api/social/accounts', '/api/fund', '/api/chat/options',
     ];
     for (const path of paths) {
       const res = await request(app).get(path);

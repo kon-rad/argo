@@ -26,6 +26,15 @@ const Schema = z.object({
   // the rest of the app runs perfectly well with no embeddings at all.
   TOGETHER_API_KEY: z.string().optional(),
   OLLAMA_URL: z.string().default('http://127.0.0.1:11434'),
+  // Chat providers (chat module, and the optional contextual-enrichment step of the
+  // embedder). A provider is offered only when its key is set; see app/config/llm-presets.json.
+  ANTHROPIC_API_KEY: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional(),
+  OPENROUTER_API_KEY: z.string().optional(),
+  // Reranker for the chat's retrieval (Cohere-compatible /rerank). Unset: reranking is off.
+  RERANK_API_KEY: z.string().optional(),
+  RERANK_URL: z.string().url().optional(),
+  RERANK_MODEL: z.string().default('Salesforce/Llama-Rank-V1'),
   // Writes the SQL for the Database page's "ask" box, on Together with the
   // key above. Checked by a real request on 2026-09-28; Together's catalogue
   // shifts, so swap it here rather than in code when this one goes away.
@@ -53,6 +62,9 @@ const Schema = z.object({
   OWNER_NAME: z.string().trim().min(1).default('owner'),
   // org module: the name of the human agent in the org (org_agents, runtime human).
   ORG_OWNER: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default('owner'),
+  // org module: the kanban assignee for vault work, a Claude Code session on the owner's machine that no dispatcher
+  // spawns. Boards that still use the old slug `m4` keep working.
+  ORG_VAULT_ASSIGNEE: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default('vault-session'),
   // org module: runs one remembered agent session may carry before the next wake starts fresh (1: never resume).
   ORG_SESSION_MAX_RUNS: z.coerce.number().int().min(1).default(3),
   // org module: re-wakes of a bot for the same card in 24 h before it is held for a person, and the first
@@ -113,7 +125,7 @@ const Schema = z.object({
   SOCIAL_X_MAX_CHARS: z.coerce.number().int().positive().default(280),
 });
 
-export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream', 'media', 'social', 'fund'] as const;
+export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream', 'media', 'social', 'fund', 'chat'] as const;
 export type ModuleName = (typeof MODULE_NAMES)[number];
 
 /** `"ring, agents"` → {'ring', 'agents'}; unknown names are ignored. */
@@ -150,7 +162,10 @@ export const config = {
   port: parsed.data.PORT,
   logLevel: parsed.data.LOG_LEVEL,
   togetherApiKey: parsed.data.TOGETHER_API_KEY,
-  ollamaUrl: parsed.data.OLLAMA_URL,
+  ollamaUrl: parsed.data.OLLAMA_URL.replace(/\/+$/, ''),
+  rerankApiKey: parsed.data.RERANK_API_KEY,
+  rerankUrl: parsed.data.RERANK_URL?.replace(/\/+$/, ''),
+  rerankModel: parsed.data.RERANK_MODEL,
   sqlModel: parsed.data.SQL_MODEL,
   deployment: parsed.data.DEPLOYMENT,
   publicOrigin: parsed.data.PUBLIC_ORIGIN?.replace(/\/+$/, ''),
@@ -163,6 +178,7 @@ export const config = {
   modules: parseModules(parsed.data.MODULES),
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,
+  orgVaultAssignee: parsed.data.ORG_VAULT_ASSIGNEE,
   orgSessionMaxRuns: parsed.data.ORG_SESSION_MAX_RUNS,
   orgTaskWakeRetries: parsed.data.ORG_TASK_WAKE_RETRIES,
   orgTaskWakeBackoffMinutes: parsed.data.ORG_TASK_WAKE_BACKOFF_MINUTES,

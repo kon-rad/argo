@@ -13,7 +13,7 @@ const T0 = new Date('2026-10-18T00:00:00Z');
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 7)]);
 const JPG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64, 9)]);
 const ACCOUNT = {
-  id: 1, provider: 'linkedin' as const, providerAccountId: 'urn:li:person:abc123', displayName: 'Konrad',
+  id: 1, provider: 'linkedin' as const, providerAccountId: 'urn:li:person:abc123', displayName: 'Jane',
   accessToken: 'tok', accessTokenExpiresAt: T0, refreshToken: null, refreshTokenExpiresAt: null,
 };
 
@@ -142,7 +142,7 @@ describe('social images: store and scheduler', () => {
   async function connect() {
     return saveConnectedAccount(
       'linkedin',
-      { providerAccountId: 'urn:li:person:abc', displayName: 'Konrad', tokens: { accessToken: 'tok', accessTokenExpiresAt: new Date(T0.getTime() + 3600_000), refreshToken: null, refreshTokenExpiresAt: null } },
+      { providerAccountId: 'urn:li:person:abc', displayName: 'Jane', tokens: { accessToken: 'tok', accessTokenExpiresAt: new Date(T0.getTime() + 3600_000), refreshToken: null, refreshTokenExpiresAt: null } },
       KEY,
     );
   }
@@ -222,7 +222,7 @@ describe('social images: queue API', () => {
   it('queues a post with a base64 image and refuses one without alt text or that is not an image', async () => {
     const accountId = await saveConnectedAccount(
       'linkedin',
-      { providerAccountId: 'urn:li:person:abc', displayName: 'Konrad', tokens: { accessToken: 'tok', accessTokenExpiresAt: new Date(Date.now() + 3600_000), refreshToken: null, refreshTokenExpiresAt: null } },
+      { providerAccountId: 'urn:li:person:abc', displayName: 'Jane', tokens: { accessToken: 'tok', accessTokenExpiresAt: new Date(Date.now() + 3600_000), refreshToken: null, refreshTokenExpiresAt: null } },
       KEY,
     );
     const a = app();
@@ -249,7 +249,7 @@ describe('social images: queue API', () => {
   it('accepts a body over the 1 MB global JSON limit (a real-sized image)', async () => {
     const accountId = await saveConnectedAccount(
       'linkedin',
-      { providerAccountId: 'urn:li:person:abc', displayName: 'Konrad', tokens: { accessToken: 'tok', accessTokenExpiresAt: new Date(Date.now() + 3600_000), refreshToken: null, refreshTokenExpiresAt: null } },
+      { providerAccountId: 'urn:li:person:abc', displayName: 'Jane', tokens: { accessToken: 'tok', accessTokenExpiresAt: new Date(Date.now() + 3600_000), refreshToken: null, refreshTokenExpiresAt: null } },
       KEY,
     );
     const big = Buffer.concat([JPG, Buffer.alloc(2 * 1024 * 1024, 1)]);

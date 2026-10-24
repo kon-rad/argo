@@ -13,7 +13,7 @@ function fakeLinkedIn(): SocialProvider {
     authUrl: (state, redirectUri) => `https://www.linkedin.com/oauth/v2/authorization?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`,
     exchangeCode: async (code) => ({
       providerAccountId: 'urn:li:person:abc123',
-      displayName: 'Konrad Gnat',
+      displayName: 'Jane Example',
       tokens: { accessToken: `tok-for-${code}`, accessTokenExpiresAt: new Date(Date.now() + 5_184_000_000), refreshToken: null, refreshTokenExpiresAt: null },
     }),
     refresh: async () => {
@@ -53,7 +53,7 @@ describe('social routes', () => {
 
     const callback = await request(a).get(`/api/social/accounts/linkedin/callback?code=authcode123&state=${state}`);
     expect(callback.status).toBe(200);
-    expect(callback.body.connected.displayName).toBe('Konrad Gnat');
+    expect(callback.body.connected.displayName).toBe('Jane Example');
 
     const list = await request(a).get('/api/social/accounts');
     expect(list.body.accounts).toHaveLength(1);
@@ -137,6 +137,6 @@ describe('social routes', () => {
     await request(server).get('/api/social/accounts/linkedin/callback?code=x&state=forged').expect(400);
     const callback = await request(server).get(`/api/social/accounts/linkedin/callback?code=authcode123&state=${state}`);
     expect(callback.status).toBe(200);
-    expect(callback.body.connected.displayName).toBe('Konrad Gnat');
+    expect(callback.body.connected.displayName).toBe('Jane Example');
   });
 });
