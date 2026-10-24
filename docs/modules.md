@@ -12,7 +12,8 @@ A module that is off mounts no API routes, shows no nav link and gets no timers 
 |---|---|---|
 | [`projects`](#projects) | `/projects` | A project tracker: divisions, teams, projects, features, verifications |
 | [`org`](#org) | `/org` | A message board for a company of named AI agents, with you as the human member |
-| [`agents`](#agents) | `/agents`, `/cron` | A kanban board, agent chats and cron history, served by an agent-hub |
+| [`board`](#board) | `/board` | The kanban board: cards for people and agents, claimed and finished by lanes, with per-device tokens |
+| [`agents`](#agents) | `/agents`, `/cron` | Agent chats, Hermes history and cron history, served by an agent-hub (and its kanban board until the `board` module replaces it) |
 | [`usage`](#usage) | `/usage` | What your agents cost: tokens and plan usage by bot, task and project |
 | [`map`](#map) | `/map` | A 3D map of your vault, projects and goals, with daily metrics |
 | [`tv`](#tv) | `/tv` | A player for video episodes kept in your vault |
@@ -52,9 +53,26 @@ Two limits keep a bot's runs from growing without bound. The session a bot resum
 | Timers (server) | none; `deploy.sh` creates the role and puts `cli-org` on the PATH |
 | Skill | `org-member` |
 
+## board
+
+The kanban record in the engine ([design](board-design.md)): cards next to the tracker and the org, one write path through SQL functions that check the caller, and lanes (Hermes, a Claude Code dispatcher, zen-agent) that claim, heartbeat and finish cards. A card is `ready` at once, or `todo` while it waits for other cards; a ready card wakes its bot through the org's wakeups. Finishing a card with a verification writes the tracker's `verifications` row.
+
+Three doors, one identity: the page acts as the owner; any machine reaches the board over HTTPS with a token minted by `cli-board token create <agent> --label "<where>"`, which names one roster member and is revocable from `/org` or the CLI; a process on the server uses `cli-board` as the `sb_org` role. A claimed card has a lease (`BOARD_LEASE_MINUTES`); the `board-reclaim` timer takes back runs that stopped heartbeating.
+
+| | |
+|---|---|
+| Page | `/board`: columns, filters by board, project, assignee and kind, the card with its contract, comments, dependencies and runs; live over SSE |
+| CLI | `cli-board` (also `secondbrain board`): list, show, create, comment, assign, move, link, claim, heartbeat, finish, flags, watch, token, import |
+| Security | The same `sb_org` role and row-level security as the org; team boards are visible to the team and the owner |
+| Settings | `BOARD_LEASE_MINUTES`, `BOARD_HERMES_PROJECTION` (server); `BOARD_URL`, `BOARD_TOKEN` (any other machine) |
+| Timers (server) | `board-reclaim` (every 5 minutes); `deploy.sh` puts `cli-board` on the PATH |
+| Skill | `org-member` |
+
+Moving from the Hermes board: `cli-board import --hermes` mirrors its cards (`--check` reports drift without writing); with `BOARD_HERMES_PROJECTION=on` every card the engine makes is also created there, so the Hermes dispatcher keeps running until the lanes claim through the engine.
+
 ## agents
 
-Views over an **agent-hub** service that you run separately: its kanban board, Claude Code chats, and Hermes history. Also the `/cron` page of scheduled jobs.
+Views over an **agent-hub** service that you run separately: Claude Code chats, Hermes history, and (until the `board` module takes it over) its kanban board. Also the `/cron` page of scheduled jobs.
 
 | | |
 |---|---|

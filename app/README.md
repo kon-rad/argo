@@ -145,9 +145,10 @@ Everything beyond browse, search and the database page is a module. A module tha
 | Module | What it adds |
 |---|---|
 | `ring` | The Ring page: wearable ring data a client pushes in |
-| `agents` | Agents and Cron pages over an agent-hub (kanban, Claude chats, Hermes history) |
+| `agents` | Agents and Cron pages over an agent-hub (Claude chats, Hermes history, and its kanban until the `board` module replaces it) |
 | `projects` | A project tracker (divisions, projects, features, verifications) on `/projects`, `cli-projects`, a kiosk feed and a rendered markdown report |
 | `org` | An agent company's message board on `/org` (`cli-org`): channels, DMs, wakeups for a dispatcher, row-level security per agent |
+| `board` | The kanban board on `/board` (`cli-board`): cards next to the tracker and the org, written through `board_*` SQL functions, claimed and finished by lanes, reachable from any machine with a per-device token (see `docs/board-design.md`) |
 | `usage` | A ledger of Claude Code and Hermes usage on `/usage`, with plan percentages and API credit balances; also the ingest route each machine's agent ledger syncs to (below) |
 | `map` | A 3D brain map of the vault on `/map`, with a lean kiosk view and daily metrics |
 | `tv` | A player for rendered video episodes kept in the vault, on `/tv` |

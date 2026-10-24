@@ -31,8 +31,7 @@ const ORG = {
 const calls: string[][] = [];
 const runner: KanbanRunner = async (args) => {
   calls.push(args);
-  if (args.includes('show')) return JSON.stringify({ task: { title: 'Old card', status: 'ready' } });
-  return JSON.stringify({ id: `t_${String(calls.length).padStart(6, '0')}` });
+  return args[3] === 'create' ? JSON.stringify({ id: `t_${String(calls.length).padStart(6, '0')}` }) : '';
 };
 const arg = (args: string[], flag: string) => args[args.indexOf(flag) + 1];
 
@@ -46,6 +45,9 @@ describe('card routing by repo', () => {
     await truncateAll();
     await importOrg(ORG);
     await query(`INSERT INTO projects (slug, title, team_slug, stage) VALUES ('argo-exo', 'Exo', 'platform', 'building')`);
+    // Cards already on the board, unassigned (made from the page).
+    await query(`INSERT INTO boards (slug, name) VALUES ('exo', 'Exo') ON CONFLICT DO NOTHING`);
+    for (const id of ['t_47e2a857', 't_aaaaaa', 't_bbbbbb']) await query(`INSERT INTO cards (id, board_slug, title, status, created_by) VALUES ($1, 'exo', 'Old card', 'ready', 'owner')`, [id]);
   });
 
   it('reads the registry and the repos the bots created', () => {
@@ -94,7 +96,8 @@ describe('card routing by repo', () => {
 
   it('sol (dispatch) gives any bot a card; another lead still only its own team', async () => {
     const r = await assignTask(await getAgent('sol'), { taskId: 't_aaaaaa', assignee: 'lena', project: 'argo-exo' }, runner);
-    expect(r.link).toMatchObject({ assignee: 'lena', created_by: 'sol' });
+    expect(r.link).toMatchObject({ assignee: 'lena', created_by: 'owner' });   // created_by stays the card's maker; the assign is an event by sol
+    expect((await query<{ actor: string }>(`SELECT actor FROM card_events WHERE card_id = 't_aaaaaa' AND kind = 'assigned'`)).rows).toEqual([{ actor: 'sol' }]);
     expect(r.message).toMatchObject({ channel_slug: 'leads', body: 'card t_aaaaaa for lena: Old card (argo-exo)', mentions: [] });
     await expect(assignTask(await getAgent('atlas'), { taskId: 't_bbbbbb', assignee: 'lena', project: 'argo-exo' }, runner))
       .rejects.toThrow(/atlas can't give lena a card/);

@@ -113,9 +113,16 @@ export default function Board() {
 
 /** The vault notes a card's title, body or result names, by card; resolved in batches of 100 for the whole board. */
 function useCardNotes(tasks: KanbanTask[]) {
+  return useCardNotesFor(tasks.map((t) => ({ id: t.id, text: [t.title, t.body, t.result].filter(Boolean).join('\n\n') })));
+}
+
+/** The same, for any list of cards with a text to scan (the board module's page uses it too). */
+export function useCardNotesFor(items: { id: string; text: string }[]) {
+  const key = items.map((i) => `${i.id}:${i.text.length}`).join('|');
   const refsByTask = useMemo(
-    () => new Map(tasks.map((t) => [t.id, collectVaultRefs([t.title, t.body, t.result].filter(Boolean).join('\n\n'))])),
-    [tasks],
+    () => new Map(items.map((i) => [i.id, collectVaultRefs(i.text)])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [key],
   );
   const all = useMemo(() => [...new Set([...refsByTask.values()].flat())].sort(), [refsByTask]);
   const resolved = useQuery({

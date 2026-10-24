@@ -94,6 +94,15 @@ const Schema = z.object({
   // Unset on the Mac, where the Agents page's live tabs say so.
   AGENT_HUB_URL: z.string().url().optional(),
   AGENT_HUB_TOKEN: z.string().min(32).optional(),
+  // board module: minutes a claimed card's lease lasts without a heartbeat before the board takes it back.
+  BOARD_LEASE_MINUTES: z.coerce.number().int().min(1).default(60),
+  // board module, on a machine that is not the server: cli-board reaches the board over HTTPS with a token
+  // minted by `cli-board token create` (door 2 of docs/board-design.md). Unset: the database connection is used.
+  BOARD_URL: z.string().url().optional(),
+  BOARD_TOKEN: z.string().min(20).optional(),
+  // board module, while the Hermes board still runs the bots: mirror every card the engine makes into it with
+  // `hermes kanban` (ORG_KANBAN_CMD names the binary). Off once the engine's record is the only one.
+  BOARD_HERMES_PROJECTION: z.enum(['on', 'off']).default('off'),
   // Read-only bearer token for a kiosk's Projects panel (GET /api/feed/projects).
   // Unset = the feed route does not exist.
   PROJECTS_FEED_TOKEN: z.string().min(32).optional(),
@@ -125,7 +134,7 @@ const Schema = z.object({
   SOCIAL_X_MAX_CHARS: z.coerce.number().int().positive().default(280),
 });
 
-export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream', 'media', 'social', 'fund', 'chat'] as const;
+export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'board', 'usage', 'map', 'tv', 'voice', 'livestream', 'media', 'social', 'fund', 'chat'] as const;
 export type ModuleName = (typeof MODULE_NAMES)[number];
 
 /** `"ring, agents"` → {'ring', 'agents'}; unknown names are ignored. */
@@ -193,6 +202,10 @@ export const config = {
   agentHubUrl: parsed.data.AGENT_HUB_URL,
   agentHubToken: parsed.data.AGENT_HUB_TOKEN,
   projectsFeedToken: parsed.data.PROJECTS_FEED_TOKEN,
+  boardLeaseMinutes: parsed.data.BOARD_LEASE_MINUTES,
+  boardUrl: parsed.data.BOARD_URL?.replace(/\/+$/, ''),
+  boardToken: parsed.data.BOARD_TOKEN,
+  boardHermesProjection: parsed.data.BOARD_HERMES_PROJECTION === 'on',
   ttsUrl: parsed.data.TTS_URL.replace(/\/+$/, ''),
   ttsModel: parsed.data.TTS_MODEL,
   webDist: resolve(appRoot, 'web', 'dist'),

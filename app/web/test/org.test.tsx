@@ -69,10 +69,10 @@ function mount(path: string) {
       if (u.pathname === '/api/org/post') return Response.json(msg(5, 'all-hands', 'owner', 'posted'), { status: 201 });
       if (u.pathname === '/api/org/dm') return Response.json(msg(6, 'dm:atlas:owner', 'owner', 'hi'), { status: 201 });
       if (u.pathname === '/api/org/agents/atlas') return Response.json(AGENT_PAGE);
-      if (u.pathname === '/api/hub/board') return Response.json({ error: { message: 'Agents run on the droplet' } }, { status: 503 });
+      if (u.pathname === '/api/board/cards' && init?.method === 'POST') return Response.json({ card: { id: 't_new000', title: 'Ship it', status: 'ready', assignee: 'atlas' }, message: null }, { status: 201 });
+      if (u.pathname === '/api/board/cards') return Response.json({ cards: [{ id: 't_abc123', board_slug: 'exo', title: 'Wire the tasks route', status: 'ready', assignee: 'atlas', project_slug: 'secondbrain-app', feature_slug: 'org-page', created_by: 'owner', kind: 'work', priority: 3, contract: {}, created_at: '2026-10-15T05:00:00Z' }] });
       if (u.pathname === '/api/org/tasks') return Response.json({ tasks: [{ task_id: 't_abc123', board: 'exo', title: 'Wire the tasks route', project_slug: 'secondbrain-app', feature_slug: 'org-page', assignee: 'atlas', created_by: 'owner', rounds: 0, created_at: '2026-10-15T05:00:00Z' }] });
       if (u.pathname === '/api/projects/report') return Response.json({ projects: [{ slug: 'secondbrain-app', title: 'Second Brain app', team: 'platform', features: [{ slug: 'org-page', title: 'The /org page' }] }] });
-      if (u.pathname === '/api/hub/tasks') return Response.json({ id: 't_new000', title: 'Ship it', status: 'ready', assignee: 'atlas' }, { status: 200 });
       return Response.json({ error: { message: `unexpected ${url}` } }, { status: 404 });
     }),
   );
@@ -173,7 +173,7 @@ describe('Org page', () => {
     expect(screen.getByText('posted the stand-up')).toBeTruthy();
     expect(screen.getByText('learned the board', { exact: false })).toBeTruthy();
     // Cards come from the link rows even when the kanban (agent-hub) is unreachable, with their project and feature.
-    expect(screen.getByRole('link', { name: 'Wire the tasks route' }).getAttribute('href')).toBe('/agents/board/t_abc123');
+    expect(screen.getByRole('link', { name: 'Wire the tasks route' }).getAttribute('href')).toBe('/board/t_abc123');
     expect(screen.getByRole('link', { name: 'secondbrain-app/org-page' })).toBeTruthy();
     fireEvent.change(screen.getByLabelText('DM atlas'), { target: { value: 'hold the deploy' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -186,13 +186,13 @@ describe('Org page', () => {
     await screen.findByText('Head of Platform');
     const give = screen.getByRole('button', { name: 'Give card' }) as HTMLButtonElement;
     fireEvent.change(screen.getByLabelText('Card for atlas'), { target: { value: 'Ship it' } });
-    expect(give.disabled).toBe(true); // no project yet
+    expect(give.disabled).toBe(false); // a project is optional on the engine's board
     await waitFor(() => expect(screen.getByRole('option', { name: 'secondbrain-app' })).toBeTruthy());
     fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'secondbrain-app' } });
     fireEvent.change(screen.getByLabelText('Feature'), { target: { value: 'org-page' } });
     fireEvent.click(give);
-    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/hub/tasks') && c.init?.method === 'POST')).toBe(true));
-    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/hub/tasks'))!.init?.body))).toEqual({ board: 'exo', title: 'Ship it', body: '', assignee: 'atlas', project: 'secondbrain-app', feature: 'org-page' });
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')).toBe(true));
+    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')!.init?.body))).toEqual({ title: 'Ship it', assignee: 'atlas', project: 'secondbrain-app', feature: 'org-page' });
     expect(await screen.findByText('card t_new000 created')).toBeTruthy();
   });
 
