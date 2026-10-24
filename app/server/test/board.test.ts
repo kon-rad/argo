@@ -355,6 +355,24 @@ describe('the CLI', () => {
     }
   });
 
+  it('a lead giving the vault assignee a card through the RLS role provisions its roster row, not a direct INSERT', async () => {
+    // Regression: cardTarget() used to INSERT/UPDATE org_agents directly, which sb_org (SELECT-only) can't do.
+    // `cli-org task create` and a bot's own wakes always run with ORG_AGENT set, so --to vault-session failed
+    // with "permission denied for table org_agents" for every caller except the owner's unauthenticated connection.
+    const env = { ORG_AGENT: 'atlas', SB_ORG_DB_URL: `postgres://sb_org@${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${TEST_DB}` };
+    try {
+      const made = await run(['create', 'Vault thing over RLS', '--to', 'vault-session', '--project', 'secondbrain-app'], env);
+      expect(made.code).toBe(0);
+      expect(made.lines[0]).toContain('for vault-session');
+      expect((await getAgent('vault-session')).runtime).toBe('session');
+      // The legacy slug works the same way, and a second call just clears retired_at again (no error).
+      await run(['create', 'Vault thing, legacy slug', '--to', 'm4', '--project', 'secondbrain-app'], env);
+      expect((await getAgent('m4')).runtime).toBe('session');
+    } finally {
+      setDatabaseUrl(ownerUrl);
+    }
+  });
+
   it('speaks to the app over HTTP with a token (the second door), same verbs', async () => {
     const a = createApp({ modules: ALL_MODULES, board: { owner: 'owner' } });
     const server: Server = createServer(a);

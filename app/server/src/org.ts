@@ -944,14 +944,17 @@ export function isVaultAssignee(name: string): boolean {
   return name === VAULT_ASSIGNEE || name === LEGACY_VAULT_ASSIGNEE;
 }
 
-/** The roster agent; the vault session's row is made on first use (an older import may predate it). */
+/**
+ * The roster agent; the vault session's row is made on first use (an older import may predate it).
+ * The upsert runs through board_ensure_vault_agent (a SECURITY DEFINER function), not a direct INSERT:
+ * under the owner's own connection a direct INSERT would work, but this also runs under the sb_org
+ * row-level-security role (ORG_AGENT set, as any bot's own wakes connect, or `cli-org`/`cli-board` run
+ * with ORG_AGENT for the RLS path), which has only SELECT on org_agents.
+ */
 async function cardTarget(name: string): Promise<Agent> {
   if (isVaultAssignee(name)) {
-    await query(
-      `INSERT INTO org_agents (name, runtime, role, reports_to, expertise, org_version) VALUES ($1, 'session', $2, $3, 'vault code: skills, scripts, hooks, notes', 'board')
-       ON CONFLICT (name) DO UPDATE SET retired_at = NULL`,
-      [name, VAULT_ROLE, (await query<{ name: string }>(`SELECT name FROM org_agents WHERE runtime = 'human' ORDER BY (name = $1) DESC LIMIT 1`, [config.orgOwner])).rows[0]?.name ?? null],
-    );
+    const reportsTo = (await query<{ name: string }>(`SELECT name FROM org_agents WHERE runtime = 'human' ORDER BY (name = $1) DESC LIMIT 1`, [config.orgOwner])).rows[0]?.name ?? null;
+    await query(`SELECT board_ensure_vault_agent($1, $2, $3)`, [name, VAULT_ROLE, reportsTo]);
   }
   return getAgent(name);
 }
