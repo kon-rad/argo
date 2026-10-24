@@ -20,6 +20,7 @@
 #   EXTRA_CADDY_IMPORT   Caddyfile snippets for other sites on the same box, comma separated
 #   DEPLOY_REDIRECT_FROM another host (e.g. the bare IP) that 308-redirects to DEPLOY_PUBLIC_HOST
 #   DEPLOY_PAUSE_FILE    a file that holds an agent dispatcher off while the build runs (org module)
+#   DEPLOY_NO_ROLLBACK=1 leave a failed deploy in place instead of putting the previous build back
 #   DEPLOY_EMBED=1       install the nightly embed timer (needs a local Ollama service)
 #   DEPLOY_DB_BACKUP=1   install the nightly pg_dump-to-B2 timer (needs b2store for the app user)
 #   DEPLOY_MODULES       the server's module list, when it differs from this machine's MODULES
@@ -52,7 +53,8 @@ read_env() {
   printf -v "$key" '%s' "$val"; export "$key"
 }
 for k in DEPLOY_HOST DEPLOY_PUBLIC_HOST DEPLOY_VAULT_DIR DEPLOY_APP_USER DEPLOY_APP_DIR DEPLOY_HERMES_HOME \
-         EXTRA_CADDY_IMPORT DEPLOY_REDIRECT_FROM DEPLOY_PAUSE_FILE DEPLOY_EMBED DEPLOY_DB_BACKUP DEPLOY_MODULES MODULES; do
+         EXTRA_CADDY_IMPORT DEPLOY_REDIRECT_FROM DEPLOY_PAUSE_FILE DEPLOY_EMBED DEPLOY_DB_BACKUP DEPLOY_MODULES MODULES \
+         DEPLOY_NO_ROLLBACK; do
   read_env "$k"
 done
 
@@ -67,9 +69,10 @@ REDIRECT_FROM="${DEPLOY_REDIRECT_FROM:-}"
 PAUSE_FILE="${DEPLOY_PAUSE_FILE:-}"
 WITH_EMBED="${DEPLOY_EMBED:-0}"
 WITH_BACKUP="${DEPLOY_DB_BACKUP:-0}"
+NO_ROLLBACK="${DEPLOY_NO_ROLLBACK:-0}"
 # The module list without spaces, so it travels to the server as one safe word.
 MODS="$(printf '%s' "${DEPLOY_MODULES:-${MODULES:-}}" | tr -d ' ')"
-for v in "$APP_USER" "$APP_DIR" "$VAULT_DIR" "$PUBLIC_HOST" "$HERMES_HOME_REMOTE" "$EXTRA_IMPORT" "$REDIRECT_FROM" "$PAUSE_FILE" "$MODS" "$WITH_EMBED" "$WITH_BACKUP" "$ENGINE_COMMIT"; do
+for v in "$APP_USER" "$APP_DIR" "$VAULT_DIR" "$PUBLIC_HOST" "$HERMES_HOME_REMOTE" "$EXTRA_IMPORT" "$REDIRECT_FROM" "$PAUSE_FILE" "$MODS" "$WITH_EMBED" "$WITH_BACKUP" "$ENGINE_COMMIT" "$NO_ROLLBACK"; do
   [[ "$v" =~ ^[A-Za-z0-9._/@:,-]*$ ]] || { echo "unsafe character in setting: $v"; exit 1; }
 done
 
@@ -81,7 +84,7 @@ rsync -az --delete \
   "$APP_ROOT/" "$HOST:$APP_DIR/"
 
 echo "→ provisioning and restarting"
-ssh "$HOST" "APP_DIR=$APP_DIR VAULT=$VAULT_DIR APP_USER=$APP_USER PUBLIC_HOST=$PUBLIC_HOST HERMES_HOME_REMOTE=$HERMES_HOME_REMOTE EXTRA_IMPORT=$EXTRA_IMPORT REDIRECT_FROM=$REDIRECT_FROM PAUSE_FILE=$PAUSE_FILE MODS=$MODS WITH_EMBED=$WITH_EMBED WITH_BACKUP=$WITH_BACKUP ENGINE_COMMIT=$ENGINE_COMMIT bash -s" <<'REMOTE'
+ssh "$HOST" "APP_DIR=$APP_DIR VAULT=$VAULT_DIR APP_USER=$APP_USER PUBLIC_HOST=$PUBLIC_HOST HERMES_HOME_REMOTE=$HERMES_HOME_REMOTE EXTRA_IMPORT=$EXTRA_IMPORT REDIRECT_FROM=$REDIRECT_FROM PAUSE_FILE=$PAUSE_FILE MODS=$MODS WITH_EMBED=$WITH_EMBED WITH_BACKUP=$WITH_BACKUP ENGINE_COMMIT=$ENGINE_COMMIT NO_ROLLBACK=$NO_ROLLBACK bash -s" <<'REMOTE'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 id "$APP_USER" >/dev/null || { echo "user $APP_USER missing: create it and give it the vault checkout"; exit 1; }
@@ -173,11 +176,83 @@ if [ -n "$PAUSE_FILE" ] && [ ! -e "$PAUSE_FILE" ]; then
   for _ in $(seq 1 24); do pgrep -u "$APP_USER" -f 'claude -p' >/dev/null || break; echo "  waiting for a running agent to finish"; sleep 5; done
 fi
 
+# ---- keep the build that is running now, so a bad one can be undone ----
+# dist/ and the build file only: node_modules is hundreds of megabytes and the
+# previous dist runs on the new one. data/ is excluded from the deploy rsync, so
+# this copy survives future deploys.
+ROLLBACK_DIR="$APP_DIR/data/rollback"
+PREV_VERSION="unknown"
+PREV_COMMIT=""
+if [ -f "$APP_DIR/data/build-info.json" ]; then
+  PREV_COMMIT="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("commit") or "")' "$APP_DIR/data/build-info.json" 2>/dev/null || true)"
+  PREV_VERSION="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("version") or "unknown")' "$APP_DIR/data/build-info.json" 2>/dev/null || echo unknown)"
+fi
+rm -rf "$ROLLBACK_DIR"
+if [ -f "$APP_DIR/server/dist/index.js" ]; then
+  install -d -o "$APP_USER" -g "$APP_USER" "$ROLLBACK_DIR"
+  cp -a "$APP_DIR/server/dist" "$ROLLBACK_DIR/server-dist"
+  [ -d "$APP_DIR/web/dist" ] && cp -a "$APP_DIR/web/dist" "$ROLLBACK_DIR/web-dist"
+  [ -f "$APP_DIR/data/build-info.json" ] && cp -a "$APP_DIR/data/build-info.json" "$ROLLBACK_DIR/build-info.json"
+  chown -R "$APP_USER:$APP_USER" "$ROLLBACK_DIR"
+  echo "→ kept the running build for rollback: v$PREV_VERSION ${PREV_COMMIT:0:7}"
+fi
+
+# Is the app answering? Its own route, public by design, so no session is needed.
+# Retries cover a slow start; PORT comes from the app's env file, not this script.
+health_ok() {
+  local port
+  port="$(grep -m1 -E '^PORT=' /etc/secondbrain/env 2>/dev/null | cut -d= -f2)"
+  port="${port:-5123}"
+  for _ in $(seq 1 "${1:-15}"); do
+    curl -fsS --max-time 5 "http://127.0.0.1:$port/api/health" 2>/dev/null | grep -q '"ok"' && return 0
+    sleep 2
+  done
+  return 1
+}
+
+# Put the previous build back and bring the app up on it. Called when this deploy
+# does not come up: a build that failed halfway leaves dist/ partial, and a build
+# that starts and then dies leaves nothing serving. Code only: migrations are
+# forward-only, so a schema change this deploy applied stays applied.
+rollback() {
+  if [ "${NO_ROLLBACK:-0}" = 1 ]; then
+    echo "✗ deploy failed and DEPLOY_NO_ROLLBACK=1: leaving this build in place"
+    return 1
+  fi
+  if [ ! -f "$ROLLBACK_DIR/server-dist/index.js" ]; then
+    echo "✗ deploy failed and there is no previous build to go back to (first deploy?)"
+    return 1
+  fi
+  echo "→ rolling back to the build that was running before this deploy: v$PREV_VERSION ${PREV_COMMIT:0:7}"
+  systemctl stop secondbrain >/dev/null 2>&1 || true
+  rm -rf "$APP_DIR/server/dist" "$APP_DIR/web/dist"
+  cp -a "$ROLLBACK_DIR/server-dist" "$APP_DIR/server/dist"
+  [ -d "$ROLLBACK_DIR/web-dist" ] && cp -a "$ROLLBACK_DIR/web-dist" "$APP_DIR/web/dist"
+  [ -f "$ROLLBACK_DIR/build-info.json" ] && cp -a "$ROLLBACK_DIR/build-info.json" "$APP_DIR/data/build-info.json"
+  chown -R "$APP_USER:$APP_USER" "$APP_DIR/server/dist" "$APP_DIR/web/dist" "$APP_DIR/data"
+  systemctl start secondbrain
+  if systemctl is-active --quiet secondbrain && health_ok; then
+    echo "✓ rolled back: secondbrain is serving the previous build, v$PREV_VERSION ${PREV_COMMIT:0:7}"
+    return 0
+  fi
+  journalctl -u secondbrain -n 30 --no-pager
+  echo "✗ the rollback did not come up either: secondbrain is not serving"
+  return 1
+}
+
 # ---- build ----
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/data"
-sudo -u "$APP_USER" bash -c "cd $APP_DIR && npm ci --no-audit --no-fund && npm run build"
-sudo -u "$APP_USER" bash -c "cd $APP_DIR && DATABASE_URL='postgres:///secondbrain?host=/var/run/postgresql' npm run migrate:up"
+if ! sudo -u "$APP_USER" bash -c "cd $APP_DIR && npm ci --no-audit --no-fund && npm run build"; then
+  echo "✗ the build failed"
+  if rollback; then exit 3; fi
+  exit 4
+fi
+if ! sudo -u "$APP_USER" bash -c "cd $APP_DIR && DATABASE_URL='postgres:///secondbrain?host=/var/run/postgresql' npm run migrate:up"; then
+  echo "✗ the migration failed"
+  if rollback; then exit 3; fi
+  exit 4
+fi
 # node_modules, dist and the schema are whole again: let the dispatcher spawn.
 if [ -n "$PAUSED_BY_DEPLOY" ]; then rm -f "$PAUSE_FILE"; echo "→ dispatcher unpaused"; fi
 
@@ -277,9 +352,14 @@ systemctl reload-or-restart caddy
 
 if grep -qE '^AUTH_PASSWORD_HASH=.+' /etc/secondbrain/env && grep -qE '^AUTH_TOTP_SECRET=.+' /etc/secondbrain/env; then
   systemctl restart secondbrain
-  sleep 2
-  systemctl is-active --quiet secondbrain && echo "✓ secondbrain running" \
-    || { journalctl -u secondbrain -n 30 --no-pager; exit 1; }
+  if systemctl is-active --quiet secondbrain && health_ok; then
+    echo "✓ secondbrain running"
+  else
+    echo "✗ secondbrain did not come up"
+    journalctl -u secondbrain -n 30 --no-pager
+    if rollback; then exit 3; fi
+    exit 4
+  fi
 else
   echo "! /etc/secondbrain/env has no login yet — the app will refuse to start until it does."
   echo "  Run 'secondbrain auth-setup' on your own machine and paste its output into that file, then:"
@@ -297,3 +377,6 @@ fi
 REMOTE
 
 echo "→ done: https://$PUBLIC_HOST"
+# Exit codes from a deploy that did not come up:
+#   3  rolled back: the previous build is serving again
+#   4  not serving: the rollback did not come up either (or there was nothing to go back to)

@@ -63,6 +63,7 @@ The app refuses to start in server mode without `AUTH_PASSWORD_HASH`, `AUTH_TOTP
 | `EXTRA_CADDY_IMPORT` | | | Caddyfile snippets for other sites on the same box, comma separated |
 | `DEPLOY_REDIRECT_FROM` | | | Another host (for example the bare IP) that redirects to the public host |
 | `DEPLOY_PAUSE_FILE` | | | A file that holds an agent dispatcher off while the build runs |
+| `DEPLOY_NO_ROLLBACK=1` | | off | Leave a deploy in place when it does not come up. By default the previous build goes back |
 | `DEPLOY_EMBED=1` | | off | Install the nightly embed timer (needs a local Ollama on the server) |
 | `DEPLOY_DB_BACKUP=1` | | off | Install the nightly `pg_dump` backup timer (needs `b2store` for the app user) |
 
@@ -89,6 +90,23 @@ Caddy is rendered from `app/deploy/Caddyfile.template`. If you already run Caddy
 ## The login
 
 One user. The password is hashed with scrypt (128 MiB, verified one at a time); the second factor is RFC 6238 TOTP with single-use codes. Both factors are always checked and failures share one message. Sessions are random 256-bit tokens in a `__Host-` cookie (HttpOnly, Secure, SameSite=Strict); only their SHA-256 is stored. They end after 7 idle days or 30 days total, and `POST /api/auth/logout-all` ends every session. Five failures lock an IP out for 15 minutes; 100 failures in an hour lock everyone out. Every mutating request must carry the right `Origin`.
+
+## When a deploy does not come up
+
+Before it builds, `deploy.sh` keeps the build that is running (`server/dist`, `web/dist` and the build-info file) in `<app dir>/data/rollback`. If the build, the migration or the app itself then fails, it puts that copy back, restarts, and checks the app again:
+
+| Outcome | What you see | Exit code |
+|---|---|---|
+| Normal deploy | `✓ secondbrain running` after `/api/health` answers | 0 |
+| Deploy failed, previous build restored | `✓ rolled back: secondbrain is serving the previous build` | 3 |
+| Deploy failed and the rollback did not come up | `✗ the rollback did not come up either` | 4 |
+
+`DEPLOY_NO_ROLLBACK=1` turns this off, for the deploy that is meant to change something the previous build cannot run against. The health check is the app's own `/api/health` route on `127.0.0.1:$PORT` (from `/etc/secondbrain/env`), polled for 30 seconds.
+
+Two things a rollback is not:
+
+- **It restores code, not the schema.** Migrations are forward-only, so a migration this deploy applied stays applied. Additive changes are fine; a migration that removes or renames what the previous build reads is not, and the rollback then reports exit 4.
+- **It is deploy-time, not a watchdog.** It covers a build or migration that failed and an app that will not start. An app that runs for an hour and then dies is `systemd`'s `Restart=on-failure` business, not this.
 
 ## Updating a server
 
