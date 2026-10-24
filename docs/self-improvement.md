@@ -392,7 +392,7 @@ The command or check and its expected result.
 - **Outcome labels on the card**: `task_links` gains `finished_at`, `wakes`, `tokens`, `result` (`done`, `blocked`, `held`, `escalated`), filled by `wake-done`. These are the per-card labels `run_outcomes` aggregates.
 - **Held and blocked reasons become structured**: `block <id> "<why>"` keeps the free text but the dispatcher's `held:` status and the review `redo` carry a reason code (`budget`, `missing-input`, `tool-error`, `needs-owner`, `review-changes`) that mining can cluster.
 - **What the loop may propose about the board**: default budgets per kind, the wake prompt text (once the dispatcher's prompt is a file the stamp covers), the review-round limit, the backoff settings. All become `policy.json` or env values with a record, not magic numbers.
-- **Bring the kanban closer to the engine** over time: the `hub` router already proxies an allowlist of agent-hub routes. A `cards` table owned by the engine, with the hub as one writer, would let the engine test graph application end to end. This is a larger change and is listed as an open question, not a phase.
+- **Bring the kanban closer to the engine** over time: the `hub` router already proxies an allowlist of agent-hub routes. A `cards` table owned by the engine, with the hub as one writer, would let the engine test graph application end to end. This is a larger change and is listed as an open question, not a phase. The design for it is now written up in [board-design.md](board-design.md).
 
 ### 5.4 The project and org structure
 

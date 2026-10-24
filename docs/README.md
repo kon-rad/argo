@@ -32,6 +32,7 @@ New here? Start with the [onboarding path](onboarding/README.md): ten short page
 | [agent-harness.md](agent-harness.md) | You run Claude Code or Hermes in the vault and want to know what the guard and the dev-log gate do |
 | [deployment.md](deployment.md) | You want the app on a server behind a login |
 | [privacy.md](privacy.md) | You want to know how the engine stays free of personal data, and how to keep your fork that way |
+| [board-design.md](board-design.md) | You want the proposal (not built yet) for moving the kanban record into the engine: cards next to the tracker and the org, one write path through SQL functions, per-device tokens, and Hermes, Claude Code and zen-agent as lanes that claim and finish cards |
 | [self-improvement.md](self-improvement.md) | You want to see the proposal (not built yet) for a self-improving loop over the rules, skills, board, org, cron jobs and engine: traces, evaluation, memory, and a possible headless runtime of our own |
 
 Also, in the repository:
