@@ -111,6 +111,7 @@ Both hooks fail open: a payload they can't parse is allowed, so a bug in a hook 
 | Module records | Postgres module tables | The module's CLI or page, never raw SQL |
 | Secrets and per-machine settings | Vault `.env` (laptop), `/etc/secondbrain/env` (server) | By hand. Never committed, never printed |
 | Structured settings | `secondbrain.json` in the vault | By hand; committed to your private vault |
+| Sync state (last run, ahead/behind, conflicts) | `~/.local/state/secondbrain/sync.json` on each machine | Only `secondbrain-vault sync` ([sync.md](sync.md)) |
 | Big media | Your vault, or object storage with a stub note | Optional `b2store serve` + `B2_SERVE_URL` |
 
 ## 7. How a change flows

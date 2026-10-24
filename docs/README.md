@@ -27,6 +27,7 @@ New here? Start with the [onboarding path](onboarding/README.md): ten short page
 | [architecture.md](architecture.md) | You want the big picture: engine vs. vault, the app, the index, the harness, where data flows |
 | [vault.md](vault.md) | You want to understand the vault template, `secondbrain-vault`, `AGENTS.md`, skills, and how to update the engine |
 | [configuration.md](configuration.md) | You need a setting: every env variable and every `secondbrain.json` key |
+| [sync.md](sync.md) | You work in the vault from more than one computer, or a server runs agents in it, and want every checkout committed, pulled and pushed on a timer without losing a note or leaking a key |
 | [modules.md](modules.md) | You want an optional feature (tracker, org board, kanban board, map, TV, usage, voice, livestream, ring, agents, chat) |
 | [rag.md](rag.md) | You want to know how notes become searchable passages and how the chat answers from them: chunking, embedding, hybrid retrieval, reranking, providers |
 | [agent-harness.md](agent-harness.md) | You run Claude Code or Hermes in the vault and want to know what the guard and the dev-log gate do |

@@ -71,6 +71,7 @@ nav:
       - Architecture: architecture.md
       - Your vault: vault.md
       - Configuration: configuration.md
+      - Vault sync: sync.md
       - Modules: modules.md
       - Retrieval and the chat module: rag.md
       - Agent harness: agent-harness.md
