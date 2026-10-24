@@ -392,7 +392,7 @@ The command or check and its expected result.
 - **Outcome labels on the card**: `task_links` gains `finished_at`, `wakes`, `tokens`, `result` (`done`, `blocked`, `held`, `escalated`), filled by `wake-done`. These are the per-card labels `run_outcomes` aggregates.
 - **Held and blocked reasons become structured**: `block <id> "<why>"` keeps the free text but the dispatcher's `held:` status and the review `redo` carry a reason code (`budget`, `missing-input`, `tool-error`, `needs-owner`, `review-changes`) that mining can cluster.
 - **What the loop may propose about the board**: default budgets per kind, the wake prompt text (once the dispatcher's prompt is a file the stamp covers), the review-round limit, the backoff settings. All become `policy.json` or env values with a record, not magic numbers.
-- **Bring the kanban closer to the engine** over time: the `hub` router already proxies an allowlist of agent-hub routes. A `cards` table owned by the engine, with the hub as one writer, would let the engine test graph application end to end. This is a larger change and is listed as an open question, not a phase.
+- **Bring the kanban closer to the engine** over time: the `hub` router already proxies an allowlist of agent-hub routes. A `cards` table owned by the engine, with the hub as one writer, would let the engine test graph application end to end. This is a larger change and is listed as an open question, not a phase. The design for it is now written up in [board-design.md](board-design.md).
 
 ### 5.4 The project and org structure
 
@@ -630,7 +630,7 @@ The headless mode is where the loop's levers (context assembly, budgets, tool co
 
 Pilot a thin headless runtime for bot wakes only, built on a minimal, well-maintained agent core rather than written from scratch, behind a per-bot switch in the roster (`runtime: sb-agent` next to `claude-code` and `hermes`, which `org_agents.runtime` already models). Keep Claude Code for the owner and Hermes for cron. Judge the pilot at the end of phase 5 on tokens per finished card, first-wake finish rate and trace completeness against the `claude -p` bots on the same graph nodes. The concrete candidate cores and their trade-offs are in section 14, which also records what could and could not be verified about them.
 
-**Status (2026-10-24):** the pilot runtime exists as [`zen-agent/`](https://github.com/kon-rad/secondbrain/blob/main/zen-agent/README.md), a standalone package on `@earendil-works/pi-agent-core`: personas from the roster, skills, any provider, the board and the retrieval API as typed tools, the guard in process, budgets in the loop, context assembled from capped named parts, compaction as policy and one JSONL trace per run. What is not yet done: the `runtime: zen-agent` switch in the roster schema and the dispatcher calling `zen-agent wake`, and the archive collector reading its traces.
+**Status (2026-10-24):** the pilot runtime exists as [`zen-agent/`](https://github.com/kon-rad/secondbrain/blob/main/zen-agent/README.md) (described in [zen-agent.md](zen-agent.md)), a standalone package on `@earendil-works/pi-agent-core`: personas from the roster, skills, any provider, the board and the retrieval API as typed tools, the guard in process, budgets in the loop, context assembled from capped named parts, compaction as policy and one JSONL trace per run. What is not yet done: the `runtime: zen-agent` switch in the roster schema and the dispatcher calling `zen-agent wake`, and the archive collector reading its traces.
 
 ---
 

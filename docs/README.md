@@ -28,11 +28,12 @@ New here? Start with the [onboarding path](onboarding/README.md): ten short page
 | [vault.md](vault.md) | You want to understand the vault template, `secondbrain-vault`, `AGENTS.md`, skills, and how to update the engine |
 | [configuration.md](configuration.md) | You need a setting: every env variable and every `secondbrain.json` key |
 | [sync.md](sync.md) | You work in the vault from more than one computer, or a server runs agents in it, and want every checkout committed, pulled and pushed on a timer without losing a note or leaking a key |
-| [modules.md](modules.md) | You want an optional feature (tracker, agent board, map, TV, usage, voice, livestream, ring, agents, chat) |
+| [modules.md](modules.md) | You want an optional feature (tracker, org board, kanban board, map, TV, usage, voice, livestream, ring, agents, chat) |
 | [rag.md](rag.md) | You want to know how notes become searchable passages and how the chat answers from them: chunking, embedding, hybrid retrieval, reranking, providers |
 | [agent-harness.md](agent-harness.md) | You run Claude Code or Hermes in the vault and want to know what the guard and the dev-log gate do |
 | [deployment.md](deployment.md) | You want the app on a server behind a login |
 | [privacy.md](privacy.md) | You want to know how the engine stays free of personal data, and how to keep your fork that way |
+| [zen-agent.md](zen-agent.md) | You want to run a roster persona headlessly on any model with the board and the knowledge base as tools: what zen-agent is, how to use it, its architecture and design, and how it compares to Claude Code, Hermes and pi |
 | [self-improvement.md](self-improvement.md) | You want to see the proposal (not built yet) for a self-improving loop over the rules, skills, board, org, cron jobs and engine: traces, evaluation, memory, and a possible headless runtime of our own |
 
 Also, in the repository:

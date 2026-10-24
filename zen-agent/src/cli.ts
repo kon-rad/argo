@@ -18,6 +18,8 @@ const USAGE = `zen-agent: a minimal agent harness
   zen-agent run [prompt] [--file f]      one task, final answer on stdout
   zen-agent chat                         interactive session
   zen-agent wake <card-id>               work one kanban card (the card is the task)
+  zen-agent lane [--runtime zen-agent|--agent name] [--once] [--interval 30]
+                                         claim ready cards from the engine's board and wake for each (the zen-agent lane)
   zen-agent models [--available]         providers and models
   zen-agent personas | skills | sessions what the vault offers
   zen-agent config                       the effective configuration
@@ -26,6 +28,7 @@ const USAGE = `zen-agent: a minimal agent harness
 Options: --persona <name>  --model <provider/model>  --config <zen.json>  --workdir <dir>
          --task "<standing orders>"  --resume <session>  --max-turns N  --max-tokens N
          --max-minutes N  --board <slug>  --json  --quiet
+         lane: --runtime <r> | --agent <name>  --once  --interval <seconds>
 Secrets come from the environment only (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...; see README).`;
 
 interface Flags {
@@ -37,6 +40,10 @@ interface Flags {
   resume?: string;
   file?: string;
   board?: string;
+  agent?: string;
+  runtime?: string;
+  interval?: string;
+  once?: boolean;
   'max-turns'?: string;
   'max-tokens'?: string;
   'max-minutes'?: string;
@@ -59,6 +66,10 @@ function parse(argv: string[]): { command: string; positionals: string[]; flags:
       resume: { type: 'string' },
       file: { type: 'string', short: 'f' },
       board: { type: 'string' },
+      agent: { type: 'string' },
+      runtime: { type: 'string' },
+      interval: { type: 'string' },
+      once: { type: 'boolean' },
       'max-turns': { type: 'string' },
       'max-tokens': { type: 'string' },
       'max-minutes': { type: 'string' },
@@ -157,6 +168,46 @@ async function main(argv: string[]): Promise<number> {
       const budget = { ...cardBudget(card.task.body), ...budgetFlags(flags) };
       const zen = new ZenAgent({ config: cfg, persona, budget, task: flags.task, onEvent: flags.json ? undefined : printer(flags.quiet === true) });
       return report(await zen.run(wakePrompt({ card, persona, canComplete: Boolean(kb.complete) })), flags);
+    }
+    case 'lane': {
+      // The lane loop of docs/board-design.md section 7: claim, run the wake, heartbeat while it runs, report. Only the
+      // engine's board can be claimed from; the card's own tools finish or block it, and a run that ends without doing so
+      // releases the card so the next wake finds it ready.
+      const cfg = config(flags);
+      const persona = flags.persona ?? process.env['ZEN_PERSONA'] ?? process.env['ORG_AGENT'] ?? null;
+      const kb = makeKanban(cfg.kanban, process.env, fetch, persona ?? 'zen-agent');
+      if (!kb?.claim) throw new Error('lane needs the engine\'s board in zen.json ("kanban": {"kind": "board", ...})');
+      const agent = flags.agent ?? (flags.runtime ? undefined : persona ?? undefined);
+      const runtime = flags.runtime ?? (agent ? undefined : 'zen-agent');
+      const interval = Math.max(5, Number(flags.interval ?? 30)) * 1000;
+      let worked = 0;
+      for (;;) {
+        const claimed = await kb.claim({ runtime, agent, board: flags.board });
+        if (!claimed) {
+          if (flags.once) return worked ? 0 : 3;
+          await new Promise((r) => setTimeout(r, interval));
+          continue;
+        }
+        const card = await kb.show(claimed.id, flags.board);
+        const budget = { ...cardBudget(card.task.body), ...budgetFlags(flags) };
+        const who = claimed.assignee ?? persona;
+        const zen = new ZenAgent({ config: cfg, persona: who, budget, task: flags.task, onEvent: flags.json ? undefined : printer(flags.quiet === true) });
+        const beat = setInterval(() => void kb.heartbeat?.(claimed.id, {}).catch(() => {}), 60_000);
+        let r: RunResult;
+        try {
+          r = await zen.run(wakePrompt({ card, persona: who, canComplete: true }));
+        } finally {
+          clearInterval(beat);
+        }
+        worked++;
+        const after = await kb.show(claimed.id, flags.board).catch(() => null);
+        if (after?.task.status === 'running' && kb.release) {
+          await kb.release(claimed.id, r.error ?? `run ended (${r.stopped}) without finishing the card`, { tokens: r.usage.input + r.usage.output, turns: r.turns }).catch(() => {});
+        }
+        if (flags.json) console.log(JSON.stringify({ card: claimed.id, stopped: r.stopped, turns: r.turns, usage: r.usage, error: r.error ?? null, status: after?.task.status ?? null }));
+        else console.error(`card ${claimed.id}: ${after?.task.status ?? '?'} after ${r.turns} turn(s), ${r.stopped}${r.error ? `: ${r.error}` : ''}`);
+        if (flags.once) return r.error ? 3 : 0;
+      }
     }
     case 'models': {
       const models = buildModels(config(flags));

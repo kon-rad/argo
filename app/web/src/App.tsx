@@ -20,6 +20,7 @@ import Fund from './routes/Fund.js';
 // three.js is large: the map loads only when it's opened.
 const MapPage = lazy(() => import('./routes/Map.js'));
 import Org from './routes/org/Org.js';
+import BoardPage from './routes/board/Board.js';
 import Login from './routes/Login.js';
 import { api, AUTH_EXPIRED_EVENT, type AppMeta } from './lib/api.js';
 import SearchBox from './components/SearchBox.js';
@@ -234,6 +235,8 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           <Route path="/ring" element={<Ring />} />
           {modules.has('projects') && <Route path="/projects" element={<Projects />} />}
           {modules.has('org') && <Route path="/org/*" element={<Org />} />}
+          {modules.has('board') && <Route path="/board" element={<BoardPage />} />}
+          {modules.has('board') && <Route path="/board/:cardId" element={<BoardPage />} />}
           {modules.has('tv') && <Route path="/tv" element={<Tv />} />}
           {modules.has('media') && <Route path="/media" element={<Media />} />}
           {modules.has('fund') && <Route path="/fund" element={<Fund />} />}
@@ -272,6 +275,7 @@ function menus(modules: Set<string>, meta: AppMeta | undefined, openChat: () => 
   const work: NavItem[] = [
     ...on('projects', { to: '/projects', label: 'Projects' }),
     ...on('org', { to: '/org', label: 'Org' }),
+    ...on('board', { to: '/board', label: 'Board' }),
     ...on('fund', { to: '/fund', label: 'Fund' }),
     ...on('agents', { to: '/agents', label: 'Agents' }),
     ...on('usage', { to: '/usage', label: 'Usage' }),

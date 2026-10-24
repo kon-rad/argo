@@ -9,6 +9,7 @@ import { agentsRouter } from './routes/agents.js';
 import { tvRouter } from './routes/tv.js';
 import { usageRouter } from './routes/usage.js';
 import { b2Router, type B2Options } from './routes/b2.js';
+import { boardRouter, type BoardRouterOptions } from './routes/board.js';
 import { chatRouter, type ChatOptions } from './routes/chat.js';
 import { errorHandlerFor } from './routes/http.js';
 import { databaseRouter } from './routes/database.js';
@@ -69,6 +70,8 @@ export interface AppOptions {
   buildInfo?: BuildInfo;
   /** Overridden in tests with a fake agent-hub. */
   hub?: HubOptions;
+  /** Overridden in tests: a fixed owner, no live bus. */
+  board?: Partial<BoardRouterOptions>;
   /** Overridden in tests; otherwise PROJECTS_FEED_TOKEN. */
   projectsFeedToken?: string;
   /** Overridden in tests: temp settings and cache, and a fake speech server. */
@@ -158,10 +161,14 @@ export function createApp(opts: AppOptions = {}): express.Express {
     );
     app.use('/api', auth.checkOrigin);
     app.use('/api/auth', auth.router);
+    // The board takes a per-machine bearer token as well as a session, so it sits ahead of the gate and
+    // applies the gate itself to requests without a token (board module).
+    if (modules.has('board')) app.use('/api/board', boardRouter({ sessionGate: auth.requireSession, hub: opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }, ...opts.board }));
     // Everything below this line needs a session. Routes are only ever added
     // below it, so a new endpoint is protected by default.
     app.use('/api', auth.requireSession);
   } else {
+    if (modules.has('board')) app.use('/api/board', boardRouter({ hub: opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }, ...opts.board }));
     app.get('/api/auth/me', (_req, res) => {
       res.json({ required: false, authenticated: true });
     });

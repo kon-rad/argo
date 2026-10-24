@@ -11,8 +11,8 @@ import { applyGraph, assertMayAssign, assignTask, createTask, getAgent, importOr
 import { ALL_MODULES, truncateAll } from './helpers.js';
 
 /**
- * The work graph: one card, one bot, one project. The kanban is a fake script
- * here (ORG_KANBAN_CMD); the link row and the handoff are the real thing.
+ * The work graph: one card, one bot, one project. The record is the engine's board (cards); the Hermes
+ * projection is a fake runner here, so the tests also check what is mirrored into it.
  */
 
 const ORG = {
@@ -38,6 +38,12 @@ function fakeKanban(): { cmd: string; log: string } {
   writeFileSync(cmd, `#!/usr/bin/env node\nrequire('fs').writeFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)));\nconsole.log(JSON.stringify({ id: 't_' + require('crypto').randomBytes(4).toString('hex'), status: 'ready' }));\n`);
   chmodSync(cmd, 0o755);
   return { cmd, log };
+}
+
+/** Cards already on the engine's board (made from the page, or imported), unassigned. */
+async function seedCards(rows: [string, string, string][]): Promise<void> {
+  await query(`INSERT INTO boards (slug, name) VALUES ('exo', 'Exo') ON CONFLICT DO NOTHING`);
+  for (const [id, title, status] of rows) await query(`INSERT INTO cards (id, board_slug, title, status, created_by) VALUES ($1, 'exo', $2, $3, 'owner')`, [id, title, status]);
 }
 
 const calls: string[][] = [];
@@ -73,9 +79,11 @@ describe('cards for bots', () => {
     const { rows } = await query<{ owner: string }>(`SELECT owner FROM features WHERE slug = 'org-page'`);
     expect(rows[0]!.owner).toBe('rune');
     expect(r.message).toMatchObject({ channel_slug: 'platform', kind: 'message', author: 'owner', task_id: 't_000001', project_slug: 'secondbrain-app', feature_slug: 'org-page', mentions: [] });
-    // The note names rune without a mention: the card itself wakes rune when it is ready, so nothing else does.
-    const { rows: wakes } = await query<{ agent_name: string; reason: string }>(`SELECT agent_name, reason FROM org_wakeups WHERE done_at IS NULL ORDER BY id`);
-    expect(wakes).toEqual([]);
+    expect(r.card).toMatchObject({ id: 't_000001', status: 'ready', board_slug: 'exo', kind: 'work', needs: null });
+    // The note names rune without a mention: the ready card itself wakes rune, once (reason task), and nothing else does.
+    const { rows: wakes } = await query<{ agent_name: string; reason: string; ref: string }>(`SELECT agent_name, reason, ref FROM org_wakeups WHERE done_at IS NULL ORDER BY id`);
+    expect(wakes).toEqual([{ agent_name: 'rune', reason: 'task', ref: 't_000001' }]);
+    expect((await query<{ kind: string }>(`SELECT kind FROM card_events WHERE card_id = 't_000001' ORDER BY id`)).rows.map((e) => e.kind)).toEqual(['created']);
     expect((await listTasks({ project: 'secondbrain-app' })).map((t) => t.task_id)).toEqual(['t_000001']);
     expect((await listTasks({ agent: 'lena' })).length).toBe(0);
   });
@@ -95,34 +103,34 @@ describe('cards for bots', () => {
   });
 
   it('assigns an existing card to a bot: kanban assign, a comment with the closing commands, the link row, a mention', async () => {
-    const shown: Record<string, { title: string; status: string }> = {
-      t_01d00001: { title: 'Second Brain app:  mobile-first update', status: 'ready' },
-      t_01d00002: { title: 'Old', status: 'done' },
-      t_01d00003: { title: 'Busy', status: 'running' },
-    };
     const kb: KanbanRunner = async (args) => {
       calls.push(args);
-      if (args[3] === 'show') return JSON.stringify({ task: { id: args[4], ...shown[args[4]!] } });
       return '';
     };
     const owner = await getAgent('owner');
+    await seedCards([['t_01d00001', 'Second Brain app:  mobile-first update', 'ready'], ['t_01d00002', 'Old', 'done'], ['t_01d00003', 'Busy', 'running']]);
     const r = await assignTask(owner, { taskId: 't_01d00001', assignee: 'rune', project: 'secondbrain-app', feature: 'org-page' }, kb);
-    expect(r.link).toMatchObject({ task_id: 't_01d00001', assignee: 'rune', project_slug: 'secondbrain-app', feature_slug: 'org-page', title: 'Second Brain app: mobile-first update', kind: 'work' });
-    expect(calls.map((c) => c[3])).toEqual(['show', 'assign', 'comment']);
-    expect(calls[1]).toEqual(['kanban', '--board', 'exo', 'assign', 't_01d00001', 'rune']);
-    const comment = calls[2]!;
+    expect(r.link).toMatchObject({ task_id: 't_01d00001', assignee: 'rune', project_slug: 'secondbrain-app', feature_slug: 'org-page', title: 'Second Brain app:  mobile-first update', kind: 'work' });
+    expect(calls.map((c) => c[3])).toEqual(['assign', 'comment']);
+    expect(calls[0]).toEqual(['kanban', '--board', 'exo', 'assign', 't_01d00001', 'rune']);
+    const comment = calls[1]!;
     expect(comment.slice(4, 8)).toEqual(['--author', 'owner', '--', 't_01d00001']);
     expect(comment[8]).toContain('Project: secondbrain-app/org-page');
-    expect(comment[8]).toContain('hermes kanban complete <this card>');
+    expect(comment[8]).toContain('cli-board finish <this card>');
+    // The same comment is on the engine's card, as the owner.
+    const { rows: comments } = await query<{ author: string; body: string }>(`SELECT author, body FROM card_comments WHERE card_id = 't_01d00001'`);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toMatchObject({ author: 'owner' });
+    expect(comments[0]!.body).toContain('Project: secondbrain-app/org-page');
     expect((await query<{ owner: string }>(`SELECT owner FROM features WHERE slug = 'org-page'`)).rows[0]!.owner).toBe('rune');
     expect(r.message).toMatchObject({ channel_slug: 'platform', mentions: [], task_id: 't_01d00001' });
     expect((await listTasks({ agent: 'rune' })).map((l) => l.task_id)).toEqual(['t_01d00001']);
-    // A finished or running card is refused before the kanban is touched; so is a card the board doesn't know.
+    // A finished or running card is refused before anything is written; so is a card the board doesn't know.
     calls.length = 0;
     await expect(assignTask(owner, { taskId: 't_01d00002', assignee: 'rune', project: 'secondbrain-app' }, kb)).rejects.toThrow('is done');
     await expect(assignTask(owner, { taskId: 't_01d00003', assignee: 'rune', project: 'secondbrain-app' }, kb)).rejects.toThrow('is running');
     await expect(assignTask(owner, { taskId: 't_01d00009', assignee: 'rune', project: 'secondbrain-app' }, kb)).rejects.toThrow('no card t_01d00009');
-    expect(calls.map((c) => c[3])).toEqual(['show', 'show', 'show']);
+    expect(calls).toEqual([]);
     // A member can't take someone else's card for a teammate; the lead can.
     await expect(assignTask(await getAgent('rune'), { taskId: 't_01d00001', assignee: 'atlas', project: 'secondbrain-app' }, kb)).rejects.toThrow("can't give");
     const byLead = await assignTask(await getAgent('atlas'), { taskId: 't_01d00001', assignee: 'rune', project: 'secondbrain-app' }, kb);
@@ -136,9 +144,9 @@ describe('cards for bots', () => {
     await expect(createTask(owner, { assignee: 'rune', title: 'x', project: 'secondbrain-app', type: 'dancing' }, runner)).rejects.toThrow(/--type dancing/);
     const kb: KanbanRunner = async (args) => {
       calls.push(args);
-      if (args[3] === 'show') return JSON.stringify({ task: { id: args[4], title: 'Design the kiosk', status: 'ready' } });
       return '';
     };
+    await seedCards([['t_01d00005', 'Design the kiosk', 'ready']]);
     const a = await assignTask(owner, { taskId: 't_01d00005', assignee: 'rune', project: 'secondbrain-app', type: 'design' }, kb);
     expect(a.link.work_type).toBe('design');
     // Assigning again without a type keeps the one it has.
@@ -166,14 +174,15 @@ describe('cards for bots', () => {
     const lines: string[] = [];
     try {
       expect(await main(['task', 'create', 'lena', 'Draft the launch post', '--project', 'secondbrain-app', '--priority', '3'], (s) => lines.push(s))).toBe(0);
-      expect(lines[0]).toMatch(/^card t_[0-9a-f]{8} for lena: Draft the launch post \(secondbrain-app\); mention \d+ in #media$/);
+      expect(lines[0]).toMatch(/^card t_[0-9a-f]{8} for lena: Draft the launch post \(secondbrain-app\) \[ready\]; mention \d+ in #media$/);
       const argv = JSON.parse(readFileSync(fake.log, 'utf8')) as string[];
       expect(argv[argv.indexOf('--priority') + 1]).toBe('3');
       lines.length = 0;
       expect(await main(['task', 'list', '--agent', 'lena'], (s) => lines.push(s))).toBe(0);
       expect(lines[0]).toMatch(/lena\s+secondbrain-app\s+Draft the launch post/);
-      // The runner's own error path.
-      await expect(kanbanRunner({ ...process.env, ORG_KANBAN_CMD: '/nonexistent/hermes' })(['kanban'])).rejects.toThrow(/kanban:/);
+      // The projection runner's own error path; without a projection configured there is no runner.
+      await expect(kanbanRunner({ ...process.env, ORG_KANBAN_CMD: '/nonexistent/hermes' })!(['kanban'])).rejects.toThrow(/kanban:/);
+      expect(kanbanRunner({})).toBeNull();
     } finally {
       delete process.env.ORG_AGENT;
       delete process.env.ORG_KANBAN_CMD;
@@ -287,14 +296,21 @@ describe('graphs and the review loop', () => {
     expect((await query<{ owner: string }>(`SELECT owner FROM features WHERE slug = 'org-page'`)).rows[0]!.owner).toBe('rune');
     expect(r.message).toMatchObject({ channel_slug: 'platform', mentions: [], task_id: 't_000001' });
     expect(r.message!.body).toContain('spec t_000001 (atlas) → build t_000002 (rune) → review t_000003 (vera) → verify t_000004 (atlas)');
-    const { rows: wakes } = await query<{ agent_name: string }>(`SELECT agent_name FROM org_wakeups WHERE done_at IS NULL`);
-    expect(wakes).toEqual([]);   // each card wakes its bot when it is ready; the summary names them without a mention
+    // The root card is ready and wakes its bot; the rest wait in todo for their parents (the summary names them without a mention).
+    const { rows: wakes } = await query<{ agent_name: string; ref: string }>(`SELECT agent_name, ref FROM org_wakeups WHERE done_at IS NULL`);
+    expect(wakes).toEqual([{ agent_name: 'atlas', ref: 't_000001' }]);
+    expect((await query<{ id: string; status: string }>(`SELECT id, status FROM cards ORDER BY id`)).rows.map((c) => c.status)).toEqual(['ready', 'todo', 'todo', 'todo']);
+    expect((await query<{ depends_on: string }>(`SELECT depends_on FROM card_deps WHERE card_id = 't_000003'`)).rows).toEqual([{ depends_on: 't_000002' }]);
   });
 
   it('redo opens a round for the builder, parks the review card on it, and escalates after two rounds', async () => {
     const owner = await getAgent('owner');
     const vera = await getAgent('vera');
     await applyGraph(owner, TEMPLATE, { project: 'secondbrain-app', feature: 'org-page' }, fake);
+    // The spec and the build are done: the review card is ready and vera reviews it.
+    await query(`SELECT board_card_finish('atlas', 't_000001', 'done', 'spec written', NULL, NULL, NULL, NULL, NULL)`);
+    await query(`SELECT board_card_finish('rune', 't_000002', 'done', 'PR 1', NULL, NULL, NULL, NULL, NULL)`);
+    expect((await query<{ status: string }>(`SELECT status FROM cards WHERE id = 't_000003'`)).rows[0]!.status).toBe('ready');
     calls.length = 0;
     const r1 = await redoTask(vera, 't_000003', 'The route returns 500 on an empty board.', fake);
     expect(r1).toMatchObject({ escalated: false, task_id: 't_000005', rounds: 1 });
@@ -306,8 +322,12 @@ describe('graphs and the review loop', () => {
     const block = calls.find((c) => c[3] === 'block')!;
     expect(block.slice(4, 7)).toEqual(['--kind', 'dependency', 't_000003']);
     const round = (await listTasks({ agent: 'rune' })).find((l) => l.task_id === 't_000005')!;
-    expect(round).toMatchObject({ rounds: 1, node: 'build', kind: 'build', graph: 'feature-build' });
+    expect(round).toMatchObject({ rounds: 1, node: 'build', kind: 'build', graph: 'feature-build', status: 'ready' });
     expect((await listTasks({ feature: 'org-page' })).find((l) => l.task_id === 't_000003')!.rounds).toBe(1);
+    // The review card waits for the round on the engine's board too, and comes back when the round is finished.
+    expect((await query<{ status: string; block_kind: string }>(`SELECT status, block_kind FROM cards WHERE id = 't_000003'`)).rows[0]).toEqual({ status: 'blocked', block_kind: 'dependency' });
+    await query(`SELECT board_card_finish('rune', 't_000005', 'done', 'fixed', NULL, NULL, NULL, NULL, NULL)`);
+    expect((await query<{ status: string }>(`SELECT status FROM cards WHERE id = 't_000003'`)).rows[0]!.status).toBe('ready');
     expect(r1.message).toMatchObject({ channel_slug: 'platform', mentions: [], task_id: 't_000005' });
     // Round 2 reviews the round-1 card (now a parent of the review card).
     const r2 = await redoTask(vera, 't_000003', 'Still 500.', fake);
@@ -317,7 +337,8 @@ describe('graphs and the review loop', () => {
     calls.length = 0;
     const r3 = await redoTask(vera, 't_000003', 'Still broken.', fake);
     expect(r3).toMatchObject({ escalated: true, task_id: null, rounds: 3 });
-    expect(calls.map((c) => c[3])).toEqual(['show', 'comment']);
+    expect(calls.map((c) => c[3])).toEqual(['comment']);
+    expect((await query<{ author: string }>(`SELECT author FROM card_comments WHERE card_id = 't_000003' ORDER BY id DESC LIMIT 1`)).rows[0]!.author).toBe('vera');
     expect(r3.message).toMatchObject({ channel_slug: 'dm:atlas:vera', author: 'vera', task_id: 't_000003' });
     // Only the reviewer, the lead or a human may ask for changes.
     await expect(redoTask(await getAgent('rune'), 't_000003', 'x', fake)).rejects.toThrow(/can't give/);

@@ -29,7 +29,7 @@
 #                        (e.g. voice here, livestream there); else MODULES. Each module installs its own timers:
 #                        agents: agents-sync · usage: usage-sync, credits-sync, the usage importer
 #                        projects: projects-render, the kiosk feed token, cli-projects on PATH
-#                        org: the sb_org role, cli-org on PATH · map: map-build, metrics
+#                        org: the sb_org role, cli-org on PATH · board: board-reclaim, cli-board on PATH · map: map-build, metrics
 #                        livestream: the minute poller and Caddy's /public/ files
 #                        social: the minute post-publisher and reauth check, cli-social on PATH
 set -euo pipefail
@@ -293,6 +293,7 @@ grep -qxF '.*.sb-*.tmp' "$VAULT/.git/info/exclude" 2>/dev/null \
 # ---- CLI wrappers on the app user's PATH, so an agent's `Bash(cli-org *)` rule matches ----
 WRAPPERS=()
 has org && WRAPPERS+=(cli-org)
+has board && WRAPPERS+=(cli-board)
 has projects && WRAPPERS+=(cli-projects)
 has social && WRAPPERS+=(cli-social)
 if [ "${#WRAPPERS[@]}" -gt 0 ]; then
@@ -306,6 +307,7 @@ fi
 # ---- services ----
 render "$APP_DIR/deploy/secondbrain.service" > /etc/systemd/system/secondbrain.service
 has agents && unit secondbrain-agents-sync
+has board && unit secondbrain-board-reclaim
 if has usage; then
   unit secondbrain-usage-sync
   unit secondbrain-credits-sync

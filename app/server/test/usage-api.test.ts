@@ -165,7 +165,9 @@ describe('usage api', () => {
     await importOrg({ version: 'usage-1', company: 'Argo', ceo: 'owner', teams: { platform: { name: 'Platform', lead: 'atlas' } }, channels: {},
       agents: { owner: { runtime: 'human', role: 'CEO', channels: ['*'] }, atlas: { role: 'Head of Platform', team: 'platform', reports_to: 'owner', work: 'coding' } } });
     await query(`INSERT INTO projects (slug, title, stage) VALUES ('secondbrain-app', 'Second Brain app', 'building')`);
-    await query(`INSERT INTO task_links (task_id, board, title, project_slug, assignee, created_by, work_type) VALUES ('t_0bada55e', 'exo', 'Fix the parser', 'secondbrain-app', 'atlas', 'owner', 'coding')`);
+    await query(`INSERT INTO org_agents (name, runtime, role, org_version) VALUES ('atlas', 'claude-code', 'Head', 'v'), ('owner', 'human', 'CEO', 'v') ON CONFLICT DO NOTHING`);
+    await query(`INSERT INTO boards (slug, name) VALUES ('exo', 'Exo') ON CONFLICT DO NOTHING`);
+    await query(`INSERT INTO cards (id, board_slug, title, project_slug, assignee, created_by, work_type) VALUES ('t_0bada55e', 'exo', 'Fix the parser', 'secondbrain-app', 'atlas', 'owner', 'coding')`);
     await query(`INSERT INTO org_wakeups (agent_name, reason, ref, created_at, claimed_at, claimed_by, done_at) VALUES ('atlas', 'mention', '62', '2026-10-14T02:59:00Z', '2026-10-14T03:00:00Z', 'org-atlas-20261014-030000', '2026-10-14T03:01:00Z')`);
     await withTransaction(async (tx) => {
       await store.upsertCalls(tx, [
