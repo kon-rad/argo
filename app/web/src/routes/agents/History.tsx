@@ -42,7 +42,8 @@ export default function History() {
 
   return (
     <div className="flex h-full min-h-0">
-      <aside className="flex w-80 shrink-0 flex-col border-r border-[var(--rule)]">
+      {/* Phone width: the conversation list OR one conversation, never both. */}
+      <aside className={`flex w-full shrink-0 flex-col border-r border-[var(--rule)] md:w-80 ${selected ? 'max-md:hidden' : ''}`}>
         <div className="space-y-2 border-b border-[var(--rule)] p-3">
           <div className="flex flex-wrap gap-1">
             {PLATFORMS.map((p) => (
@@ -93,7 +94,8 @@ export default function History() {
           ))}
         </ul>
       </aside>
-      <section className="min-w-0 flex-1 overflow-y-auto">
+      <section className={`min-w-0 flex-1 overflow-y-auto ${selected ? '' : 'max-md:hidden'}`}>
+        {selected && <Link to="/agents/history" className="inline-flex min-h-11 items-center px-3 text-sm text-[var(--accent)] md:hidden">← All conversations</Link>}
         {selected ? <Thread id={selected} /> : (
           <p className="p-6 text-sm text-[var(--ink-dim)]">Pick a conversation on the left.</p>
         )}
@@ -108,7 +110,7 @@ function Thread({ id }: { id: number }) {
   if (chat.isError) return <p className="p-6 text-sm">⚠ {chat.error.message}</p>;
   const { session: s, messages } = chat.data;
   return (
-    <div className="mx-auto max-w-3xl px-6 py-5">
+    <div className="mx-auto max-w-3xl px-4 py-5 md:px-6">
       <h1 className="text-lg font-semibold tracking-tight">{sessionName(s)}</h1>
       <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--ink-dim)]">
         <div>bot <b className="font-medium text-[var(--ink)]">{s.profile}</b></div>

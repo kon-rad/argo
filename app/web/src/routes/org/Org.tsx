@@ -591,7 +591,7 @@ function AgentPage() {
 export default function Org() {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <nav className="flex shrink-0 gap-1 border-b border-[var(--rule)] px-3" aria-label="Org">
+      <nav className="flex shrink-0 gap-1 overflow-x-auto whitespace-nowrap border-b border-[var(--rule)] px-3" aria-label="Org">
         <NavLink to="/org" end className={tab}>Channels</NavLink>
         <NavLink to="/org/chart" className={tab}>Org chart</NavLink>
         <NavLink to="/org/live" className={tab}>Live</NavLink>

@@ -293,7 +293,7 @@ function Board({ r }: { r: TrackerReport }) {
                 {p.needs_owner && <span className="ml-3 text-[var(--warn)]">⚑ Needs you: {p.needs_owner}</span>}
               </div>
             </header>
-            <div className="grid grid-cols-5 gap-2 p-2">
+            <div className="grid grid-cols-1 gap-2 p-2 md:grid-cols-5">
               {COLUMNS.map((s) => (
                 <div key={s} className="min-w-0">
                   <div className="mb-1 text-xs font-medium text-[var(--ink-dim)]">{LABEL[s]} ({p.counts[s]})</div>
@@ -442,7 +442,8 @@ export default function Projects() {
     <div className="h-full overflow-y-auto p-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold tracking-tight">Projects</h1>
-        <nav className="flex gap-1 text-sm">
+        {/* Scrolls inside its own strip on a phone instead of widening the page. */}
+        <nav className="flex max-w-full gap-1 overflow-x-auto whitespace-nowrap text-sm" aria-label="Projects views">
           {VIEWS.map((v) => (
             <button
               key={v}

@@ -13,7 +13,7 @@ const tab = ({ isActive }: { isActive: boolean }): string =>
 export default function Agents() {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <nav className="flex shrink-0 gap-1 border-b border-[var(--rule)] px-3" aria-label="Agents">
+      <nav className="flex shrink-0 gap-1 overflow-x-auto whitespace-nowrap border-b border-[var(--rule)] px-3" aria-label="Agents">
         <NavLink to="/agents/board" className={tab}>Board</NavLink>
         <NavLink to="/agents/chat" className={tab}>Chat</NavLink>
         <NavLink to="/agents/history" className={tab}>History</NavLink>

@@ -63,7 +63,7 @@ export default function Media() {
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--rule)] px-4 py-2">
         <h1 className="mr-2 text-xl font-semibold">Media</h1>
-        <div className="flex gap-1" role="tablist">
+        <div className="flex max-w-full gap-1 overflow-x-auto whitespace-nowrap" role="tablist">
           {TABS.map((t) => {
             const n = t.kind === 'all' ? all : counts[t.kind];
             const active = t.kind === kind;

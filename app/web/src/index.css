@@ -62,6 +62,43 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Phones (below Tailwind's md, 768px). Desktop is untouched by everything in this block.
+   - Inputs are 16px so iOS Safari does not zoom the page when one is focused.
+   - Buttons, selects and inputs are at least 44px tall: a thumb-sized target.
+   - Wide content scrolls inside its own box, never the whole page. */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  button,
+  select,
+  summary,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) {
+    min-height: 44px;
+  }
+  /* A checkbox is small; its label is the target. */
+  label:has(> input[type="checkbox"]),
+  label:has(> input[type="radio"]) {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  /* Text-only buttons (tab strips, the close mark) need width as well as height. */
+  button { min-width: 44px; }
+  img, video, canvas, svg { max-width: 100%; }
+  pre { max-width: 100%; overflow-x: auto; }
+  table { display: block; max-width: 100%; overflow-x: auto; }
+  /* The dynamic viewport shrinks for the browser bar and, where supported, the keyboard, so the
+     chat input stays on screen instead of sliding under it. */
+  @supports (height: 100dvh) {
+    html, body, #root { height: 100dvh; }
+  }
+  /* Long unbroken strings (URLs, hashes, paths) wrap instead of widening the page. */
+  main { overflow-wrap: anywhere; }
+}
+
 /* Markdown body. Scoped so Tailwind's reset stays in force everywhere else. */
 .prose { line-height: 1.65; }
 .prose > * + * { margin-top: 0.85em; }
