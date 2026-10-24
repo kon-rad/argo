@@ -32,6 +32,7 @@ New here? Start with the [onboarding path](onboarding/README.md): ten short page
 | [agent-harness.md](agent-harness.md) | You run Claude Code or Hermes in the vault and want to know what the guard and the dev-log gate do |
 | [deployment.md](deployment.md) | You want the app on a server behind a login |
 | [privacy.md](privacy.md) | You want to know how the engine stays free of personal data, and how to keep your fork that way |
+| [zen-runtime.md](zen-runtime.md) | You want the plan for running the bots on zen-agent instead of Claude Code headless and Hermes cron: rules and a Jev gate in front of every wake, DeepSeek V4 Flash on OpenRouter as the default, context as capped parts, every run and dollar on `/usage` |
 | [self-improvement.md](self-improvement.md) | You want to see the proposal (not built yet) for a self-improving loop over the rules, skills, board, org, cron jobs and engine: traces, evaluation, memory, and a possible headless runtime of our own |
 
 Also, in the repository:
