@@ -16,6 +16,7 @@ import {
   upsertTeam,
 } from './projects.js';
 import { renderMarkdown, renderStandup, renderTelegram } from './projects-report.js';
+import { fetchCards, mayOverwrite, renderRoadmap, RoadmapError } from './roadmap.js';
 import { settings } from './settings.js';
 
 const USAGE = `cli-projects: the project tracker (Postgres). Every agent and the company-report skill use this.
@@ -23,6 +24,7 @@ const USAGE = `cli-projects: the project tracker (Postgres). Every agent and the
   report [--format markdown|standup|telegram|json]   the company report (default: telegram)
   list                                               projects and features, one line each
   render [path]                                      write the markdown report to projects.reportFile (only if it changed)
+  roadmap [path]                                     kanban cards + tracker features by theme (roadmap.themes) to roadmap.file; exits 1 if either source is unreachable
   add-project <project> --title T --stage S [fields]
   add <project>/<feature> --title T [fields]         a new feature (starts in idea = backlog unless --stage)
   set <project>[/<feature>] [fields]                 update; a stage change is recorded with --note
@@ -124,6 +126,25 @@ async function main(argv: string[]): Promise<number> {
       console.log(changed ? `wrote ${path}` : `${path} unchanged`);
       return 0;
     }
+    case 'roadmap': {
+      const rs = settings(vault).roadmap;
+      const path = pos[0] ?? join(vault, rs.file);
+      // Read both sources first: if either is unreachable this throws and nothing is written.
+      const [cards, board] = await Promise.all([fetchCards(rs), getBoard(vault)]);
+      if (!mayOverwrite(path)) throw new RoadmapError(`${path} exists and is not a generated roadmap; set roadmap.file in secondbrain.json to another path`);
+      const { text, counts } = renderRoadmap(cards, board, rs);
+      // The "Generated at" line changes every run; ignore it so git only sees real changes.
+      const stable = (t: string): string => t.replace(/^\*\*Generated at:\*\* \S+/m, '');
+      let same = false;
+      try {
+        same = stable(readFileSync(path, 'utf8')) === stable(text);
+      } catch {
+        // missing: write it
+      }
+      if (!same) writeIfChanged(path, text);
+      console.log(`${same ? 'unchanged' : 'wrote'} ${path}: ${counts.map((c) => `${c.id} ${c.features} features, ${c.cards} tickets`).join('; ') || 'no themes'}`);
+      return 0;
+    }
     case 'list': {
       const b = await getBoard(vault);
       for (const p of b.projects) {
@@ -220,7 +241,7 @@ if (process.argv[1]?.endsWith('cli-projects.js') || process.argv[1]?.endsWith('c
   try {
     code = await main(process.argv.slice(2));
   } catch (err) {
-    if (err instanceof TrackerError) console.error(err.message);
+    if (err instanceof TrackerError || err instanceof RoadmapError) console.error(err.message);
     else if (err instanceof z.ZodError) console.error(err.issues.map((i) => `${i.path.join('.') || 'input'}: ${i.message}`).join('\n'));
     else console.error(err instanceof Error ? err.message : String(err));
   } finally {
