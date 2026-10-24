@@ -38,7 +38,7 @@ const ORG = {
 
 let n = 0;
 const runner: KanbanRunner = async (args) => {
-  if (args.includes('show')) return JSON.stringify({ task: { title: 'An old card', status: 'ready' } });
+  if (args[3] !== 'create') return '';
   n++;
   return JSON.stringify({ id: `t_${String(n).padStart(6, '0')}` });
 };
@@ -87,7 +87,8 @@ describe('bot powers', () => {
     const r = await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Tidy', project: 'argo-exo' }, runner);
     expect(r.message).toMatchObject({ channel_slug: 'platform', mentions: [] });
     expect(r.message!.body).toBe(`card ${r.task_id} for rune: Tidy (argo-exo)`);
-    expect(await wakes()).toEqual([]);
+    // The ready card wakes rune once (reason task); the note adds no mention wake on top.
+    expect(await wakes()).toEqual([{ agent_name: 'rune', reason: 'task' }]);
   });
 
   it('a graph checks every node: a code review node needs a reviewer', async () => {

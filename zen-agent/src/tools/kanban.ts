@@ -5,11 +5,13 @@ import type { KanbanConfig } from '../config.js';
 import { clipOutput, text, tool, type ToolContext } from './index.js';
 
 /**
- * The kanban board as typed tools. Two backends speak to the same board:
- * `hub` is agent-hub's HTTP API (bearer token from the environment; list,
- * show, create, comment, assign), `cli` is the board's own command line
- * (`hermes kanban`, which also completes and blocks cards). The tool set the
- * model sees is whatever the backend can do, so it never calls what will fail.
+ * The kanban board as typed tools. Three backends: `board` is the engine's own
+ * board (the secondbrain app's /api/board, a per-machine token from the
+ * environment; every verb, plus claim and heartbeat for the lane loop), `hub`
+ * is agent-hub's HTTP API (list, show, create, comment, assign), `cli` is the
+ * Hermes board's command line (`hermes kanban`, which also completes and blocks
+ * cards). The tool set the model sees is whatever the backend can do, so it
+ * never calls what will fail.
  */
 export interface Card {
   id: string;
@@ -32,7 +34,7 @@ export interface CardDetail {
 }
 
 export interface KanbanBackend {
-  readonly kind: 'hub' | 'cli';
+  readonly kind: 'board' | 'hub' | 'cli';
   readonly board: string;
   list(board?: string): Promise<Card[]>;
   show(id: string, board?: string): Promise<CardDetail>;
@@ -41,6 +43,11 @@ export interface KanbanBackend {
   assign(id: string, assignee: string, opts?: { board?: string; project?: string; feature?: string }): Promise<void>;
   complete?(id: string, result?: string, board?: string): Promise<void>;
   block?(id: string, reason: string, board?: string): Promise<void>;
+  /** The lane loop: the next ready card for this runtime or agent, now running with a lease; null when nothing waits. */
+  claim?(o: { runtime?: string; agent?: string; board?: string; leaseMinutes?: number }): Promise<Card | null>;
+  heartbeat?(id: string, o: { tokens?: number; turns?: number }): Promise<void>;
+  /** A run that ended without finishing its card: the card goes back to ready for the next wake. */
+  release?(id: string, note?: string, usage?: { tokens?: number; turns?: number }): Promise<void>;
 }
 
 const CARD_ID = /^t_[0-9a-f]{6,32}$/;
@@ -92,6 +99,98 @@ export class HubKanban implements KanbanBackend {
   }
   async assign(id: string, assignee: string, opts: { board?: string; project?: string; feature?: string } = {}): Promise<void> {
     await this.call('POST', `/tasks/${checkId(id)}/assign`, undefined, { board: opts.board ?? this.board, assignee, project: opts.project, feature: opts.feature });
+  }
+}
+
+/** A card as the engine's board returns it (docs/board-design.md section 5.1), reduced to what the tools show. */
+interface EngineCard {
+  id: string;
+  title: string;
+  body: string | null;
+  assignee: string | null;
+  status: string;
+  priority: number;
+  created_by: string;
+  created_at: string;
+  result: string | null;
+  block_kind: string | null;
+  block_reason: string | null;
+  contract: Record<string, unknown>;
+}
+
+const toCard = (c: EngineCard): Card => ({
+  id: c.id, title: c.title, body: c.body, assignee: c.assignee, status: c.status, priority: c.priority, created_by: c.created_by,
+  created_at: Math.floor(Date.parse(c.created_at) / 1000), result: c.result,
+});
+
+export class BoardKanban implements KanbanBackend {
+  readonly kind = 'board' as const;
+  private readonly url: string;
+  constructor(
+    url: string,
+    private readonly token: string,
+    readonly board: string,
+    private readonly fetchFn: typeof fetch,
+  ) {
+    this.url = url.replace(/\/+$/, '');
+  }
+
+  private async call<T>(method: 'GET' | 'POST', path: string, query?: Record<string, string | undefined>, body?: unknown): Promise<T> {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(query ?? {})) if (v) q.set(k, v);
+    const res = await this.fetchFn(`${this.url}/api/board${path}${q.size ? `?${q}` : ''}`, {
+      method,
+      headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (res.status === 204) return null as T;
+    const data = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+    if (!res.ok) throw new Error(`board ${res.status}${data?.error?.message ? `: ${data.error.message}` : ''}`);
+    return data as T;
+  }
+
+  async list(board = this.board): Promise<Card[]> {
+    return (await this.call<{ cards: EngineCard[] }>('GET', '/cards', { board })).cards.map(toCard);
+  }
+  async show(id: string): Promise<CardDetail> {
+    const d = await this.call<{ card: EngineCard; comments: { author: string; body: string; created_at: string }[]; depends_on: { id: string }[]; dependants: { id: string }[] }>('GET', `/cards/${checkId(id)}`);
+    const body = d.card.body;
+    // The contract rides in the body for the model, under the headings the wake prompt reads.
+    const contract = Object.entries(d.card.contract ?? {}).map(([k, v]) => `## ${k[0]!.toUpperCase()}${k.slice(1)}\n${typeof v === 'string' ? v : Array.isArray(v) ? v.map((x) => `- ${String(x)}`).join('\n') : Object.entries(v as Record<string, unknown>).map(([a, b]) => `${a}: ${String(b)}`).join(' · ')}`).join('\n');
+    return {
+      task: { ...toCard(d.card), body: [body, contract].filter(Boolean).join('\n\n') || null },
+      comments: d.comments.map((c) => ({ author: c.author, body: c.body, created_at: Math.floor(Date.parse(c.created_at) / 1000) })),
+      parents: d.depends_on.map((x) => x.id),
+      children: d.dependants.map((x) => x.id),
+      latest_summary: d.card.block_reason ?? null,
+    };
+  }
+  async create(c: { title: string; body: string; assignee: string; board?: string; project?: string; feature?: string }): Promise<Card> {
+    const r = await this.call<{ card: EngineCard }>('POST', '/cards', undefined, { title: c.title, body: c.body, assignee: c.assignee === 'none' ? null : c.assignee, board: c.board ?? this.board, project: c.project, feature: c.feature });
+    return toCard(r.card);
+  }
+  async comment(id: string, body: string): Promise<void> {
+    await this.call('POST', `/cards/${checkId(id)}/comment`, undefined, { body });
+  }
+  async assign(id: string, assignee: string, opts: { board?: string; project?: string; feature?: string } = {}): Promise<void> {
+    await this.call('POST', `/cards/${checkId(id)}/assign`, undefined, { assignee: assignee === 'none' ? null : assignee, project: opts.project, feature: opts.feature });
+  }
+  async complete(id: string, result?: string): Promise<void> {
+    await this.call('POST', `/cards/${checkId(id)}/finish`, undefined, { outcome: 'done', result });
+  }
+  async block(id: string, reason: string): Promise<void> {
+    await this.call('POST', `/cards/${checkId(id)}/finish`, undefined, { outcome: 'blocked', block_kind: 'other', result: reason });
+  }
+  async claim(o: { runtime?: string; agent?: string; board?: string; leaseMinutes?: number }): Promise<Card | null> {
+    const r = await this.call<{ card: EngineCard } | null>('POST', '/claim', undefined, { runtime: o.runtime, agent: o.agent, board: o.board ?? this.board, lease_minutes: o.leaseMinutes });
+    return r ? toCard(r.card) : null;
+  }
+  async heartbeat(id: string, o: { tokens?: number; turns?: number }): Promise<void> {
+    await this.call('POST', `/cards/${checkId(id)}/heartbeat`, undefined, { tokens: o.tokens, turns: o.turns });
+  }
+  async release(id: string, note?: string, usage: { tokens?: number; turns?: number } = {}): Promise<void> {
+    await this.call('POST', `/cards/${checkId(id)}/finish`, undefined, { outcome: 'partial', result: note, tokens: usage.tokens, turns: usage.turns });
   }
 }
 
@@ -153,6 +252,11 @@ export class CliKanban implements KanbanBackend {
 }
 
 export function makeKanban(cfg: KanbanConfig, env: NodeJS.ProcessEnv, fetchFn: typeof fetch, author: string, exec?: Exec): KanbanBackend | null {
+  if (cfg.kind === 'board') {
+    const token = env[cfg.tokenEnv];
+    if (!token) throw new Error(`kanban: ${cfg.tokenEnv} is not set (a board token from \`cli-board token create\`)`);
+    return new BoardKanban(cfg.url, token, cfg.board, fetchFn);
+  }
   if (cfg.kind === 'hub') {
     const token = env[cfg.tokenEnv];
     if (!token) throw new Error(`kanban: ${cfg.tokenEnv} is not set`);

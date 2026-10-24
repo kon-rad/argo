@@ -84,15 +84,14 @@ describe('Projects page', () => {
     mount('/projects?view=board', (url, init) => {
       calls.push({ url, init });
       const u = new URL(url, 'http://x');
-      if (u.pathname === '/api/org/tasks') return Response.json({ tasks: [{ task_id: 't_abc123', board: 'exo', title: 'Write /v1/days', project_slug: 'lifeos', feature_slug: 'core', assignee: 'rune', created_by: 'owner', rounds: 1, created_at: '2026-10-15T05:00:00Z' }] });
-      if (u.pathname === '/api/hub/board') return Response.json({ board: 'exo', tasks: [{ id: 't_abc123', title: 'Write /v1/days', status: 'running', assignee: 'rune' }] });
+      if (u.pathname === '/api/org/tasks') return Response.json({ tasks: [{ task_id: 't_abc123', board: 'exo', title: 'Write /v1/days', project_slug: 'lifeos', feature_slug: 'core', assignee: 'rune', created_by: 'owner', rounds: 1, created_at: '2026-10-15T05:00:00Z', status: 'running' }] });
       if (u.pathname === '/api/org/chart') return Response.json({ teams: [{ slug: 'platform', name: 'Platform', lead: 'atlas' }, { slug: 'media', name: 'Media', lead: 'juno' }], agents: [
         { name: 'owner', team_slug: null, team_name: null, runtime: 'human', role: 'CEO', is_lead: false },
         { name: 'atlas', team_slug: 'platform', team_name: 'Platform', runtime: 'claude-code', role: 'Head of Platform', is_lead: true },
         { name: 'rune', team_slug: 'platform', team_name: 'Platform', runtime: 'claude-code', role: 'Platform engineer', is_lead: false },
         { name: 'juno', team_slug: 'media', team_name: 'Media', runtime: 'claude-code', role: 'Head of Media', is_lead: true },
       ] });
-      if (u.pathname === '/api/hub/tasks') return Response.json({ id: 't_new000', title: 'Add tests', status: 'ready', assignee: 'atlas' });
+      if (u.pathname === '/api/board/cards' && init?.method === 'POST') return Response.json({ card: { id: 't_new000', title: 'Add tests', status: 'ready', assignee: 'atlas' }, message: null }, { status: 201 });
       return undefined;
     });
     expect(await screen.findByText('Headless core')).toBeTruthy();
@@ -108,8 +107,8 @@ describe('Projects page', () => {
     expect(screen.getByRole('option', { name: 'juno (Media)' })).toBeTruthy(); // other teams are marked
     fireEvent.change(screen.getByLabelText('Card title for Headless core'), { target: { value: 'Add tests' } });
     fireEvent.click(screen.getByRole('button', { name: 'Give to atlas' }));
-    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/hub/tasks') && c.init?.method === 'POST')).toBe(true));
-    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/hub/tasks'))!.init?.body))).toEqual({ board: 'exo', title: 'Add tests', body: '', assignee: 'atlas', project: 'lifeos', feature: 'core' });
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')).toBe(true));
+    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')!.init?.body))).toEqual({ title: 'Add tests', assignee: 'atlas', project: 'lifeos', feature: 'core' });
   });
 
   it('divisions view groups projects under their division', async () => {

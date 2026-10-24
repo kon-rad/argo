@@ -140,12 +140,11 @@ function Overview({ r }: { r: TrackerReport }) {
   );
 }
 
-/** The work graph, read side: every card for a bot (task_links) and the kanban's status for it, when agent-hub answers. */
+/** The work graph, read side: every card for a bot with its status, from the org's task list (the engine's board). */
 function useCards() {
   const links = useQuery({ queryKey: ['org', 'tasks'], queryFn: () => api.orgTasks(), staleTime: 30_000, retry: false });
-  const board = useQuery({ queryKey: ['hub-board', 'exo'], queryFn: () => api.board('exo'), staleTime: 30_000, retry: false });
   const chart = useQuery({ queryKey: ['org', 'chart'], queryFn: api.orgChart, staleTime: 60_000, retry: false });
-  const status = new Map((board.data?.tasks ?? []).map((t) => [t.id, t.status]));
+  const status = new Map((links.data?.tasks ?? []).map((t) => [t.task_id, t.status ?? 'card']));
   return { links: links.data?.tasks ?? [], status, chart: chart.data ?? null };
 }
 
@@ -157,7 +156,7 @@ function GiveCard({ p, f, chart, onDone }: { p: TrackerProject; f: TrackerFeatur
   const [title, setTitle] = useState('');
   const chosen = bot || team?.lead || bots[0]?.name || '';
   const give = useMutation({
-    mutationFn: () => api.createTask({ board: 'exo', title, body: '', assignee: chosen, project: p.slug, feature: f.slug }),
+    mutationFn: () => api.boardCreate({ title, assignee: chosen, project: p.slug, feature: f.slug }),
     onSuccess: () => {
       setTitle('');
       onDone();
@@ -218,7 +217,7 @@ function FeatureCard({ p, f, cards }: { p: TrackerProject; f: TrackerFeature; ca
             <li key={t.task_id}>
               <Link className="text-[var(--accent)]" to={`/org/agents/${t.assignee}`}>{t.assignee}</Link>
               {' · '}
-              <Link className="text-[var(--ink)]" to={`/agents/board/${t.task_id}`}>{t.title}</Link>
+              <Link className="text-[var(--ink)]" to={`/board/${t.task_id}`}>{t.title}</Link>
               <span className="text-[var(--ink-dim)]"> · {cards.status.get(t.task_id) ?? 'card'}{t.node ? ` · ${t.node}` : ''}{t.rounds ? ` · round ${t.rounds}` : ''}</span>
             </li>
           ))}
@@ -242,7 +241,7 @@ function FeatureCard({ p, f, cards }: { p: TrackerProject; f: TrackerFeature; ca
           give to a bot
         </button>
       </div>
-      {giving && <GiveCard p={p} f={f} chart={cards.chart} onDone={() => { setGiving(false); void qc.invalidateQueries({ queryKey: ['org', 'tasks'] }); void qc.invalidateQueries({ queryKey: ['hub-board'] }); void refresh(); }} />}
+      {giving && <GiveCard p={p} f={f} chart={cards.chart} onDone={() => { setGiving(false); void qc.invalidateQueries({ queryKey: ['org', 'tasks'] }); void qc.invalidateQueries({ queryKey: ['board'] }); void refresh(); }} />}
       {move.isError && <div className="mt-1 text-xs text-[var(--warn)]">{move.error.message}</div>}
       {verifying && (
         <div className="mt-1 space-y-1">

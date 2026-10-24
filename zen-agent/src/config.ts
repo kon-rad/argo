@@ -32,6 +32,8 @@ export interface ProviderConfig {
 
 export type KanbanConfig =
   | { kind: 'none' }
+  /** The engine's board (the secondbrain app's /api/board) with a board token from the environment. */
+  | { kind: 'board'; url: string; tokenEnv: string; board: string }
   | { kind: 'hub'; url: string; tokenEnv: string; board: string }
   | { kind: 'cli'; command: string; board: string };
 

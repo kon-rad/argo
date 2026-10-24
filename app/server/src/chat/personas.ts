@@ -34,7 +34,7 @@ export async function listPersonas(): Promise<Persona[]> {
   try {
     const { rows } = await query<{ name: string; role: string; team_slug: string | null }>(
       `SELECT name, role, team_slug FROM org_agents
-       WHERE retired_at IS NULL AND runtime <> 'human' ORDER BY team_slug NULLS LAST, name`,
+       WHERE retired_at IS NULL AND runtime NOT IN ('human', 'session') ORDER BY team_slug NULLS LAST, name`,
     );
     agents = rows.map((r) => ({ id: r.name, name: r.name, role: r.role, team: r.team_slug, builtin: false }));
   } catch {
@@ -50,7 +50,7 @@ export async function personaDefinition(vaultRoot: string, id: string): Promise<
   let row: Row | undefined;
   try {
     const { rows } = await query<Row>(
-      `SELECT name, role, team_slug, expertise FROM org_agents WHERE name = $1 AND retired_at IS NULL AND runtime <> 'human'`,
+      `SELECT name, role, team_slug, expertise FROM org_agents WHERE name = $1 AND retired_at IS NULL AND runtime NOT IN ('human', 'session')`,
       [id],
     );
     row = rows[0];

@@ -27,12 +27,12 @@ New here? Start with the [onboarding path](onboarding/README.md): ten short page
 | [architecture.md](architecture.md) | You want the big picture: engine vs. vault, the app, the index, the harness, where data flows |
 | [vault.md](vault.md) | You want to understand the vault template, `secondbrain-vault`, `AGENTS.md`, skills, and how to update the engine |
 | [configuration.md](configuration.md) | You need a setting: every env variable and every `secondbrain.json` key |
-| [modules.md](modules.md) | You want an optional feature (tracker, agent board, map, TV, usage, voice, livestream, ring, agents, chat) |
+| [modules.md](modules.md) | You want an optional feature (tracker, org board, kanban board, map, TV, usage, voice, livestream, ring, agents, chat) |
 | [rag.md](rag.md) | You want to know how notes become searchable passages and how the chat answers from them: chunking, embedding, hybrid retrieval, reranking, providers |
 | [agent-harness.md](agent-harness.md) | You run Claude Code or Hermes in the vault and want to know what the guard and the dev-log gate do |
 | [deployment.md](deployment.md) | You want the app on a server behind a login |
 | [privacy.md](privacy.md) | You want to know how the engine stays free of personal data, and how to keep your fork that way |
-| [board-design.md](board-design.md) | You want the proposal (not built yet) for moving the kanban record into the engine: cards next to the tracker and the org, one write path through SQL functions, per-device tokens, and Hermes, Claude Code and zen-agent as lanes that claim and finish cards |
+| [board-design.md](board-design.md) | You want the design behind the `board` module: the kanban record in the engine, cards next to the tracker and the org, one write path through SQL functions, per-device tokens, and Hermes, Claude Code and zen-agent as lanes that claim and finish cards |
 | [self-improvement.md](self-improvement.md) | You want to see the proposal (not built yet) for a self-improving loop over the rules, skills, board, org, cron jobs and engine: traces, evaluation, memory, and a possible headless runtime of our own |
 
 Also, in the repository:

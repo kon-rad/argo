@@ -349,6 +349,44 @@ function Live() {
  * Ship approvals: what the bots want to merge or deploy, waiting on the owner. Approving here is the same yes as
  * "approve <id>" on Telegram; a denial needs a reason the bot can act on. Shared facts are listed under it.
  */
+
+/** Who may reach the board from elsewhere: the per-device tokens, with revoke. Minting stays on the CLI (the secret is shown once, in a terminal). */
+function Tokens() {
+  const qc = useQueryClient();
+  const tokens = useQuery({ queryKey: ['board', 'tokens'], queryFn: api.boardTokens, retry: false, staleTime: 15_000 });
+  const revoke = useMutation({ mutationFn: (id: number) => api.boardRevokeToken(id), onSuccess: () => void qc.invalidateQueries({ queryKey: ['board', 'tokens'] }) });
+  if (tokens.isError) return null;   // the board module is off here
+  const rows = tokens.data?.tokens ?? [];
+  const when = (iso: string | null): string => (iso ? new Date(iso).toLocaleString() : 'never');
+  return (
+    <section className="mt-6 rounded border border-[var(--rule)] p-3" aria-label="Board tokens">
+      <h2 className="mb-1 font-semibold tracking-tight">Board tokens</h2>
+      <p className="mb-2 text-xs text-[var(--ink-dim)]">Machines and agent processes that reach the board over HTTPS, each as one roster member. Mint one on the server with <code>cli-board token create &lt;agent&gt; --label "where"</code>; revoking ends that machine's access at once.</p>
+      {rows.length === 0 ? <p className="text-sm text-[var(--ink-faint)]">No tokens.</p> : (
+        <table className="w-full text-sm">
+          <thead><tr className="text-left text-xs text-[var(--ink-dim)]"><th>Acts as</th><th>Label</th><th>Last seen</th><th>Made</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((t) => (
+              <tr key={t.id} className={t.revoked_at ? 'text-[var(--ink-faint)] line-through' : ''}>
+                <td><Link className="text-[var(--accent)]" to={`/org/agents/${t.agent_name}`}>{t.agent_name}</Link></td>
+                <td>{t.label ?? '-'}</td>
+                <td>{when(t.last_seen_at)}</td>
+                <td>{when(t.created_at)}</td>
+                <td className="text-right">
+                  {t.revoked_at ? <span className="text-xs">revoked</span> : (
+                    <button type="button" onClick={() => revoke.mutate(t.id)} disabled={revoke.isPending} className="rounded border border-[var(--rule)] px-2 py-0.5 text-xs">revoke</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {revoke.isError && <p className="mt-1 text-xs text-[var(--warn)]">{revoke.error.message}</p>}
+    </section>
+  );
+}
+
 function Approvals() {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ['org', 'approvals'], queryFn: () => api.orgApprovals(), refetchInterval: POLL_MS });
@@ -442,20 +480,19 @@ function AgentPage() {
   const qc = useQueryClient();
   const teams = useTeams();
   const page = useQuery({ queryKey: ['org', 'agent', name], queryFn: () => api.orgAgent(name), refetchInterval: 15_000 });
-  // The kanban lives behind agent-hub on the droplet; on the Mac this answers 503 and the section stays empty.
-  const board = useQuery({ queryKey: ['hub-board', 'exo'], queryFn: () => api.board('exo'), retry: false, staleTime: 30_000 });
-  const links = useQuery({ queryKey: ['org', 'tasks', name], queryFn: () => api.orgTasks({ agent: name }), retry: false, staleTime: 30_000 });
+  // The agent's cards on the engine's board (board module); without it the section says so.
+  const board = useQuery({ queryKey: ['board', 'cards', { assignee: name }], queryFn: () => api.boardCards({ assignee: name, done_days: 30 }), retry: false, staleTime: 30_000 });
   const projects = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, retry: false });
   const [dmText, setDmText] = useState('');
   const [cardTitle, setCardTitle] = useState('');
   const [cardProject, setCardProject] = useState('');
   const [cardFeature, setCardFeature] = useState('');
   const giveCard = useMutation({
-    mutationFn: () => api.createTask({ board: 'exo', title: cardTitle, body: '', assignee: name, project: cardProject, feature: cardFeature || undefined }),
+    mutationFn: () => api.boardCreate({ title: cardTitle, assignee: name, project: cardProject || undefined, feature: cardFeature || undefined }),
     onSuccess: () => {
       setCardTitle('');
       void qc.invalidateQueries({ queryKey: ['org'] });
-      void qc.invalidateQueries({ queryKey: ['hub-board'] });
+      void qc.invalidateQueries({ queryKey: ['board'] });
     },
   });
   const sendDm = useMutation({
@@ -469,13 +506,7 @@ function AgentPage() {
   if (page.isError) return <p className="p-4 text-sm">⚠ {page.error.message}</p>;
   const p = page.data;
   if (!p) return null;
-  const tasks = (board.data?.tasks ?? []).filter((t) => t.assignee === name);
-  const linkOf = new Map((links.data?.tasks ?? []).map((l) => [l.task_id, l]));
-  // Cards the kanban does not list (agent-hub down, or the Mac) still show from their link rows.
-  const cardRows = [
-    ...tasks.map((t) => ({ id: t.id, title: t.title, status: t.status, link: linkOf.get(t.id) ?? null })),
-    ...(links.data?.tasks ?? []).filter((l) => !tasks.some((t) => t.id === l.task_id)).map((l) => ({ id: l.task_id, title: l.title, status: 'card', link: l })),
-  ];
+  const cardRows = (board.data?.cards ?? []).map((c) => ({ id: c.id, title: c.title, status: c.status, link: c.project_slug ? { project_slug: c.project_slug, feature_slug: c.feature_slug } : null }));
   const projectList = projects.data?.projects ?? [];
   const featureList = projectList.find((pr) => pr.slug === cardProject)?.features ?? [];
   const section = (title: string, children: React.ReactNode) => (
@@ -525,7 +556,7 @@ function AgentPage() {
           className="mb-4 flex flex-wrap items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (cardTitle.trim() && cardProject) giveCard.mutate();
+            if (cardTitle.trim()) giveCard.mutate();
           }}
         >
           <input aria-label={`Card for ${name}`} className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-sm" placeholder={`Give ${name} a card (one card, one bot, one project)`} maxLength={200} value={cardTitle} onChange={(e) => setCardTitle(e.target.value)} />
@@ -537,9 +568,9 @@ function AgentPage() {
             <option value="">feature (optional)</option>
             {featureList.map((f) => <option key={f.slug} value={f.slug}>{f.slug}</option>)}
           </select>
-          <button type="submit" disabled={!cardTitle.trim() || !cardProject || giveCard.isPending} className="rounded bg-[var(--accent)] px-3 py-1 text-sm font-medium text-white disabled:opacity-50">Give card</button>
+          <button type="submit" disabled={!cardTitle.trim() || giveCard.isPending} className="rounded bg-[var(--accent)] px-3 py-1 text-sm font-medium text-white disabled:opacity-50">Give card</button>
           {giveCard.isError && <span className="self-center text-xs text-[var(--warn)]">{giveCard.error.message}</span>}
-          {giveCard.isSuccess && <span className="self-center text-xs text-[var(--ink-dim)]">card {giveCard.data.id} created</span>}
+          {giveCard.isSuccess && <span className="self-center text-xs text-[var(--ink-dim)]">card {giveCard.data.card.id} created</span>}
         </form>
       )}
       <div className="grid gap-3 lg:grid-cols-2">
@@ -557,14 +588,14 @@ function AgentPage() {
           <ul className="space-y-1 text-sm">
             {cardRows.map((t) => (
               <li key={t.id}>
-                <Link className="text-[var(--accent)]" to={`/agents/board/${t.id}`}>{t.title}</Link>
+                <Link className="text-[var(--accent)]" to={`/board/${t.id}`}>{t.title}</Link>
                 <span className="text-xs text-[var(--ink-dim)]"> {t.status}</span>
                 {t.link?.project_slug && <span className="text-xs text-[var(--ink-dim)]"> · <Link className="text-[var(--accent)]" to="/projects?view=board">{t.link.project_slug}{t.link.feature_slug ? `/${t.link.feature_slug}` : ''}</Link></span>}
               </li>
             ))}
           </ul>
         ) : board.isError ? (
-          <p className="text-xs text-[var(--ink-faint)]">No cards; the kanban itself is on the droplet.</p>
+          <p className="text-xs text-[var(--ink-faint)]">No cards: the board module is off here.</p>
         ) : (
           <p className="text-sm text-[var(--ink-faint)]">No cards. Give one above.</p>
         ))}
@@ -602,7 +633,7 @@ export default function Org() {
           <Route index element={<Channels />} />
           <Route path="chart" element={<Chart />} />
           <Route path="live" element={<Live />} />
-          <Route path="approvals" element={<Approvals />} />
+          <Route path="approvals" element={<div className="h-full overflow-y-auto"><Approvals /><div className="px-4 pb-4"><Tokens /></div></div>} />
           <Route path="agents/:name" element={<AgentPage />} />
         </Routes>
       </div>
