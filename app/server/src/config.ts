@@ -115,6 +115,10 @@ const Schema = z.object({
   // Unset on the Mac, where the Agents page's live tabs say so.
   AGENT_HUB_URL: z.string().url().optional(),
   AGENT_HUB_TOKEN: z.string().min(32).optional(),
+  // agents module: `zen-agent serve` (the zen-agent chat host, loopback, bearer token) behind /api/zen. Unset: the
+  // zen-agent chat page says so.
+  ZEN_AGENT_URL: z.string().url().optional(),
+  ZEN_AGENT_TOKEN: z.string().min(16).optional(),
   // board module: minutes a claimed card's lease lasts without a heartbeat before the board takes it back.
   BOARD_LEASE_MINUTES: z.coerce.number().int().min(1).default(60),
   // board module, on a machine that is not the server: cli-board reaches the board over HTTPS with a token
@@ -235,6 +239,8 @@ export const config = {
   ringPullDb: parsed.data.RING_PULL_DB,
   agentHubUrl: parsed.data.AGENT_HUB_URL,
   agentHubToken: parsed.data.AGENT_HUB_TOKEN,
+  zenAgentUrl: parsed.data.ZEN_AGENT_URL,
+  zenAgentToken: parsed.data.ZEN_AGENT_TOKEN,
   projectsFeedToken: parsed.data.PROJECTS_FEED_TOKEN,
   boardLeaseMinutes: parsed.data.BOARD_LEASE_MINUTES,
   boardUrl: parsed.data.BOARD_URL?.replace(/\/+$/, ''),

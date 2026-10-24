@@ -77,14 +77,16 @@ Moving from the Hermes board: `cli-board import --hermes` mirrors its cards (`--
 
 Views over an **agent-hub** service that you run separately: Claude Code chats, Hermes history, and (until the `board` module takes it over) its kanban board. Also the `/cron` page of scheduled jobs.
 
+The Chat tab has a harness switch. **Claude Code** chats go through the agent-hub. **zen-agent** chats go through `zen-agent serve` ([zen-agent.md](zen-agent.md#36-as-a-chat-host)), a loopback process the app proxies under `/api/zen` the same way: the page lists the providers whose key is set on the server (and, for local endpoints such as a laptop over Tailscale, whether they answer right now), the roster's personas, and starts a session with a persona, a model, a tool-access level (full, or read-only: skills and knowledge) and a thinking level. The session then streams its trace as it is written: thinking, each tool call with its timing, skill reads, guard blocks, compactions and the turn's tokens and cost. A session's settings are fixed for its life; "Continue as new session" starts another one with other settings, seeded with the conversation so far. No key passes through the page: adding a provider is an environment change on the server.
+
 | | |
 |---|---|
 | Pages | `/agents` (board, chats, history), `/cron` |
-| Settings | `AGENT_HUB_URL`, `AGENT_HUB_TOKEN`, `HERMES_HOME` |
+| Settings | `AGENT_HUB_URL`, `AGENT_HUB_TOKEN`, `ZEN_AGENT_URL`, `ZEN_AGENT_TOKEN`, `HERMES_HOME` |
 | CLI | `secondbrain agents-sync` |
 | Timers (server) | `agents-sync` |
 
-Without an agent-hub, the live tabs say so and the rest still works.
+Without an agent-hub or a `zen-agent serve`, the live tabs say so and the rest still works.
 
 ## usage
 

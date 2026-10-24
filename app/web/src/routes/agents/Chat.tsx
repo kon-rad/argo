@@ -7,6 +7,7 @@ import EventFeed from '../../components/EventFeed.js';
 import { ChatInput } from '../../components/ChatInput.js';
 import { useStickToBottom } from '../../lib/useStickToBottom.js';
 import HubError from './HubError.js';
+import HarnessSwitch from './HarnessSwitch.js';
 
 /**
  * Chat with Claude Code on the droplet, in the vault, on the subscription: a terminal-style conversation that shows
@@ -34,7 +35,8 @@ export default function Chat() {
   return (
     <div className="flex h-full min-h-0">
       <aside className={`flex w-72 shrink-0 flex-col border-r border-[var(--rule)] ${chatId ? 'max-md:hidden' : 'max-md:w-full'}`}>
-        <div className="flex items-center gap-2 border-b border-[var(--rule)] p-3">
+        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--rule)] p-3">
+          <HarnessSwitch />
           <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model"
             className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
             <option value="opus">Opus</option>

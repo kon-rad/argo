@@ -16,6 +16,7 @@ import { databaseRouter } from './routes/database.js';
 import { fileRouter } from './routes/file.js';
 import { ingestRouter } from './routes/ingest.js';
 import { hubRouter, type HubOptions } from './routes/hub.js';
+import { zenRouter, type ZenOptions } from './routes/zen.js';
 import { mapRouter } from './routes/map.js';
 import { mediaRouter } from './routes/media.js';
 import { fundRouter } from './routes/fund.js';
@@ -70,6 +71,8 @@ export interface AppOptions {
   buildInfo?: BuildInfo;
   /** Overridden in tests with a fake agent-hub. */
   hub?: HubOptions;
+  /** Overridden in tests with a fake `zen-agent serve`. */
+  zen?: ZenOptions;
   /** Overridden in tests: a fixed owner, no live bus. */
   board?: Partial<BoardRouterOptions>;
   /** Overridden in tests; otherwise PROJECTS_FEED_TOKEN. */
@@ -217,6 +220,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
   if (modules.has('agents')) {
     app.use('/api/agents', agentsRouter(opts.timers));
     app.use('/api/hub', hubRouter(opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }));
+    app.use('/api/zen', zenRouter(opts.zen ?? { url: config.zenAgentUrl, token: config.zenAgentToken }));
   }
   if (modules.has('usage')) app.use('/api/usage', usageRouter());
   if (modules.has('projects')) app.use('/api/projects', projectsRouter(vaultRoot));
