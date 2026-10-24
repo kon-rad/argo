@@ -2,7 +2,19 @@
 
 A design for replacing Claude Code headless wakes and Hermes cron jobs on the server with [zen-agent](https://github.com/kon-rad/secondbrain/blob/main/zen-agent/README.md), with DeepSeek V4 Flash on OpenRouter as the default model, rules and a small calibrated classifier (Jev) in front of every wake, and every token and dollar on the `/usage` page.
 
-Status: proposal (2026-10-24). Nothing in it is built unless a section says so. Figures marked "measured" come from one install's run logs over about 31 hours and are shaped to carry the point, not the install.
+Status (2026-10-24): the engine side is built and tested; the pilot (phases 2 to 5 of section 11) has not run. Figures marked "measured" come from one install's run logs over about 31 hours and are shaped to carry the point, not the install.
+
+What exists in this repository:
+
+| Piece | Where | Notes |
+|---|---|---|
+| Rules (section 4.1) | migration `1756000014800_zen-runtime.sql`, `org.ts` | `ack` message kind that wakes nobody; one `routine` wakeup per local day in `ORG_TZ`; roster `routines` |
+| Classify step (4.2) | `app/server/src/classify/`, `secondbrain classify` | Jev through OpenRouter (`CLASSIFY_PROVIDER=openrouter`, the owner's choice) or TypeSafe directly; privacy allow list, cache, daily cap, fall-through; default schemas in `vault-template/.agents/classify/*.json` (JSON, not YAML: the server has no YAML dependency) |
+| Context policy (5) | `zen-agent` flags `--tools`, `--task-file`, `--handoff-file`, `--thinking`, `--meta`; `handoff` part | Caps as in 5.1 are set in the vault template's `zen.example.json` |
+| Model default (6.1) | `vault-template/zen.example.json` | `openrouter/deepseek/deepseek-v4.1-flash` to trial first (the owner's choice); V4 Flash named as the alternative |
+| Ledger (7) | `usage/zenTrace.ts`, `usage-sync`, the usage routes and page | Trace `meta.version` 1; real cost on `zen-agent` rows, none on `claude-code` rows |
+| Dispatcher (8) | `app/server/src/dispatch/`, `secondbrain org-dispatch`, `secondbrain-dispatch.timer` | `ORG_DISPATCH=on` installs it; only bots with roster `runtime: zen-agent` are run |
+| Not built | `usage_runs.outcome` is not filled from the run-outcome decision yet (the decision row carries `run_id`); no Telegram transport (section 9, by design) | |
 
 ---
 
@@ -100,7 +112,7 @@ The engine never imports zen-agent and zen-agent never imports the engine: the d
 
 | Piece | Design |
 |---|---|
-| Decision schemas | `.agents/classify/<decision>.yaml` in the vault: question text, primitive (`noul` yes/no, `choice`, `score`), options, `act` and `escalate` thresholds, privacy ceiling, schema version, model pin (`openrouter/typesafe/jev-1.14`). The engine ships defaults for `wake-gate`, `card-tier`, `run-outcome` in `vault-template/.agents/classify/`; a vault edits thresholds, never code |
+| Decision schemas | `.agents/classify/<decision>.json` in the vault: question text, primitive (`noul` yes/no, `choice`, `score`), options, `act` and `escalate` thresholds, privacy ceiling, schema version, model pin (`openrouter/typesafe/jev-1.14`). The engine ships defaults for `wake-gate`, `card-tier`, `run-outcome` in `vault-template/.agents/classify/` (copied by `secondbrain-vault init`); a vault edits thresholds, never code |
 | Provider | pi-ai, which zen-agent already depends on, has a `typesafe-system-one` API and lists `typesafe/jev-1.14` under OpenRouter. The classify step uses the engine's `OPENROUTER_API_KEY`. No new vendor account is required; a direct TypeSafe key is an option, not a prerequisite |
 | Table | `classify_decisions (id, decision, schema_version, input_hash, input_level, model, answer, probabilities jsonb, confidence, action, latency_ms, input_tokens, cost_usd, error, run_id, agent_name, created_at, label, labelled_by)`. `run_id` joins `usage_runs`; `label` is the owner's later verdict |
 | Bands | Above `act`: do it. Between `escalate` and `act`: the old path (wake the agent, keep the default model). Below `escalate`, for decisions that touch the owner: queue for review. Thresholds are set from labelled decisions after shadow mode, not from intuition |
