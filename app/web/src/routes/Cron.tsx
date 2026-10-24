@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { VaultMarkdown } from '../components/VaultMarkdown.js';
 import { api, type CronJob } from '../lib/api.js';
 import { ago, zoned } from '../lib/time.js';
 
@@ -201,9 +200,7 @@ function Output({ profile, jobId, file }: { profile: string; jobId: string; file
   const prompt = at >= 0 ? out.data.content.slice(0, at) : null;
   return (
     <div className="border-t border-[var(--rule)] px-3 py-2 text-sm">
-      <div className="prose max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{response}</ReactMarkdown>
-      </div>
+      <VaultMarkdown text={response} className="prose max-w-none" />
       {prompt && (
         <details className="mt-2 text-xs text-[var(--ink-dim)]">
           <summary className="cursor-pointer">Header and prompt sent to the agent</summary>

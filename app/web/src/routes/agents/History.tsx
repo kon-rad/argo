@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { VaultMarkdown } from '../../components/VaultMarkdown.js';
 import { api, type AgentMessage, type AgentSession } from '../../lib/api.js';
 import { ago, zoned } from '../../lib/time.js';
 
@@ -155,11 +154,7 @@ function Message({ m, tz }: { m: AgentMessage; tz: string | null }) {
         <b className="font-semibold">{mine ? 'You' : m.role === 'assistant' ? 'Agent' : m.role}</b>
         {time}
       </div>
-      {m.content && (
-        <div className="prose max-w-none text-sm">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-        </div>
-      )}
+      {m.content && <VaultMarkdown text={m.content} />}
       {m.reasoning && (
         <details className="mt-1 text-xs text-[var(--ink-dim)]">
           <summary className="cursor-pointer">reasoning</summary>

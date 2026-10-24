@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { unified } from 'unified';
@@ -84,5 +84,39 @@ describe('VaultMarkdown', () => {
     expect(screen.getByText('Areas/argo/media/linkedin-posts/2026-10-19_how-secondbrain-works.md').closest('a')).toBeNull();
     expect(screen.getByText('ghost-note').className).toBe('wikilink-dead');
     expect(container.querySelector('a[href^="https://www.linkedin.com"]')).toBeTruthy();
+  });
+
+  it('opens a Preview modal for a resolved path and dismisses it with Esc, the close button and the backdrop', async () => {
+    const path = 'Research/ai/x-research.md';
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url);
+      const body = u.startsWith('/api/file/resolve')
+        ? { resolved: { [path]: path } }
+        : { file: { path, name: 'x-research.md', title: 'X research', ext: '.md', size_bytes: 5, mtime: '2026-10-21T00:00:00Z', is_markdown: true, body: 'Hello preview', parent_path: 'Research/ai' },
+            frontmatter: {}, tags: [], links: [], backlinks: [] };
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter><VaultMarkdown text={`Wrote ${path}.`} /></MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const button = await screen.findByRole('button', { name: 'Preview' });
+    fireEvent.click(button);
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+    expect(await screen.findByText('Hello preview')).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(button);
+    fireEvent.click(await screen.findByRole('button', { name: 'Close preview' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(button);
+    fireEvent.click(await screen.findByTestId('preview-backdrop'));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
