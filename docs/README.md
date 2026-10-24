@@ -33,6 +33,7 @@ New here? Start with the [onboarding path](onboarding/README.md): ten short page
 | [deployment.md](deployment.md) | You want the app on a server behind a login |
 | [privacy.md](privacy.md) | You want to know how the engine stays free of personal data, and how to keep your fork that way |
 | [zen-agent.md](zen-agent.md) | You want to run a roster persona headlessly on any model with the board and the knowledge base as tools: what zen-agent is, how to use it, its architecture and design, and how it compares to Claude Code, Hermes and pi |
+| [zen-server-design.md](zen-server-design.md) | You want zen-agent bots running on the server, a page to talk to them, and their tokens on `/usage`: the design for the `zen` module (lane service, API, page, trace collector) |
 | [self-improvement.md](self-improvement.md) | You want to see the proposal (not built yet) for a self-improving loop over the rules, skills, board, org, cron jobs and engine: traces, evaluation, memory, and a possible headless runtime of our own |
 
 Also, in the repository:

@@ -78,3 +78,4 @@ nav:
       - Privacy (engine): privacy.md
       - Self-improving orchestration (proposal): self-improvement.md
       - zen-agent, the minimal agent harness: zen-agent.md
+      - zen-agent on the server (design): zen-server-design.md

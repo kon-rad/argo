@@ -5,7 +5,7 @@
 **Status:** built and merged: `zen-agent/` on `main` since [kon-rad/secondbrain#38](https://github.com/kon-rad/secondbrain/pull/38). The roster switch and the dispatcher hand-off described in [Integration](#7-integration-with-the-second-brain) are not done yet.
 **Written:** 2026-10-24
 **Goal:** Run one agent of the org, as a named persona, on one task, under a budget, with every input measured and every step traced, on whichever model the policy names.
-**Companion pages:** [Self-improving orchestration](self-improvement.md) (section 10 asked for this runtime), [Agent harness](agent-harness.md) (the guard and the gate it shares), [Retrieval](rag.md) (the search it calls).
+**Companion pages:** [zen-agent on the server](zen-server-design.md) (the design for running it on the server, talking to it from the app and counting it on `/usage`), [Self-improving orchestration](self-improvement.md) (section 10 asked for this runtime), [Agent harness](agent-harness.md) (the guard and the gate it shares), [Retrieval](rag.md) (the search it calls).
 
 ---
 
