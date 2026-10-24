@@ -1,0 +1,77 @@
+# The docs site: https://kon-rad.github.io/secondbrain/
+# Built from docs/ by .github/workflows/docs.yml. Preview locally with:
+#   pip install mkdocs-material && mkdocs serve
+site_name: secondbrain
+site_description: An exocortex you own. Plain markdown in a git repo you control, an app that searches and maps it, and agents that work inside it under rules you write.
+site_url: https://kon-rad.github.io/secondbrain/
+repo_url: https://github.com/kon-rad/secondbrain
+repo_name: kon-rad/secondbrain
+edit_uri: edit/main/docs/
+docs_dir: docs
+copyright: MIT licensed
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - tables
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+validation:
+  links:
+    absolute_links: warn
+    unrecognized_links: warn
+    not_found: warn
+    anchors: warn
+
+nav:
+  - Home: README.md
+  - Onboarding:
+      - Overview: onboarding/README.md
+      - What you get, and what to borrow: onboarding/01-what-you-get.md
+      - Set up your vault: onboarding/02-set-up-your-vault.md
+      - Connect Claude Code: onboarding/03-claude-code.md
+      - Connect Hermes: onboarding/04-hermes.md
+      - Connect another harness: onboarding/05-other-harnesses.md
+      - Connect servers and computers: onboarding/06-connect-machines.md
+      - Privacy: onboarding/07-privacy.md
+      - Configuration and secrets: onboarding/08-config-and-secrets.md
+      - Orchestrate agents: onboarding/09-orchestrate-agents.md
+      - Adapt it: onboarding/10-adapt-it.md
+  - Reference:
+      - Getting started: getting-started.md
+      - Architecture: architecture.md
+      - Your vault: vault.md
+      - Configuration: configuration.md
+      - Modules: modules.md
+      - Agent harness: agent-harness.md
+      - Deployment: deployment.md
+      - Privacy (engine): privacy.md

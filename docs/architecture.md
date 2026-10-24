@@ -114,4 +114,4 @@ Both hooks fail open: a payload they can't parse is allowed, so a bug in a hook 
 ## 7. How a change flows
 
 - **Your notes and settings:** commit to your vault, as usual.
-- **The engine:** a branch and a pull request on this repo. CI runs the app suite, the Python suite and the leak checks; `main` is protected. Once merged, each vault moves its pin when it wants the change. See [vault.md](vault.md) and [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
+- **The engine:** a branch and a pull request on this repo. CI runs the app suite, the Python suite and the leak checks; `main` is protected. Once merged, each vault moves its pin when it wants the change. See [vault.md](vault.md) and [`CONTRIBUTING.md`](https://github.com/kon-rad/secondbrain/blob/main/CONTRIBUTING.md).

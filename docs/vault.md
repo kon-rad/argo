@@ -83,4 +83,4 @@ git -C .secondbrain worktree add ../secondbrain-my-fix -b fix/my-fix origin/main
 # work in ../secondbrain-my-fix, then push the branch and open a PR
 ```
 
-Once it's merged, move your pin. [`../CONTRIBUTING.md`](../CONTRIBUTING.md) has the rest.
+Once it's merged, move your pin. [`CONTRIBUTING.md`](https://github.com/kon-rad/secondbrain/blob/main/CONTRIBUTING.md) has the rest.
