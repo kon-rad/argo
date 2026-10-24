@@ -53,6 +53,9 @@ const Schema = z.object({
   OWNER_NAME: z.string().trim().min(1).default('owner'),
   // org module: the name of the human agent in the org (org_agents, runtime human).
   ORG_OWNER: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default('owner'),
+  // org module: the kanban assignee for vault work, a Claude Code session on the owner's machine that no dispatcher
+  // spawns. Boards that still use the old slug `m4` keep working.
+  ORG_VAULT_ASSIGNEE: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default('vault-session'),
   // org module: runs one remembered agent session may carry before the next wake starts fresh (1: never resume).
   ORG_SESSION_MAX_RUNS: z.coerce.number().int().min(1).default(3),
   // org module: re-wakes of a bot for the same card in 24 h before it is held for a person, and the first
@@ -163,6 +166,7 @@ export const config = {
   modules: parseModules(parsed.data.MODULES),
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,
+  orgVaultAssignee: parsed.data.ORG_VAULT_ASSIGNEE,
   orgSessionMaxRuns: parsed.data.ORG_SESSION_MAX_RUNS,
   orgTaskWakeRetries: parsed.data.ORG_TASK_WAKE_RETRIES,
   orgTaskWakeBackoffMinutes: parsed.data.ORG_TASK_WAKE_BACKOFF_MINUTES,

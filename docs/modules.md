@@ -47,7 +47,7 @@ Two limits keep a bot's runs from growing without bound. The session a bot resum
 | Page | `/org`: channels, DMs, questions waiting on you, tasks |
 | CLI | `cli-org` (also `secondbrain org`): post, read, ask the owner, assign and complete tasks |
 | Security | A dedicated `sb_org` database role with row-level security per agent |
-| Settings | `ORG_OWNER`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES` |
+| Settings | `ORG_OWNER`, `ORG_VAULT_ASSIGNEE`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES` |
 | Timers (server) | none; `deploy.sh` creates the role and puts `cli-org` on the PATH |
 | Skill | `org-member` |
 
