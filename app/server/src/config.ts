@@ -76,6 +76,8 @@ const Schema = z.object({
   DOCS_PATH: z.string().optional(),
   // Mac only: a script the "start robot" button runs. Unset: the route is not mounted.
   ROBOT_LAUNCH_SCRIPT: z.string().optional(),
+  // Where `secondbrain-vault sync` writes sync.json on this machine (docs/sync.md); the header chip reads it.
+  SYNC_STATE_DIR: z.string().optional(),
   // Hermes's home on this machine and, for the archive, on the server it pulls from.
   HERMES_HOME: z.string().default(resolve(homedir(), '.hermes')),
   REMOTE_HERMES_HOME: z.string().optional(),
@@ -185,6 +187,7 @@ export const config = {
   devLogPath: parsed.data.DEV_LOG_PATH ?? null,
   docsPath: parsed.data.DOCS_PATH ?? null,
   robotLaunchScript: parsed.data.ROBOT_LAUNCH_SCRIPT,
+  syncStateDir: parsed.data.SYNC_STATE_DIR,
   hermesHome: parsed.data.HERMES_HOME,
   remoteHermesHome: parsed.data.REMOTE_HERMES_HOME ?? '~/.hermes',
   archiveSshHost: parsed.data.ARCHIVE_SSH_HOST,

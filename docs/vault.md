@@ -26,6 +26,8 @@ Template files that would act on the engine repo itself are stored without their
 .secondbrain/bin/secondbrain-vault rules [--check] [--force]
                                                        AGENTS.md = AGENTS.base.md + AGENTS.local.md
 .secondbrain/bin/secondbrain-vault link-skills         symlink the engine's skills into .agents/skills/
+.secondbrain/bin/secondbrain-vault sync run|status|install|uninstall|resolve
+                                                       keep this checkout in step with your other machines (sync.md)
 ```
 
 The vault it acts on is `--vault`, else the folder that holds the engine as `.secondbrain/`, else the current directory. It is Python 3.9+, standard library only.

@@ -23,6 +23,8 @@
 #   DEPLOY_NO_ROLLBACK=1 leave a failed deploy in place instead of putting the previous build back
 #   DEPLOY_EMBED=1       install the nightly embed timer (needs a local Ollama service)
 #   DEPLOY_DB_BACKUP=1   install the nightly pg_dump-to-B2 timer (needs b2store for the app user)
+#   DEPLOY_VAULT_SYNC=1  install the vault sync timer (tools/sbsync.py as the app user, role agent, every 15 min;
+#                        the app user needs push access to the vault repo; docs/sync.md)
 #   DEPLOY_MODULES       the server's module list, when it differs from this machine's MODULES
 #                        (e.g. voice here, livestream there); else MODULES. Each module installs its own timers:
 #                        agents: agents-sync · usage: usage-sync, credits-sync, the usage importer
@@ -56,7 +58,7 @@ read_env() {
   printf -v "$key" '%s' "$val"; export "$key"
 }
 for k in DEPLOY_HOST DEPLOY_PUBLIC_HOST DEPLOY_VAULT_DIR DEPLOY_APP_USER DEPLOY_APP_DIR DEPLOY_HERMES_HOME \
-         EXTRA_CADDY_IMPORT DEPLOY_REDIRECT_FROM DEPLOY_PAUSE_FILE DEPLOY_EMBED DEPLOY_DB_BACKUP DEPLOY_MODULES MODULES \
+         EXTRA_CADDY_IMPORT DEPLOY_REDIRECT_FROM DEPLOY_PAUSE_FILE DEPLOY_EMBED DEPLOY_DB_BACKUP DEPLOY_VAULT_SYNC DEPLOY_MODULES MODULES \
          DEPLOY_NO_ROLLBACK; do
   read_env "$k"
 done
@@ -72,10 +74,11 @@ REDIRECT_FROM="${DEPLOY_REDIRECT_FROM:-}"
 PAUSE_FILE="${DEPLOY_PAUSE_FILE:-}"
 WITH_EMBED="${DEPLOY_EMBED:-0}"
 WITH_BACKUP="${DEPLOY_DB_BACKUP:-0}"
+WITH_VAULT_SYNC="${DEPLOY_VAULT_SYNC:-0}"
 NO_ROLLBACK="${DEPLOY_NO_ROLLBACK:-0}"
 # The module list without spaces, so it travels to the server as one safe word.
 MODS="$(printf '%s' "${DEPLOY_MODULES:-${MODULES:-}}" | tr -d ' ')"
-for v in "$APP_USER" "$APP_DIR" "$VAULT_DIR" "$PUBLIC_HOST" "$HERMES_HOME_REMOTE" "$EXTRA_IMPORT" "$REDIRECT_FROM" "$PAUSE_FILE" "$MODS" "$WITH_EMBED" "$WITH_BACKUP" "$ENGINE_COMMIT" "$NO_ROLLBACK"; do
+for v in "$APP_USER" "$APP_DIR" "$VAULT_DIR" "$PUBLIC_HOST" "$HERMES_HOME_REMOTE" "$EXTRA_IMPORT" "$REDIRECT_FROM" "$PAUSE_FILE" "$MODS" "$WITH_EMBED" "$WITH_BACKUP" "$WITH_VAULT_SYNC" "$ENGINE_COMMIT" "$NO_ROLLBACK"; do
   [[ "$v" =~ ^[A-Za-z0-9._/@:,-]*$ ]] || { echo "unsafe character in setting: $v"; exit 1; }
 done
 
@@ -85,9 +88,15 @@ rsync -az --delete \
   --exclude node_modules --exclude dist --exclude 'web/dist' --exclude data \
   --exclude .git --exclude .DS_Store \
   "$APP_ROOT/" "$HOST:$APP_DIR/"
+# The vault sync is one stdlib Python file from tools/, outside app/: ship it next to the app
+# (the rsync above has --delete, so it is sent again on every deploy).
+if [ "$WITH_VAULT_SYNC" = 1 ]; then
+  ssh "$HOST" "mkdir -p $APP_DIR/vault-sync"
+  rsync -az "$ENGINE_ROOT/tools/sbsync.py" "$HOST:$APP_DIR/vault-sync/sbsync.py"
+fi
 
 echo "→ provisioning and restarting"
-ssh "$HOST" "APP_DIR=$APP_DIR VAULT=$VAULT_DIR APP_USER=$APP_USER PUBLIC_HOST=$PUBLIC_HOST HERMES_HOME_REMOTE=$HERMES_HOME_REMOTE EXTRA_IMPORT=$EXTRA_IMPORT REDIRECT_FROM=$REDIRECT_FROM PAUSE_FILE=$PAUSE_FILE MODS=$MODS WITH_EMBED=$WITH_EMBED WITH_BACKUP=$WITH_BACKUP ENGINE_COMMIT=$ENGINE_COMMIT NO_ROLLBACK=$NO_ROLLBACK bash -s" <<'REMOTE'
+ssh "$HOST" "APP_DIR=$APP_DIR VAULT=$VAULT_DIR APP_USER=$APP_USER PUBLIC_HOST=$PUBLIC_HOST HERMES_HOME_REMOTE=$HERMES_HOME_REMOTE EXTRA_IMPORT=$EXTRA_IMPORT REDIRECT_FROM=$REDIRECT_FROM PAUSE_FILE=$PAUSE_FILE MODS=$MODS WITH_EMBED=$WITH_EMBED WITH_BACKUP=$WITH_BACKUP WITH_VAULT_SYNC=$WITH_VAULT_SYNC ENGINE_COMMIT=$ENGINE_COMMIT NO_ROLLBACK=$NO_ROLLBACK bash -s" <<'REMOTE'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 id "$APP_USER" >/dev/null || { echo "user $APP_USER missing: create it and give it the vault checkout"; exit 1; }
@@ -310,6 +319,7 @@ has livestream && unit secondbrain-livestream
 has social && unit secondbrain-social
 [ "$WITH_EMBED" = 1 ] && unit secondbrain-embed
 [ "$WITH_BACKUP" = 1 ] && unit secondbrain-db-backup
+[ "$WITH_VAULT_SYNC" = 1 ] && unit secondbrain-vault-sync
 
 install -d -o caddy -g caddy /var/log/caddy
 ip_host() { [[ "$1" =~ ^[0-9.]+$ ]]; }

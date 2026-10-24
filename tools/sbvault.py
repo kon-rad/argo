@@ -5,6 +5,7 @@
   rules [--check] [--force]
                       write AGENTS.md = the engine's AGENTS.base.md + the vault's AGENTS.local.md
   link-skills         symlink the engine's skills into <vault>/.agents/skills/
+  sync ...            keep this checkout in step with your other machines (tools/sbsync.py, docs/sync.md)
 
 The vault is DIR for init; otherwise --vault, else the folder that holds this
 engine as .secondbrain/, else the current directory. Stdlib only: it runs on
@@ -161,11 +162,16 @@ def main(argv=None) -> int:
     p_rules.add_argument("--check", action="store_true", help="exit 1 if AGENTS.md is out of date")
     p_rules.add_argument("--force", action="store_true", help="overwrite a hand-edited AGENTS.md")
     sub.add_parser("link-skills", help="link the engine's skills into .agents/skills")
+    p_sync = sub.add_parser("sync", help="commit, pull and push this checkout on a timer (see docs/sync.md)")
+    p_sync.add_argument("rest", nargs=argparse.REMAINDER, help="run | status | install | uninstall | resolve")
     args = ap.parse_args(argv)
 
     if args.cmd == "init":
         return cmd_init((args.dir or args.vault or default_vault()).resolve())
     vault = (args.vault or default_vault()).resolve()
+    if args.cmd == "sync":
+        import sbsync
+        return sbsync.main(args.rest or ["--help"], vault=vault)
     if args.cmd == "rules":
         return cmd_rules(vault, args.check, args.force)
     return cmd_link_skills(vault)

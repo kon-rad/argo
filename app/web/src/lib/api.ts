@@ -265,6 +265,24 @@ export interface AppMeta {
   builtAt: string | null;
 }
 
+/** This machine's vault sync (server: GET /api/sync). `installed: false` when no sync runs here. */
+export type SyncState =
+  | { installed: false }
+  | {
+      installed: true;
+      machine: string;
+      role: string;
+      policy: string;
+      last_run: string | null;
+      last_success: string | null;
+      last_result: string | null;
+      last_error: string | null;
+      ahead: number;
+      behind: number;
+      conflict_files: string[];
+      push_failures: number;
+    };
+
 export interface AgentSession {
   id: number;
   source: string;
@@ -1026,6 +1044,7 @@ export const api = {
     request<ClaudeChat>(`/hub/chats/${id}/messages`, undefined, json('POST', { text })),
   stopClaudeChat: (id: string) => request<{ ok: true }>(`/hub/chats/${id}/interrupt`, undefined, { method: 'POST' }),
   meta: () => request<AppMeta>('/meta'),
+  syncState: () => request<SyncState>('/sync'),
   fund: (refresh = false) => request<FundOverview>('/fund', refresh ? { refresh: '1' } : undefined),
   projectsReport: () => request<TrackerReport>('/projects/report'),
   projectsMarkdown: () => request<{ text: string; as_of: string | null }>('/projects/report', { format: 'markdown' }),
