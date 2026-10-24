@@ -1,0 +1,10 @@
+[Unit]
+Description=Second Brain org-dispatch tick every 2 minutes (ORG_DISPATCH_TICK_SECONDS is this interval; edit both together)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
