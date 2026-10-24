@@ -37,7 +37,7 @@ export function readSyncState(file: string): SyncState | null {
   } catch {
     return null;
   }
-  if (!raw || typeof raw !== 'object') return null;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const d = raw as Record<string, unknown>;
   return {
     installed: true,
