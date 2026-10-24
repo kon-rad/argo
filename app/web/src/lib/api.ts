@@ -265,6 +265,24 @@ export interface AppMeta {
   builtAt: string | null;
 }
 
+/** This machine's vault sync (server: GET /api/sync). `installed: false` when no sync runs here. */
+export type SyncState =
+  | { installed: false }
+  | {
+      installed: true;
+      machine: string;
+      role: string;
+      policy: string;
+      last_run: string | null;
+      last_success: string | null;
+      last_result: string | null;
+      last_error: string | null;
+      ahead: number;
+      behind: number;
+      conflict_files: string[];
+      push_failures: number;
+    };
+
 export interface AgentSession {
   id: number;
   source: string;
@@ -551,7 +569,7 @@ export interface UsageSessionRow {
   task_id: string | null; lane: string | null; archive_id: number | null;
   agent_name?: string | null; project_slug?: string | null; work_type?: string | null; runs?: number;
 }
-/** One `claude -p` run: a bot's wake or a lane's card, with its labels and token sums (tokens null when its calls are not in yet). */
+/** One headless run (claude-code or zen-agent): a bot's wake or a lane's card, with its labels and token sums (tokens null when its calls are not in yet). */
 export interface UsageRun {
   host: string; run_id?: string; session_id: string; task_id: string | null; lane: string | null; board: string | null; model: string | null;
   started_at: string | null; ended_at: string | null; duration_ms: number | null; num_turns: number | null; subtype: string | null;
@@ -560,6 +578,9 @@ export interface UsageRun {
   agent_name?: string | null; team_slug?: string | null; reason?: string | null; reasons?: { reason: string | null; ref: string | null }[];
   work_type?: string | null; project_slug?: string | null; feature_slug?: string | null; card_title?: string | null; resumed?: boolean | null;
   surface?: string; calls?: number | null; input?: number | null; cache_write?: number | null; cache_read?: number | null; output?: number | null;
+  /** 'claude-code' or 'zen-agent'; cost_usd is real dollars for an API runtime and null for the subscription. */
+  runtime?: string; source?: string; tier?: string | null; outcome?: string | null; cost_usd?: number | null;
+  compactions?: number | null; blocked?: number | null;
 }
 export interface OrgWakeRow {
   agent_name: string; team_slug: string | null; role: string; wakes: number; done: number; open: number; routine: number;
@@ -1175,6 +1196,7 @@ export const api = {
     request<ClaudeChat>(`/hub/chats/${id}/messages`, undefined, json('POST', { text })),
   stopClaudeChat: (id: string) => request<{ ok: true }>(`/hub/chats/${id}/interrupt`, undefined, { method: 'POST' }),
   meta: () => request<AppMeta>('/meta'),
+  syncState: () => request<SyncState>('/sync'),
   fund: (refresh = false) => request<FundOverview>('/fund', refresh ? { refresh: '1' } : undefined),
   projectsReport: () => request<TrackerReport>('/projects/report'),
   projectsMarkdown: () => request<{ text: string; as_of: string | null }>('/projects/report', { format: 'markdown' }),

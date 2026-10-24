@@ -18,7 +18,7 @@ export async function truncateAll(): Promise<void> {
                usage_calls, usage_runs, plan_usage_snapshots, hermes_usage_snapshots, usage_files, provider_credit_snapshots,
                metric_samples, map_edges, map_nodes, map_layouts,
                social_post_media, social_posts, social_accounts,
-               chat_messages, chat_conversations, chat_settings
+               chat_messages, chat_conversations, chat_settings, classify_decisions
                RESTART IDENTITY CASCADE`);
 }
 

@@ -1,0 +1,20 @@
+[Unit]
+Description=Second Brain vault sync: commit what agents wrote, pull and push (docs/sync.md)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# As the app user: owns the vault checkout and its push credential (an SSH deploy key or
+# credential.helper=store). State goes to ~/.local/state/secondbrain, where the app reads it.
+User=@APP_USER@
+Group=@APP_USER@
+Environment=HOME=@APP_HOME@
+Environment=SYNC_ROLE=agent
+Environment=SYNC_ALERT=log
+EnvironmentFile=/etc/secondbrain/env
+WorkingDirectory=@VAULT_DIR@
+ExecStart=/usr/bin/python3 @APP_DIR@/vault-sync/sbsync.py run --vault @VAULT_DIR@
+TimeoutStartSec=15min
+PrivateTmp=true
+NoNewPrivileges=true

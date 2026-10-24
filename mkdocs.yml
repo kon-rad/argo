@@ -71,6 +71,7 @@ nav:
       - Architecture: architecture.md
       - Your vault: vault.md
       - Configuration: configuration.md
+      - Vault sync: sync.md
       - Modules: modules.md
       - Retrieval and the chat module: rag.md
       - Agent harness: agent-harness.md
@@ -78,4 +79,5 @@ nav:
       - Deployment: deployment.md
       - Privacy (engine): privacy.md
       - Self-improving orchestration (proposal): self-improvement.md
+      - Bots on zen-agent (proposal): zen-runtime.md
       - zen-agent, the minimal agent harness: zen-agent.md

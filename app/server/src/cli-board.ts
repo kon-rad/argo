@@ -28,7 +28,7 @@ const USAGE = `cli-board <command>
   assign <card> <agent|none> [--project p] [--feature f] [--type work] [--needs cap]
   move <card> <status> ["<note>"]             triage todo scheduled ready running review blocked done archived (bots: own card, not done)
   link <card> --after <card>                  card waits for the other
-  claim --runtime <r> | --agent <a> [--board b] [--lease N] [--json]      the next ready card, now running with a lease
+  claim --runtime <r> | --agent <a> [--board b] [--lease N] [--task t_..] [--json]      the next ready card, or that exact one, now running with a lease
   heartbeat <card> [--tokens N] [--turns N] [--lease N]
   finish <card> --done "<result>" | --blocked <kind> "<why>" | --partial | --budget ["<why>"]
          [--verify "<check>" [--fail] [--evidence "..."] [--verify-kind test|manual|deploy|review|metric]] [--tokens N] [--turns N] [--run id]
@@ -112,7 +112,7 @@ export class HttpBoard implements BoardClient {
   async assign(id: string, assignee: string | null, o: { project?: string; feature?: string; work?: string; needs?: string }) { return (await this.call<{ card: Card }>('POST', `/cards/${id}/assign`, undefined, { assignee, ...o })).card; }
   async move(id: string, status: string, note?: string) { return (await this.call<{ card: Card }>('POST', `/cards/${id}/move`, undefined, { status, note })).card; }
   async link(id: string, dependsOn: string) { await this.call('POST', `/cards/${id}/link`, undefined, { depends_on: dependsOn }); }
-  async claim(o: ClaimOpts) { return (await this.call<{ card: Card } | null>('POST', '/claim', undefined, { runtime: o.runtime, agent: o.agent, board: o.board, lease_minutes: o.leaseMinutes }))?.card ?? null; }
+  async claim(o: ClaimOpts) { return (await this.call<{ card: Card } | null>('POST', '/claim', undefined, { runtime: o.runtime, agent: o.agent, board: o.board, lease_minutes: o.leaseMinutes, task_id: o.taskId }))?.card ?? null; }
   async heartbeat(id: string, o: { tokens?: number; turns?: number; leaseMinutes?: number }) { await this.call('POST', `/cards/${id}/heartbeat`, undefined, { tokens: o.tokens, turns: o.turns, lease_minutes: o.leaseMinutes }); }
   async finish(id: string, o: FinishOpts) {
     return (await this.call<{ card: Card }>('POST', `/cards/${id}/finish`, undefined, { outcome: o.outcome, result: o.result, block_kind: o.blockKind, verification: o.verification, tokens: o.tokens, turns: o.turns, run_id: o.runId })).card;
@@ -272,7 +272,7 @@ export async function main(argv: string[], out: (s: string) => void = console.lo
       return 0;
     }
     case 'claim': {
-      const c = await kb!.claim({ runtime: str(opts.runtime), agent: str(opts.agent), board: str(opts.board), leaseMinutes: num(opts.lease, 'lease') });
+      const c = await kb!.claim({ runtime: str(opts.runtime), agent: str(opts.agent), board: str(opts.board), leaseMinutes: num(opts.lease, 'lease'), taskId: str(opts.task) });
       if (!c) {
         out(json ? 'null' : 'nothing ready');
         return 3;

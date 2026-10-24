@@ -97,7 +97,7 @@ AI agents (Claude Code, Hermes, others) work *inside the vault*, not inside the 
 | Guard hook | Runs before every tool call; blocks reading secrets, force pushes, unsafe `rsync --delete`, and whatever the vault's `guard.local.json` adds | `harness/hooks/guard.py` |
 | Dev-log gate | Runs when an agent tries to finish; sends it back once if it changed skills, scripts, hooks or config without writing a dev log today | `harness/hooks/devlog_gate.py` |
 | Skills | `SKILL.md` folders; the engine's shared ones are symlinked into `.agents/skills/` | `skills/` |
-| zen-agent | A headless runtime of our own for bot wakes: the same rules, skills, guard rules and hook scripts, run by a minimal loop (pi agent core) with the context assembled as code, a budget per run and a JSONL trace per run. Any provider; the board and the retrieval API are tools, and `zen-agent lane` claims cards from the board | `zen-agent/` |
+| zen-agent | A headless runtime of our own for bot wakes: the same rules, skills, guard rules and hook scripts, run by a minimal loop (pi agent core) with the context assembled as code, a budget per run and a JSONL trace per run. Any provider; the board and the retrieval API are tools, and `zen-agent lane` claims cards from the board. The plan for moving the bots onto it is [zen-runtime.md](zen-runtime.md) | `zen-agent/` |
 | The board | The kanban record in Postgres (`cards`, comments, events, dependencies, runs), written only through `board_*` SQL functions that check the caller; Hermes, a Claude Code dispatcher and zen-agent are lanes that claim and finish cards. Any machine reaches it over HTTPS with a per-device token ([board-design.md](board-design.md)) | `app/server/src/board.ts`, `app/db/migrations/*_board.sql` |
 
 Both hooks fail open: a payload they can't parse is allowed, so a bug in a hook never stops an agent. They are guardrails, not a sandbox. Details: [agent-harness.md](agent-harness.md).
@@ -111,6 +111,7 @@ Both hooks fail open: a payload they can't parse is allowed, so a bug in a hook 
 | Module records | Postgres module tables | The module's CLI or page, never raw SQL |
 | Secrets and per-machine settings | Vault `.env` (laptop), `/etc/secondbrain/env` (server) | By hand. Never committed, never printed |
 | Structured settings | `secondbrain.json` in the vault | By hand; committed to your private vault |
+| Sync state (last run, ahead/behind, conflicts) | `~/.local/state/secondbrain/sync.json` on each machine | Only `secondbrain-vault sync` ([sync.md](sync.md)) |
 | Big media | Your vault, or object storage with a stub note | Optional `b2store serve` + `B2_SERVE_URL` |
 
 ## 7. How a change flows

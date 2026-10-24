@@ -1,7 +1,7 @@
 import type { AgentEvent } from '@earendil-works/pi-agent-core';
 import type { Models } from '@earendil-works/pi-ai';
 import { ZenAgent, type RunResult } from './agent.js';
-import { parseBudgetLine, type Budget, type ZenConfig } from './config.js';
+import { parseBudgetLine, type Budget, type ThinkingLevel, type ZenConfig } from './config.js';
 import type { Part } from './context.js';
 import { execCommand, fetchParts, fetchersFor, type Exec, type FetcherStat } from './fetchers.js';
 import { loadPersona, type Persona } from './persona.js';
@@ -81,6 +81,14 @@ export interface WakeRun {
   budget?: Partial<Budget>;
   /** Extra standing orders from the caller (the dispatcher's wake prompt). */
   task?: string;
+  /** The previous run's conclusion, the `handoff` part. */
+  handoff?: string;
+  /** Tool set names for this run, instead of the config's. */
+  toolSets?: string[];
+  /** Thinking level for this run, instead of the config's. */
+  thinking?: ThinkingLevel;
+  /** A dispatcher's labels for the trace's meta line. */
+  dispatch?: Record<string, unknown>;
   thread?: number | null;
   fetchers?: string[] | null;
   /** The card's own tools finish it; false when the backend cannot (the model comments and says DONE). */
@@ -105,7 +113,7 @@ export async function runWake(o: WakeRun): Promise<WakeResult> {
   const persona = o.persona ? loadPersona(o.cfg, o.persona) : null;
   const budget = { ...cardBudget(card.task.body), ...o.budget };
   const ctx = await wakeContext({ cfg: o.cfg, card, persona, env: o.env, exec: o.exec, thread: o.thread, fetchers: o.fetchers });
-  const zen = new ZenAgent({ config: o.cfg, persona, budget, task: o.task, parts: ctx.parts, fetchers: ctx.fetchers, env: o.env, models: o.models, onEvent: o.onEvent });
+  const zen = new ZenAgent({ config: o.cfg, persona, budget, task: o.task, handoff: o.handoff, toolSets: o.toolSets, thinking: o.thinking, dispatch: o.dispatch, parts: ctx.parts, fetchers: ctx.fetchers, env: o.env, models: o.models, onEvent: o.onEvent });
   const r = await zen.run(wakePrompt({ card, persona: persona?.name ?? null, canComplete: o.canComplete ?? Boolean(o.kb.complete) }));
   return { ...r, card, fetchers: ctx.fetchers };
 }

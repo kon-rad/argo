@@ -25,6 +25,7 @@ import Login from './routes/Login.js';
 import { api, AUTH_EXPIRED_EVENT, type AppMeta } from './lib/api.js';
 import SearchBox from './components/SearchBox.js';
 import IndexStatus from './components/IndexStatus.js';
+import SyncChip from './components/SyncChip.js';
 import UsageChip from './components/UsageChip.js';
 import FriendlyButton from './components/FriendlyButton.js';
 import AgentToggle from './components/AgentToggle.js';
@@ -182,6 +183,9 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           <IndexStatus />
         </div>
 
+        {/* This machine's vault sync; hidden where none is installed. */}
+        <SyncChip />
+
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {/* chat module: the assistant over the vault, in a panel over any page. */}
           {modules.has('chat') && <ChatButton open={chatOpen} onClick={() => setChatOpen((o) => !o)} />}
@@ -205,6 +209,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
             {modules.has('usage') && <UsageChip />}
             {modules.has('agents') && <AgentToggle />}
             <div className="text-xs"><IndexStatus /></div>
+            <SyncChip />
             {loginRequired && (
               <button type="button" onClick={() => void logout()} className="min-h-11 rounded border border-[var(--rule)] px-3 text-left text-base">
                 Log out

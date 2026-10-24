@@ -76,11 +76,32 @@ const Schema = z.object({
   ORG_REFLECT_MODEL: z.string().trim().min(1).default('cheap'),
   // org module: reflect model calls allowed per day across every bot; past it, wakes still record their episode.
   ORG_REFLECT_MAX_PER_DAY: z.coerce.number().int().min(0).default(200),
+  // org module: the local day for "one routine per day" and the dispatcher's quiet hours (an IANA zone name).
+  ORG_TZ: z.string().min(1).default('UTC'),
+  // org module: the engine's dispatcher (secondbrain org-dispatch; docs/zen-runtime.md). `on` installs its timer and
+  // runs bots whose roster runtime is zen-agent; `off` leaves wakeups to whatever dispatcher the install has.
+  ORG_DISPATCH: z.enum(['on', 'off']).default('off'),
+  ORG_DISPATCH_TICK_SECONDS: z.coerce.number().int().min(10).default(120),
+  ORG_DISPATCH_PARALLEL: z.coerce.number().int().min(1).default(2),
+  // Local hours with no wakes, `HH-HH` (e.g. 01-07); unset: none.
+  ORG_DISPATCH_QUIET: z.string().regex(/^\d{2}-\d{2}$/).optional(),
+  // Tokens all bots together may spend in one local day before the rest of the day's wakes are held; 0: no cap.
+  ORG_DISPATCH_DAILY_TOKENS: z.coerce.number().int().min(0).default(0),
+  // The zen-agent command the dispatcher runs (on the PATH, or an absolute path).
+  ORG_ZEN_COMMAND: z.string().min(1).default('zen-agent'),
+  // Where zen-agent writes its traces (zen.json sessionsDir); usage-sync reads them. Default: <vault>/.zen/sessions.
+  ZEN_SESSIONS_DIR: z.string().optional(),
+  // The classify step (secondbrain classify): `none` falls every decision through to the old path.
+  CLASSIFY_PROVIDER: z.enum(['none', 'openrouter', 'typesafe']).default('none'),
+  CLASSIFY_DAILY_TOKENS: z.coerce.number().int().min(0).default(2_000_000),
+  TYPESAFE_API_KEY: z.string().optional(),
   // Vault-relative notes the nav links to; unset hides the link.
   DEV_LOG_PATH: z.string().optional(),
   DOCS_PATH: z.string().optional(),
   // Mac only: a script the "start robot" button runs. Unset: the route is not mounted.
   ROBOT_LAUNCH_SCRIPT: z.string().optional(),
+  // Where `secondbrain-vault sync` writes sync.json on this machine (docs/sync.md); the header chip reads it.
+  SYNC_STATE_DIR: z.string().optional(),
   // Hermes's home on this machine and, for the archive, on the server it pulls from.
   HERMES_HOME: z.string().default(resolve(homedir(), '.hermes')),
   REMOTE_HERMES_HOME: z.string().optional(),
@@ -198,9 +219,22 @@ export const config = {
   orgSessionMaxRuns: parsed.data.ORG_SESSION_MAX_RUNS,
   orgTaskWakeRetries: parsed.data.ORG_TASK_WAKE_RETRIES,
   orgTaskWakeBackoffMinutes: parsed.data.ORG_TASK_WAKE_BACKOFF_MINUTES,
+  orgTz: parsed.data.ORG_TZ,
+  orgDispatch: parsed.data.ORG_DISPATCH === 'on',
+  orgDispatchTickSeconds: parsed.data.ORG_DISPATCH_TICK_SECONDS,
+  orgDispatchParallel: parsed.data.ORG_DISPATCH_PARALLEL,
+  orgDispatchQuiet: parsed.data.ORG_DISPATCH_QUIET ?? null,
+  orgDispatchDailyTokens: parsed.data.ORG_DISPATCH_DAILY_TOKENS,
+  orgZenCommand: parsed.data.ORG_ZEN_COMMAND,
+  zenSessionsDir: parsed.data.ZEN_SESSIONS_DIR ?? resolve(parsed.data.VAULT_ROOT, '.zen', 'sessions'),
+  classifyProvider: parsed.data.CLASSIFY_PROVIDER,
+  classifyDailyTokens: parsed.data.CLASSIFY_DAILY_TOKENS,
+  openrouterApiKey: parsed.data.OPENROUTER_API_KEY,
+  typesafeApiKey: parsed.data.TYPESAFE_API_KEY,
   devLogPath: parsed.data.DEV_LOG_PATH ?? null,
   docsPath: parsed.data.DOCS_PATH ?? null,
   robotLaunchScript: parsed.data.ROBOT_LAUNCH_SCRIPT,
+  syncStateDir: parsed.data.SYNC_STATE_DIR,
   hermesHome: parsed.data.HERMES_HOME,
   remoteHermesHome: parsed.data.REMOTE_HERMES_HOME ?? '~/.hermes',
   archiveSshHost: parsed.data.ARCHIVE_SSH_HOST,

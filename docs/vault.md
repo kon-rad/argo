@@ -26,6 +26,8 @@ Template files that would act on the engine repo itself are stored without their
 .secondbrain/bin/secondbrain-vault rules [--check] [--force]
                                                        AGENTS.md = AGENTS.base.md + AGENTS.local.md
 .secondbrain/bin/secondbrain-vault link-skills         symlink the engine's skills into .agents/skills/
+.secondbrain/bin/secondbrain-vault sync run|status|install|uninstall|resolve
+                                                       keep this checkout in step with your other machines (sync.md)
 ```
 
 The vault it acts on is `--vault`, else the folder that holds the engine as `.secondbrain/`, else the current directory. It is Python 3.9+, standard library only.
@@ -33,6 +35,7 @@ The vault it acts on is `--vault`, else the folder that holds the engine as `.se
 - `rules --check` exits non-zero if `AGENTS.md` is stale or was edited by hand. Useful in a pre-commit hook.
 - `rules --force` overwrites a hand-edited `AGENTS.md`.
 - `link-skills` never replaces a real folder: if you have your own skill with the same name as a shared one, yours wins.
+- `sync run|install|status|resolve` keeps this checkout in step with your other machines by git, on a timer: [sync.md](sync.md).
 
 ## Rules for agents, in layers
 

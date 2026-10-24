@@ -30,26 +30,28 @@ export async function upsertCalls(tx: TxClient, calls: UsageCall[]): Promise<num
     const batch = unique.slice(i, i + BATCH);
     const params: unknown[] = [];
     const values = batch.map((c, j) => {
-      const b = j * 21;
+      const b = j * 22;
       params.push(c.source, c.host, c.callId, c.requestId, c.sessionExternalId, c.messageExternalId, c.ts, c.model,
         c.entrypoint, c.cwd, c.isSidechain, c.inputTokens, c.cacheWriteTokens, c.cacheReadTokens, c.outputTokens,
-        c.thinkingTokens, c.webSearchRequests, c.tool ?? null, c.action ?? null, c.provider ?? null, c.matchKey ?? null);
-      return `(${Array.from({ length: 21 }, (_, k) => `$${b + k + 1}`).join(',')})`;
+        c.thinkingTokens, c.webSearchRequests, c.tool ?? null, c.action ?? null, c.provider ?? null, c.matchKey ?? null, c.costUsd ?? null);
+      return `(${Array.from({ length: 22 }, (_, k) => `$${b + k + 1}`).join(',')})`;
     });
     const r = await tx.query(
       `INSERT INTO usage_calls AS u (source, host, call_id, request_id, session_external_id, message_external_id, ts,
          model, entrypoint, cwd, is_sidechain, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens,
-         thinking_tokens, web_search_requests, tool, action, provider, match_key)
+         thinking_tokens, web_search_requests, tool, action, provider, match_key, cost_usd)
        VALUES ${values.join(',')}
        ON CONFLICT (source, host, call_id) DO UPDATE SET
          output_tokens = GREATEST(u.output_tokens, EXCLUDED.output_tokens),
          thinking_tokens = CASE WHEN EXCLUDED.output_tokens > u.output_tokens THEN EXCLUDED.thinking_tokens ELSE u.thinking_tokens END,
          tool = COALESCE(u.tool, EXCLUDED.tool), action = COALESCE(u.action, EXCLUDED.action),
          provider = COALESCE(EXCLUDED.provider, u.provider), match_key = COALESCE(u.match_key, EXCLUDED.match_key),
+         cost_usd = COALESCE(EXCLUDED.cost_usd, u.cost_usd),
          message_external_id = CASE WHEN EXCLUDED.output_tokens > u.output_tokens AND u.session_external_id = EXCLUDED.session_external_id
                                     THEN EXCLUDED.message_external_id ELSE u.message_external_id END
-       -- A fuller copy of the response, or the first one that says which provider served it.
-       WHERE EXCLUDED.output_tokens > u.output_tokens OR (u.provider IS NULL AND EXCLUDED.provider IS NOT NULL)`, params);
+       -- A fuller copy of the response, the first one that says which provider served it, or the first with a price.
+       WHERE EXCLUDED.output_tokens > u.output_tokens OR (u.provider IS NULL AND EXCLUDED.provider IS NOT NULL)
+          OR (u.cost_usd IS NULL AND EXCLUDED.cost_usd IS NOT NULL)`, params);
     changed += r.rowCount ?? 0;
   }
   return changed;
@@ -62,8 +64,10 @@ export async function upsertRuns(tx: TxClient, runs: RunRecord[]): Promise<numbe
     const res = await tx.query(
       `INSERT INTO usage_runs AS u (host, run_id, session_id, task_id, board, lane, model, started_at, ended_at, duration_ms,
          duration_api_ms, num_turns, subtype, is_error, total_cost_usd, usage, model_usage, verify_name, verify_passed,
-         verify_exit, verify_metric, verify_output, verify_at, log_path, agent_name, team_slug, work_type, reasons, wakeup_ids, resumed)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17::jsonb,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28::jsonb,$29::bigint[],$30)
+         verify_exit, verify_metric, verify_output, verify_at, log_path, agent_name, team_slug, work_type, reasons, wakeup_ids, resumed,
+         runtime, outcome, parts, budget, tier, compactions, blocked)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17::jsonb,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28::jsonb,$29::bigint[],$30,
+         $31,$32,$33::jsonb,$34::jsonb,$35,$36,$37)
        ON CONFLICT (host, run_id) DO UPDATE SET session_id=EXCLUDED.session_id, task_id=EXCLUDED.task_id, board=EXCLUDED.board,
          lane=EXCLUDED.lane, model=EXCLUDED.model, started_at=EXCLUDED.started_at, ended_at=EXCLUDED.ended_at,
          duration_ms=EXCLUDED.duration_ms, duration_api_ms=EXCLUDED.duration_api_ms, num_turns=EXCLUDED.num_turns,
@@ -72,14 +76,21 @@ export async function upsertRuns(tx: TxClient, runs: RunRecord[]): Promise<numbe
          verify_passed=EXCLUDED.verify_passed, verify_exit=EXCLUDED.verify_exit, verify_metric=EXCLUDED.verify_metric,
          verify_output=EXCLUDED.verify_output, verify_at=EXCLUDED.verify_at, log_path=EXCLUDED.log_path,
          agent_name=EXCLUDED.agent_name, team_slug=EXCLUDED.team_slug, work_type=EXCLUDED.work_type,
-         reasons=EXCLUDED.reasons, wakeup_ids=EXCLUDED.wakeup_ids, resumed=EXCLUDED.resumed
-       WHERE (u.verify_at, u.ended_at, u.lane, u.session_id, u.agent_name, u.task_id, u.work_type, u.reasons::text)
-             IS DISTINCT FROM (EXCLUDED.verify_at, EXCLUDED.ended_at, EXCLUDED.lane, EXCLUDED.session_id, EXCLUDED.agent_name, EXCLUDED.task_id, EXCLUDED.work_type, EXCLUDED.reasons::text)`,
+         reasons=EXCLUDED.reasons, wakeup_ids=EXCLUDED.wakeup_ids, resumed=EXCLUDED.resumed,
+         runtime=EXCLUDED.runtime, outcome=COALESCE(EXCLUDED.outcome, u.outcome), parts=EXCLUDED.parts, budget=EXCLUDED.budget,
+         tier=COALESCE(EXCLUDED.tier, u.tier), compactions=EXCLUDED.compactions, blocked=EXCLUDED.blocked
+       WHERE (u.verify_at, u.ended_at, u.lane, u.session_id, u.agent_name, u.task_id, u.work_type, u.reasons::text,
+              u.num_turns, u.total_cost_usd, u.tier, u.compactions, u.blocked)
+             IS DISTINCT FROM (EXCLUDED.verify_at, EXCLUDED.ended_at, EXCLUDED.lane, EXCLUDED.session_id, EXCLUDED.agent_name, EXCLUDED.task_id, EXCLUDED.work_type, EXCLUDED.reasons::text,
+              EXCLUDED.num_turns, EXCLUDED.total_cost_usd, COALESCE(EXCLUDED.tier, u.tier), EXCLUDED.compactions, EXCLUDED.blocked)
+          OR (u.outcome IS NULL AND EXCLUDED.outcome IS NOT NULL)`,
       [r.host, r.runId, r.sessionId, r.taskId, r.board, r.lane, r.model, r.startedAt, r.endedAt, r.durationMs, r.durationApiMs,
         r.numTurns, r.subtype, r.isError, r.totalCostUsd, JSON.stringify(r.usage ?? null),
         JSON.stringify(r.modelUsage ?? null), v?.name ?? null, v?.passed ?? null, v?.exitCode ?? null,
         v?.metric ?? null, v?.output ?? null, v?.at ?? null, r.logPath, r.agentName, r.teamSlug, r.workType,
-        JSON.stringify(r.reasons ?? []), r.wakeupIds ?? [], r.resumed]);
+        JSON.stringify(r.reasons ?? []), r.wakeupIds ?? [], r.resumed,
+        r.runtime ?? 'claude-code', r.outcome ?? null, r.parts === undefined ? null : JSON.stringify(r.parts),
+        r.budget === undefined ? null : JSON.stringify(r.budget), r.tier ?? null, r.compactions ?? null, r.blocked ?? null]);
     changed += res.rowCount ?? 0;
   }
   return changed;

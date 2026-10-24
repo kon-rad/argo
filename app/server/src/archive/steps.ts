@@ -24,6 +24,32 @@ type Obj = Record<string, any>;
 const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.isArray(v);
 const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
 
+/** A zen-agent trace line, stored with a `harness` marker by usage/zenTrace.ts. */
+const isZen = (raw: Obj): boolean => raw.harness === 'zen-agent';
+
+function zenBlocks(raw: Obj): Obj[] {
+  const c = raw.message?.content;
+  if (typeof c === 'string') return [{ type: 'text', text: c }];
+  return Array.isArray(c) ? c.filter(isObj) : [];
+}
+
+function zenFields(raw: Obj): StepFields {
+  const none: StepFields = { step: 'meta', toolNames: [], toolCallId: null, isError: null };
+  if (raw.type === 'blocked' || raw.type === 'compaction') return { ...none, step: 'system' };
+  if (raw.type !== 'message' || !isObj(raw.message)) return none;
+  const m = raw.message;
+  if (m.role === 'user') return { ...none, step: 'prompt' };
+  if (m.role === 'toolResult') {
+    const name = str(m.toolName);
+    return { step: 'tool_result', toolNames: name ? [name] : [], toolCallId: str(m.toolCallId), isError: m.isError === true ? true : null };
+  }
+  if (m.role !== 'assistant') return { ...none, step: 'system' };
+  const calls = zenBlocks(raw).filter((b) => b.type === 'toolCall');
+  if (calls.length) return { step: 'tool_call', toolNames: calls.map((b) => String(b.name ?? 'tool')), toolCallId: str(calls[0]!.id), isError: null };
+  const blocks = zenBlocks(raw);
+  return { ...none, step: blocks.length && blocks.every((b) => b.type === 'thinking') ? 'thinking' : 'response' };
+}
+
 /** Hermes rows carry `role` and `session_id`; Claude Code records carry `type`. */
 function isHermes(raw: Obj): boolean {
   return typeof raw.role === 'string' && 'session_id' in raw && typeof raw.type !== 'string';
@@ -67,6 +93,7 @@ function resultText(content: unknown): string {
 export function stepFields(raw: unknown): StepFields {
   const none: StepFields = { step: 'meta', toolNames: [], toolCallId: null, isError: null };
   if (!isObj(raw)) return none;
+  if (isZen(raw)) return zenFields(raw);
   if (isHermes(raw)) {
     const role = raw.role as string;
     if (role === 'user') return { ...none, step: 'prompt' };
@@ -99,6 +126,23 @@ export function expandSteps(row: StepRow): StepPart[] {
   const raw = row.raw;
   const base = { toolName: null, toolCallId: null, isError: null };
   const k = String(row.id);
+  if (isObj(raw) && isZen(raw)) {
+    if (raw.type !== 'message' || !isObj(raw.message)) return [{ key: k, step: zenFields(raw).step, text: row.text, ...base }];
+    const m = raw.message;
+    if (m.role === 'toolResult') {
+      return [{ key: k, step: 'tool_result', text: resultText(m.content), toolName: str(m.toolName), toolCallId: str(m.toolCallId), isError: m.isError === true ? true : null }];
+    }
+    const blocks = zenBlocks(raw);
+    const parts: StepPart[] = [];
+    blocks.forEach((b, i) => {
+      const key = blocks.length > 1 ? `${k}:${i}` : k;
+      if (b.type === 'thinking') parts.push({ key, step: 'thinking', text: b.redacted ? '(redacted thinking)' : String(b.thinking ?? ''), ...base });
+      else if (b.type === 'toolCall') parts.push({ key, step: 'tool_call', text: JSON.stringify(b.arguments ?? {}), toolName: String(b.name ?? 'tool'), toolCallId: str(b.id), isError: null });
+      else if (b.type === 'text') parts.push({ key, step: m.role === 'user' ? 'prompt' : 'response', text: String(b.text ?? ''), ...base });
+      else if (b.type === 'image') parts.push({ key, step: m.role === 'user' ? 'prompt' : 'response', text: '(image)', ...base });
+    });
+    return parts.length ? parts : [{ key: k, step: zenFields(raw).step, text: row.text, ...base }];
+  }
   if (isObj(raw) && isHermes(raw)) {
     const f = stepFields(raw);
     if (raw.role !== 'assistant') {
