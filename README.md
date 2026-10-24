@@ -146,6 +146,7 @@ The launcher rebuilds and runs new migrations on the next start. More in [docs/v
 | [Configuration](docs/configuration.md) | Every env variable and `secondbrain.json` key |
 | [Modules](docs/modules.md) | Each optional feature: pages, CLIs, settings, timers |
 | [Agent harness](docs/agent-harness.md) | The guard, the dev-log gate, Claude Code and Hermes wiring |
+| [zen-agent](zen-agent/README.md) | A minimal headless agent runtime: personas, skills, any provider, the board and the knowledge base as tools, budgets and traces |
 | [Deployment](docs/deployment.md) | A server behind a login |
 | [Privacy](docs/privacy.md) | How the engine stays free of personal data |
 | [The app](app/README.md) | Tech stack, search design, invariants |

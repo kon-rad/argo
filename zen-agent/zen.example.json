@@ -1,0 +1,36 @@
+{
+  "$comment": "zen-agent configuration. Copy to zen.json next to your vault (or ~/.zen/zen.json). Paths are relative to the vault. Secrets are never here: name the environment variable that holds them.",
+  "model": "anthropic/claude-sonnet-4-6",
+  "thinking": "off",
+  "vault": ".",
+  "sessionsDir": ".zen/sessions",
+  "rules": ["AGENTS.md"],
+  "skills": [".agents/skills", "~/.zen/skills"],
+  "persona": { "org": ".agents/org/org.json", "definitions": ".claude/agents", "memory": ".agents/org/memory" },
+  "tools": ["fs", "shell", "skills", "knowledge", "kanban", "org", "subagent"],
+  "budget": { "turns": 40, "tokens": 400000, "minutes": 30 },
+  "context": {
+    "cap": 0.6,
+    "keepTurns": 6,
+    "parts": { "rules": 6000, "persona": 3000, "playbook": 2000, "skills": 1500, "task": 4000 }
+  },
+  "guard": {
+    "local": ".agents/guard.local.json",
+    "log": "~/.cache/agent-guard.log",
+    "hooks": {
+      "preToolUse": [],
+      "stop": ["python3 .secondbrain/harness/hooks/devlog_gate.py"]
+    }
+  },
+  "shell": { "timeoutS": 120, "maxOutput": 12000 },
+  "knowledge": { "kind": "secondbrain", "url": "http://127.0.0.1:3000", "headersEnv": "ZEN_SB_HEADERS" },
+  "kanban": { "kind": "cli", "command": "hermes", "board": "exo" },
+  "org": { "command": "cli-org" },
+  "providers": {
+    "ollama": {
+      "api": "openai-completions",
+      "baseUrl": "http://127.0.0.1:11434/v1",
+      "models": [{ "id": "qwen3:8b", "contextWindow": 32000, "maxTokens": 8000 }]
+    }
+  }
+}

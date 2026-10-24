@@ -19,5 +19,6 @@ Also:
 
 - [`../app/README.md`](../app/README.md): the app's tech stack, search design and invariants.
 - [`../addons/tv-kiosk/README.md`](../addons/tv-kiosk/README.md): a Raspberry Pi that shows the app on a TV.
+- [`../zen-agent/README.md`](../zen-agent/README.md): zen-agent, the minimal headless agent runtime (pi agent core) that runs a roster persona with skills, the board and the knowledge base as tools, under a budget, with a trace per run.
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md): how to send a change.
 - [`../AGENTS.md`](../AGENTS.md): the rules AI coding agents follow when they change this repo.
