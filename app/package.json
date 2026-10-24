@@ -1,6 +1,7 @@
 {
   "name": "secondbrain-app",
   "private": true,
+  "version": "1.0.0",
   "type": "module",
   "workspaces": ["server", "web"],
   "scripts": {

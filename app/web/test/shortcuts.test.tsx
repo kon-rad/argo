@@ -68,7 +68,10 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     const body = url.startsWith('/api/auth/me') ? { required: false, authenticated: true }
-      : url.startsWith('/api/meta') ? { modules: ['tv', 'agents', 'org'], owner: 'o', devLogPath: null, docsPath: null, robot: false }
+      : url.startsWith('/api/meta') ? {
+        modules: ['tv', 'agents', 'org'], owner: 'o', devLogPath: null, docsPath: null, robot: false,
+        version: '1.2.3', commit: 'abcdef1234567890abcdef1234567890abcdef12', commitShort: 'abcdef1', builtAt: '2026-10-23T17:40:00Z',
+      }
       : url.startsWith('/api/tree') ? { path: '', dirs: [], files: [], total: 0, has_more: false }
       : url.startsWith('/api/runs') ? { runs: [] }
       : url.startsWith('/api/sources') ? { sources: [] }
@@ -98,6 +101,17 @@ describe('shortcuts in the app', () => {
     expect(list.textContent).not.toContain('Brain map');
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('the info panel says which version and commit is running', async () => {
+    renderAt('/');
+    fireEvent.click(await screen.findByRole('button', { name: 'Keyboard shortcuts' }));
+    const list = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
+    expect(list.textContent).toContain('Second Brain v1.2.3 · abcdef1');
+    // The full hash and the build time are in the tooltip, not the panel line.
+    expect(screen.getByText(/Second Brain v1\.2\.3/).getAttribute('title')).toBe(
+      'commit abcdef1234567890abcdef1234567890abcdef12 · built ' + new Date('2026-10-23T17:40:00Z').toLocaleString(),
+    );
   });
 
   it('sends the old /argo-tv kiosk URL to /tv', async () => {

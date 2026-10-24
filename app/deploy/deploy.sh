@@ -36,6 +36,9 @@ APP_ROOT="$(cd "$HERE/.." && pwd)"
 ENGINE_ROOT="$(cd "$APP_ROOT/.." && pwd)"
 if [[ "$(basename "$ENGINE_ROOT")" == ".secondbrain" ]]; then VAULT_ROOT_LOCAL="$(dirname "$ENGINE_ROOT")"; else VAULT_ROOT_LOCAL="$ENGINE_ROOT"; fi
 VAULT_ROOT_LOCAL="${VAULT_ROOT:-$VAULT_ROOT_LOCAL}"
+# The commit this deploy is shipping, written into the app's build-info file so
+# the running app can say which version is live. Empty when this is not a checkout.
+ENGINE_COMMIT="$(git -C "$APP_ROOT" rev-parse HEAD 2>/dev/null || true)"
 # Read only the settings this script uses, literally: the vault's env file holds
 # keys and hashes whose `$` sequences a shell `source` would expand (or trip
 # set -u on). A value already in the environment wins.
@@ -66,7 +69,7 @@ WITH_EMBED="${DEPLOY_EMBED:-0}"
 WITH_BACKUP="${DEPLOY_DB_BACKUP:-0}"
 # The module list without spaces, so it travels to the server as one safe word.
 MODS="$(printf '%s' "${DEPLOY_MODULES:-${MODULES:-}}" | tr -d ' ')"
-for v in "$APP_USER" "$APP_DIR" "$VAULT_DIR" "$PUBLIC_HOST" "$HERMES_HOME_REMOTE" "$EXTRA_IMPORT" "$REDIRECT_FROM" "$PAUSE_FILE" "$MODS" "$WITH_EMBED" "$WITH_BACKUP"; do
+for v in "$APP_USER" "$APP_DIR" "$VAULT_DIR" "$PUBLIC_HOST" "$HERMES_HOME_REMOTE" "$EXTRA_IMPORT" "$REDIRECT_FROM" "$PAUSE_FILE" "$MODS" "$WITH_EMBED" "$WITH_BACKUP" "$ENGINE_COMMIT"; do
   [[ "$v" =~ ^[A-Za-z0-9._/@:,-]*$ ]] || { echo "unsafe character in setting: $v"; exit 1; }
 done
 
@@ -78,7 +81,7 @@ rsync -az --delete \
   "$APP_ROOT/" "$HOST:$APP_DIR/"
 
 echo "→ provisioning and restarting"
-ssh "$HOST" "APP_DIR=$APP_DIR VAULT=$VAULT_DIR APP_USER=$APP_USER PUBLIC_HOST=$PUBLIC_HOST HERMES_HOME_REMOTE=$HERMES_HOME_REMOTE EXTRA_IMPORT=$EXTRA_IMPORT REDIRECT_FROM=$REDIRECT_FROM PAUSE_FILE=$PAUSE_FILE MODS=$MODS WITH_EMBED=$WITH_EMBED WITH_BACKUP=$WITH_BACKUP bash -s" <<'REMOTE'
+ssh "$HOST" "APP_DIR=$APP_DIR VAULT=$VAULT_DIR APP_USER=$APP_USER PUBLIC_HOST=$PUBLIC_HOST HERMES_HOME_REMOTE=$HERMES_HOME_REMOTE EXTRA_IMPORT=$EXTRA_IMPORT REDIRECT_FROM=$REDIRECT_FROM PAUSE_FILE=$PAUSE_FILE MODS=$MODS WITH_EMBED=$WITH_EMBED WITH_BACKUP=$WITH_BACKUP ENGINE_COMMIT=$ENGINE_COMMIT bash -s" <<'REMOTE'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 id "$APP_USER" >/dev/null || { echo "user $APP_USER missing: create it and give it the vault checkout"; exit 1; }
@@ -177,6 +180,24 @@ sudo -u "$APP_USER" bash -c "cd $APP_DIR && npm ci --no-audit --no-fund && npm r
 sudo -u "$APP_USER" bash -c "cd $APP_DIR && DATABASE_URL='postgres:///secondbrain?host=/var/run/postgresql' npm run migrate:up"
 # node_modules, dist and the schema are whole again: let the dispatcher spawn.
 if [ -n "$PAUSED_BY_DEPLOY" ]; then rm -f "$PAUSE_FILE"; echo "→ dispatcher unpaused"; fi
+
+# ---- what is live: the version and the commit, for the app's info panel ----
+# /opt/secondbrain-app has no .git (the rsync above excludes it), so the app cannot
+# ask git which commit it is; it reads this file instead. data/ is excluded from the
+# rsync, so the file survives the next deploy's --delete.
+if [ -n "${ENGINE_COMMIT:-}" ]; then
+  python3 - "$APP_DIR/package.json" "$APP_DIR/data/build-info.json" "$ENGINE_COMMIT" "$(date -u +%FT%TZ)" <<'PY'
+import json, sys
+pkg, out, commit, built_at = sys.argv[1:5]
+try:
+    version = json.load(open(pkg)).get('version', '0.0.0')
+except Exception:
+    version = '0.0.0'
+with open(out, 'w') as fh:
+    json.dump({'version': version, 'commit': commit, 'builtAt': built_at}, fh, indent=2, sort_keys=True)
+PY
+  chown "$APP_USER:$APP_USER" "$APP_DIR/data/build-info.json"
+fi
 # The vault is a git checkout: tell git to ignore the editor's atomic-write
 # temp files in case the sync runs in the instant one exists.
 grep -qxF '.*.sb-*.tmp' "$VAULT/.git/info/exclude" 2>/dev/null \

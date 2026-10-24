@@ -46,6 +46,20 @@ describe('optional modules', () => {
     expect(res.body).toHaveProperty('docsPath');
   });
 
+  it('/api/meta carries the version and commit the running copy was built from', async () => {
+    const app = createApp({
+      modules: new Set(['ring']),
+      buildInfo: { version: '1.2.3', commit: 'abcdef1234567890', commitShort: 'abcdef1', builtAt: '2026-10-23T17:40:00Z' },
+    });
+    const res = await request(app).get('/api/meta');
+    expect(res.body).toMatchObject({
+      version: '1.2.3',
+      commit: 'abcdef1234567890',
+      commitShort: 'abcdef1',
+      builtAt: '2026-10-23T17:40:00Z',
+    });
+  });
+
   it('wallets are not part of the engine', async () => {
     const res = await request(createApp({ modules: new Set(['ring', 'agents']) })).get('/api/wallets');
     expect(res.status).toBe(404);

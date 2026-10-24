@@ -80,6 +80,10 @@ The app refuses to start in server mode without `AUTH_PASSWORD_HASH`, `AUTH_TOTP
 | `secondbrain-embed.timer` | Daily 02:30 UTC | `DEPLOY_EMBED=1` |
 | `secondbrain-db-backup.timer` | Daily 03:30 UTC | `DEPLOY_DB_BACKUP=1` |
 
+## Which version is live
+
+`deploy.sh` records the commit it shipped in `<app dir>/data/build-info.json` (the deploy rsync excludes `data/`, so the file survives the next deploy). The app reads it at startup and reports it in `GET /api/meta`, which the ⓘ panel in the header shows as `Second Brain v<version> · <short commit>`; the tooltip has the full hash and the build time. On a laptop there is no build file, so the app asks git instead and shows the checkout's commit. Bump `app/package.json`'s `version` when you want a new number in the panel.
+
 Caddy is rendered from `app/deploy/Caddyfile.template`. If you already run Caddy for other sites, diff the rendered file against your live one before the first deploy, and use `EXTRA_CADDY_IMPORT` for the others.
 
 ## The login
