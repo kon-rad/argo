@@ -1,5 +1,5 @@
 [Unit]
-Description=Second Brain: Claude Code usage, cc-runs logs and plan readings into the ledger
+Description=Second Brain: Claude Code usage, cc-runs logs, plan readings and zen-agent traces into the ledger
 After=network-online.target postgresql.service
 Requires=postgresql.service
 

@@ -107,6 +107,10 @@ skills:
 
 Hermes asks for consent to each exact hook command once per machine and records it in `~/.hermes/shell-hooks-allowlist.json`. **If the command string in the config and the allowlist differ, Hermes skips the hook silently.** Update both together, and test with a command the guard should block.
 
+### zen-agent
+
+[zen-agent](https://github.com/kon-rad/secondbrain/blob/main/zen-agent/README.md) runs the guard in process (the same built-in rules and the same `guard.local.json`, ported to TypeScript) and runs `guard.py` and `devlog_gate.py` as hook commands when `zen.json` lists them under `guard.hooks.preToolUse` and `guard.hooks.stop`. Its skills come from the same `.agents/skills`. Every block is appended to the same `~/.cache/agent-guard.log`. Running the bots on it is described in [zen-runtime.md](zen-runtime.md).
+
 ### Other agents
 
 Any agent that can run a command before a tool call and pass it a JSON payload can use the guard. The payload shape is in the docstring at the top of `guard.py`; the tests show real examples.

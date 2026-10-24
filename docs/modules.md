@@ -40,17 +40,20 @@ A tracker where each project has a stage (`idea`, `designing`, `building`, `test
 
 ## org
 
-A company of agents. Each agent is a row with a role, a team and who it reports to; you are the human member (`ORG_OWNER`). Agents post in channels, DM each other, ask you questions, and take cards from the board. A dispatcher (not included) watches for wakeups and starts the right agent.
+A company of agents. Each agent is a row with a role, a team and who it reports to; you are the human member (`ORG_OWNER`). Agents post in channels, DM each other, ask you questions, and take cards from the board. A dispatcher watches for wakeups and starts the right agent: your own for `claude-code` and `hermes` bots, the engine's for `zen-agent` bots.
 
-Two limits keep a bot's runs from growing without bound. The session a bot resumes (`cli-org session`) is dropped after `ORG_SESSION_MAX_RUNS` runs, because a resumed `claude -p` re-sends the whole conversation on every turn. And a card that keeps waking its bot without finishing is held: `wake-add --reason task` waits `ORG_TASK_WAKE_BACKOFF_MINUTES` after the first run (doubling each time), and after `ORG_TASK_WAKE_RETRIES` re-wakes in 24 h it posts one `held:` status in the bot's team channel and wakes the bot for that card only on an `owner` wake. A dispatcher that runs bots without `cli-org session` and `wake-add` gets neither limit.
+A bot's `runtime` in the roster says what runs it: `claude-code` or `hermes` (your own dispatcher, as before), or `zen-agent`, which the engine's dispatcher runs itself when `ORG_DISPATCH=on` (`secondbrain org-dispatch tick`, a systemd timer on the server). The dispatcher claims a bot's open wakeups, finishes acknowledgements without a run, asks the classify step whether a free-text message needs the bot at all (`secondbrain classify wake-gate`), picks tool sets and a budget by wake reason, writes the wake's task and handoff files, runs `zen-agent` with `--json`, and finishes the wakeups with the run id. Roster `routines` (`{ name, at: "HH:MM", days?, task_file }`) become `routine` wakeups once per local day in `ORG_TZ`. A message of kind `ack` ("read, nothing to do") wakes nobody. The design and the phased rollout: [zen-runtime.md](zen-runtime.md).
+
+Two limits keep a bot's runs from growing without bound. The session a `claude-code` bot resumes (`cli-org session`) is dropped after `ORG_SESSION_MAX_RUNS` runs, because a resumed `claude -p` re-sends the whole conversation on every turn; the `zen-agent` lane needs neither `cli-org session` nor the column behind it, since every zen-agent wake is a fresh run ([zen-agent.md](zen-agent.md#34-a-bot-wake-end-to-end)) and a bot's continuity is its memory file plus `cli-org remember`/`recall`. And a card that keeps waking its bot without finishing is held: `wake-add --reason task` waits `ORG_TASK_WAKE_BACKOFF_MINUTES` after the first run (doubling each time), and after `ORG_TASK_WAKE_RETRIES` re-wakes in 24 h it posts one `held:` status in the bot's team channel and wakes the bot for that card only on an `owner` wake. A dispatcher that runs bots without `cli-org session` and `wake-add` gets neither limit.
 
 | | |
 |---|---|
 | Page | `/org`: channels, DMs, questions waiting on you, tasks |
 | CLI | `cli-org` (also `secondbrain org`): post, read, ask the owner, assign and complete tasks |
 | Security | A dedicated `sb_org` database role with row-level security per agent |
-| Settings | `ORG_OWNER`, `ORG_VAULT_ASSIGNEE`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES` |
-| Timers (server) | none; `deploy.sh` creates the role and puts `cli-org` on the PATH |
+| Settings | `ORG_OWNER`, `ORG_VAULT_ASSIGNEE`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES`, `ORG_TZ`; the dispatcher's `ORG_DISPATCH`, `ORG_DISPATCH_TICK_SECONDS`, `ORG_DISPATCH_PARALLEL`, `ORG_DISPATCH_QUIET`, `ORG_DISPATCH_DAILY_TOKENS`, `ORG_ZEN_COMMAND`; the classify step's `CLASSIFY_PROVIDER`, `CLASSIFY_DAILY_TOKENS`, `TYPESAFE_API_KEY` (or `OPENROUTER_API_KEY`); `secondbrain.json` `classify` and `dispatch` |
+| CLI | also `secondbrain org-dispatch tick|routines` and `secondbrain classify <decision> --state-file f | label <id> right|wrong | recent` |
+| Timers (server) | `dispatch` when `ORG_DISPATCH=on`; `deploy.sh` creates the role and puts `cli-org` on the PATH |
 | Skill | `org-member` |
 
 ## board
@@ -85,7 +88,7 @@ Without an agent-hub, the live tabs say so and the rest still works.
 
 ## usage
 
-A ledger of Claude Code and Hermes usage: tokens per run, which bot, why it woke, which card and project, the work type and host; plus plan percentages and API credit balances.
+A ledger of Claude Code, zen-agent and Hermes usage: tokens per run, which bot, why it woke, which card and project, the work type, runtime and host; plus plan percentages and API credit balances. zen-agent runs come from their traces (`ZEN_SESSIONS_DIR`, default `<vault>/.zen/sessions`) with the size of every system-prompt part and a real dollar cost, which the page shows; Claude Code runs on a subscription never show dollars.
 
 | | |
 |---|---|

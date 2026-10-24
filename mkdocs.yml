@@ -78,4 +78,5 @@ nav:
       - Deployment: deployment.md
       - Privacy (engine): privacy.md
       - Self-improving orchestration (proposal): self-improvement.md
+      - Bots on zen-agent (proposal): zen-runtime.md
       - zen-agent, the minimal agent harness: zen-agent.md

@@ -1,6 +1,6 @@
 {
-  "$comment": "zen-agent configuration. Copy to zen.json next to your vault (or ~/.zen/zen.json). Paths are relative to the vault. Secrets are never here: name the environment variable that holds them.",
-  "model": "anthropic/claude-sonnet-4-6",
+  "$comment": "zen-agent configuration. Copy to zen.json next to your vault (or ~/.zen/zen.json). Paths are relative to the vault. Secrets are never here: name the environment variable that holds them. The model is the cheap default for bot wakes (OPENROUTER_API_KEY); openrouter/deepseek/deepseek-v4-flash is the alternative, and a persona's model field or --model overrides it per run.",
+  "model": "openrouter/deepseek/deepseek-v4.1-flash",
   "thinking": "off",
   "vault": ".",
   "sessionsDir": ".zen/sessions",
@@ -12,7 +12,9 @@
   "context": {
     "cap": 0.6,
     "keepTurns": 6,
-    "parts": { "rules": 6000, "persona": 3000, "playbook": 2000, "skills": 1500, "task": 4000 }
+    "parts": { "rules": 6000, "persona": 3000, "playbook": 2000, "skills": 1500, "handoff": 500, "task": 4000, "thread": 2000, "tracker": 1500, "github": 1500, "recall": 2000 },
+    "fetchers": {},
+    "$fetchers_example": "context fetchers per card work type, team or default, e.g. { \"default\": [\"recall\"], \"coding\": [\"tracker\", \"github\"], \"team:research\": [\"recall\"] }; names: tracker (cli-projects list rows for the card's project), github (gh pr view / run list for the card's branch), recall (cli-org recall for the card's title). All off by default; a wake is always a fresh session"
   },
   "guard": {
     "local": ".agents/guard.local.json",
@@ -27,6 +29,8 @@
   "kanban": { "kind": "board", "url": "http://127.0.0.1:5123", "tokenEnv": "BOARD_TOKEN", "board": "exo" },
   "$kanban_alternatives": "{ \"kind\": \"cli\", \"command\": \"hermes\", \"board\": \"exo\" } for the Hermes board; { \"kind\": \"hub\", \"url\": \"http://127.0.0.1:5140\", \"tokenEnv\": \"AGENT_HUB_TOKEN\", \"board\": \"exo\" } for agent-hub",
   "org": { "command": "cli-org" },
+  "tracker": { "command": "cli-projects" },
+  "github": { "command": "gh" },
   "providers": {
     "ollama": {
       "api": "openai-completions",

@@ -36,5 +36,17 @@
     "providers": {
       "together": { "models": [{ "id": "example-org/example-model", "label": "Example model" }] }
     }
+  },
+  "classify": {
+    "allow": ["all-hands", "platform", "board", "Research/"],
+    "model": "openrouter/typesafe/jev-1.14"
+  },
+  "dispatch": {
+    "tiers": {
+      "strong": { "model": "openrouter/anthropic/claude-sonnet-5.5", "thinking": "low" },
+      "flash-high": { "thinking": "high" }
+    },
+    "budgets": { "dm": { "turns": 8, "tokens": 60000, "minutes": 5 } },
+    "tools": { "routine": ["org", "knowledge", "fs", "skills"] }
   }
 }

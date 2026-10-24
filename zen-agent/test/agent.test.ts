@@ -124,7 +124,7 @@ test('a stop hook sends the agent back exactly once', async () => {
 });
 
 test('compaction summarises old turns when the transcript passes the cap', async () => {
-  const { cfg, faux, models } = setup({ context: { cap: 0.0005, keepTurns: 1, parts: {} } }); // 64 tokens of a 128k window
+  const { cfg, faux, models } = setup({ context: { cap: 0.0005, keepTurns: 1, parts: {}, fetchers: {} } }); // 64 tokens of a 128k window
   faux.setResponses([fauxAssistantMessage([fauxText('one '.repeat(100))]), fauxAssistantMessage([fauxText('two')]), fauxAssistantMessage([fauxText('three')])]);
   const zen = new ZenAgent({ config: cfg, models, env: {}, summarize: async () => 'SUMMARY OF EARLIER TURNS' });
   await zen.run('first');

@@ -10,6 +10,7 @@ import { callsFromRecords } from './claudeCalls.js';
 import { splitJsonLines } from './lines.js';
 import { transcriptIds } from './transcript.js';
 import { parseRunLog } from './runLog.js';
+import { parseZenTrace } from './zenTrace.js';
 import { parseStatuslineLog } from './statusline.js';
 import * as store from './store.js';
 
@@ -18,7 +19,8 @@ import * as store from './store.js';
  * cc-* lanes), cc-runs logs and the status-line plan log, into the ledger. Runs as
  * hermes from secondbrain-usage-sync.timer. Every write is idempotent.
  */
-export interface UsageSyncPaths { claudeProjectsDir: string; runsDir: string | null; statuslineLog: string | null }
+/** `zenSessionsDir`: zen-agent's traces (zen.json sessionsDir); null or missing: none to read. */
+export interface UsageSyncPaths { claudeProjectsDir: string; runsDir: string | null; statuslineLog: string | null; zenSessionsDir?: string | null }
 export interface UsageSyncCounts {
   files: number; calls: number; sessions: number; messages: number; runs: number; plan: number; attached: number; errors: string[];
 }
@@ -92,6 +94,33 @@ export async function syncUsage(paths: UsageSyncPaths, host: Host): Promise<Usag
         await withTransaction(async (tx) => {
           c.runs += await store.upsertRuns(tx, runs);
           c.plan += await store.insertPlanSnapshots(tx, plan);
+          await store.saveCursor(tx, host, path, { fingerprint: 'whole-file', offsetBytes: consumedBytes, lines, sizeBytes: st.size });
+        });
+        c.files++;
+      } catch (err) {
+        c.errors.push(`${path}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  // zen-agent traces: one small file per run, appended while the run is live, so a changed one is re-read whole.
+  // The run row is written from the meta line and again when the end line lands; calls and the archive come with it.
+  if (paths.zenSessionsDir && existsSync(paths.zenSessionsDir)) {
+    for (const path of walk(paths.zenSessionsDir).filter((p) => p.endsWith('.jsonl')).sort()) {
+      try {
+        const st = statSync(path);
+        const prev = await store.getCursor(host, path);
+        if (prev && prev.sizeBytes === st.size) continue;
+        const { records, consumedBytes, lines } = splitJsonLines(readFileSync(path));
+        const t = parseZenTrace(records, host, path, st.mtime);
+        await withTransaction(async (tx) => {
+          if (t.run) c.runs += await store.upsertRuns(tx, [t.run]);
+          c.calls += await store.upsertCalls(tx, t.calls);
+          if (t.session) {
+            const s = await archive.upsertSession(tx, t.session.input);
+            if (s.changed) c.sessions++;
+            c.messages += await archive.upsertMessages(tx, s.id, t.session.messages);
+          }
           await store.saveCursor(tx, host, path, { fingerprint: 'whole-file', offsetBytes: consumedBytes, lines, sizeBytes: st.size });
         });
         c.files++;

@@ -120,7 +120,7 @@ def test_init_builds_a_working_vault(vault):
     assert p.returncode == 0, p.stderr
     for rel in ("AGENTS.md", "AGENTS.local.md", "CLAUDE.md", "PARA Guide.md", ".gitignore", ".env.example",
                 "Projects/README.md", "Areas/README.md", "Research/README.md", "Archives/README.md",
-                ".agents/guard.local.json", ".claude/settings.json"):
+                ".agents/guard.local.json", ".claude/settings.json", "zen.example.json"):
         assert (vault / rel).exists(), rel
     assert (vault / ".claude" / "skills").is_symlink()
     assert (vault / ".claude" / "skills" / "fact-check" / "SKILL.md").is_file()

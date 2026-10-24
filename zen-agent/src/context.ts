@@ -66,6 +66,10 @@ export interface PromptInputs {
   environment: Record<string, string>;
   /** Extra instructions for this run (a wake's standing orders), kept apart from the task itself. */
   task?: string;
+  /** What the previous run concluded (its end line and last words), so a fresh run needs no resumed transcript. */
+  handoff?: string;
+  /** Fetched parts (a thread, the tracker row, PR status, recall hits), each already named and capped by its fetcher. */
+  extra?: Part[];
 }
 
 export const DEFAULT_IDENTITY =
@@ -92,7 +96,9 @@ export function buildSystemPrompt(input: PromptInputs): Assembled {
     { name: 'rules', text: rulesPath ? readFileSync(rulesPath, 'utf8') : '', cap: cap('rules') },
     { name: 'playbook', text: input.persona?.playbook ?? '', cap: cap('playbook') },
     { name: 'skills', text: skills, cap: cap('skills') },
+    { name: 'handoff', text: input.handoff ?? '', cap: cap('handoff') },
     { name: 'task', text: input.task ?? '', cap: cap('task') },
+    ...(input.extra ?? []),
     { name: 'environment', text: env, cap: 0 },
   ]);
 }

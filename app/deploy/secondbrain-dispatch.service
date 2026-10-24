@@ -1,0 +1,21 @@
+[Unit]
+Description=Second Brain: run zen-agent bots for their open wakeups (org-dispatch tick)
+After=network-online.target postgresql.service secondbrain.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# As the app user: it runs zen-agent in the vault and writes traces to the vault's .zen/sessions.
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+Environment=VAULT_ROOT=@VAULT_DIR@
+# zen-agent and cli-org live on the app user's PATH (deploy.sh installs the wrappers; `npm link` zen-agent there).
+Environment=PATH=@APP_HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-dispatch.js tick
+# A run may last the whole budget; the timer does not start a second tick while this one is active.
+TimeoutStartSec=45min
+Nice=5
+PrivateTmp=true
+NoNewPrivileges=true
