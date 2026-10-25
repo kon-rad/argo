@@ -261,9 +261,9 @@ export async function createCard(by: string, c: NewCard): Promise<Card> {
   );
 }
 
-export async function assignCard(by: string, id: string, assignee: string | null, opts: { project?: string; feature?: string; work?: string; needs?: string } = {}): Promise<Card> {
+export async function assignCard(by: string, id: string, assignee: string | null, opts: { project?: string; feature?: string; work?: string; needs?: string; repo?: string } = {}): Promise<Card> {
   checkId(id);
-  return fn<Card>(`SELECT * FROM board_card_assign($1,$2,$3,$4,$5,$6,$7)`, [by, id, assignee, opts.project ?? null, opts.feature ?? null, opts.work ?? null, opts.needs ?? null]);
+  return fn<Card>(`SELECT * FROM board_card_assign($1,$2,$3,$4,$5,$6,$7,$8)`, [by, id, assignee, opts.project ?? null, opts.feature ?? null, opts.work ?? null, opts.needs ?? null, opts.repo ?? null]);
 }
 
 export async function commentCard(by: string, id: string, body: string): Promise<CardComment> {
@@ -272,10 +272,10 @@ export async function commentCard(by: string, id: string, body: string): Promise
   return fn<CardComment>(`SELECT * FROM board_card_comment($1,$2,$3)`, [by, id, body]);
 }
 
-export async function moveCard(by: string, id: string, status: string, note?: string): Promise<Card> {
+export async function moveCard(by: string, id: string, status: string, note?: string, opts: { blockKind?: string; rounds?: number } = {}): Promise<Card> {
   checkId(id);
   if (!(STATUSES as readonly string[]).includes(status)) throw new BoardError(`status is one of ${STATUSES.join(', ')}, not ${status}`);
-  return fn<Card>(`SELECT * FROM board_card_move($1,$2,$3,$4)`, [by, id, status, note ?? null]);
+  return fn<Card>(`SELECT * FROM board_card_move($1,$2,$3,$4,$5,$6)`, [by, id, status, note ?? null, opts.blockKind ?? null, opts.rounds ?? null]);
 }
 
 export interface ClaimOpts {
