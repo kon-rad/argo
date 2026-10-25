@@ -226,8 +226,9 @@ describe('cards for bots', () => {
     try {
       expect((await query<{ repo: string | null }>(`SELECT repo FROM cards WHERE id = 't_01d000aa'`)).rows[0]!.repo).toBeNull();
       expect(await main(['task', 'assign', 't_01d000aa', 'm4', '--project', 'secondbrain-app', '--type', 'ops', '--repo', 'vault', '--json'], (s) => lines.push(s))).toBe(0);
-      const r = JSON.parse(lines[0]!) as { link: { assignee: string; repo: string | null } };
-      expect(r.link).toMatchObject({ assignee: 'm4', repo: 'vault' });
+      const r = JSON.parse(lines[0]!) as { link: { task_id: string; assignee: string } };
+      expect(r.link).toMatchObject({ task_id: 't_01d000aa', assignee: 'm4' });
+      // The repo is a column the link does not carry; the write is what this card fixes, so assert the row.
       const after = await query<{ assignee: string; repo: string | null }>(`SELECT assignee, repo FROM cards WHERE id = 't_01d000aa'`);
       expect(after.rows[0]).toMatchObject({ assignee: 'm4', repo: 'vault' });
     } finally {
