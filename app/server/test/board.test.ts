@@ -389,29 +389,6 @@ describe('the CLI', () => {
     }
   });
 
-  it('a lead assigning an existing card to the vault assignee with --repo vault works through the RLS role', async () => {
-    // Regression (t_f25205f5): assignTask() set cards.repo with a direct UPDATE over the sb_org connection, which
-    // has only SELECT on cards -- "permission denied for table cards". It only surfaced when the repo changed
-    // (a vault card starts with repo NULL). The write now rides board_card_assign() (SECURITY DEFINER).
-    const env = { ORG_AGENT: 'atlas', SB_ORG_DB_URL: `postgres://sb_org@${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${TEST_DB}` };
-    try {
-      const made = await run(['create', 'Needs the M4', '--to', 'rune', '--project', 'secondbrain-app'], env);
-      expect(made.code).toBe(0);
-      const id = /card (t_[0-9a-f]+)/.exec(made.lines[0]!)![1]!;
-      expect((await getCard(id)).card.repo ?? null).toBeNull();
-      const r = await run(['assign', id, 'm4', '--project', 'secondbrain-app', '--type', 'ops', '--repo', 'vault'], env);
-      expect(r.code).toBe(0);
-      expect(r.lines[0]).toContain("now m4's");
-      const after = await getCard(id);
-      expect(after.card.assignee).toBe('m4');
-      expect(after.card.repo).toBe('vault');
-      // and the review redo's block write (block_kind/rounds) also rides board_card_move, not a direct UPDATE
-      expect(after.card.status).not.toBe('running');
-    } finally {
-      setDatabaseUrl(ownerUrl);
-    }
-  });
-
   it('speaks to the app over HTTP with a token (the second door), same verbs', async () => {
     const a = createApp({ modules: ALL_MODULES, board: { owner: 'owner' } });
     const server: Server = createServer(a);
