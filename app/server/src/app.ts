@@ -162,11 +162,14 @@ export function createApp(opts: AppOptions = {}): express.Express {
         publicOrigin: config.publicOrigin!,
       },
     );
+    // The board takes a per-machine bearer token as well as a session, so it sits ahead of BOTH gates
+    // (checkOrigin and requireSession) and applies its own gate to requests without a token. A bearer-token
+    // client (a lane on another machine, a CLI over HTTPS) sends no Origin and no session cookie, so mounting
+    // this after checkOrigin made every non-GET board call 403 "cross-origin request refused" before the
+    // board's own token check ever ran (docs/zen-runtime.md phase 2 pilot, 2026-10-25).
+    if (modules.has('board')) app.use('/api/board', boardRouter({ sessionGate: auth.requireSession, hub: opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }, ...opts.board }));
     app.use('/api', auth.checkOrigin);
     app.use('/api/auth', auth.router);
-    // The board takes a per-machine bearer token as well as a session, so it sits ahead of the gate and
-    // applies the gate itself to requests without a token (board module).
-    if (modules.has('board')) app.use('/api/board', boardRouter({ sessionGate: auth.requireSession, hub: opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }, ...opts.board }));
     // Everything below this line needs a session. Routes are only ever added
     // below it, so a new endpoint is protected by default.
     app.use('/api', auth.requireSession);
