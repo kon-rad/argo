@@ -148,7 +148,10 @@ export default function Board() {
                           {c.block_kind && <span title={c.block_reason ?? ''}>⛔ {c.block_kind}</span>}
                           <span className="ml-auto tabular-nums">{age(c.completed_at ?? c.started_at ?? c.created_at)}</span>
                         </div>
-                        {c.project_slug && <div className="mt-0.5 truncate text-[0.7rem] text-[var(--ink-faint)]">{c.project_slug}{c.feature_slug ? `/${c.feature_slug}` : ''}</div>}
+                        <div className="mt-0.5 flex items-center gap-1 text-[0.65rem] text-[var(--ink-faint)]">
+                          <span className="tabular-nums" title={c.id}>#{c.id.replace(/^t_/, '')}</span>
+                          {c.project_slug && <span className="truncate">· {c.project_slug}{c.feature_slug ? `/${c.feature_slug}` : ''}</span>}
+                        </div>
                       </button>
                       <CardNotes refs={notes.refsByTask.get(c.id) ?? []} resolved={notes.resolved} />
                     </li>
