@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { agentSpecProblem } from './agent-spec.js';
 import { config } from './config.js';
 import { query, withTransaction, type TxClient } from './db.js';
 import { assignCard, BoardError, commentCard, createCard, flagCard, linkCards, moveCard, type Card, type Contract } from './board.js';
@@ -62,6 +63,9 @@ export const OrgDoc = z.object({
       channels: z.array(z.string()).optional(),
       /** Scheduled wakes the engine's dispatcher adds as `routine` wakeups, once per local day (ORG_TZ). */
       routines: z.array(Routine).optional(),
+    }).superRefine((a, ctx) => {
+      const problem = agentSpecProblem({ runtime: a.runtime, model: a.model });
+      if (problem) ctx.addIssue({ code: 'custom', message: problem, path: ['model'] });
     }),
   ),
   teams: z.record(
@@ -553,6 +557,9 @@ export interface ChartAgent extends Agent {
   paused?: boolean;
   paused_reason?: string | null;
   paused_at?: Date | null;
+  /** True when an owner override (cli-org set) is applied: runtime and model above are the effective ones. */
+  overridden?: boolean;
+  effort?: string | null;
 }
 
 export async function orgChart(): Promise<{ teams: { slug: string; name: string; lead: string | null }[]; agents: ChartAgent[] }> {
@@ -560,10 +567,10 @@ export async function orgChart(): Promise<{ teams: { slug: string; name: string;
     `SELECT t.slug, t.name, t.lead FROM teams t WHERE EXISTS (SELECT 1 FROM org_agents a WHERE a.team_slug = t.slug AND a.retired_at IS NULL) ORDER BY t.sort, t.slug`,
   );
   const { rows: agents } = await query<ChartAgent>(
-    `SELECT a.name, a.team_slug, a.runtime, a.role, a.reports_to, a.model, a.expertise, a.retired_at, t.name AS team_name,
+    `SELECT a.name, a.team_slug, e.runtime, a.role, a.reports_to, e.model, a.expertise, a.retired_at, t.name AS team_name,
             EXISTS (SELECT 1 FROM teams x WHERE x.lead = a.name) AS is_lead, a.session_id, a.session_started,
-            a.paused, a.paused_reason, a.paused_at
-       FROM org_agents a LEFT JOIN teams t ON t.slug = a.team_slug
+            e.paused, a.paused_reason, a.paused_at, e.overridden, e.effort
+       FROM org_agents a JOIN org_agents_effective e ON e.name = a.name LEFT JOIN teams t ON t.slug = a.team_slug
       WHERE a.retired_at IS NULL
       ORDER BY (a.runtime = 'human') DESC, t.sort, a.team_slug NULLS FIRST, is_lead DESC, a.name`,
   );
