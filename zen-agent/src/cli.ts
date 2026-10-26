@@ -44,7 +44,7 @@ A dispatcher's flags: --tools picks this run's tool sets, --handoff-file is the 
 (the handoff part), --meta labels land in the trace's meta line under "dispatch".
 Secrets come from the environment only (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...; see README).`;
 
-interface Flags {
+export interface Flags {
   persona?: string;
   model?: string;
   config?: string;
@@ -158,7 +158,7 @@ export function parseTools(list?: string): string[] | undefined {
 }
 
 /** The per-run options every command shares: standing orders (inline or from a file), the handoff, tools, thinking, labels. */
-function runOptions(f: Flags): { task?: string; handoff?: string; toolSets?: string[]; thinking?: ThinkingLevel; dispatch: Record<string, unknown> } {
+export function runOptions(f: Flags): { task?: string; handoff?: string; toolSets?: string[]; thinking?: ThinkingLevel; model?: string; dispatch: Record<string, unknown> } {
   const fromFile = f['task-file'] ? readFileSync(f['task-file'], 'utf8').trim() : undefined;
   const task = [f.task, fromFile].filter((s): s is string => Boolean(s && s.trim())).join('\n\n') || undefined;
   return {
@@ -166,6 +166,8 @@ function runOptions(f: Flags): { task?: string; handoff?: string; toolSets?: str
     handoff: f['handoff-file'] ? readFileSync(f['handoff-file'], 'utf8').trim() || undefined : undefined,
     toolSets: parseTools(f.tools),
     thinking: parseThinking(f.thinking),
+    // --model beats the persona's own model, as the README says; config(f) only moved the default.
+    model: f.model,
     dispatch: parseMeta(f.meta, f['meta-json']),
   };
 }
