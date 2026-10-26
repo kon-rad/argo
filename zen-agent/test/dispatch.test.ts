@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { ZenAgent } from '../src/agent.js';
-import { parseMeta, parseThinking, parseTools } from '../src/cli.js';
+import { parseMeta, parseThinking, parseTools, runOptions } from '../src/cli.js';
 import { loadConfig } from '../src/config.js';
 import { buildSystemPrompt } from '../src/context.js';
 
@@ -79,4 +79,9 @@ test('the CLI parsers: --meta pairs over --meta-json, thinking levels, tool list
   assert.deepEqual(parseTools('fs, org,,'), ['fs', 'org']);
   assert.equal(parseTools(undefined), undefined);
   assert.throws(() => parseTools(','), /comma list/);
+});
+
+test('--model reaches the run options, so it beats a persona\'s own model', () => {
+  assert.equal(runOptions({ model: 'openrouter/deepseek/deepseek-v4.1-flash' } as never).model, 'openrouter/deepseek/deepseek-v4.1-flash');
+  assert.equal(runOptions({} as never).model, undefined);
 });
