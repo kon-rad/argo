@@ -17,6 +17,10 @@ A Telegram bot that answers through [zen-agent](../../zen-agent/README.md). Each
 - **Failures are told, not hidden.** A timeout, a budget stop or a crash comes back as a short message in the chat.
 - **Restart-safe.** The polling offset is saved before a message is handled, so a message that crashes a run is skipped, not replayed forever.
 
+## Where it shows up
+
+Every run is a zen-agent session in the vault's `.zen/sessions`, so `secondbrain usage-sync` (every five minutes on a server) puts it on the `/usage` page with the rest: tokens, cost in dollars, model, the session viewer with the full text of each message and answer. The bridge labels each run `work_type=telegram` and gives it a `telegram` wake reason whose ref is the Telegram message id, so you can filter the page to Telegram. The chat ID and the message text are never in the labels.
+
 ## Set it up
 
 1. **Create the bot** with `@BotFather` (`/newbot`) and note the token. This must be a bot no other process polls. Find your user ID with `@userinfobot`.
