@@ -1,6 +1,6 @@
 # The board: a kanban in the engine (design proposal)
 
-Status: **built as the `board` module** (see [modules.md](modules.md#board)): the migration, the `board_*` functions, the API with its three doors, `cli-board`, the page, the Hermes importer and projection, and zen-agent's `board` backend and `lane` loop. What remains is operational: running stages 0 to 3 below against a live Hermes board, and the deletion list once the record is authoritative. This page stays the architecture. It is grounded in what the engine already has: the `org` module's schema and row-level security (`app/db/migrations/1756000012200_org.sql`, `…12400_org-rls.sql`, `…14000_bot-powers.sql`), the card links in `task_links` (`…12600`, `…12700`, `…12800`), the `hub` proxy (`app/server/src/routes/hub.ts`), the Board page (`app/web/src/routes/agents/Board.tsx`), zen-agent's kanban tools (`zen-agent/src/tools/kanban.ts`) and the self-improvement proposal's sections 5.3 and 10.
+Status: **built as the `board` module** (see [modules.md](modules.md#board)): the migration, the `board_*` functions, the API with its three doors, `cli-board`, the page, a legacy file importer for old Hermes exports, and zen-agent's `board` backend and `lane` loop. Stages 0 to 3 below are done (cutover 2026-10-26; the Hermes projection and the old surfaces were removed afterwards). This page stays the architecture. It is grounded in what the engine already has: the `org` module's schema and row-level security (`app/db/migrations/1756000012200_org.sql`, `…12400_org-rls.sql`, `…14000_bot-powers.sql`), the card links in `task_links` (`…12600`, `…12700`, `…12800`), the `hub` proxy (`app/server/src/routes/hub.ts`), the old Board page (`app/web/src/routes/agents/Board.tsx`, since removed), zen-agent's kanban tools (`zen-agent/src/tools/kanban.ts`) and the self-improvement proposal's sections 5.3 and 10.
 
 ## 1. What it has to be
 
@@ -253,7 +253,7 @@ cli-board token create <agent> --label "..." | list | revoke <id>     (owner)
 
 ### 5.3 Agent tools
 
-zen-agent's `KanbanBackend` interface already has the right shape (`list`, `show`, `create`, `comment`, `assign`, `complete`, `block`). A third backend, `kind: 'board'`, speaks 5.1 with a token from the environment; the model's tools (`board_list`, `card_show`, `card_create`, `card_comment`, `card_assign`, `card_complete`, `card_block`) do not change. The `hub` and `cli` backends stay until stage 3 and are then deleted. Claude Code agents use `cli-board` through Bash, as they use `cli-org` today. Hermes keeps `hermes kanban` against its projection until stage 2 (section 7).
+zen-agent's `KanbanBackend` interface already has the right shape (`list`, `show`, `create`, `comment`, `assign`, `complete`, `block`). A third backend, `kind: 'board'`, speaks 5.1 with a token from the environment; the model's tools (`board_list`, `card_show`, `card_create`, `card_comment`, `card_assign`, `card_complete`, `card_block`) do not change. The `hub` and `cli` backends were deleted after the cutover. Claude Code agents use `cli-board` through Bash, as they use `cli-org` today.
 
 ## 6. Parity with the Hermes board
 
@@ -297,7 +297,7 @@ The lane contract is small on purpose: claim, heartbeat, finish, plus "write you
 
 ## 8. Staged so nothing breaks
 
-Each stage is a pull request or two and has a measurable "done". Stages 0 to 2 deliver the brief; stage 3 is the only bet.
+Each stage is a pull request or two and has a measurable "done". **Stages 0 to 3 are done:** the cutover was 2026-10-26 (cc-dispatcher claims, runs and finishes cards through `cli-board`), and the Hermes projection (`hermesProjection`, `KanbanRunner`, `BOARD_HERMES_PROJECTION`, `ORG_KANBAN_CMD`, `cli-board import --hermes`) and the old surfaces (the hub's board routes and allowlist, `agents/Board.tsx`, zen-agent's `hub` and `cli` backends) were removed afterwards. The table below is the plan as it was staged. One item of stage 3 is still open: the `task_links` view and its two patch migrations stay, because `listTasks`, the dispatch store, `routes/usage.ts` and the `usage_facts` views still read the view.
 
 | Stage | What lands | Done when |
 |---|---|---|
@@ -330,7 +330,7 @@ Tests first, per `AGENTS.md`: the migration's functions get a suite like `org-po
 |---|---|
 | `app/db/migrations/…_board.sql` | Section 3.2 and 3.4; `runtime` check gains `zen-agent`, `session`; grants and policies for `sb_org` |
 | `app/server/src/board.ts`, `routes/board.ts`, `cli-board.ts` | The module: functions called, routes, CLI, token auth, SSE |
-| `app/server/src/org.ts` | `createTask`, `assignTask`, `redoTask`, `applyGraph` call `board_card_*` instead of `hermes kanban`; `KanbanRunner` becomes the stage-1 projection and then goes |
+| `app/server/src/org.ts` | `createTask`, `assignTask`, `redoTask`, `applyGraph` call `board_card_*` instead of `hermes kanban`; `KanbanRunner` was the stage-1 projection and is gone |
 | `app/server/src/routes/hub.ts` | Board routes removed in stage 2; chats and the Telegram toggle stay until they have their own home |
 | `app/web/src/routes/agents/Board.tsx`, `Projects.tsx`, `org/Org.tsx` | Read `/api/board`; SSE; filters; contract and runs on the panel |
 | `zen-agent/src/tools/kanban.ts`, `zen.example.json` | `kind: 'board'` backend; `runtime: zen-agent` |

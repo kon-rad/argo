@@ -241,7 +241,7 @@ cli-board import /tmp/local-board.json --board exo --check       # reports "only
 cli-board import /tmp/local-board.json --board exo               # upserts by id; safe to re-run
 ```
 
-`import` upserts by the card's own id, so re-running it does not duplicate. It will *not* spot a card re-filed by hand under a different id with the same title: search by title after an import and archive the stale copy yourself. `cli-board import --hermes` does the same thing by calling the local Hermes CLI directly.
+`import` upserts by the card's own id, so re-running it does not duplicate. It will *not* spot a card re-filed by hand under a different id with the same title: search by title after an import and archive the stale copy yourself. The importer only reads a saved file; the engine no longer calls the Hermes CLI.
 
 ---
 
@@ -251,20 +251,7 @@ cli-board import /tmp/local-board.json --board exo               # upserts by id
 
 **`board 403: <name> can't move <card>` (or "can't unassign").** The read succeeded and the write was refused, which means the door worked and the identity is the problem. The message names the identity the server resolved, so read it literally: if it is not who you think you are, the environment is supplying someone else's identity. The usual causes are a `BOARD_TOKEN` minted for a different roster member, or `ORG_AGENT` left set from an earlier command in the same shell. Note that `cli-org` and `cli-board` on the server source the server env file themselves, so a variable you unset in your shell can come straight back.
 
-**A card that finished still shows `ready` or `running` on the board.** The two writers disagree. `cli-board finish` and `hermes kanban complete` write different records, and a card closed on one side can look open on the other. Check both, then close the stale one:
-
-```bash
-cli-board show <id>
-hermes kanban --board exo show <id>
-```
-
-If the engine already has it `done`, the stale side is the projection: nothing to fix by hand, only the lane's projection step to look at.
-
-**Column order looks wrong: is priority doing this?** Yes, and it is intentional. Cards sort by priority first, then by status bucket, then by creation time, so a priority-1 card in `todo` appears above a default card in `ready`. The board is a queue, and priority-1 means "this jumps". If a card looks like it is in the wrong place, read its priority before assuming the filter is broken.
-
-**A card looks stale on a screen after the data is fixed.** A browser tab, a kiosk or a PWA session that was loaded before a deploy keeps running the old bundle and will not refetch itself; a soft navigation inside the app does not help. Reload it hard. Before re-auditing the database, check two things in this order: does the board actually have the card (`cli-board show <id>`), and when did the app last restart relative to when that screen last reloaded?
-
-**A card is blocked and the reason is gone.** `block_kind` is the honest answer to why. A `dependency` block clears itself when the parent card finishes; everything else clears when a person decides it has. Re-read the reason before moving the card back to `ready`: if the underlying condition still holds, a lane will burn a run and block it again, and two transient blocks on one card is the pattern that triggers the board's auto-decomposer. Then look at what the decomposition produced: it splits the card into several children, and a child does not inherit the caution of its parent's body, so a card that asked for a review path can produce a child that does not have one. If the parent's work touched production, treat every new child as an incident, inspect it, and block the ones that would run on their own.
+**A card that finished still shows `ready` or `running` on the board.** Check `cli-board show <id>`: it is the only record. If a worker's run ended without `cli-board finish`, the lane blocks the card or the lease expires and the card goes back to `ready`; `cli-board reclaim <id>` does it by hand. A card closed with a plain `hermes kanban complete` never reached this board at all (see the trap above).
 
 ---
 
@@ -272,5 +259,5 @@ If the engine already has it `done`, the stale side is the projection: nothing t
 
 - [board-design.md](board-design.md) - the architecture: the record and the lanes, the tables, the status machine, the function-per-rule write path, the parity table against the legacy board, the staged rollout and what is deliberately out of scope.
 - [modules.md](modules.md#board) - the `board` module: page, CLI, settings, timers, and how it sits next to the org and the tracker.
-- [configuration.md](configuration.md) - `BOARD_URL`, `BOARD_TOKEN`, `BOARD_LEASE_MINUTES`, `BOARD_HERMES_PROJECTION`.
+- [configuration.md](configuration.md) - `BOARD_URL`, `BOARD_TOKEN`, `BOARD_LEASE_MINUTES`.
 - [architecture.md](architecture.md) - where the board's record sits relative to the vault, the index and the other modules.
