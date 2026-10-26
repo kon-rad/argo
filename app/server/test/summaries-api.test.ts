@@ -2,7 +2,7 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { query } from '../src/db.js';
-import { buildDigest } from '../src/summaries/digest.js';
+import { buildDigest, groupOf } from '../src/summaries/digest.js';
 import { ALL_MODULES, truncateAll } from './helpers.js';
 
 const app = createApp({ modules: ALL_MODULES });
@@ -90,7 +90,8 @@ describe('the stand-up digest', () => {
     await query(`INSERT INTO agent_summary_facts (summary_id, subject, claim) VALUES ($1,'billing','Codes are deduplicated.')`, [a.summary]);
     const md = await buildDigest(24);
     expect(md).toMatch(/2 sessions: (1 finished, 1 blocked|1 blocked, 1 finished);/);
-    expect(md).toContain('### shop (1)');
+    expect(md).toContain('### folder shop (1)');
+    expect(md).toMatch(/\d+ input\+output tokens \(\d+k? more from cache\)/);
     expect(md).toContain('### no project (1)');
     expect(md).toContain('[blocked] Deploy the site');
     expect(md).toContain('### Open items');
@@ -104,6 +105,15 @@ describe('the stand-up digest', () => {
     expect(await buildDigest(24)).toContain('No summarized sessions');
     for (let i = 0; i < 40; i++) await seed(`s${i}`, { request: 'x'.repeat(130), done: 'y'.repeat(210) });
     expect((await buildDigest(24, 2000)).length).toBeLessThanOrEqual(2000);
+  });
+});
+
+describe('digest grouping', () => {
+  it('prefers the card project, then names the folder a session ran in', () => {
+    expect(groupOf({ card_project: 'argo-app', project: '-Users-me-Documents-vault' })).toBe('argo-app');
+    expect(groupOf({ card_project: null, project: '-Users-me-Documents-vault' })).toBe('folder vault');
+    expect(groupOf({ card_project: null, project: '/home/agent/work/shop/' })).toBe('folder shop');
+    expect(groupOf({ card_project: null, project: null })).toBe('no project');
   });
 });
 
