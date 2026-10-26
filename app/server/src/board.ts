@@ -545,3 +545,46 @@ export async function driftReport(board: string, docs: HermesCard[]): Promise<{ 
     statusDiffers: [...hermes].filter(([id, s]) => engine.has(id) && engine.get(id) !== s).map(([id, s]) => ({ id, engine: engine.get(id)!, hermes: s })).sort((a, b) => a.id.localeCompare(b.id)),
   };
 }
+
+/**
+ * Pause and resume: the cutover's phase 1b control plane (vault: kanban-board/dev-log/2026-10-26_cutover-phase0-inventory.md).
+ * One owner-only switch in Postgres stops new claims for one bot, a team's bots, or the whole board. A pause stops
+ * *new* work only; a run that already holds a lease keeps its card. The gate lives inside board_card_claim, so every
+ * backend (cc-dispatcher over the projection, zen-agent over this API) sees the same pause without reading a file.
+ */
+export interface BoardSettings {
+  board_slug: string;
+  dispatch_enabled: boolean;
+  disabled_reason: string | null;
+  disabled_at: Date | null;
+}
+
+/** Pause or resume a bot, a team's bots, or all bots ('all'). Returns how many agent rows changed. */
+export async function pauseAgents(by: string, scope: string, paused: boolean, reason: string, until?: string, board?: string): Promise<number> {
+  try {
+    const { rows } = await query<{ board_pause: number }>(`SELECT board_pause($1,$2,$3,$4,$5,$6) AS board_pause`, [by, scope, paused, reason, until ?? null, board ?? null]);
+    return rows[0]!.board_pause;
+  } catch (err) {
+    return translate(err);
+  }
+}
+
+export const resumeAgents = (by: string, scope: string, board?: string): Promise<number> => pauseAgents(by, scope, false, '', undefined, board);
+
+/** The board-wide dispatch switch. `enabled` false stops every new claim on the board; a reason is required to disable. */
+export async function setDispatch(by: string, enabled: boolean, reason?: string, board?: string): Promise<BoardSettings> {
+  return fn<BoardSettings>(`SELECT * FROM board_set_dispatch($1,$2,$3,$4)`, [by, enabled, reason ?? null, board ?? null]);
+}
+
+/**
+ * The board's current switch state. A board with no row is enabled. Checks for the table first so a deployment
+ * that has the CLI but not yet the migration (the migrate step runs after the new dist is in place) reports
+ * "enabled" rather than failing on a missing relation.
+ */
+export async function dispatchState(board = 'exo'): Promise<BoardSettings> {
+  const { rows: present } = await query<{ t: string | null }>(`SELECT to_regclass('public.board_settings')::text AS t`);
+  if (!present[0]?.t) return { board_slug: board, dispatch_enabled: true, disabled_reason: null, disabled_at: null };
+  const { rows } = await query<BoardSettings>(`SELECT dispatch_enabled, disabled_reason, disabled_at, $1::text AS board_slug FROM board_settings WHERE board_slug = $1`, [board]);
+  return rows[0] ?? { board_slug: board, dispatch_enabled: true, disabled_reason: null, disabled_at: null };
+}
+

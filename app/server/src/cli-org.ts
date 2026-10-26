@@ -42,6 +42,7 @@ import {
   type Message,
   type TaskLink,
 } from './org.js';
+import { dispatchState, pauseAgents, resumeAgents, setDispatch } from './board.js';
 import {
   forget,
   listApprovals,
@@ -96,6 +97,9 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   search "<words>" [--limit N]             full-text over your channels
   channels                                 your channels
   agents                                   the org chart (no identity needed)
+  pause <agent|team|all> --reason "..." [--until "when"]   owner or dispatch bot only: stop new claims for a bot, a team's bots, or all bots
+  resume <agent|team|all>                  owner or dispatch bot only: clear the pause; the next claim succeeds
+  board status [board] | board pause --reason "..." | board resume [board]   the board-wide dispatch switch (owner or dispatch bot only)
   wakeups [--all]                          open wakeups for you (or everyone with --all)
   import <org.json>                        load the compiled org file (agents, teams, channels); idempotent
   task create <bot|none> "<title>" [--project p] [--feature f] [--type t] [--needs cap] [--repo r] [--ship-now] [--body "..."] [--board exo] [--priority N] [--after t_..,t_..]
@@ -425,9 +429,38 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       const chart = await orgChart();
       if (json) return (out(JSON.stringify(chart, null, 2)), 0);
       for (const a of chart.agents) {
-        out(`${a.name.padEnd(10)} ${a.role}${a.team_name ? `  [${a.team_name}${a.is_lead ? ', lead' : ''}]` : ''}${a.reports_to ? `  reports to ${a.reports_to}` : ''}  (${a.runtime}${a.model ? `, ${a.model}` : ''})`);
+        out(`${a.name.padEnd(10)} ${a.role}${a.team_name ? `  [${a.team_name}${a.is_lead ? ', lead' : ''}]` : ''}${a.reports_to ? `  reports to ${a.reports_to}` : ''}  (${a.runtime}${a.model ? `, ${a.model}` : ''})${a.paused ? `  PAUSED: ${a.paused_reason ?? 'no reason given'}` : ''}`);
       }
       return 0;
+    }
+    case 'pause':
+    case 'resume': {
+      const [scope] = pos;
+      const reason = str(opts.reason) ?? '';
+      const until = str(opts.until);
+      if (!scope) throw new OrgError(`${cmd} <agent|team|all> --reason "..." [--until "when"]`);
+      const by = identityName();
+      const n = cmd === 'pause' ? await pauseAgents(by, scope, true, reason, until) : await resumeAgents(by, scope);
+      out(json ? JSON.stringify({ scope, paused: cmd === 'pause', agents: n }) : `${cmd === 'pause' ? 'paused' : 'resumed'} ${n} agent(s) in ${scope}`);
+      return 0;
+    }
+    case 'board': {
+      const [sub, arg] = pos;
+      const by = identityName();
+      if (sub === 'pause' || sub === 'resume') {
+        const enabled = sub === 'resume';
+        const reason = str(opts.reason);
+        if (!enabled && !(reason && reason.trim())) throw new OrgError('board pause --reason "..." (a disabled board needs a reason)');
+        const st = await setDispatch(by, enabled, reason);
+        out(json ? JSON.stringify(st) : `dispatch ${st.dispatch_enabled ? 'enabled' : `disabled (${st.disabled_reason})`} on ${st.board_slug}`);
+        return 0;
+      }
+      if (sub === 'status' || sub === undefined) {
+        const st = await dispatchState(arg ?? 'exo');
+        out(json ? JSON.stringify(st) : `${st.board_slug}: dispatch ${st.dispatch_enabled ? 'enabled' : `disabled (${st.disabled_reason})`}`);
+        return 0;
+      }
+      throw new OrgError('board <status|pause|resume> [board] [--reason "..."]');
     }
     case 'wakeups': {
       const ws = await openWakeups(opts.all === true ? undefined : identityName());

@@ -549,6 +549,10 @@ export interface ChartAgent extends Agent {
   is_lead: boolean;
   session_id: string | null;
   session_started: Date | null;
+  /** The cutover's pause flag: a paused bot starts no new work until an owner resumes it. */
+  paused?: boolean;
+  paused_reason?: string | null;
+  paused_at?: Date | null;
 }
 
 export async function orgChart(): Promise<{ teams: { slug: string; name: string; lead: string | null }[]; agents: ChartAgent[] }> {
@@ -557,7 +561,8 @@ export async function orgChart(): Promise<{ teams: { slug: string; name: string;
   );
   const { rows: agents } = await query<ChartAgent>(
     `SELECT a.name, a.team_slug, a.runtime, a.role, a.reports_to, a.model, a.expertise, a.retired_at, t.name AS team_name,
-            EXISTS (SELECT 1 FROM teams x WHERE x.lead = a.name) AS is_lead, a.session_id, a.session_started
+            EXISTS (SELECT 1 FROM teams x WHERE x.lead = a.name) AS is_lead, a.session_id, a.session_started,
+            a.paused, a.paused_reason, a.paused_at
        FROM org_agents a LEFT JOIN teams t ON t.slug = a.team_slug
       WHERE a.retired_at IS NULL
       ORDER BY (a.runtime = 'human') DESC, t.sort, a.team_slug NULLS FIRST, is_lead DESC, a.name`,
