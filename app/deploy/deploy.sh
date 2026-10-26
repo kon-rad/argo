@@ -332,6 +332,9 @@ has social && WRAPPERS+=(cli-social)
 if [ "${#WRAPPERS[@]}" -gt 0 ]; then
   install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.local/bin"
   for w in "${WRAPPERS[@]}"; do
+    # rm first: a symlink here (zen-agent -> dist/src/cli.js from an earlier `npm link`) would make the redirect
+    # overwrite its target, and the chat host would crash-loop on a shell script where its compiled cli.js was.
+    rm -f "$APP_HOME/.local/bin/$w"
     render "$APP_DIR/deploy/bin/$w" > "$APP_HOME/.local/bin/$w"
     chown "$APP_USER:$APP_USER" "$APP_HOME/.local/bin/$w"; chmod 755 "$APP_HOME/.local/bin/$w"
   done
