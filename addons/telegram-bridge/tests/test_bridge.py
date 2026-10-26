@@ -112,6 +112,17 @@ def test_footer_shows_tokens_when_on(tmp_path):
     assert tg.sent[-1]["text"].endswith("[120 tokens, 2 turns]")
 
 
+def test_footer_separates_cached_rereads_from_new_tokens(tmp_path):
+    def run(argv, **kw):
+        out = json.dumps({"text": "ok", "stopped": "done", "turns": 11, "sessionId": "s",
+                          "usage": {"total": 231698, "input": 32768, "output": 1170, "cacheRead": 197760, "cacheWrite": 0}})
+        return SimpleNamespace(stdout=out, stderr="", returncode=0)
+
+    b, tg = make(tmp_path, run, BRIDGE_FOOTER="1")
+    b.handle(update("x"))
+    assert tg.sent[-1]["text"].endswith("[33938 tokens + 197760 cached, 11 turns]")
+
+
 def test_failures_are_reported_not_raised(tmp_path):
     def boom(argv, **kw):
         return SimpleNamespace(stdout="", stderr="Error: no key\n", returncode=1)
