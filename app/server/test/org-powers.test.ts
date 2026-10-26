@@ -9,7 +9,7 @@ import { agentDatabaseUrl, main, plainSnippet } from '../src/cli-org.js';
 import { query } from '../src/db.js';
 import { applyGraph, assignTask, createTask, dm, getAgent, importOrg, neededCapability, nodeNeed, post, type KanbanRunner } from '../src/org.js';
 import {
-  forget, listFacts, recallExcluded, recallFacts, recallMemoryFiles, remember, shipCheck, shipDecide, shipRequest,
+  dedupeVaultHits, forget, listFacts, recallExcluded, recallFacts, recallMemoryFiles, remember, shipCheck, shipDecide, shapeVaultHits, shipRequest, terms,
 } from '../src/org-powers.js';
 import { ALL_MODULES, truncateAll } from './helpers.js';
 
@@ -215,6 +215,19 @@ describe('shared memory', () => {
     expect(await listFacts({ subject: 'droplet' })).toEqual([]);
   });
 
+  it('a natural-language question still finds a fact when not every word is in it', async () => {
+    const rune = await getAgent('rune');
+    const f = await remember(rune, { subject: 'cli-board door selection', claim: 'a dead BOARD_TOKEN in the env wins over a working door and 401s; unset it to use the database door', source: 'Projects/x/dev-log/a.md' });
+    await remember(rune, { subject: 'ring sync', claim: 'the droplet is the master for ring data', source: '#12' });
+    // strict AND finds nothing ("why", "return" are not in the claim); the fallback needs half of the terms
+    const hits = await recallFacts('why does cli-board return 401');
+    expect(hits.map((h) => h.ref)).toEqual([`fact #${f.id}`]);
+    // one shared word out of four is not enough
+    expect(await recallFacts('droplet unicorn rainbow glitter')).toEqual([]);
+    // an exact match still wins and skips the fallback
+    expect((await recallFacts('ring sync master'))[0].title).toBe('ring sync');
+  });
+
   it('a bot writes facts only as itself through the RLS role', async () => {
     const url = agentDatabaseUrl(`postgres://sb_org@${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${process.env.SB_TEST_DB ?? 'secondbrain_test'}`, 'lena');
     const c = new pg.Client({ connectionString: url });
@@ -238,6 +251,50 @@ describe('shared memory', () => {
     expect(recallExcluded('Areas/Finance/exports/x.md')).toBe(true);
     expect(recallExcluded('Areas/zion/tenancy.md', ['Areas/zion/'])).toBe(true);
     expect(recallExcluded('Projects/kanban/kanban-design.md')).toBe(false);
+  });
+
+  it('query terms drop question words, and memory lines match on word starts, not inside other words', () => {
+    expect(terms('how do I render video')).toEqual(['render', 'video']);
+    expect(terms('why does cli-board return 401')).toEqual(['cli-board', 'return', '401']);
+    const vault = mkdtempSync(join(tmpdir(), 'sb-vault-'));
+    mkdirSync(join(vault, '.agents', 'org', 'memory'), { recursive: true });
+    writeFileSync(join(vault, '.agents', 'org', 'memory', 'atlas.md'), [
+      '# atlas memory',
+      '- `hermes kanban show` is denied in routine wakes',
+      '- video renders run on the M1 Max',
+      '- the board was down for a day',
+      '',
+    ].join('\n'));
+    // "how" is a question word and "show" must not match it; only the video line is about the query
+    const hits = recallMemoryFiles(vault, 'how do I render video');
+    expect(hits.map((h) => h.ref)).toEqual(['.agents/org/memory/atlas.md:3']);
+    // a prefix still matches ("renders" for "render"), and a nonsense query finds nothing
+    expect(recallMemoryFiles(vault, 'zzzqx plugh')).toEqual([]);
+  });
+
+  it('a memory line must share at least half of the query terms', () => {
+    const vault = mkdtempSync(join(tmpdir(), 'sb-vault-'));
+    mkdirSync(join(vault, '.agents', 'org', 'memory'), { recursive: true });
+    writeFileSync(join(vault, '.agents', 'org', 'memory', 'rune.md'), '- the droplet runs two workers\n- npm ci starves the droplet\n');
+    expect(recallMemoryFiles(vault, 'droplet workers memory budget quota').length).toBe(0);
+    expect(recallMemoryFiles(vault, 'droplet workers').map((h) => h.ref)).toEqual(['.agents/org/memory/rune.md:1', '.agents/org/memory/rune.md:2']);
+  });
+
+  it('vault hits: vector-only matches never stand alone, are capped at half the quota, and duplicates collapse', () => {
+    const mk = (ref: string, kind: string | undefined, sim: number | null) => ({ ref_path: ref, title: 'T', snippet: 's', rank: 0.1, match_kind: kind, similarity: sim });
+    // nothing is backed by the keyword branch: the words are not in the vault, so nothing comes back
+    expect(shapeVaultHits([mk('a', 'semantic', 0.85), mk('b', 'semantic', 0.84)], 8, 0.25)).toEqual([]);
+    // backed hits stay; vector-only hits fill at most half of the limit (4 of 8), in order
+    const mixed = [mk('t1', 'text', null), ...Array.from({ length: 6 }, (_, i) => mk(`s${i}`, 'semantic', 0.8)), mk('h1', 'hybrid', 0.8), mk('f1', 'filename', null)];
+    expect(shapeVaultHits(mixed, 8, 0.25).map((h) => h.ref_path)).toEqual(['t1', 's0', 's1', 's2', 's3', 'h1', 'f1']);
+    // a model with a wider spread can set a floor for vector-only hits
+    expect(shapeVaultHits([mk('t1', 'text', null), mk('s0', 'semantic', 0.3), mk('s1', 'semantic', 0.6)], 8, 0.5).map((h) => h.ref_path)).toEqual(['t1', 's1']);
+    // a plain keyword search (the fallback) has no match kind and is all backed
+    expect(shapeVaultHits([mk('k1', undefined, null)], 8, 0.25).map((h) => h.ref_path)).toEqual(['k1']);
+    const a = { source: 'vault' as const, ref: '.hermes/skills/x/SKILL.md', title: 'X skill', text: 'same body text here', score: 1 };
+    const b = { ...a, ref: '.hermes/profiles/p/skills/x/SKILL.md' };
+    const c = { ...a, ref: 'Areas/y.md', title: 'Y', text: 'other' };
+    expect(dedupeVaultHits([a, b, c]).map((h) => h.ref)).toEqual(['.hermes/skills/x/SKILL.md', 'Areas/y.md']);
   });
 
   it('vault snippets reach the bot as plain text', () => {
