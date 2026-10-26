@@ -1,0 +1,23 @@
+[Unit]
+Description=Telegram bridge for zen-agent
+After=network-online.target
+Wants=network-online.target
+
+# Replace <user> and /path/to/vault. The env file holds the bot token: mode 600, owned by <user>, outside the vault.
+# The unit has no shell of its own; the agent's tools run as <user> under the vault guard, so run it as the user
+# whose files you want the bot to reach, and no one else.
+[Service]
+User=<user>
+WorkingDirectory=/path/to/vault
+EnvironmentFile=/home/<user>/.zen/telegram-bridge.env
+Environment=PATH=/home/<user>/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 /path/to/vault/.secondbrain/addons/telegram-bridge/bridge.py
+Restart=on-failure
+RestartSec=10
+MemoryMax=700M
+NoNewPrivileges=true
+ProtectHome=read-only
+ReadWritePaths=/home/<user>/.zen /path/to/vault
+
+[Install]
+WantedBy=multi-user.target

@@ -125,6 +125,18 @@ Hermes also takes a `platform_toolsets.telegram` list in its config. That list i
 
 Check the exact key names against your Hermes version; they have moved between releases.
 
+### Option C: zen-agent (the cheap one)
+
+The [telegram-bridge add-on](https://github.com/kon-rad/secondbrain/blob/main/addons/telegram-bridge/README.md) is a small Python process that answers each message with one `zen-agent run` on the cheap model in your `zen.json`. Use it for everyday questions, board work and notes from your phone, and keep the Claude Code bot for work that needs Claude. It needs its own bot (a third one if you run both of the others), a token file outside the vault, and the allowlist:
+
+```bash
+mkdir -p ~/.zen && cp .secondbrain/addons/telegram-bridge/env.example ~/.zen/telegram-bridge.env
+chmod 600 ~/.zen/telegram-bridge.env     # then fill in the token, your user ID and the vault path
+set -a; . ~/.zen/telegram-bridge.env; set +a; python3 .secondbrain/addons/telegram-bridge/bridge.py
+```
+
+It prints `bridge: up as @yourbot` when the token is good. The add-on's README has the systemd unit, the cost limits (`BRIDGE_MAX_TURNS`, `BRIDGE_MAX_TOKENS`, a fresh session every 20 messages) and the commands `/new` and `/status`. It refuses to start with an empty allowlist.
+
 ## 4. Check it
 
 Run these in order. The first that fails is the problem.
