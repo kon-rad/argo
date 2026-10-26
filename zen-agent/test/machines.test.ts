@@ -1,4 +1,7 @@
 import { createModels } from '@earendil-works/pi-ai';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { ZenAgent } from '../src/agent.js';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -106,4 +109,39 @@ test('a machines entry that is not a machine (a comment key, a typo) is dropped 
   const dir = mkdtempSync(join(tmpdir(), 'zen-badmachines-'));
   writeFileSync(join(dir, 'zen.json'), JSON.stringify({ machines: { $comment: 'notes', Bad: { url: BOX }, nourl: {}, ok: { url: BOX } } }));
   assert.deepEqual(Object.keys(loadConfig({ workdir: dir, env: {} }).machines), ['ok']);
+});
+
+test('an agent turn runs on a keyless machine model: it needs a key to call, so a placeholder stands in', async () => {
+  const seen: { auth: string | undefined; model: string }[] = [];
+  const fake = createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => {
+      seen.push({ auth: req.headers.authorization, model: (JSON.parse(raw || '{}') as { model?: string }).model ?? '' });
+      res.setHeader('content-type', 'text/event-stream');
+      const chunk = (delta: object, finish: string | null = null) => `data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', created: 1, model: 'tiny', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+      res.write(chunk({ role: 'assistant', content: 'ready' }));
+      res.write(chunk({}, 'stop'));
+      res.write(`data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', created: 1, model: 'tiny', choices: [], usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } })}\n\n`);
+      res.end('data: [DONE]\n\n');
+    });
+  });
+  await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
+  try {
+    const url = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
+    const dir = mkdtempSync(join(tmpdir(), 'zen-keyless-'));
+    const cfg = loadConfig({ workdir: dir, env: { OLLAMA_MACHINES: `box=${url}` }, overrides: { tools: [], guard: { local: null, log: null, hooks: { preToolUse: [], stop: [] } } } });
+    // The fake answers /api/tags and /api/show with nothing useful, so serve it through the discovery path by hand.
+    const models = createModels();
+    const { customProvider } = await import('../src/models.js');
+    models.setProvider(customProvider('ollama-box', { api: 'openai-completions', baseUrl: `${url}/v1`, apiKeyEnv: null, models: [{ id: 'tiny', contextWindow: 8000 }] }));
+    const zen = new ZenAgent({ config: cfg, models, model: 'ollama-box/tiny' });
+    const r = await zen.run('say ready');
+    assert.equal(r.error ?? null, null, String(r.error));
+    assert.ok(seen.length >= 1, 'the machine was called');
+    assert.equal(seen[0]!.model, 'tiny');
+    assert.ok(seen[0]!.auth?.startsWith('Bearer '), 'a placeholder bearer was sent');
+  } finally {
+    fake.close();
+  }
 });

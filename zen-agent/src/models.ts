@@ -22,7 +22,9 @@ export function customProvider(id: string, p: ProviderConfig) {
   const name = p.name ?? id;
   const auth = p.apiKeyEnv
     ? { apiKey: envApiKeyAuth(`${name} API key`, [p.apiKeyEnv]) }
-    : { apiKey: { name, resolve: async () => ({ auth: {} }) } };
+    // A keyless local server (Ollama, vLLM) ignores the bearer value, but the agent loop refuses to call a provider that
+    // resolves no key at all ("No API key for provider"), so a placeholder stands in.
+    : { apiKey: { name, resolve: async () => ({ auth: { apiKey: 'not-needed' } }) } };
   const list = p.models.map((m) => ({
     id: m.id,
     name: m.name ?? m.id,
