@@ -7,6 +7,7 @@ import EventFeed from '../../components/EventFeed.js';
 import { ChatInput } from '../../components/ChatInput.js';
 import { useStickToBottom } from '../../lib/useStickToBottom.js';
 import HarnessSwitch from './HarnessSwitch.js';
+import PresetLauncher from './PresetLauncher.js';
 
 /**
  * Chat with zen-agent on the server: `zen-agent serve` keeps one live agent per open chat and this page follows its
@@ -33,6 +34,7 @@ export default function ZenChat() {
   return (
     <div className="flex h-full min-h-0">
       <aside className={`flex w-72 shrink-0 flex-col border-r border-[var(--rule)] ${chatId || showForm ? 'max-md:hidden' : 'max-md:w-full'}`}>
+        <PresetLauncher />
         <div className="flex items-center gap-2 border-b border-[var(--rule)] p-3">
           <HarnessSwitch />
           <button type="button" onClick={() => setForm({ from: null })}

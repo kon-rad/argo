@@ -572,6 +572,14 @@ export interface NewZenChat {
   from?: string;
 }
 
+/** A saved way to start a chat (the Chat tab's Preset button). Launching it is the create call of its harness. */
+export interface ChatPreset {
+  name: string;
+  harness: 'claude-code' | 'zen-agent';
+  config: { model?: string; role?: string; persona?: string; tools?: 'full' | 'read-only'; thinking?: ZenThinking };
+  updated_at: string;
+}
+
 export interface ClaudeChat {
   id: string;
   title: string;
@@ -1252,6 +1260,10 @@ export const api = {
   assignTask: (id: string, t: { board: string; assignee: string; project?: string; feature?: string }) =>
     request<KanbanTask & { link?: TaskLink }>(`/hub/tasks/${id}/assign`, undefined, json('POST', t)),
   claudeChats: () => request<{ chats: ClaudeChat[] }>('/hub/chats'),
+  chatPresets: () => request<{ presets: ChatPreset[] }>('/presets'),
+  putChatPreset: (name: string, body: Pick<ChatPreset, 'harness' | 'config'>) =>
+    request<{ preset: ChatPreset }>(`/presets/${name}`, undefined, json('PUT', body)),
+  deleteChatPreset: (name: string) => request<{ ok: true }>(`/presets/${name}`, undefined, { method: 'DELETE' }),
   newClaudeChat: (model?: string) => request<ClaudeChat>('/hub/chats', undefined, json('POST', model ? { model } : {})),
   claudeChatEvents: (id: string, offset: number) =>
     request<EventPage & { chat: ClaudeChat }>(`/hub/chats/${id}/events`, { offset }),
