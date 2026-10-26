@@ -92,8 +92,35 @@ const Dispatch = z
   })
   .prefault({});
 
+/** One provider to try, in order, when the summarizer needs a model (docs/summaries.md). */
+const SummaryChainEntry = z.object({
+  /** A preset provider id from llm-presets.json: ollama, together, openrouter, anthropic, openai. */
+  provider: z.string().min(1),
+  model: z.string().min(1),
+  /** Overrides the preset's base URL; `baseUrlEnv` names an environment variable that holds one (a home server's address). */
+  baseUrl: z.string().min(1).optional(),
+  baseUrlEnv: z.string().min(1).optional(),
+  timeoutMs: z.number().int().positive().optional(),
+  body: z.record(z.string(), z.unknown()).optional(),
+});
+
+/** The summarizer (`secondbrain summarize`). Every field defaults from `app/config/summaries.json`. */
+const Summaries = z
+  .object({
+    /** Providers tried in order; the first that answers writes the summary. */
+    chain: z.array(SummaryChainEntry).min(1).optional(),
+    /** Sessions with fewer prompt+response steps than this are recorded as skipped. */
+    minSteps: z.number().int().min(1).optional(),
+    /** A session is finished once nothing was added for this many minutes. */
+    quietMinutes: z.number().int().min(1).optional(),
+    /** Characters of compacted transcript sent to the model. */
+    maxInputChars: z.number().int().min(2000).optional(),
+  })
+  .prefault({});
+
 const Settings = z.object({
   chat: Chat,
+  summaries: Summaries,
   classify: Classify,
   dispatch: Dispatch,
   /** Vault-relative goals file: tables of `| W1 | Goal | Measure | Due | Status |` (see projects.parseGoals). */

@@ -7,6 +7,7 @@ import { connectors as defaultConnectors, type ConnectorRegistry } from './conne
 import { defaultEmbeddingProvider } from './embeddings/factory.js';
 import { agentsRouter } from './routes/agents.js';
 import { tvRouter } from './routes/tv.js';
+import { summariesRouter } from './routes/summaries.js';
 import { usageRouter } from './routes/usage.js';
 import { b2Router, type B2Options } from './routes/b2.js';
 import { boardRouter, type BoardRouterOptions } from './routes/board.js';
@@ -228,6 +229,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
     app.use('/api/presets', presetsRouter());
   }
   if (modules.has('usage')) app.use('/api/usage', usageRouter());
+  if (modules.has('usage')) app.use('/api/summaries', summariesRouter());
   if (modules.has('projects')) app.use('/api/projects', projectsRouter(vaultRoot));
   if (modules.has('org')) app.use('/api/org', orgRouter(vaultRoot));
   if (modules.has('map')) app.use('/api/map', mapRouter());

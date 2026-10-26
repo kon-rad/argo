@@ -10,6 +10,7 @@ import StackedBars, { type BarSeries } from '../../components/charts/StackedBars
 import { bucketEnd, formatTokens, money, planText, TYPE_SERIES } from './format.js';
 import { zoned } from '../../lib/time.js';
 import AgentSessions from './AgentSessions.js';
+import Summaries from './Summaries.js';
 import Running from './Running.js';
 
 const RANGES = [{ label: '24 h', days: 1 }, { label: '7 d', days: 7 }, { label: '30 d', days: 30 }, { label: '90 d', days: 90 }];
@@ -357,13 +358,13 @@ function UsageOverview() {
 /** Two views on one route: the spend overview (the default) and what is running on the server now (`?view=running`). */
 export default function Usage() {
   const [sp, setSp] = useSearchParams();
-  const view = sp.get('view') === 'running' ? 'running' : 'usage';
-  const pick = (v: 'usage' | 'running') => {
+  const view = sp.get('view') === 'running' ? 'running' : sp.get('view') === 'summaries' ? 'summaries' : 'usage';
+  const pick = (v: 'usage' | 'running' | 'summaries') => {
     const next = new URLSearchParams(sp);
     if (v === 'usage') next.delete('view'); else next.set('view', v);
     setSp(next, { replace: true });
   };
-  const tab = (v: 'usage' | 'running', label: string) => (
+  const tab = (v: 'usage' | 'running' | 'summaries', label: string) => (
     <button type="button" role="tab" aria-selected={view === v} onClick={() => pick(v)}
       className={`px-3 py-1.5 text-sm ${view === v ? 'border-b-2 border-[var(--ink)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}>{label}</button>
   );
@@ -371,10 +372,12 @@ export default function Usage() {
     <div className="flex h-full flex-col">
       <div role="tablist" aria-label="Usage views" className="flex shrink-0 gap-1 border-b border-[var(--rule)] px-4 pt-2">
         {tab('usage', 'Usage')}
+        {tab('summaries', 'Summaries')}
         {tab('running', 'Running now')}
       </div>
       <div className="min-h-0 flex-1">
-        {view === 'running' ? <div className="h-full overflow-auto p-4"><Running /></div> : <UsageOverview />}
+        {view === 'running' ? <div className="h-full overflow-auto p-4"><Running /></div>
+          : view === 'summaries' ? <div className="h-full overflow-auto p-4"><Summaries /></div> : <UsageOverview />}
       </div>
     </div>
   );

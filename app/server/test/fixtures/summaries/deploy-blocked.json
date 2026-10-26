@@ -1,0 +1,76 @@
+{
+ "id": "deploy-blocked",
+ "note": "Stops on a missing credential; must not claim success.",
+ "parts": [
+  {
+   "step": "prompt",
+   "text": "Deploy the web app to the production server."
+  },
+  {
+   "step": "response",
+   "text": "Checking the deploy script first."
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"file_path\":\"/work/web/deploy.sh\"}",
+   "toolName": "Read"
+  },
+  {
+   "step": "tool_result",
+   "text": "#!/usr/bin/env bash\n: \"${DEPLOY_SSH_KEY:?set DEPLOY_SSH_KEY}\"",
+   "isError": null
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"command\":\"./deploy.sh\"}",
+   "toolName": "Bash"
+  },
+  {
+   "step": "tool_result",
+   "text": "deploy.sh: DEPLOY_SSH_KEY: set DEPLOY_SSH_KEY",
+   "isError": true
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"command\":\"ls ~/.ssh\"}",
+   "toolName": "Bash"
+  },
+  {
+   "step": "tool_result",
+   "text": "known_hosts",
+   "isError": true
+  },
+  {
+   "step": "response",
+   "text": "I cannot deploy: DEPLOY_SSH_KEY is not set and there is no key in ~/.ssh. Tell me which key to use, or set the variable, and I will rerun deploy.sh."
+  }
+ ],
+ "expect": {
+  "outcome": "blocked",
+  "mustMention": [
+   [
+    "DEPLOY_SSH_KEY",
+    "ssh key",
+    "key"
+   ]
+  ],
+  "mustNotMention": [
+   "deployed successfully"
+  ],
+  "filesEdited": [],
+  "cards": []
+ },
+ "reference": {
+  "request": "Deploy the web app to the production server.",
+  "done": "Read web/deploy.sh and tried to run it. It stopped because DEPLOY_SSH_KEY is not set, and ~/.ssh holds no key. Nothing was deployed.",
+  "learned": "deploy.sh requires DEPLOY_SSH_KEY to be set.",
+  "open_items": "Needs the SSH key to use, or DEPLOY_SSH_KEY set, then rerun deploy.sh.",
+  "outcome": "blocked",
+  "facts": [
+   {
+    "subject": "web deploy",
+    "claim": "deploy.sh refuses to run unless DEPLOY_SSH_KEY is set."
+   }
+  ]
+ }
+}

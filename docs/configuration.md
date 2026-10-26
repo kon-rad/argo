@@ -19,6 +19,7 @@ The app reads `<vault>/.env` at start (`app/server/src/config.ts`), validates ev
 | `PORT` | `5123` | HTTP port (always bound to `127.0.0.1`) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `DEPLOYMENT` | `local` | `local` (no login, loopback) or `server` (login required). See [deployment.md](deployment.md) |
+| `SUMMARIES`, `SUMMARIES_M1_URL` | unset | `SUMMARIES=on` makes the deploy script install the summaries timer. `SUMMARIES_M1_URL` is the home server's Ollama address that the default chain tries first. See [summaries.md](summaries.md) |
 | `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`. Unknown names are ignored |
 | `OWNER_NAME` | `owner` | Your name in the authenticator app and as a comment author |
 | `DEV_LOG_PATH`, `DOCS_PATH` | unset | Vault-relative notes the nav bar links to; unset hides the link |
@@ -136,6 +137,7 @@ Settings that don't fit on one env line. Every section is optional; a file that 
 | `livestream.youtube`, `.twitch`, `.kick` | `livestream` | Your channel handle on each platform |
 | `fund.dir`, `fund.txService`, `fund.explorer` | `fund` | Vault folder of the fund's state (default `fund`), the Safe Transaction Service URL and the block explorer for its chain (defaults: Base) |
 | `projects.reportFile` | `projects` | Where `cli-projects render` writes the markdown report (default `projects.md`) |
+| `summaries.chain`, `summaries.minSteps`, `summaries.quietMinutes`, `summaries.maxInputChars` | `usage` | Which providers write session summaries and in what order, the shortest session worth summarizing, how long a session must be quiet, and how much transcript is sent. Defaults in `app/config/summaries.json`; see [summaries.md](summaries.md) |
 | `chat.defaultProvider` | `chat` | The preset provider the chat starts on, when its key is set |
 | `chat.systemPrompt` | `chat` | Replaces the engine's base system prompt (still editable in the app's settings modal) |
 | `chat.providers.<id>` | `chat` | Per preset provider: `models` to add (`[{ "id", "label" }]`), another `default` model, another `baseUrl` |

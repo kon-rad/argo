@@ -1,0 +1,108 @@
+{
+ "id": "bugfix-finished",
+ "note": "A clean fix: edit two files, tests pass.",
+ "parts": [
+  {
+   "step": "prompt",
+   "text": "The invoice total is wrong when a discount code is applied twice. Card t_ab12cd34. Fix it and add a test."
+  },
+  {
+   "step": "response",
+   "text": "I'll start by reading the invoice code."
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"file_path\":\"/work/shop/src/billing/invoice.ts\"}",
+   "toolName": "Read"
+  },
+  {
+   "step": "tool_result",
+   "text": "export function total(lines, codes) { ... codes.forEach(apply) ... }",
+   "isError": null
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"pattern\":\"applyDiscount\"}",
+   "toolName": "Grep"
+  },
+  {
+   "step": "tool_result",
+   "text": "src/billing/invoice.ts:41\nsrc/billing/discount.ts:12",
+   "isError": null
+  },
+  {
+   "step": "response",
+   "text": "The discount is applied once per code entry, so a repeated code stacks. I'll dedupe codes before applying."
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"file_path\":\"/work/shop/src/billing/invoice.ts\",\"old_string\":\"codes.forEach\",\"new_string\":\"[...new Set(codes)].forEach\"}",
+   "toolName": "Edit"
+  },
+  {
+   "step": "tool_result",
+   "text": "ok",
+   "isError": null
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"file_path\":\"/work/shop/test/invoice-duplicate-code.test.ts\",\"content\":\"...\"}",
+   "toolName": "Write"
+  },
+  {
+   "step": "tool_result",
+   "text": "ok",
+   "isError": null
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"command\":\"npm test -- invoice\"}",
+   "toolName": "Bash"
+  },
+  {
+   "step": "tool_result",
+   "text": "Tests: 14 passed, 14 total",
+   "isError": null
+  },
+  {
+   "step": "response",
+   "text": "Fixed. Repeated discount codes are now deduplicated in invoice.ts and a regression test covers it. 14 tests pass."
+  }
+ ],
+ "expect": {
+  "outcome": "finished",
+  "mustMention": [
+   [
+    "dedup",
+    "duplicate",
+    "repeated"
+   ],
+   [
+    "test"
+   ]
+  ],
+  "mustNotMention": [
+   "deployed"
+  ],
+  "filesEdited": [
+   "/work/shop/src/billing/invoice.ts",
+   "/work/shop/test/invoice-duplicate-code.test.ts"
+  ],
+  "cards": [
+   "t_ab12cd34"
+  ]
+ },
+ "reference": {
+  "request": "Fix the invoice total when a discount code is applied twice, and add a test (card t_ab12cd34).",
+  "done": "Found that each code entry was applied separately, so a repeated code stacked. Deduplicated the codes in src/billing/invoice.ts and added test/invoice-duplicate-code.test.ts. The invoice tests passed, 14 of 14.",
+  "learned": "Repeated discount codes stacked because they were applied once per entry.",
+  "open_items": "",
+  "outcome": "finished",
+  "facts": [
+   {
+    "subject": "invoice discount codes",
+    "claim": "Discount codes are deduplicated before they are applied in src/billing/invoice.ts."
+   }
+  ]
+ }
+}
