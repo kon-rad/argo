@@ -40,10 +40,11 @@ export function parseModelSummary(raw: string): ModelSummary | null {
 export const SYSTEM_PROMPT = `You write a short, factual record of one AI agent work session for the person who owns it.
 You are given a compacted transcript: [prompt] is what the person or a dispatcher asked, [response] is what the agent said, [tool] is a tool call, [error] is a failed tool result.
 Rules:
+- A message ending in [...] was shortened for you; that is not the agent being cut off. Judge how the session ended from the last [response] and the last tool results. Where steps are marked omitted, say nothing about them.
 - Use only what the transcript shows. Never invent files, numbers, names, or results. If something is unclear, say so or leave the field empty.
 - Write plain sentences, no markdown, no em-dashes. Past tense for done, imperative or noun phrases for open_items.
 - request: what was asked, in 1 to 3 sentences.
-- done: what was actually completed, naming concrete things (files, commands, decisions) that appear in the transcript.
+- done: what was actually completed, naming concrete things (files, commands, decisions) that appear in the transcript. Copy names, counts and file names exactly; do not list or total anything you cannot see in full.
 - learned: durable findings worth remembering later (a cause, a constraint, a decision and why). Empty if nothing.
 - open_items: what is unfinished, blocked, or needs a decision. Empty if nothing.
 - outcome: finished (the request was met), partial, blocked (waiting on someone or something), failed (errors ended it), unknown (cannot tell).
