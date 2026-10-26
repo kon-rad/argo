@@ -6,7 +6,7 @@ import EventFeed from '../../components/EventFeed.js';
 import { VaultMarkdown } from '../../components/VaultMarkdown.js';
 import { api, BOARD_STATUSES, type BoardCard, type BoardCardDetail, type BoardStatus, type OrgChart } from '../../lib/api.js';
 import { useEventLog } from '../../lib/useEventLog.js';
-import { CardNotes, useCardNotesFor } from '../agents/Board.js';
+import { CardNotes, useCardNotesFor } from '../../components/CardNotes.js';
 
 /**
  * The board module's page: the kanban record in the engine (docs/board-design.md). Columns over the card statuses,

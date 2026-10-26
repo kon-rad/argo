@@ -18,7 +18,7 @@ import { expect, test } from '@playwright/test';
 
 const ROUTES = [
   '/', '/search?q=test', '/vector-search', '/database', '/sources', '/cron', '/ring',
-  '/agents/board', '/agents/chat', '/agents/history',
+  '/agents/chat', '/agents/history',
   '/projects', '/projects?view=board', '/projects?view=needs', '/projects?view=teams', '/projects?view=goals', '/projects?view=report',
   '/org', '/org/chart', '/org/live', '/org/approvals',
   '/usage', '/media', '/media-schedule', '/map', '/tv',

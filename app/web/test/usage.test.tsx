@@ -120,7 +120,7 @@ describe('Usage page', () => {
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Usage /></MemoryRouter></QueryClientProvider>);
     expect(await screen.findByRole('link', { name: 'atlas' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'atlas' }).getAttribute('href')).toBe('/org/agents/atlas');
-    expect(screen.getByRole('link', { name: 't_9' }).getAttribute('href')).toBe('/agents/board/t_9');
+    expect(screen.getByRole('link', { name: 't_9' }).getAttribute('href')).toBe('/board/t_9');
     expect(screen.getByRole('button', { name: 'mention' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'secondbrain-app' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'coding' })).toBeTruthy();

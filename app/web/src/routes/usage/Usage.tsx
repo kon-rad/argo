@@ -303,7 +303,7 @@ function UsageOverview() {
                   <td><Link className="underline" to={`/usage/session/${r.host}/${encodeURIComponent(r.session_id)}?source=${r.runtime ?? 'claude-code'}`}>{r.started_at ? zoned(r.started_at, tz) : (r.run_id ?? r.session_id.slice(0, 8))}</Link>{r.runtime && r.runtime !== 'claude-code' ? <span className="ml-1 text-xs text-[var(--ink-faint)]" title={r.tier ? `${r.runtime}, tier ${r.tier}` : r.runtime}>{r.runtime}</span> : null}</td>
                   <td>{w ? <Pick dim={w.dim} value={w.value} onPick={addFilter}>{r.agent_name ? <Link className="underline" to={`/org/agents/${r.agent_name}`} onClick={(e) => e.stopPropagation()}>{r.agent_name}</Link> : r.lane}</Pick> : ''}{r.resumed ? <span className="text-xs text-[var(--ink-faint)]" title="resumed its session"> ↻</span> : null}</td>
                   <td><Pick dim="reason" value={r.reason} onPick={addFilter} /></td>
-                  <td>{r.task_id ? <Link className="underline" to={`/agents/board/${r.task_id}`} title={r.card_title ?? ''}>{r.task_id}</Link> : ''}</td>
+                  <td>{r.task_id ? <Link className="underline" to={`/board/${r.task_id}`} title={r.card_title ?? ''}>{r.task_id}</Link> : ''}</td>
                   <td><Pick dim="project" value={r.project_slug} onPick={addFilter}>{r.project_slug}{r.feature_slug ? `/${r.feature_slug}` : ''}</Pick></td>
                   <td><Pick dim="work_type" value={r.work_type} onPick={addFilter} /></td>
                   <td className="text-right">{t === null ? '' : formatTokens(t)}</td>

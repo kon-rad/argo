@@ -26,9 +26,9 @@ beforeAll(async () => {
       res.statusCode = 401;
       return res.end(JSON.stringify({ error: 'unauthorized' }));
     }
-    if (req.url === '/tasks' && req.method === 'POST') {
+    if (req.url === '/chats' && req.method === 'POST') {
       res.statusCode = 400;
-      return res.end(JSON.stringify({ error: "unknown agent 'nobody'" }));
+      return res.end(JSON.stringify({ error: "unknown model 'nobody'" }));
     }
     res.end(JSON.stringify({ ok: true, path: req.url }));
   });
@@ -41,8 +41,8 @@ afterAll(() => new Promise<void>((r) => hub.close(() => r())));
 describe('/api/hub', () => {
   it('forwards allowed routes with the token and only known query keys', async () => {
     const app = createApp({ deployment: 'local', hub: { url: hubUrl, token: TOKEN } });
-    const res = await request(app).get('/api/hub/board?board=exo&evil=1').expect(200);
-    expect(res.body).toEqual({ ok: true, path: '/board?board=exo' });
+    const res = await request(app).get('/api/hub/chats/aaaaaaaaaaaa/events?offset=5&evil=1').expect(200);
+    expect(res.body).toEqual({ ok: true, path: '/chats/aaaaaaaaaaaa/events?offset=5' });
     expect(seen.at(-1)!.auth).toBe(`Bearer ${TOKEN}`);
     expect(res.headers['cache-control']).toBe('no-store');
   });
@@ -57,6 +57,8 @@ describe('/api/hub', () => {
     const app = createApp({ deployment: 'local', hub: { url: hubUrl, token: TOKEN } });
     const before = seen.length;
     await request(app).get('/api/hub/health').expect(404);
+    await request(app).get('/api/hub/board').expect(404);
+    await request(app).post('/api/hub/tasks').send({ title: 'x' }).expect(404);
     await request(app).get('/api/hub/tasks/../../etc/passwd').expect(404);
     await request(app).post('/api/hub/chats/zzz/messages').send({ text: 'x' }).expect(404);
     await request(app).delete('/api/hub/chats').expect(404);
@@ -65,23 +67,23 @@ describe('/api/hub', () => {
 
   it("passes the hub's errors through in the app's shape", async () => {
     const app = createApp({ deployment: 'local', hub: { url: hubUrl, token: TOKEN } });
-    const res = await request(app).post('/api/hub/tasks').send({ title: 'x', assignee: 'nobody' }).expect(400);
-    expect(res.body.error.message).toBe("unknown agent 'nobody'");
+    const res = await request(app).post('/api/hub/chats').send({ model: 'nobody' }).expect(400);
+    expect(res.body.error.message).toBe("unknown model 'nobody'");
   });
 
   it('a token mismatch is a server fault (502), not an expired browser session', async () => {
     const app = createApp({ deployment: 'local', hub: { url: hubUrl, token: 'w'.repeat(40) } });
-    await request(app).get('/api/hub/agents').expect(502);
+    await request(app).get('/api/hub/chats').expect(502);
   });
 
   it('answers 503 where no hub is configured (the Mac)', async () => {
     const app = createApp({ deployment: 'local', hub: {} });
-    const res = await request(app).get('/api/hub/board').expect(503);
+    const res = await request(app).get('/api/hub/chats').expect(503);
     expect(res.body.error.message).toMatch(/droplet/);
   });
 
   it('answers 502 when the hub is down', async () => {
     const app = createApp({ deployment: 'local', hub: { url: 'http://127.0.0.1:9', token: TOKEN, timeoutMs: 2000 } });
-    await request(app).get('/api/hub/agents').expect(502);
+    await request(app).get('/api/hub/chats').expect(502);
   });
 });

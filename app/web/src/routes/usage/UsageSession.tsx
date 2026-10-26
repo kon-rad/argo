@@ -99,7 +99,7 @@ function Runs({ runs }: { runs: AgentSessionRun[] }) {
   return <>{runs.map((run) => (
     <div key={run.run_id} className="mt-2 rounded border border-[var(--rule)] p-2 text-sm">
       {run.agent_name
-        ? <><Link className="underline" to={`/org/agents/${run.agent_name}`}>{run.agent_name}</Link>{run.task_id ? <> on card <Link className="underline" to={`/agents/board/${run.task_id}`}>{run.task_id}</Link></> : ''}</>
+        ? <><Link className="underline" to={`/org/agents/${run.agent_name}`}>{run.agent_name}</Link>{run.task_id ? <> on card <Link className="underline" to={`/board/${run.task_id}`}>{run.task_id}</Link></> : ''}</>
         : <>Task {run.task_id ?? '?'} on {run.lane ?? '?'}</>}
       {' '}· {run.num_turns ?? '?'} turns · {run.subtype ?? ''}{run.started_at ? ` · ${zoned(run.started_at, tz)}` : ''}
       {run.verify_name && (

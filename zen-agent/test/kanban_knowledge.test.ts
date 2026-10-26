@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DEFAULTS } from '../src/config.js';
-import { BoardKanban, CliKanban, formatDetail, HubKanban, kanbanTools, makeKanban } from '../src/tools/kanban.js';
+import { BoardKanban, formatDetail, kanbanTools, makeKanban } from '../src/tools/kanban.js';
 import type { ToolContext } from '../src/tools/index.js';
 import { formatHits, Knowledge, knowledgeTools } from '../src/tools/knowledge.js';
 import { wakePrompt } from '../src/wake.js';
@@ -18,22 +18,6 @@ function fakeFetch(answer: (c: Call) => unknown, status = 200): { fetch: typeof 
 }
 
 const ctx = (over: Partial<ToolContext> = {}): ToolContext => ({ cfg: DEFAULTS, persona: null, models: null as never, skills: [], depth: 0, env: {}, fetch, ...over });
-
-test('HubKanban speaks agent-hub\'s API with the bearer token', async () => {
-  const { fetch: f, calls } = fakeFetch((c) => (c.url.includes('/board') ? { tasks: [{ id: 't_a1b2c3', title: 'Build', status: 'todo', assignee: 'bolt', body: null }] } : c.url.endsWith('/tasks') ? { id: 't_2', title: 'New', assignee: 'bolt', status: 'todo', body: 'b' } : { ok: true }));
-  const kb = new HubKanban('http://127.0.0.1:8787/', 'tok', 'exo', f);
-  const cards = await kb.list();
-  assert.equal(cards[0]!.id, 't_a1b2c3');
-  assert.equal(calls[0]!.url, 'http://127.0.0.1:8787/board?board=exo');
-  assert.equal((calls[0]!.init!.headers as Record<string, string>)['Authorization'], 'Bearer tok');
-  const created = await kb.create({ title: 'New', body: 'b', assignee: 'bolt', project: 'p' });
-  assert.equal(created.id, 't_2');
-  assert.deepEqual(JSON.parse(calls[1]!.init!.body as string), { title: 'New', body: 'b', assignee: 'bolt', project: 'p', board: 'exo' });
-  await kb.comment('t_a1b2c3', 'hi');
-  assert.deepEqual(JSON.parse(calls[2]!.init!.body as string), { board: 'exo', text: 'hi' });
-  await assert.rejects(kb.show('bad id'), /bad card id/);
-  assert.equal((kb as { complete?: unknown }).complete, undefined);
-});
 
 test('BoardKanban speaks the engine\'s /api/board with a board token: every verb, plus claim and heartbeat', async () => {
   const card = { id: 't_a1b2c3d4', title: 'Build', body: 'do it', assignee: 'rune', status: 'ready', priority: 2, created_by: 'owner', created_at: '2026-10-24T10:00:00.000Z', result: null, block_kind: null, block_reason: null, contract: { objective: 'Ship it', returns: ['a PR'], budget: { turns: 20 } } };
@@ -74,46 +58,28 @@ test('BoardKanban speaks the engine\'s /api/board with a board token: every verb
   // The tool set includes complete and block, which the engine's board can do.
   const names = kanbanTools(ctx(), kb).map((t) => t.name);
   assert.ok(names.includes('card_complete') && names.includes('card_block'));
-  assert.throws(() => makeKanban({ kind: 'board', url: 'http://127.0.0.1:1', tokenEnv: 'BOARD_TOKEN', board: 'exo' }, {}, fetch, 'x'), /BOARD_TOKEN is not set/);
+  assert.throws(() => makeKanban({ kind: 'board', url: 'http://127.0.0.1:1', tokenEnv: 'BOARD_TOKEN', board: 'exo' }, {}, fetch), /BOARD_TOKEN is not set/);
 });
 
-test('HubKanban surfaces the hub\'s error message', async () => {
-  const { fetch: f } = fakeFetch(() => ({ error: 'no such board' }), 404);
-  await assert.rejects(new HubKanban('http://127.0.0.1:1', 't', 'exo', f).list(), /kanban 404: no such board/);
+test('BoardKanban surfaces the board\'s error message', async () => {
+  const { fetch: f } = fakeFetch(() => ({ error: { message: 'no such board' } }), 404);
+  await assert.rejects(new BoardKanban('http://127.0.0.1:1', 't', 'exo', f).list(), /board 404: no such board/);
+  await assert.rejects(new BoardKanban('http://127.0.0.1:1', 't', 'exo', f).show('bad id'), /bad card id/);
 });
 
-test('CliKanban drives the board command and can complete and block', async () => {
-  const seen: string[][] = [];
-  const kb = new CliKanban('hermes', 'exo', 'atlas', async (cmd, args) => {
-    seen.push([cmd, ...args]);
-    if (args.includes('show')) return JSON.stringify({ task: { id: 't_abc123', title: 'Review', status: 'doing', body: '## Budget\nturns: 4' }, comments: [{ author: 'owner', body: 'go', created_at: 1_700_000_000 }] });
-    if (args.includes('list')) return JSON.stringify([{ id: 't_abc123', title: 'Review', status: 'doing' }]);
-    return '{}';
-  });
-  const d = await kb.show('t_abc123');
-  assert.equal(d.task.title, 'Review');
-  assert.deepEqual(seen[0], ['hermes', 'kanban', '--board', 'exo', 'show', 't_abc123', '--json']);
-  assert.equal((await kb.list())[0]!.id, 't_abc123');
-  await kb.comment('t_abc123', 'done');
-  assert.deepEqual(seen[2], ['hermes', 'kanban', '--board', 'exo', 'comment', '--author', 'atlas', '--', 't_abc123', 'done']);
-  await kb.complete('t_abc123', 'PR 12');
-  assert.deepEqual(seen[3]!.slice(4), ['complete', 't_abc123', '--result', 'PR 12']);
-  await kb.block('t_abc123', 'needs owner');
-  assert.deepEqual(seen[4]!.slice(4), ['block', 't_abc123', 'needs owner']);
+test('formatDetail and wakePrompt read a card detail', () => {
+  const d = { task: { id: 't_abc123', title: 'Review', status: 'doing', assignee: null, body: '## Budget\nturns: 4' }, comments: [{ author: 'owner', body: 'go', created_at: 1_700_000_000 }] };
   assert.match(formatDetail(d), /t_abc123: Review\nstatus: doing\n\n## Budget\nturns: 4\n\nComments:\n- owner \(2023-11-14T22:13\): go/);
   const prompt = wakePrompt({ card: d, persona: 'atlas', canComplete: true });
   assert.match(prompt, /^You were woken for card t_abc123\./);
   assert.match(prompt, /card_complete on t_abc123/);
 });
 
-test('the kanban tool set follows the backend: none, hub, cli', () => {
+test('the kanban tool set follows the backend: none, board', () => {
   assert.deepEqual(kanbanTools(ctx()), []);
-  assert.equal(makeKanban({ kind: 'none' }, {}, fetch, 'x'), null);
-  assert.throws(() => makeKanban({ kind: 'hub', url: 'http://127.0.0.1:1', tokenEnv: 'HUB_TOKEN', board: 'exo' }, {}, fetch, 'x'), /HUB_TOKEN is not set/);
-  const hub = kanbanTools(ctx(), makeKanban({ kind: 'hub', url: 'http://127.0.0.1:1', tokenEnv: 'HUB_TOKEN', board: 'exo' }, { HUB_TOKEN: 't' }, fetch, 'x'));
-  assert.deepEqual(hub.map((t) => t.name), ['board_list', 'card_show', 'card_create', 'card_comment', 'card_assign']);
-  const cli = kanbanTools(ctx(), new CliKanban('hermes', 'exo', 'x', async () => '[]'));
-  assert.deepEqual(cli.map((t) => t.name).slice(-2), ['card_complete', 'card_block']);
+  assert.equal(makeKanban({ kind: 'none' }, {}, fetch), null);
+  const board = kanbanTools(ctx(), makeKanban({ kind: 'board', url: 'http://127.0.0.1:1', tokenEnv: 'BOARD_TOKEN', board: 'exo' }, { BOARD_TOKEN: 't'.repeat(24) }, fetch));
+  assert.deepEqual(board.map((t) => t.name).slice(-2), ['card_complete', 'card_block']);
 });
 
 test('Knowledge calls the second brain\'s search API with the headers from the environment', async () => {
