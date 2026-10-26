@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { breakerLimitsFromEnv, runBreaker } from './breaker.js';
 import { classify } from './classify/index.js';
 import { config } from './config.js';
 import { pool } from './db.js';
@@ -49,6 +50,16 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
   if (cmd === 'tick') {
+    // The credit breaker rides the tick (ORG_BREAKER=on): it only ever pauses, and a failure never blocks the tick.
+    if (process.env.ORG_BREAKER === 'on') {
+      try {
+        for (const a of await runBreaker(process.env.ORG_BREAKER_AS || config.orgOwner, breakerLimitsFromEnv(), { dryRun: false })) {
+          if (a.paused) console.error(`breaker: ${a.runtime} lane paused (${a.paused} bots): ${a.reason}`);
+        }
+      } catch (err) {
+        console.error(`breaker: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     const r = await d.tick();
     console.log(`tick: ${r.routines} routines, ${r.released} released, ${r.agents} bots, ${r.runs} runs, ${r.acks} acks, ${r.gated} gated` +
       (r.held ? `, held: ${r.held}` : ''));

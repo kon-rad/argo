@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import pg from 'pg';
+import { agentSpecProblem } from './agent-spec.js';
 import { config } from './config.js';
 import { query } from './db.js';
 
@@ -570,6 +571,52 @@ export async function pauseAgents(by: string, scope: string, paused: boolean, re
 }
 
 export const resumeAgents = (by: string, scope: string, board?: string): Promise<number> => pauseAgents(by, scope, false, '', undefined, board);
+
+/** Pause or resume every bot whose effective runtime is `runtime`. Returns how many bots changed; 0 means nothing to do. */
+export async function pauseLane(by: string, runtime: string, paused: boolean, reason: string): Promise<number> {
+  const { board_pause_lane } = await fn<{ board_pause_lane: number }>(`SELECT board_pause_lane($1,$2,$3,$4) AS board_pause_lane`, [by, runtime, paused, reason]);
+  return board_pause_lane;
+}
+
+/**
+ * The override table: an owner-written switch of an agent's runtime, model or effort that the claim path reads
+ * ahead of `.agents/org.yaml`. A field left out inherits the roster. The pair is checked against the roster row
+ * it lands on, so `--runtime zen-agent` on a bot whose roster model is `sonnet` is refused until `--model` says
+ * which provider/model (the ravi mistake, caught at write time).
+ */
+export interface AgentOverride {
+  agent: string;
+  runtime: string | null;
+  model: string | null;
+  effort: string | null;
+  paused: boolean;
+  set_by: string;
+  set_at: Date;
+}
+
+export async function setOverride(by: string, agent: string, o: { runtime?: string; model?: string; effort?: string }): Promise<AgentOverride> {
+  const { rows } = await query<{ runtime: string; model: string | null }>(`SELECT runtime, model FROM org_agents WHERE name = $1 AND retired_at IS NULL`, [agent]);
+  const base = rows[0];
+  if (!base) throw new BoardError(`no bot named "${agent}" on the roster; run cli-org agents`, 404);
+  // A runtime override drops the roster's model unless the owner names one: a model belongs to the runtime it was written for.
+  const merged = { runtime: o.runtime ?? base.runtime, model: o.model ?? (o.runtime && o.runtime !== base.runtime ? null : base.model), effort: o.effort ?? null };
+  const problem = agentSpecProblem(merged);
+  if (problem) throw new BoardError(`${agent}: ${problem}`, 400);
+  if (o.runtime && o.runtime !== base.runtime && !o.model && merged.runtime === 'zen-agent') {
+    throw new BoardError(`${agent}: moving to zen-agent needs --model provider/model`, 400);
+  }
+  return fn<AgentOverride>(`SELECT * FROM board_set_override($1,$2,$3,$4,$5)`, [by, agent, o.runtime ?? null, o.model ?? null, o.effort ?? null]);
+}
+
+export async function clearOverride(by: string, agent: string): Promise<boolean> {
+  const { board_clear_override } = await fn<{ board_clear_override: boolean }>(`SELECT board_clear_override($1,$2) AS board_clear_override`, [by, agent]);
+  return board_clear_override;
+}
+
+export async function listOverrides(): Promise<AgentOverride[]> {
+  const { rows } = await query<AgentOverride>(`SELECT agent, runtime, model, effort, paused, set_by, set_at FROM org_agent_overrides ORDER BY agent`);
+  return rows;
+}
 
 /** The board-wide dispatch switch. `enabled` false stops every new claim on the board; a reason is required to disable. */
 export async function setDispatch(by: string, enabled: boolean, reason?: string, board?: string): Promise<BoardSettings> {
