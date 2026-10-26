@@ -211,6 +211,34 @@ describe('cards for bots', () => {
     expect(rows[0]!.owner).toBe('rune');
   });
 
+  it('assigns an existing card to the vault assignee with --repo vault through the sb_org role', async () => {
+    // Regression (t_f25205f5): assignTask() set cards.repo with a direct `UPDATE cards` over the sb_org connection,
+    // which has only SELECT on cards -> "permission denied for table cards". It only surfaced when the repo
+    // changed (a vault card starts with repo NULL), so `cli-org task assign <card> m4 --repo vault` -- the
+    // 2026-10-21 vault-code rule -- failed for exactly the cards it was meant for. The write now rides
+    // board_card_assign() (SECURITY DEFINER). Repro before the fix: card with repo NULL -> permission denied.
+    await seedCards([['t_01d000aa', 'Needs the M4', 'ready']]);
+    const fake = fakeKanban();
+    process.env.ORG_AGENT = 'atlas';
+    process.env.ORG_KANBAN_CMD = fake.cmd;
+    process.env.SB_ORG_DB_URL = `postgres://sb_org@${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${process.env.SB_TEST_DB ?? 'secondbrain_test'}`;
+    const lines: string[] = [];
+    try {
+      expect((await query<{ repo: string | null }>(`SELECT repo FROM cards WHERE id = 't_01d000aa'`)).rows[0]!.repo).toBeNull();
+      expect(await main(['task', 'assign', 't_01d000aa', 'm4', '--project', 'secondbrain-app', '--type', 'ops', '--repo', 'vault', '--json'], (s) => lines.push(s))).toBe(0);
+      const r = JSON.parse(lines[0]!) as { link: { task_id: string; assignee: string } };
+      expect(r.link).toMatchObject({ task_id: 't_01d000aa', assignee: 'm4' });
+      // The repo is a column the link does not carry; the write is what this card fixes, so assert the row.
+      const after = await query<{ assignee: string; repo: string | null }>(`SELECT assignee, repo FROM cards WHERE id = 't_01d000aa'`);
+      expect(after.rows[0]).toMatchObject({ assignee: 'm4', repo: 'vault' });
+    } finally {
+      delete process.env.ORG_AGENT;
+      delete process.env.ORG_KANBAN_CMD;
+      delete process.env.SB_ORG_DB_URL;
+      setDatabaseUrl(`postgres://${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${process.env.SB_TEST_DB ?? 'secondbrain_test'}`);
+    }
+  });
+
   it('GET /api/org/tasks lists links by project, feature and bot', async () => {
     const owner = await getAgent('owner');
     await createTask(owner, { assignee: 'rune', title: 'A', project: 'secondbrain-app', feature: 'org-page' }, runner);

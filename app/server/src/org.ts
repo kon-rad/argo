@@ -1230,10 +1230,9 @@ export async function assignTask(caller: Agent, opts: AssignTaskOpts, run?: Kanb
   if (before.status === 'done' || before.status === 'archived') throw new OrgError(`card ${opts.taskId} is ${before.status}; give ${to.name} a new card instead`);
   if (before.status === 'running') throw new OrgError(`card ${opts.taskId} is running; wait for the worker or reclaim it first`);
   const header = cardHeader(caller, to, { title: before.title, project: opts.project ?? before.project_slug ?? undefined, feature: opts.feature ?? (opts.project ? undefined : before.feature_slug ?? undefined), board: before.board_slug, repo });
-  const card = await assignCard(caller.name, opts.taskId, to.name, { project: opts.project, feature: opts.feature, work: checkWorkType(opts.type) ?? undefined, needs: need ?? undefined }).catch(boardErr);
+  const card = await assignCard(caller.name, opts.taskId, to.name, { project: opts.project, feature: opts.feature, work: checkWorkType(opts.type) ?? undefined, needs: need ?? undefined, repo: repo ?? undefined }).catch(boardErr);
   await commentOnCard(caller.name, opts.taskId, header);
   if (opts.shipNow) await flagCard(caller.name, opts.taskId, { shipNow: true }).catch(boardErr);
-  if (repo && repo !== card.repo) await query(`UPDATE cards SET repo = $2 WHERE id = $1`, [opts.taskId, repo]);
   if (run) {
     await run(['kanban', '--board', before.board_slug, 'assign', opts.taskId, to.name]);
     await run(['kanban', '--board', before.board_slug, 'comment', '--author', caller.name, '--', opts.taskId, header]);
@@ -1457,8 +1456,7 @@ export async function redoTask(caller: Agent, reviewId: string, changes: string,
     `UPDATE org_agent_episodes SET corrected = true WHERE id = (SELECT id FROM org_agent_episodes WHERE agent_name = $1 AND task_id = $2 ORDER BY id DESC LIMIT 1)`,
     [builder.name, reviewed.id],
   ).catch(() => undefined);
-  await moveCard(caller.name, reviewId, 'blocked', `changes requested (round ${rounds}); waits for ${task_id}`).catch(boardErr);
-  await query(`UPDATE cards SET block_kind = 'dependency', rounds = $2 WHERE id = $1`, [reviewId, rounds]);
+  await moveCard(caller.name, reviewId, 'blocked', `changes requested (round ${rounds}); waits for ${task_id}`, { blockKind: 'dependency', rounds }).catch(boardErr);
   if (run) {
     await run(['kanban', '--board', review.board_slug, 'link', task_id, reviewId]);
     await run(['kanban', '--board', review.board_slug, 'block', '--kind', 'dependency', reviewId, `changes requested (round ${rounds}); waits for ${task_id}`]);
