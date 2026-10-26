@@ -17,6 +17,7 @@ import { fileRouter } from './routes/file.js';
 import { ingestRouter } from './routes/ingest.js';
 import { hubRouter, type HubOptions } from './routes/hub.js';
 import { zenRouter, type ZenOptions } from './routes/zen.js';
+import { presetsRouter } from './routes/presets.js';
 import { mapRouter } from './routes/map.js';
 import { mediaRouter } from './routes/media.js';
 import { fundRouter } from './routes/fund.js';
@@ -224,6 +225,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
     app.use('/api/agents', agentsRouter(opts.timers));
     app.use('/api/hub', hubRouter(opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }));
     app.use('/api/zen', zenRouter(opts.zen ?? { url: config.zenAgentUrl, token: config.zenAgentToken }));
+    app.use('/api/presets', presetsRouter());
   }
   if (modules.has('usage')) app.use('/api/usage', usageRouter());
   if (modules.has('projects')) app.use('/api/projects', projectsRouter(vaultRoot));
