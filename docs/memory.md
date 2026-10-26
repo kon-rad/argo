@@ -45,9 +45,11 @@ No automatic call to `recall` was found for an interactive Claude Code or Hermes
 
 | Arm | Label | How it matches |
 |---|---|---|
-| Shared facts | `[fact]` | Postgres full text (`websearch_to_tsquery('english', q)`), or the query as a substring of the subject or claim. Current facts only (`valid_to IS NULL`). With `--project`, facts of that project and facts with no project |
-| Bot memory files | `[memory]` | Each line of the files under `.agents/org/memory/` is scored by how many of the query's words (three letters or longer) it contains as a substring. Best first; at most half of `--limit` lines are kept |
-| Vault | `[vault]` | The app's hybrid search (keyword plus vector) when embeddings are configured, else keyword. `CURRENT/`, `Areas/Finance/` and `.env` never appear, plus any path prefix in `ORG_RECALL_EXCLUDE` (comma-separated). The semantic branch drops chunks below cosine similarity 0.25 and nothing else cuts weak hits |
+| Shared facts | `[fact]` | Postgres full text (`websearch_to_tsquery('english', q)`, which ANDs every word), or the query as a substring of the subject or claim. When that finds nothing, a looser pass: a fact qualifies when it matches at least half of the query's terms, each as a word prefix ("401" finds "401s"). Current facts only (`valid_to IS NULL`). With `--project`, facts of that project and facts with no project |
+| Bot memory files | `[memory]` | The query is cut into terms of three letters or more, minus question words ("how", "what", "does" and similar). Each line of the files under `.agents/org/memory/` is scored by how many terms start a word in it ("render" matches "renders", "how" never matches inside "show"). A line needs at least half of the terms. Best first; at most half of `--limit` lines are kept |
+| Vault | `[vault]` | The app's hybrid search (keyword plus vector) when embeddings are configured, else keyword. `CURRENT/`, `Areas/Finance/` and `.env` never appear, plus any path prefix in `ORG_RECALL_EXCLUDE` (comma-separated). Hits are then trimmed: a hit the keyword branch found stays; a hit only the vector branch found never stands alone (if no hit has any keyword support, the arm returns nothing), fills at most half of `--limit`, and must clear `ORG_RECALL_MIN_SIMILARITY` (default 0.25, which cuts nothing; see below). Hits with the same title and snippet under two paths (a skill copied into a profile) take one slot |
+
+**Why vector-only hits are not trusted.** On a vault embedded with `multilingual-e5-large-instruct`, cosine similarity does not separate good matches from noise: gibberish queries scored 0.80 to 0.85, an off-topic query 0.79, and a relevant query's best vector-only hit 0.82. No fixed floor works on that model, so recall asks for a second signal instead, a shared word. If your embedder spreads more widely, measure it (run a few nonsense queries and a few real ones through `hybridSearch`) and set `ORG_RECALL_MIN_SIMILARITY` above the nonsense scores.
 
 Writing: `cli-org remember "<subject>" "<claim>" --source <path|#message|t_card|url> [--project p] [--inferred] [--supersedes id]`. A bot may only insert rows as itself (row-level security: `author = org_me()`), cannot update or delete, A fact is retired with `cli-org forget <id> "<why>"`, which sets `valid_to`; only its author, the author's team lead or the owner may do it. Nothing is deleted, so history stays.
 
@@ -123,6 +125,19 @@ Track three numbers: **hit@8** (share of questions where the expected string app
 | Nonsense query ("chocolate cake recipe zzzqx") | Still returned 8 vault hits, none relevant |
 | Latency through the SSH wrapper | 1.6 to 3.8 s |
 
+### Before and after the recall fixes (same vault, vault and memory arms, 13 queries)
+
+| Probe | Before | After |
+|---|---|---|
+| 10 known-answer questions: expected source present | 10 of 10 | 10 of 10 |
+| Size of those answers | 4.2 to 5.0 KB | 3.1 to 5.1 KB (median about 12 percent smaller) |
+| Two nonsense queries | 8 hits each, 2.1 to 3.6 KB | 0 hits, 62 bytes ("nothing found") |
+| "how do I render video": memory lines returned | 4, all about a board outage | 2, both mention video work |
+| Fact lookup "why does cli-board return 401" | no fact | the fact (unit test; not run against the live table) |
+
+The expected strings in that check are loose, so read it as "no loss found", not as a precision score. The fact arm cannot be run from a machine whose database role cannot read `memory_facts`.
+
+
 ## Is it making the context worse? (context rot)
 
 Memory costs tokens twice: what is loaded **every session whether or not it is needed**, and what a **recall call returns whether or not it is relevant**. Measure both.
@@ -138,27 +153,33 @@ Rule of thumb used here: 4 characters per token, which is an estimate, not a tok
 
 Signals that memory is hurting rather than helping:
 
-1. **Irrelevant hits that fill the quota.** Recall returned `--limit` vault hits even for a nonsense query. The only cutoff is the semantic branch's cosine floor of 0.25, which weak matches clear, and the keyword branch needs only a text or substring match. Every call spends about the same tokens whether or not anything relevant matched.
-2. **Substring matching on common words.** The bot-memory arm treats "how" as a match inside "show", so a query such as "how do I render video" returned four lines about a board outage. Wrong-topic hits look authoritative because they carry a source label.
-3. **Duplicate documents in the hit list.** A vendored skill that exists under two folders occupies two of the eight vault slots.
+1. **Irrelevant hits that fill the quota.** Before the fixes, recall returned `--limit` vault hits even for a nonsense query, because the vector branch's only cutoff is a cosine floor of 0.25 that every note clears. Now vector-only hits need a keyword hit beside them and fill at most half the quota; check that your own noise queries return nothing.
+2. **Substring matching on common words.** The bot-memory arm used to treat "how" as a match inside "show", so "how do I render video" returned four lines about a board outage. It now ignores question words and matches word starts. Wrong-topic hits look authoritative because they carry a source label, so keep spot-checking.
+3. **Duplicate documents in the hit list.** A vendored skill that exists under two folders used to take two of the eight vault slots. Hits with the same title and snippet now collapse; near-duplicates with different snippets still do not.
 4. **Index lines that carry history instead of pointers.** A `MEMORY.md` index line is a pointer ("title, one-line hook"). When lines grow into status logs, the index is loaded in full every session while the detail it duplicates sits in a file nobody opened.
 5. **Stale entries.** Memory describes the past. Check that the paths and names a memory cites still exist (a script that extracts backticked paths and runs `test -e` is a start; many paths are relative to another repo, so read the misses before deleting anything).
 6. **Facts with no curation.** No retired or superseded facts after weeks of writes means `forget` and `--supersedes` are not being used.
 
 ## Recommendations
 
-These are proposals from the measurements above. None are built unless stated.
+Done in the engine (the recall fixes):
+
+| Change | Where |
+|---|---|
+| Vector-only vault hits need keyword support, are capped at half the quota, and can be floored with `ORG_RECALL_MIN_SIMILARITY` | `shapeVaultHits` in `org-powers.ts`, used by `recallVault` in `cli-org.ts` |
+| Memory-file matching ignores question words and matches word starts; a line needs half the terms | `terms`, `recallMemoryFiles` |
+| Fact lookups fall back to a looser pass when the strict query finds nothing | `recallFactsLoose` |
+| Duplicate vault hits collapse | `dedupeVaultHits` |
+
+Still proposals:
 
 | Change | Why | Cost |
 |---|---|---|
-| Raise or expose the similarity floor on the vault arm, and add a score floor to the keyword and memory arms (return fewer than `--limit` when little matches) | Removes most of the fixed per-call cost and the nonsense hits | Small: thresholds in `cli-org.ts`, `semantic.ts` and `org-powers.ts` |
-| Tokenise memory-file matching on word boundaries and drop stopwords | Stops "how" matching "show" | Small |
-| Fall back from AND to OR (or to a trigram/substring match) when the fact arm returns nothing | Half the paraphrased questions missed a fact that exists | Small |
-| Collapse duplicate paths in the vault arm (same title and near-identical body) | Frees slots | Small |
 | Count recalls in the archive importer and expose them on the Usage page (calls per session, per bot, hits that were later quoted) | Turns "is it used?" from a query into a dashboard | Medium |
 | Keep the harness memory index to pointers (about 150 characters a line) and move status into the linked file | Shrinks the always-loaded cost | Editing only |
 | Run the golden set weekly and log hit@8, first-hit position and characters returned | A regression becomes visible | Small |
 | Review facts monthly: retire or supersede any whose source changed | Keeps recall current | Process |
+| Make recall an explicit first step in the skills that research or plan | Adoption was about 5 percent of sessions | Small |
 
 How to judge a change: run the golden set before and after, and compare hit@8 and characters returned. A change that raises hit@8 and lowers characters is a clear win; one that does only the second is a win if hit@8 holds.
 

@@ -46,6 +46,9 @@ import {
   forget,
   listApprovals,
   listFacts,
+  dedupeVaultHits,
+  DEFAULT_RECALL_MIN_SIMILARITY,
+  shapeVaultHits,
   recallExcluded,
   recallFacts,
   recallMemoryFiles,
@@ -57,6 +60,7 @@ import {
   type Approval,
   type Fact,
   type RecallHit,
+  type VaultSearchHit,
 } from './org-powers.js';
 import {
   EPISODE_REASONS,
@@ -297,10 +301,12 @@ export function plainSnippet(html: string): string {
  */
 export async function recallVault(q: string, limit: number, env: NodeJS.ProcessEnv = process.env): Promise<RecallHit[]> {
   const extra = (env.ORG_RECALL_EXCLUDE ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  let hits: { ref_path: string; title: string | null; snippet: string; rank: number }[] = [];
+  const floor = Number(env.ORG_RECALL_MIN_SIMILARITY);
+  const minSimilarity = Number.isFinite(floor) && floor > 0 ? floor : DEFAULT_RECALL_MIN_SIMILARITY;
+  let hits: VaultSearchHit[] = [];
   try {
     await loadEmbeddingConfig();
-    hits = (await hybridSearch(q, { source: 'vault', limit: limit * 3, offset: 0, provider: defaultEmbeddingProvider() })).results;
+    hits = (await hybridSearch(q, { source: 'vault', limit: limit * 3, offset: 0, provider: defaultEmbeddingProvider(), minSimilarity })).results;
   } catch {
     try {
       hits = (await search(q, { source: 'vault', limit: limit * 3, offset: 0 })).results;
@@ -308,10 +314,9 @@ export async function recallVault(q: string, limit: number, env: NodeJS.ProcessE
       return [];
     }
   }
-  return hits
-    .filter((h) => !recallExcluded(h.ref_path, extra))
-    .slice(0, limit)
+  const kept = shapeVaultHits(hits.filter((h) => !recallExcluded(h.ref_path, extra)), limit, minSimilarity)
     .map((h) => ({ source: 'vault' as const, ref: h.ref_path, title: h.title ?? '', text: plainSnippet(h.snippet), score: Number(h.rank) }));
+  return dedupeVaultHits(kept).slice(0, limit);
 }
 
 async function main(argv: string[], out: (s: string) => void = console.log): Promise<number> {

@@ -242,6 +242,27 @@ export interface RecallHit {
   score: number;
 }
 
+/**
+ * The fallback when the strict query finds nothing. `websearch_to_tsquery` ANDs every word, so a question written the
+ * way a person asks it ("why does cli-board return 401") misses a fact that has most of its words. Here a current fact
+ * qualifies when it matches at least half of the query's terms (as word prefixes, one term at a time), best first.
+ */
+async function recallFactsLoose(q: string, opts: { project?: string; limit?: number }): Promise<(Fact & { rank: number })[]> {
+  // trimmed so each term is a valid tsquery operand; matched as a prefix ("401" finds "401s", "return" finds "returns")
+  const words = terms(q).map((w) => w.replace(/^[._-]+|[._-]+$/g, '')).filter(Boolean);
+  if (words.length < 2) return [];
+  const params: unknown[] = [words, Math.ceil(words.length / 2)];
+  const project = opts.project ? `AND (project_slug = $${params.push(opts.project)} OR project_slug IS NULL)` : '';
+  const { rows } = await query<Fact & { hits: number }>(
+    `SELECT * FROM (
+       SELECT ${FACT_COLS}, (SELECT count(*)::int FROM unnest($1::text[]) AS t WHERE memory_facts.tsv @@ to_tsquery('english', t || ':*')) AS hits
+         FROM memory_facts WHERE valid_to IS NULL ${project}
+     ) m WHERE hits >= $2 ORDER BY hits DESC, id DESC LIMIT $${params.push(Math.min(opts.limit ?? 8, 50))}`,
+    params,
+  );
+  return rows.map((r) => ({ ...r, rank: r.hits / words.length }));
+}
+
 /** Current facts first, then by text rank; a project filter keeps project-less facts too (they are company-wide). */
 export async function recallFacts(q: string, opts: { project?: string; limit?: number } = {}): Promise<RecallHit[]> {
   const params: unknown[] = [q, `%${q}%`];
@@ -253,7 +274,8 @@ export async function recallFacts(q: string, opts: { project?: string; limit?: n
       ORDER BY rank DESC, id DESC LIMIT $${params.push(Math.min(opts.limit ?? 8, 50))}`,
     params,
   );
-  return rows.map((f) => ({
+  const found = rows.length ? rows : await recallFactsLoose(q, opts);
+  return found.map((f) => ({
     source: 'fact',
     ref: `fact #${f.id}`,
     title: f.subject,
@@ -262,9 +284,23 @@ export async function recallFacts(q: string, opts: { project?: string; limit?: n
   }));
 }
 
-/** Words of three letters or more, lowercased; what a memory-file line is scored against. */
+/** Question and function words that say nothing about the topic; they would match half the lines of any file. */
+const STOPWORDS = new Set([
+  'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'any', 'can', 'was', 'were', 'has', 'had', 'have', 'its', 'our', 'your', 'out',
+  'how', 'why', 'who', 'whom', 'what', 'when', 'where', 'which', 'does', 'did', 'this', 'that', 'these', 'those', 'with', 'from', 'into',
+  'about', 'than', 'then', 'them', 'they', 'there', 'their', 'been', 'being', 'will', 'would', 'could', 'should', 'also', 'via',
+]);
+
+/** Words of three letters or more, lowercased, without question words; what a memory-file line is scored against. */
 export function terms(q: string): string[] {
-  return [...new Set(q.toLowerCase().split(/[^a-z0-9_.-]+/).filter((t) => t.length >= 3))];
+  return [...new Set(q.toLowerCase().split(/[^a-z0-9_.-]+/).filter((t) => t.length >= 3 && !STOPWORDS.has(t)))];
+}
+
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** A term matches where a word starts ("render" in "renders"), never inside another word ("how" in "show"). */
+function wordStart(w: string): RegExp {
+  return new RegExp(`(?<![a-z0-9_])${escapeRegExp(w)}`);
 }
 
 /**
@@ -286,15 +322,67 @@ export function recallMemoryFiles(vaultRoot: string, q: string, limit = 5): Reca
     return [];
   }
   const hits: RecallHit[] = [];
+  const patterns = words.map(wordStart);
   for (const f of files) {
     const lines = readFileSync(join(dir, f.rel), 'utf8').split('\n');
     lines.forEach((line, i) => {
       const l = line.toLowerCase();
-      const n = words.filter((w) => l.includes(w)).length;
-      if (n && line.trim().length > 3) hits.push({ source: 'memory', ref: `.agents/org/memory/${f.rel}:${i + 1}`, title: f.title, text: line.trim().slice(0, 400), score: n / words.length });
+      const n = patterns.filter((re) => re.test(l)).length;
+      // a line needs at least half of the query's words, so one shared common word is not a hit
+      if (n && n / words.length >= 0.5 && line.trim().length > 3) hits.push({ source: 'memory', ref: `.agents/org/memory/${f.rel}:${i + 1}`, title: f.title, text: line.trim().slice(0, 400), score: n / words.length });
     });
   }
   return hits.sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+/** What recall keeps of a vault search hit, whatever shape the search gave it (a plain keyword search has no match kind). */
+export interface VaultSearchHit {
+  ref_path: string;
+  title: string | null;
+  snippet: string;
+  rank: number;
+  match_kind?: string;
+  similarity?: number | null;
+}
+
+/**
+ * Cosine floor for a hit only the vector branch found. The default does not cut anything: measured on a vault embedded
+ * with multilingual-e5-large-instruct, gibberish queries scored 0.80 to 0.85 and a relevant one 0.82, so no single
+ * number separates them. Models with a wider spread can set `ORG_RECALL_MIN_SIMILARITY`.
+ */
+export const DEFAULT_RECALL_MIN_SIMILARITY = 0.25;
+
+/**
+ * Trim a ranked list of vault search hits to the ones worth a bot's tokens.
+ *
+ * A hit is *backed* when the keyword branch found it (alone or with the vector branch). Closeness in embedding space
+ * alone is not trusted: it returns eight confident-looking notes for a nonsense query. So:
+ *   - no backed hit at all: nothing comes back (the question's words are not in the vault);
+ *   - otherwise backed hits stay, and vector-only hits above the floor fill at most half of `limit`.
+ * Order is kept; `/api/search?mode=semantic` still explores by meaning alone.
+ */
+export function shapeVaultHits<T extends VaultSearchHit>(hits: T[], limit: number, minSimilarity: number): T[] {
+  const semanticOnly = (h: VaultSearchHit): boolean => h.match_kind === 'semantic';
+  if (!hits.some((h) => !semanticOnly(h))) return [];
+  const cap = Math.ceil(limit / 2);
+  let loose = 0;
+  return hits.filter((h) => {
+    if (!semanticOnly(h)) return true;
+    if ((h.similarity ?? 0) < minSimilarity || loose >= cap) return false;
+    loose += 1;
+    return true;
+  });
+}
+
+/** The same document under two paths (a skill copied into a profile) takes one slot: same title and same snippet. */
+export function dedupeVaultHits(hits: RecallHit[]): RecallHit[] {
+  const seen = new Set<string>();
+  return hits.filter((h) => {
+    const key = `${h.title}\u0000${h.text.replace(/\s+/g, ' ').trim().slice(0, 160)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /** Vault paths recall never returns, whatever the search finds: the owner's working files and finances. */
