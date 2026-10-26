@@ -48,6 +48,11 @@ describe('what counts as an agent process', () => {
     expect(runtimeOf('postgres: 16/main: agent vaultdb [local] idle')).toBeNull();
   });
 
+  it('does not mistake a claude stand-in that forwards to zen-agent for Claude Code', () => {
+    const bridge = 'python3 /home/agent/.local/bin/claude-zen-bridge.py -p You are rune, Platform --output-format stream-json';
+    expect(runtimeOf(bridge)).toBe('zen-agent (claude bridge)');
+  });
+
   it('reads the model flag in both spellings', () => {
     expect(modelOf(FUND)).toBe('sonnet');
     expect(modelOf('claude -p x --model=opus')).toBe('opus');

@@ -19,7 +19,7 @@ export interface RunningRow {
   kind: RunningKind;
   /** The bot's name, the lane's name, or a short label for a session that belongs to neither. */
   name: string;
-  /** What this process is: claude-code, zen-agent, hermes (a bot or lane worker) or a label for the rest. */
+  /** What this process really is: claude-code, zen-agent, 'zen-agent (claude bridge)' (a `claude` stand-in), hermes. */
   runtime: string;
   /** The model on the command line, else the roster's. */
   model: string | null;
@@ -55,6 +55,8 @@ const base = (p: string): string => p.slice(p.lastIndexOf('/') + 1);
 
 /** Which agent runtime a command line is, or null when it is not an agent process (a shell, a sleep, a database). */
 export function runtimeOf(args: string): string | null {
+  // A stand-in for the `claude` CLI that forwards each call to zen-agent: it answers to `claude` but is not Claude Code.
+  if (/claude-zen-bridge/.test(args)) return 'zen-agent (claude bridge)';
   const t = args.split(/\s+/);
   const first = base(t[0] ?? '');
   const second = base(t[1] ?? '');
