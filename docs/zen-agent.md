@@ -74,9 +74,7 @@ The keys, in the order you are likely to touch them:
 | `budget` | 40 turns, 400 000 tokens, 30 minutes | Per run; `--max-turns`, `--max-tokens`, `--max-minutes`, or the card's `## Budget` line |
 | `tools` | all seven sets | `fs`, `shell`, `skills`, `knowledge`, `kanban`, `org`, `subagent`. A set whose backend is not configured contributes nothing |
 | `knowledge` | off | `{ "kind": "secondbrain", "url": "http://127.0.0.1:3000", "headersEnv": "ZEN_SB_HEADERS" }` |
-
-The search endpoints need a login, and an agent cannot type a TOTP code. On the same machine as the app, set `KNOWLEDGE_TOKEN` in the app's env (see [configuration](configuration.md)) and give the agent `ZEN_SB_HEADERS={"Authorization":"Bearer <token>"}`. The token opens only the three read paths the knowledge tool calls, from loopback only. From another machine, use a copied session cookie in the same variable, or an SSH tunnel to the app's loopback port.
-| `kanban` | off | `{ "kind": "cli", "command": "hermes", "board": "exo" }` or `{ "kind": "hub", "url": "http://127.0.0.1:8787", "tokenEnv": "AGENT_HUB_TOKEN", "board": "exo" }` |
+| `kanban` | off | `{ "kind": "board", "url": "http://127.0.0.1:5123", "tokenEnv": "BOARD_TOKEN", "board": "exo" }` |
 | `org.command` | `cli-org` | The message board CLI; its tools appear only when it is on the PATH and a persona is set |
 | `persona.org`, `persona.definitions`, `persona.memory` | `.agents/org/org.json`, `.claude/agents`, `.agents/org/memory` | Where personas come from |
 | `rules`, `skills` | `["AGENTS.md"]`, `[".agents/skills", "~/.zen/skills"]` | The rules part (first file that exists) and the skill folders (earlier wins) |
@@ -85,6 +83,8 @@ The search endpoints need a login, and an agent cannot type a TOTP code. On the 
 | `org.command`, `tracker.command`, `github.command` | `cli-org`, `cli-projects`, `gh` | The commands behind the `org` tools and the `thread`, `recall`, `tracker` and `github` fetchers |
 | `guard.local`, `guard.log`, `guard.hooks` | first `.agents/guard.local.json` up from the working directory; `~/.cache/agent-guard.log`; none | The vault's rules, the block log, and the `preToolUse` and `stop` hook commands |
 | `providers` | `{}` | Extra endpoints: `{ "<id>": { "api": "openai-completions" \| "anthropic-messages", "baseUrl", "apiKeyEnv"?, "models": [{ "id", "contextWindow"?, "maxTokens"? }] } }` |
+
+The search endpoints need a login, and an agent cannot type a TOTP code. On the same machine as the app, set `KNOWLEDGE_TOKEN` in the app's env (see [configuration](configuration.md)) and give the agent `ZEN_SB_HEADERS={"Authorization":"Bearer <token>"}`. The token opens only the three read paths the knowledge tool calls, from loopback only. From another machine, use a copied session cookie in the same variable, or an SSH tunnel to the app's loopback port.
 
 `zen-agent config` prints the effective configuration with every path resolved. `zen-agent models --available` lists the models whose provider has a key.
 
@@ -149,6 +149,8 @@ Everything is exported: the guard (`decide`), the assembler (`buildSystemPrompt`
 ### 3.6 As a chat host
 
 `zen-agent serve` turns the library into a chat transport for the engine's Agents page (the Chat tab's harness switch; the `agents` module). It is the only long-lived process in the package: one live `ZenAgent` per open chat, held in memory, and a small JSON API on `127.0.0.1:8791` with a bearer token (`ZEN_SERVE_TOKEN`). The app server never runs an agent itself: it is sandboxed (read-only home, no new privileges) and only forwards an allowlist of these routes under `/api/zen` with the token, the way it forwards agent-hub's routes for Claude Code chats. The host should run as a dedicated user, as section 8 says of every zen-agent run.
+
+`app/deploy/deploy.sh` installs and runs this for you under the `agents` module: when the vault's pinned `.secondbrain/zen-agent` builds (it ships in the engine, not under `app/`, so the deploy's own rsync of `app/` never carries it), the script builds it into the app user's home, generates `ZEN_SERVE_TOKEN`/`ZEN_AGENT_URL`/`ZEN_AGENT_TOKEN` in `/etc/secondbrain/env` the first time, puts `zen-agent` on the app user's `PATH`, and installs `zen-agent-serve.service` (`Type=simple`, `Restart=on-failure`, the same sandboxing as `secondbrain.service`). A vault without `.secondbrain/zen-agent` just skips all of this; the Claude Code chat harness is unaffected either way. A deploy that only ships `app/` code (not through `deploy.sh`) must wire this by hand, the way section 3.6 originally described.
 
 ```
 browser  ──HTTPS, the app's login──▶  app server (/api/zen: allowlist + token)  ──loopback──▶  zen-agent serve
@@ -298,7 +300,7 @@ Against general frameworks (LangGraph, the OpenAI Agents SDK and their kind): th
 | Surface | How zen-agent uses it today | What is left |
 |---|---|---|
 | **The retrieval API** ([rag.md](rag.md)) | `search_notes` calls `/api/search?mode=hybrid`; `search_everything` calls `/api/search/global` (notes, records, agent transcripts); `read_note` calls `/api/file/source`. On a server, the owner's session cookie goes in the headers variable | A token for agents on the search routes, so a bot never holds the owner's cookie |
-| **The kanban board** | `hub` backend: agent-hub's routes as the app's web client calls them (list, show, create, comment, assign). `cli` backend: `hermes kanban` (adds complete and block). `wake` reads the card and its `## Budget` | `list --json` and `complete --result` on the CLI were written from the engine's existing usage, not run against a live board |
+| **The kanban board** | `board` backend: the engine's `/api/board` with a board token (list, show, create, comment, assign, finish, claim, heartbeat). The earlier `hub` and `cli` (Hermes) backends are removed. `wake` reads the card and its `## Budget` | Nothing |
 | **The message board** (`org` module) | `cli-org` as typed tools, as the persona (`ORG_AGENT`); the CLI enforces membership and who may DM whom | Nothing; an HTTP path would need an agent identity the routes do not take today |
 | **The roster** | Reads the compiled `org.json` (or `org.yaml`) the vault already keeps; the chart's `model` field is honoured | `runtime: zen-agent` in `OrgDoc` next to `claude-code`, `hermes` and `codex`, so the dispatcher can route a bot's wakes here |
 | **The dispatcher** | `ORG_AGENT=<bot> zen-agent wake <card> --json` for a card wake; `ORG_AGENT=<bot> zen-agent run --task "<standing orders>" --thread <message id> "<prompt>"` for a DM, handoff or mention wake (the wakeup's `ref` is the message id). Neither call takes a session id: every wake is fresh, so the dispatcher never stores one and `cli-org session` is not part of this lane | In the vault: `runtime: zen-agent` as the default in `org.yaml` (per-agent `claude-code` stays available), the dispatcher routing wakes to these two calls and reading the JSON result into `wake-done`, and the `session_id` column left unused by this lane |

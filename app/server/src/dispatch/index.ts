@@ -292,6 +292,8 @@ export class Dispatcher {
           if (t.thinking) modelFlags.push('--thinking', t.thinking);
         }
       }
+      // No tier model: the bot's own, override ?? roster, so `cli-org set` moves a bot to a model with no deploy.
+      if (!modelFlags.includes('--model') && agent.model) modelFlags.push('--model', agent.model);
 
       const meta: Record<string, string> = {
         run_id: runId,

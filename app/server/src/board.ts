@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import pg from 'pg';
+import { agentSpecProblem } from './agent-spec.js';
 import { config } from './config.js';
 import { query } from './db.js';
 
@@ -244,7 +245,7 @@ export interface NewCard {
   node?: string;
   rounds?: number;
   shipNow?: boolean;
-  /** A fixed id (the Hermes projection's, while both boards run). */
+  /** A fixed id (the legacy importer's); normally the board function mints it. */
   id?: string;
   scheduledFor?: Date;
 }
@@ -285,7 +286,7 @@ export interface ClaimOpts {
   leaseMinutes?: number;
   wakeup?: number;
   /** Claim this exact card, not just the next ready one: a lane (cc-dispatcher) that already picked a task from its
-   * own sorted, filtered list needs the same "claim this one or fail" guarantee Hermes's `kanban claim <id>` gives. */
+   * own sorted, filtered list needs the same "claim this one or fail" guarantee the old Hermes `kanban claim <id>` gave. */
   taskId?: string;
 }
 
@@ -450,7 +451,7 @@ export class BoardBus {
   }
 }
 
-// ---- the mirror: cards from the Hermes board's `--json` output ------------------------------------------
+// ---- legacy migration: cards from a saved Hermes board `--json` export (file only, never a live call) ----
 
 export interface HermesCard {
   id: string;
@@ -550,7 +551,7 @@ export async function driftReport(board: string, docs: HermesCard[]): Promise<{ 
  * Pause and resume: the cutover's phase 1b control plane (vault: kanban-board/dev-log/2026-10-26_cutover-phase0-inventory.md).
  * One owner-only switch in Postgres stops new claims for one bot, a team's bots, or the whole board. A pause stops
  * *new* work only; a run that already holds a lease keeps its card. The gate lives inside board_card_claim, so every
- * backend (cc-dispatcher over the projection, zen-agent over this API) sees the same pause without reading a file.
+ * backend (cc-dispatcher, zen-agent over this API) sees the same pause without reading a file.
  */
 export interface BoardSettings {
   board_slug: string;
@@ -570,6 +571,52 @@ export async function pauseAgents(by: string, scope: string, paused: boolean, re
 }
 
 export const resumeAgents = (by: string, scope: string, board?: string): Promise<number> => pauseAgents(by, scope, false, '', undefined, board);
+
+/** Pause or resume every bot whose effective runtime is `runtime`. Returns how many bots changed; 0 means nothing to do. */
+export async function pauseLane(by: string, runtime: string, paused: boolean, reason: string): Promise<number> {
+  const { board_pause_lane } = await fn<{ board_pause_lane: number }>(`SELECT board_pause_lane($1,$2,$3,$4) AS board_pause_lane`, [by, runtime, paused, reason]);
+  return board_pause_lane;
+}
+
+/**
+ * The override table: an owner-written switch of an agent's runtime, model or effort that the claim path reads
+ * ahead of `.agents/org.yaml`. A field left out inherits the roster. The pair is checked against the roster row
+ * it lands on, so `--runtime zen-agent` on a bot whose roster model is `sonnet` is refused until `--model` says
+ * which provider/model (the ravi mistake, caught at write time).
+ */
+export interface AgentOverride {
+  agent: string;
+  runtime: string | null;
+  model: string | null;
+  effort: string | null;
+  paused: boolean;
+  set_by: string;
+  set_at: Date;
+}
+
+export async function setOverride(by: string, agent: string, o: { runtime?: string; model?: string; effort?: string }): Promise<AgentOverride> {
+  const { rows } = await query<{ runtime: string; model: string | null }>(`SELECT runtime, model FROM org_agents WHERE name = $1 AND retired_at IS NULL`, [agent]);
+  const base = rows[0];
+  if (!base) throw new BoardError(`no bot named "${agent}" on the roster; run cli-org agents`, 404);
+  // A runtime override drops the roster's model unless the owner names one: a model belongs to the runtime it was written for.
+  const merged = { runtime: o.runtime ?? base.runtime, model: o.model ?? (o.runtime && o.runtime !== base.runtime ? null : base.model), effort: o.effort ?? null };
+  const problem = agentSpecProblem(merged);
+  if (problem) throw new BoardError(`${agent}: ${problem}`, 400);
+  if (o.runtime && o.runtime !== base.runtime && !o.model && merged.runtime === 'zen-agent') {
+    throw new BoardError(`${agent}: moving to zen-agent needs --model provider/model`, 400);
+  }
+  return fn<AgentOverride>(`SELECT * FROM board_set_override($1,$2,$3,$4,$5)`, [by, agent, o.runtime ?? null, o.model ?? null, o.effort ?? null]);
+}
+
+export async function clearOverride(by: string, agent: string): Promise<boolean> {
+  const { board_clear_override } = await fn<{ board_clear_override: boolean }>(`SELECT board_clear_override($1,$2) AS board_clear_override`, [by, agent]);
+  return board_clear_override;
+}
+
+export async function listOverrides(): Promise<AgentOverride[]> {
+  const { rows } = await query<AgentOverride>(`SELECT agent, runtime, model, effort, paused, set_by, set_at FROM org_agent_overrides ORDER BY agent`);
+  return rows;
+}
 
 /** The board-wide dispatch switch. `enabled` false stops every new claim on the board; a reason is required to disable. */
 export async function setDispatch(by: string, enabled: boolean, reason?: string, board?: string): Promise<BoardSettings> {

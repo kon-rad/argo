@@ -999,7 +999,7 @@ export async function proposeImprovement(agent: Agent, memoryId: number, opts: P
     `To apply: make this edit in the vault, recompile the org (compile.py) and re-import; the change is then measured for two weeks against this agent's corrections per completed card (\`cli-org memory stats ${agent.name}\`) and reverted if it does not move. To deny: close this card. Either way the memory stays; the same friction re-proposes only after fresh evidence. A bot never applies a change to itself.`,
   ].join('\n');
   const title = `self-improvement: ${agent.name}, ${row.content.slice(0, 120)}`.slice(0, 200);
-  const r = await createTask(agent, { assignee: null, title, body, kind: 'improve', priority: 3 }, null);
+  const r = await createTask(agent, { assignee: null, title, body, kind: 'improve', priority: 3 });
   await query(`UPDATE org_agent_memory SET promoted_to_proposal = true, proposal_task_id = $2, proposed_at = now(), updated_at = now() WHERE id = $1`, [row.id, r.task_id]);
   res.card = { id: r.task_id, title };
   return res;

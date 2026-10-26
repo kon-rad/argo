@@ -19,6 +19,7 @@ The app reads `<vault>/.env` at start (`app/server/src/config.ts`), validates ev
 | `PORT` | `5123` | HTTP port (always bound to `127.0.0.1`) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `DEPLOYMENT` | `local` | `local` (no login, loopback) or `server` (login required). See [deployment.md](deployment.md) |
+| `SUMMARIES`, `SUMMARIES_M1_URL` | unset | `SUMMARIES=on` makes the deploy script install the summaries timer. `SUMMARIES_M1_URL` is the home server's Ollama address that the default chain tries first. See [summaries.md](summaries.md) |
 | `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`. Unknown names are ignored |
 | `OWNER_NAME` | `owner` | Your name in the authenticator app and as a comment author |
 | `DEV_LOG_PATH`, `DOCS_PATH` | unset | Vault-relative notes the nav bar links to; unset hides the link |
@@ -73,7 +74,7 @@ Deploy settings (`DEPLOY_*`) are read by `deploy.sh` only: see [deployment.md](d
 
 | Variable | Module | Default | Purpose |
 |---|---|---|---|
-| `AGENT_HUB_URL`, `AGENT_HUB_TOKEN` | `agents` | unset | The agent-hub service that serves the kanban board and chats. Unset: those tabs say so |
+| `AGENT_HUB_URL`, `AGENT_HUB_TOKEN` | `agents` | unset | The agent-hub service that serves Claude chats and the Telegram toggle. Unset: those tabs say so |
 | `ZEN_AGENT_URL`, `ZEN_AGENT_TOKEN` | `agents` | unset | The `zen-agent serve` process behind `/api/zen` (the zen-agent chat page). The token is the serve process's `ZEN_SERVE_TOKEN`. Unset: the page says so |
 | `HERMES_HOME` | `agents`, archive | `~/.hermes` | Hermes's home on this machine |
 | `ARCHIVE_SSH_HOST`, `REMOTE_HERMES_HOME`, `REMOTE_HERMES_USER` | archive | unset | Pull a server's Hermes history over ssh; unset skips the pull |
@@ -84,7 +85,6 @@ Deploy settings (`DEPLOY_*`) are read by `deploy.sh` only: see [deployment.md](d
 | `ORG_VAULT_ASSIGNEE` | `org` | `vault-session` | The kanban assignee for vault work: a Claude Code session on your machine that no dispatcher spawns (lowercase, `a-z0-9-`). Cards on boards that still use the old slug `m4` keep working |
 | `ORG_SESSION_MAX_RUNS` | `org` | `3` | Runs one remembered `claude-code` agent session carries before the next wake starts fresh. `1` never resumes. Not used by the `zen-agent` lane, whose wakes are always fresh |
 | `BOARD_LEASE_MINUTES` | `board` | `60` | How long a claimed card stays a lane's without a heartbeat before the `board-reclaim` sweep puts it back to ready |
-| `BOARD_HERMES_PROJECTION` | `board` | `off` | `on` mirrors every card the engine makes into the Hermes board with `hermes kanban` (`ORG_KANBAN_CMD` names the binary), while Hermes still runs the bots |
 | `BOARD_URL`, `BOARD_TOKEN` | `board` | unset | On a machine that is not the server: `cli-board` and agents reach the board over HTTPS as the roster member the token names (`cli-board token create <agent>`). Unset: the database connection is used |
 | `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES` | `org` | `2`, `15` | A card that keeps waking its bot waits 15, then 30 minutes between wakes, and after 2 re-wakes in 24 h is held until a person wakes it (`wake-add --reason owner`) |
 | `ORG_TZ` | `org` | `UTC` | The local day for "one routine wakeup per day" and the dispatcher's quiet hours (an IANA zone name) |
@@ -137,6 +137,7 @@ Settings that don't fit on one env line. Every section is optional; a file that 
 | `livestream.youtube`, `.twitch`, `.kick` | `livestream` | Your channel handle on each platform |
 | `fund.dir`, `fund.txService`, `fund.explorer` | `fund` | Vault folder of the fund's state (default `fund`), the Safe Transaction Service URL and the block explorer for its chain (defaults: Base) |
 | `projects.reportFile` | `projects` | Where `cli-projects render` writes the markdown report (default `projects.md`) |
+| `summaries.chain`, `summaries.minSteps`, `summaries.quietMinutes`, `summaries.maxInputChars` | `usage` | Which providers write session summaries and in what order, the shortest session worth summarizing, how long a session must be quiet, and how much transcript is sent. Defaults in `app/config/summaries.json`; see [summaries.md](summaries.md) |
 | `chat.defaultProvider` | `chat` | The preset provider the chat starts on, when its key is set |
 | `chat.systemPrompt` | `chat` | Replaces the engine's base system prompt (still editable in the app's settings modal) |
 | `chat.providers.<id>` | `chat` | Per preset provider: `models` to add (`[{ "id", "label" }]`), another `default` model, another `baseUrl` |

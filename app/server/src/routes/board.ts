@@ -5,7 +5,7 @@ import {
   listCards, listTokens, moveCard, OUTCOMES, reclaim, revokeToken, STATUSES, findToken, type BoardNotice,
 } from '../board.js';
 import { config } from '../config.js';
-import { assignTask, createTask, getAgent, hermesProjection, OrgError, type Agent } from '../org.js';
+import { assignTask, createTask, getAgent, OrgError, type Agent } from '../org.js';
 import { HttpError, intParam, parseOr400, wrap } from './http.js';
 import type { HubOptions } from './hub.js';
 
@@ -130,14 +130,14 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
     res.json(await boardErrors(() => getCard(id, caller(res).viewer)));
   }));
 
-  // Create and assign go through the org's verbs: the repo rule, the team mention and the Hermes projection live there.
+  // Create and assign go through the org's verbs: the repo rule and the team mention live there.
   router.post('/cards', wrap(async (req, res) => {
     const b = parseOr400(NewCardBody, req.body);
     const me = await agentOf(caller(res));
     const r = await boardErrors(() => createTask(me, {
       assignee: b.assignee ?? null, title: b.title, body: b.body, contract: b.contract, project: b.project, feature: b.feature, board: b.board, priority: b.priority,
       type: b.work, needs: b.needs, repo: b.repo, shipNow: b.ship_now, kind: b.kind, deps: b.deps, run: 'app',
-    }, hermesProjection()));
+    }));
     res.status(201).json({ card: r.card, message: r.message });
   }));
 
@@ -149,7 +149,7 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
       res.json({ card: await boardErrors(() => assignCard(me.name, id, null)) });
       return;
     }
-    const r = await boardErrors(() => assignTask(me, { taskId: id, assignee: b.assignee!, project: b.project, feature: b.feature, type: b.work, needs: b.needs, run: 'app' }, hermesProjection()));
+    const r = await boardErrors(() => assignTask(me, { taskId: id, assignee: b.assignee!, project: b.project, feature: b.feature, type: b.work, needs: b.needs, run: 'app' }));
     res.json({ card: r.card, message: r.message });
   }));
 

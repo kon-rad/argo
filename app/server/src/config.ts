@@ -130,9 +130,6 @@ const Schema = z.object({
   // minted by `cli-board token create` (door 2 of docs/board-design.md). Unset: the database connection is used.
   BOARD_URL: z.string().url().optional(),
   BOARD_TOKEN: z.string().min(20).optional(),
-  // board module, while the Hermes board still runs the bots: mirror every card the engine makes into it with
-  // `hermes kanban` (ORG_KANBAN_CMD names the binary). Off once the engine's record is the only one.
-  BOARD_HERMES_PROJECTION: z.enum(['on', 'off']).default('off'),
   // Read-only bearer token for a kiosk's Projects panel (GET /api/feed/projects).
   // Unset = the feed route does not exist.
   PROJECTS_FEED_TOKEN: z.string().min(32).optional(),
@@ -257,7 +254,6 @@ export const config = {
   boardLeaseMinutes: parsed.data.BOARD_LEASE_MINUTES,
   boardUrl: parsed.data.BOARD_URL?.replace(/\/+$/, ''),
   boardToken: parsed.data.BOARD_TOKEN,
-  boardHermesProjection: parsed.data.BOARD_HERMES_PROJECTION === 'on',
   ttsUrl: parsed.data.TTS_URL.replace(/\/+$/, ''),
   ttsModel: parsed.data.TTS_MODEL,
   webDist: resolve(appRoot, 'web', 'dist'),

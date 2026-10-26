@@ -7,7 +7,7 @@ A minimal agent harness: one loop, hooks on the loop, and everything else a file
 | **Any persona** | A roster entry (`org.json` or `org.yaml`: role, team, lead, model, expertise, capabilities) plus its definition file and its playbook become the top of the system prompt. `--persona atlas` |
 | **Any provider, any model** | pi-ai's forty providers by key in the environment, plus any OpenAI-compatible or Anthropic-compatible endpoint from `zen.json`. `--model openrouter/anthropic/claude-sonnet-4-6`, `--model ollama/qwen3:8b` |
 | **Skills** | Agent Skills folders (`<dir>/<name>/SKILL.md`). The prompt lists names and descriptions; `read_skill` loads one on demand. A private skill shadows a shared one of the same name |
-| **Kanban board** | Typed tools over the board: list, show, create, comment, assign, complete, block. Three backends: the engine's own board (`/api/board` with a board token), agent-hub's HTTP API, or the `hermes kanban` command line. `zen-agent wake <card>` makes the card the task and its budget the run's; `zen-agent lane` claims ready cards from the engine's board and wakes for each |
+| **Kanban board** | Typed tools over the board: list, show, create, comment, assign, complete, block. One backend: the engine's own board (`/api/board` with a board token). `zen-agent wake <card>` makes the card the task and its budget the run's; `zen-agent lane` claims ready cards from the engine's board and wakes for each |
 | **Knowledge base** | The second brain's retrieval API as tools: `search_notes` (hybrid keyword + vector), `search_everything` (notes, records, transcripts), `read_note` |
 | **Message board** | `cli-org` as typed tools: whoami, read, post, dm, handoff, ask-owner, tasks, recall, remember, under the persona's identity |
 | **Budgets** | Turns, tokens and minutes, enforced in the loop. A run that hits one ends with `stopped: budget` and exit code 3 |
@@ -51,7 +51,7 @@ Secrets come from the environment only: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `
 | `persona.definitions` | `.claude/agents` | `<name>.md`, frontmatter dropped: the identity Claude Code runs the agent with |
 | `persona.memory` | `.agents/org/memory` | `<name>.md`: the playbook, read in full at the start of a run |
 | `tools` | all seven | `fs`, `shell`, `skills`, `knowledge`, `kanban`, `org`, `subagent`. A set whose backend is not configured contributes nothing |
-| `budget` | 40 turns, 400 000 tokens, 30 minutes | Per run. `--max-turns`, `--max-tokens`, `--max-minutes`, or a card's `## Budget` line |
+| `budget` | 40 turns, 400 000 tokens, 30 minutes | Per run. Tokens are input + output + cache writes; a cache read (the same prompt read again each turn) is not counted, so a long run does not stop early while spending almost nothing. `--max-turns`, `--max-tokens`, `--max-minutes`, or a card's `## Budget` line |
 | `context.cap` | `0.6` | Fraction of the model's context window that triggers compaction |
 | `context.keepTurns` | `6` | User turns kept verbatim after a compaction |
 | `context.parts` | rules 6000, persona 3000, playbook 2000, skills 1500, handoff 500, task 4000, thread 2000, tracker 1500, github 1500, recall 2000 | Token caps per prompt part, the fetched parts included; 0 is unlimited. `handoff` is what the previous run concluded (`--handoff-file`), so a fresh run needs no resumed transcript |
@@ -63,7 +63,7 @@ Secrets come from the environment only: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `
 | `fs.roots` | the working directory and the vault | Where the file tools may read and write; `bash` is not confined |
 | `shell.timeoutS`, `shell.maxOutput` | 120, 12 000 | Command timeout and the output cap (head and tail kept) |
 | `knowledge` | `{ "kind": "none" }` | `{ "kind": "secondbrain", "url": "http://127.0.0.1:3000", "headersEnv": "ZEN_SB_HEADERS" }` |
-| `kanban` | `{ "kind": "none" }` | `{ "kind": "board", "url": "http://127.0.0.1:5123", "tokenEnv": "BOARD_TOKEN", "board": "exo" }` (the engine's board; the token comes from `cli-board token create`), `{ "kind": "cli", "command": "hermes", "board": "exo" }` or `{ "kind": "hub", "url": "http://127.0.0.1:8787", "tokenEnv": "AGENT_HUB_TOKEN", "board": "exo" }` |
+| `kanban` | `{ "kind": "none" }` | `{ "kind": "board", "url": "http://127.0.0.1:5123", "tokenEnv": "BOARD_TOKEN", "board": "exo" }` (the engine's board; the token comes from `cli-board token create`) |
 | `org.command` | `cli-org` | The message board CLI; the `org` tools appear only when it is on the PATH and a persona is set. Also the `thread` and `recall` fetchers |
 | `tracker.command`, `github.command` | `cli-projects`, `gh` | The commands behind the `tracker` and `github` fetchers |
 | `providers` | `{}` | Extra endpoints: `{ "<id>": { "api": "openai-completions" \| "anthropic-messages", "baseUrl", "apiKeyEnv"?, "models": [{ "id", "contextWindow"?, "maxTokens"?, "reasoning"? }] } }` |
@@ -103,7 +103,7 @@ The flags a dispatcher uses, on `run` and `wake` (and `chat`):
 | `--meta key=value` | Repeatable. Labels for the ledger (run id, wake reasons, card, tier); they land in the trace's `meta` line under `dispatch` and change nothing about the run |
 | `--meta-json '{...}'` | The same as one JSON object (for values that are not strings); `--meta` pairs win on a clash |
 
-The `board` backend speaks the engine's `/api/board` (docs/board-design.md section 5.1): list, show, create, comment, assign, finish (complete and block), claim and heartbeat. The `cli` kanban backend calls the Hermes board's command line the way the engine's `cli-org` already does (`show --json`, `create`, `comment`, `assign`, `block`); `list --json` and `complete --result` follow the same shape and were written from that usage, not run against a live board. The `hub` backend follows agent-hub's routes as the app's web client calls them.
+The `board` backend speaks the engine's `/api/board` (docs/board-design.md section 5.1): list, show, create, comment, assign, finish (complete and block), claim and heartbeat. The earlier `cli` (Hermes) and `hub` (agent-hub) kanban backends are gone: the engine's board is the only one.
 
 ### A bot wake, end to end
 
@@ -158,7 +158,7 @@ src/
   session.ts      JSONL trace per run; load for resume; list; summary (one run in numbers)
   fetchers.ts     context fetchers: thread, tracker, github, recall → capped parts + per-fetcher stats
   wake.ts         card → wake prompt and budget; wakeContext (the fetched parts); runWake (one fresh wake, start to finish)
-  tools/          fs, shell, skill, knowledge, kanban (board | hub | cli), org (cli-org), subagent (delegate)
+  tools/          fs, shell, skill, knowledge, kanban (board), org (cli-org), subagent (delegate)
   cli.ts          run, chat, wake, lane, models, personas, skills, sessions, config, guard
 ```
 

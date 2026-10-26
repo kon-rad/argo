@@ -368,7 +368,7 @@ nodes:
 
 ### 5.3 The kanban board
 
-**Today:** the kanban is the `board` module in the engine — migration, `board_*` SECURITY DEFINER functions, three auth doors, `cli-board`, the page, a Hermes importer and projection, and zen-agent's `board` backend and `lane` loop (built; see [board-design.md](board-design.md) for the full design and the staged rollout in its section 8). Stage 0 (mirror, read-only) is what's running: the engine's cards mirror Hermes's own kanban while the Hermes dispatcher still claims and runs cards in its own SQLite. Cards still carry prose bodies — the contract fields below are not yet filled in by `task create` — and the dispatcher still wakes a bot with a prompt that says "follow the org-member skill".
+**Today:** the kanban is the `board` module in the engine — migration, `board_*` SECURITY DEFINER functions, three auth doors, `cli-board`, the page, a legacy importer for old Hermes exports (the projection was removed after the 2026-10-26 cutover), and zen-agent's `board` backend and `lane` loop (built; see [board-design.md](board-design.md) for the full design and the staged rollout in its section 8). Stage 0 (mirror, read-only) is what's running: the engine's cards mirror Hermes's own kanban while the Hermes dispatcher still claims and runs cards in its own SQLite. Cards still carry prose bodies — the contract fields below are not yet filled in by `task create` — and the dispatcher still wakes a bot with a prompt that says "follow the org-member skill".
 
 **Proposal (on top of the built board module):**
 

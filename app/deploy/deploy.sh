@@ -29,7 +29,9 @@
 #                        the server's /etc/secondbrain/env, so setting it there is enough
 #   DEPLOY_MODULES       the server's module list, when it differs from this machine's MODULES
 #                        (e.g. voice here, livestream there); else MODULES. Each module installs its own timers:
-#                        agents: agents-sync · usage: usage-sync, credits-sync, the usage importer
+#                        agents: agents-sync, and (if the vault's .secondbrain/zen-agent builds) zen-agent-serve,
+#                        ZEN_SERVE_TOKEN/ZEN_AGENT_URL/ZEN_AGENT_TOKEN, zen-agent on PATH (docs/zen-agent.md 3.6)
+#                        usage: usage-sync, credits-sync, the usage importer
 #                        projects: projects-render, the kiosk feed token, cli-projects on PATH
 #                        org: the sb_org role, cli-org on PATH · board: board-reclaim, cli-board on PATH · map: map-build, metrics
 #                        livestream: the minute poller and Caddy's /public/ files
@@ -295,12 +297,38 @@ fi
 grep -qxF '.*.sb-*.tmp' "$VAULT/.git/info/exclude" 2>/dev/null \
   || echo '.*.sb-*.tmp' >> "$VAULT/.git/info/exclude"
 
+# ---- zen-agent serve: the chat host behind /api/zen (agents module, docs/zen-agent.md 3.6). zen-agent ships
+# in the engine (a sibling of app/), not under app/, so this script's own rsync of app/ never carries it: build
+# it from the vault's pinned copy instead. Optional - a vault without .secondbrain/zen-agent just skips this,
+# and the agents module's Claude Code chat still works without it.
+ZEN_BUILT=0
+if has agents; then
+  ZEN_SRC="$VAULT/.secondbrain/zen-agent"
+  if [ -d "$ZEN_SRC" ]; then
+    ZEN_DIR="$APP_HOME/zen-agent"
+    install -d -o "$APP_USER" -g "$APP_USER" "$ZEN_DIR"
+    sudo -u "$APP_USER" rsync -a --delete --exclude node_modules --exclude dist --exclude .git "$ZEN_SRC/" "$ZEN_DIR/"
+    if sudo -u "$APP_USER" bash -c "cd $ZEN_DIR && npm ci --no-audit --no-fund && npm run build"; then
+      ZEN_BUILT=1
+      # ZEN_SERVE_TOKEN is the serve process's own bearer token; ZEN_AGENT_URL/ZEN_AGENT_TOKEN are how the app
+      # server reaches it (env.example documents both as the same string). Generated once, like PROJECTS_FEED_TOKEN.
+      grep -qE '^ZEN_SERVE_TOKEN=.{16,}' /etc/secondbrain/env || echo "ZEN_SERVE_TOKEN=$(openssl rand -hex 32)" >> /etc/secondbrain/env
+      grep -qE '^ZEN_AGENT_URL=' /etc/secondbrain/env || echo "ZEN_AGENT_URL=http://127.0.0.1:8791" >> /etc/secondbrain/env
+      grep -qE '^ZEN_AGENT_TOKEN=.+' /etc/secondbrain/env \
+        || echo "ZEN_AGENT_TOKEN=$(grep -m1 -E '^ZEN_SERVE_TOKEN=' /etc/secondbrain/env | cut -d= -f2-)" >> /etc/secondbrain/env
+    else
+      echo "! zen-agent build failed; the chat page's zen-agent harness will stay unreachable (Claude Code chat is unaffected)"
+    fi
+  fi
+fi
+
 # ---- CLI wrappers on the app user's PATH, so an agent's `Bash(cli-org *)` rule matches ----
 WRAPPERS=()
 has org && WRAPPERS+=(cli-org)
 has board && WRAPPERS+=(cli-board)
 has projects && WRAPPERS+=(cli-projects)
 has social && WRAPPERS+=(cli-social)
+[ "$ZEN_BUILT" = 1 ] && WRAPPERS+=(zen-agent)
 if [ "${#WRAPPERS[@]}" -gt 0 ]; then
   install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.local/bin"
   for w in "${WRAPPERS[@]}"; do
@@ -324,9 +352,12 @@ has projects && unit secondbrain-projects-render
 if has map; then unit secondbrain-map-build; unit secondbrain-metrics; fi
 has livestream && unit secondbrain-livestream
 has social && unit secondbrain-social
+[ "$ZEN_BUILT" = 1 ] && render "$APP_DIR/deploy/zen-agent-serve.service" > /etc/systemd/system/zen-agent-serve.service
 # org-dispatch: only with the org module and ORG_DISPATCH=on (here or in the server's env file).
 grep -qsE '^ORG_DISPATCH=on$' /etc/secondbrain/env && WITH_DISPATCH=on
 if has org && [ "$WITH_DISPATCH" = on ]; then unit secondbrain-dispatch; fi
+# summaries: only with SUMMARIES=on in the server's env file (it needs a model to call: docs/summaries.md).
+grep -qsE '^SUMMARIES=on$' /etc/secondbrain/env && has usage && unit secondbrain-summarize
 [ "$WITH_EMBED" = 1 ] && unit secondbrain-embed
 [ "$WITH_BACKUP" = 1 ] && unit secondbrain-db-backup
 [ "$WITH_VAULT_SYNC" = 1 ] && unit secondbrain-vault-sync
@@ -370,6 +401,25 @@ caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 chown -R caddy:caddy /var/log/caddy
 systemctl daemon-reload
 systemctl enable caddy secondbrain >/dev/null
+# The chat host's kanban tools read BOARD_TOKEN (zen.json kanban.tokenEnv). It goes in its own 0600 file and a
+# drop-in for this one unit, never in /etc/secondbrain/env: BOARD_URL+BOARD_TOKEN in the shared env would switch
+# every process's cli-board to the HTTPS door. Minted once, as the owner; revoke with `cli-board token revoke`.
+if [ "$ZEN_BUILT" = 1 ] && has board && [ ! -s /etc/secondbrain/zen-serve.env ]; then
+  ZEN_BOARD_OUT=$(sudo -u "$APP_USER" -H "$APP_HOME/.local/bin/cli-board" token create "${ZEN_BOARD_AGENT:-sol}" --label "zen chat serve" 2>&1) || true
+  ZEN_BOARD_TOKEN=$(printf '%s' "$ZEN_BOARD_OUT" | grep -o 'sbb_[A-Za-z0-9_-]*' | head -1)
+  if [ -n "$ZEN_BOARD_TOKEN" ]; then
+    install -m 0600 -o "$APP_USER" -g "$APP_USER" /dev/null /etc/secondbrain/zen-serve.env
+    printf 'BOARD_TOKEN=%s\n' "$ZEN_BOARD_TOKEN" > /etc/secondbrain/zen-serve.env
+  else
+    echo "! no board token minted for zen-agent serve (ZEN_BOARD_AGENT, default sol, must be a roster member); its kanban tools stay off"
+  fi
+fi
+if [ "$ZEN_BUILT" = 1 ] && [ -s /etc/secondbrain/zen-serve.env ]; then
+  install -d /etc/systemd/system/zen-agent-serve.service.d
+  printf '[Service]\nEnvironmentFile=/etc/secondbrain/zen-serve.env\n' > /etc/systemd/system/zen-agent-serve.service.d/board-token.conf
+  systemctl daemon-reload
+fi
+[ "$ZEN_BUILT" = 1 ] && systemctl enable --now zen-agent-serve >/dev/null
 for t in "${TIMERS[@]}"; do systemctl enable --now "$t" >/dev/null; done
 systemctl reload-or-restart caddy
 

@@ -13,7 +13,7 @@ A module that is off mounts no API routes, shows no nav link and gets no timers 
 | [`projects`](#projects) | `/projects` | A project tracker: divisions, teams, projects, features, verifications |
 | [`org`](#org) | `/org` | A message board for a company of named AI agents, with you as the human member |
 | [`board`](#board) | `/board` | The kanban board: cards for people and agents, claimed and finished by lanes, with per-device tokens |
-| [`agents`](#agents) | `/agents`, `/cron` | Agent chats, Hermes history and cron history, served by an agent-hub (and its kanban board until the `board` module replaces it) |
+| [`agents`](#agents) | `/agents`, `/cron` | Agent chats, Hermes history and cron history, served by an agent-hub |
 | [`usage`](#usage) | `/usage` | What your agents cost: tokens and plan usage by bot, task and project |
 | [`map`](#map) | `/map` | A 3D map of your vault, projects and goals, with daily metrics |
 | [`tv`](#tv) | `/tv` | A player for video episodes kept in your vault |
@@ -68,15 +68,15 @@ Three doors, one identity: the page acts as the owner; any machine reaches the b
 | Page | `/board`: columns, filters by board, project, assignee and kind, the card with its contract, comments, dependencies and runs; live over SSE |
 | CLI | `cli-board` (also `secondbrain board`): list, show, create, comment, assign, move, link, claim, heartbeat, finish, flags, watch, token, import |
 | Security | The same `sb_org` role and row-level security as the org; team boards are visible to the team and the owner |
-| Settings | `BOARD_LEASE_MINUTES`, `BOARD_HERMES_PROJECTION` (server); `BOARD_URL`, `BOARD_TOKEN` (any other machine) |
+| Settings | `BOARD_LEASE_MINUTES` (server); `BOARD_URL`, `BOARD_TOKEN` (any other machine) |
 | Timers (server) | `board-reclaim` (every 5 minutes); `deploy.sh` puts `cli-board` on the PATH |
 | Skill | `org-member` |
 
-Moving from the Hermes board: `cli-board import --hermes` mirrors its cards (`--check` reports drift without writing); with `BOARD_HERMES_PROJECTION=on` every card the engine makes is also created there, so the Hermes dispatcher keeps running until the lanes claim through the engine.
+Moving from the Hermes board (done; kept for anyone with an old export): `cli-board import <file.json>` is a legacy migration tool that upserts cards from a saved `hermes kanban list --json` export (`--check` reports drift without writing). The engine never calls `hermes` and no longer mirrors cards into it.
 
 ## agents
 
-Views over an **agent-hub** service that you run separately: Claude Code chats, Hermes history, and (until the `board` module takes it over) its kanban board. Also the `/cron` page of scheduled jobs.
+Views over an **agent-hub** service that you run separately: Claude Code chats, Hermes history. Also the `/cron` page of scheduled jobs.
 
 The Chat tab has a harness switch. **Claude Code** chats go through the agent-hub. **zen-agent** chats go through `zen-agent serve` ([zen-agent.md](zen-agent.md#36-as-a-chat-host)), a loopback process the app proxies under `/api/zen` the same way: the page lists the providers whose key is set on the server (and, for local endpoints such as a laptop over Tailscale, whether they answer right now), the roster's personas, and starts a session with a persona, a model, a tool-access level (full, or read-only: skills and knowledge) and a thinking level. The session then streams its trace as it is written: thinking, each tool call with its timing, skill reads, guard blocks, compactions and the turn's tokens and cost. A session's settings are fixed for its life; "Continue as new session" starts another one with other settings, seeded with the conversation so far. No key passes through the page: adding a provider is an environment change on the server.
 
@@ -91,12 +91,12 @@ Without an agent-hub or a `zen-agent serve`, the live tabs say so and the rest s
 
 ## usage
 
-A ledger of Claude Code, zen-agent and Hermes usage: tokens per run, which bot, why it woke, which card and project, the work type, runtime and host; plus plan percentages and API credit balances. zen-agent runs come from their traces (`ZEN_SESSIONS_DIR`, default `<vault>/.zen/sessions`) with the size of every system-prompt part and a real dollar cost, which the page shows; Claude Code runs on a subscription never show dollars.
+A ledger of Claude Code, zen-agent and Hermes usage: tokens per run, which bot, why it woke, which card and project, the work type, runtime and host; plus plan percentages and API credit balances. zen-agent runs come from their traces (`ZEN_SESSIONS_DIR`, default `<vault>/.zen/sessions`) with the size of every system-prompt part and a real dollar cost, which the page shows; Claude Code runs on a subscription never show dollars. The Summaries tab shows one model-written summary per finished session with counted metrics, and holds the facts a session proposes until you approve them ([summaries.md](summaries.md)).
 
 | | |
 |---|---|
 | Page | `/usage`, with filters in the URL |
-| CLI | `secondbrain usage-sync`, `usage-push`, `usage-backfill`, `credits` |
+| CLI | `secondbrain usage-sync`, `usage-push`, `usage-backfill`, `credits`, `summarize`, `summarize-eval` |
 | Timers (server) | `usage-sync`, `credits-sync`, and the usage importer |
 
 ## map

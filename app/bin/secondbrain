@@ -439,6 +439,17 @@ cmd_archive_steps() {
   ensure_deps; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-archive-steps.js" "$@"
 }
+cmd_summarize() {
+  # One summary per finished agent session (agent_summaries). Droplet only: it reads the archive.
+  # --digest [HOURS] prints the stand-up's markdown instead. Providers and fallbacks: docs/summaries.md.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-summarize.js" "$@"
+}
+cmd_summarize_eval() {
+  # Grade summaries: --golden [DIR] (real provider chain), --references (no model), --sample N (stored ones); --judge, --min, --out.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-summarize-eval.js" "$@"
+}
 cmd_archive() {
   # Writes only archive_* tables, which nothing else touches, so it runs
   # directly rather than through the server's scan queue.
@@ -501,6 +512,8 @@ secondbrain archive  archive Claude Code + Hermes conversations to B2 and Postgr
 secondbrain ledger   this machine's agent ledger: run | status | install --server URL --token T --host SLUG
 secondbrain ingest-device  (server) device tokens for ledgers: add <host> | list | revoke <id>
 secondbrain archive-steps  fill step columns of old archive rows (--redact: remove stored keys; --dry-run)
+secondbrain summarize  summarize finished agent sessions with a local model, fallbacks in config (--digest for the stand-up)
+secondbrain summarize-eval  grade summaries against transcripts: --golden | --references | --sample N [--judge]
 secondbrain agents-sync  copy Hermes chats and cron history into Postgres
 secondbrain usage-sync   this machine's Claude Code usage into the ledger
 secondbrain usage-push   send new Claude Code usage to the droplet ledger (Mac)
@@ -532,6 +545,8 @@ case "${1:-start}" in
   ledger)        cmd_ledger "${@:2}" ;;
   ingest-device) cmd_ingest_device "${@:2}" ;;
   archive-steps) cmd_archive_steps "${@:2}" ;;
+  summarize)     cmd_summarize "${@:2}" ;;
+  summarize-eval) cmd_summarize_eval "${@:2}" ;;
   inventory)     cmd_inventory "${@:2}" ;;
   org)           cmd_org "${@:2}" ;;
   org-dispatch)  cmd_org_dispatch "${@:2}" ;;

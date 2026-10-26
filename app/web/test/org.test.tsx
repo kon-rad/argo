@@ -155,7 +155,7 @@ describe('Org page', () => {
     const calls = mount('/org?channel=platform');
     await screen.findByText('shipped: the board');
     expect(screen.getByText('stand-up')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'task t_abc123' }).getAttribute('href')).toBe('/agents/board/t_abc123');
+    expect(screen.getByRole('link', { name: 'task t_abc123' }).getAttribute('href')).toBe('/board/t_abc123');
     expect(screen.queryByText('good')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'show 1 reply' }));
     expect(screen.getByText('good')).toBeTruthy();

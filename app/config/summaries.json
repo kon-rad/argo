@@ -1,0 +1,10 @@
+{
+  "chain": [
+    { "provider": "ollama", "model": "qwen3.6:35b-a3b", "baseUrlEnv": "SUMMARIES_M1_URL", "timeoutMs": 240000, "body": { "reasoning_effort": "none" } },
+    { "provider": "together", "model": "deepseek-ai/DeepSeek-V4.1-Flash", "timeoutMs": 120000 },
+    { "provider": "openrouter", "model": "google/gemini-2.5-flash", "timeoutMs": 120000 }
+  ],
+  "minSteps": 4,
+  "quietMinutes": 30,
+  "maxInputChars": 24000
+}

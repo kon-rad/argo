@@ -6,7 +6,8 @@ import { query } from '../db.js';
  * not an agent, so no RLS identity applies.
  */
 
-export interface ZenAgentRow { name: string; team_slug: string | null; role: string; routines: Routine[] }
+/** `model` is the effective one (override ?? roster); only the wake query fills it. */
+export interface ZenAgentRow { name: string; team_slug: string | null; role: string; routines: Routine[]; model?: string | null }
 export interface Routine { name: string; at: string; days?: number[]; task_file: string }
 export interface MessageRow {
   id: number; channel_slug: string; thread_id: number | null; author: string; kind: string; body: string;
@@ -44,9 +45,9 @@ export async function tokensToday(tz: string): Promise<number> {
  */
 export async function zenAgentsWithOpenWakeups(): Promise<ZenAgentRow[]> {
   const { rows } = await query<ZenAgentRow>(
-    `SELECT a.name, a.team_slug, a.role, a.routines
-       FROM org_agents a
-      WHERE a.runtime = 'zen-agent' AND a.retired_at IS NULL
+    `SELECT a.name, a.team_slug, a.role, a.routines, e.model
+       FROM org_agents a JOIN org_agents_effective e ON e.name = a.name
+      WHERE e.runtime = 'zen-agent' AND a.retired_at IS NULL AND NOT e.paused
         AND EXISTS (SELECT 1 FROM org_wakeups w WHERE w.agent_name = a.name AND w.done_at IS NULL AND w.claimed_at IS NULL)
       ORDER BY a.name`);
   return rows;

@@ -10,6 +10,7 @@ import StackedBars, { type BarSeries } from '../../components/charts/StackedBars
 import { bucketEnd, formatTokens, money, planText, TYPE_SERIES } from './format.js';
 import { zoned } from '../../lib/time.js';
 import AgentSessions from './AgentSessions.js';
+import Summaries from './Summaries.js';
 import Running from './Running.js';
 
 const RANGES = [{ label: '24 h', days: 1 }, { label: '7 d', days: 7 }, { label: '30 d', days: 30 }, { label: '90 d', days: 90 }];
@@ -303,7 +304,7 @@ function UsageOverview() {
                   <td><Link className="underline" to={`/usage/session/${r.host}/${encodeURIComponent(r.session_id)}?source=${r.runtime ?? 'claude-code'}`}>{r.started_at ? zoned(r.started_at, tz) : (r.run_id ?? r.session_id.slice(0, 8))}</Link>{r.runtime && r.runtime !== 'claude-code' ? <span className="ml-1 text-xs text-[var(--ink-faint)]" title={r.tier ? `${r.runtime}, tier ${r.tier}` : r.runtime}>{r.runtime}</span> : null}</td>
                   <td>{w ? <Pick dim={w.dim} value={w.value} onPick={addFilter}>{r.agent_name ? <Link className="underline" to={`/org/agents/${r.agent_name}`} onClick={(e) => e.stopPropagation()}>{r.agent_name}</Link> : r.lane}</Pick> : ''}{r.resumed ? <span className="text-xs text-[var(--ink-faint)]" title="resumed its session"> ↻</span> : null}</td>
                   <td><Pick dim="reason" value={r.reason} onPick={addFilter} /></td>
-                  <td>{r.task_id ? <Link className="underline" to={`/agents/board/${r.task_id}`} title={r.card_title ?? ''}>{r.task_id}</Link> : ''}</td>
+                  <td>{r.task_id ? <Link className="underline" to={`/board/${r.task_id}`} title={r.card_title ?? ''}>{r.task_id}</Link> : ''}</td>
                   <td><Pick dim="project" value={r.project_slug} onPick={addFilter}>{r.project_slug}{r.feature_slug ? `/${r.feature_slug}` : ''}</Pick></td>
                   <td><Pick dim="work_type" value={r.work_type} onPick={addFilter} /></td>
                   <td className="text-right">{t === null ? '' : formatTokens(t)}</td>
@@ -357,13 +358,13 @@ function UsageOverview() {
 /** Two views on one route: the spend overview (the default) and what is running on the server now (`?view=running`). */
 export default function Usage() {
   const [sp, setSp] = useSearchParams();
-  const view = sp.get('view') === 'running' ? 'running' : 'usage';
-  const pick = (v: 'usage' | 'running') => {
+  const view = sp.get('view') === 'running' ? 'running' : sp.get('view') === 'summaries' ? 'summaries' : 'usage';
+  const pick = (v: 'usage' | 'running' | 'summaries') => {
     const next = new URLSearchParams(sp);
     if (v === 'usage') next.delete('view'); else next.set('view', v);
     setSp(next, { replace: true });
   };
-  const tab = (v: 'usage' | 'running', label: string) => (
+  const tab = (v: 'usage' | 'running' | 'summaries', label: string) => (
     <button type="button" role="tab" aria-selected={view === v} onClick={() => pick(v)}
       className={`px-3 py-1.5 text-sm ${view === v ? 'border-b-2 border-[var(--ink)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}>{label}</button>
   );
@@ -371,10 +372,12 @@ export default function Usage() {
     <div className="flex h-full flex-col">
       <div role="tablist" aria-label="Usage views" className="flex shrink-0 gap-1 border-b border-[var(--rule)] px-4 pt-2">
         {tab('usage', 'Usage')}
+        {tab('summaries', 'Summaries')}
         {tab('running', 'Running now')}
       </div>
       <div className="min-h-0 flex-1">
-        {view === 'running' ? <div className="h-full overflow-auto p-4"><Running /></div> : <UsageOverview />}
+        {view === 'running' ? <div className="h-full overflow-auto p-4"><Running /></div>
+          : view === 'summaries' ? <div className="h-full overflow-auto p-4"><Summaries /></div> : <UsageOverview />}
       </div>
     </div>
   );

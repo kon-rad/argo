@@ -21,7 +21,6 @@ import {
   getAgent,
   getThread,
   handoff,
-  hermesProjection,
   importOrg,
   KINDS,
   listChannels,
@@ -37,12 +36,12 @@ import {
   standup,
   whoami,
   type Agent,
-  type KanbanRunner,
   type Kind,
   type Message,
   type TaskLink,
 } from './org.js';
-import { dispatchState, pauseAgents, resumeAgents, setDispatch } from './board.js';
+import { clearOverride, dispatchState, listOverrides, pauseAgents, pauseLane, resumeAgents, setDispatch, setOverride } from './board.js';
+import { breakerLimitsFromEnv, runBreaker } from './breaker.js';
 import {
   forget,
   listApprovals,
@@ -99,6 +98,10 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   agents                                   the org chart (no identity needed)
   pause <agent|team|all> --reason "..." [--until "when"]   owner or dispatch bot only: stop new claims for a bot, a team's bots, or all bots
   resume <agent|team|all>                  owner or dispatch bot only: clear the pause; the next claim succeeds
+  pause lane:<runtime> / resume lane:<runtime>   the same for every bot whose effective runtime is that one (claude-code, zen-agent)
+  set <agent> --runtime R --model M [--effort E]   owner only: override the roster for one bot from its next claim, no deploy; set <agent> --clear removes it
+  overrides                                owner or any bot: the overrides in force
+  breaker [--dry-run]                      credit breaker: pause the zen-agent lane under the OpenRouter balance minimum, the claude-code lane after two rate-limit blocks in a row (owner or dispatch bot)
   board status [board] | board pause --reason "..." | board resume [board]   the board-wide dispatch switch (owner or dispatch bot only)
   wakeups [--all]                          open wakeups for you (or everyone with --all)
   import <org.json>                        load the compiled org file (agents, teams, channels); idempotent
@@ -264,9 +267,6 @@ async function rerenderCore(agent: string): Promise<void> {
   await writeCore(config.vaultRoot, agent, memorySettingsFor(config.vaultRoot, agent).memory.core_budget_tokens).catch(() => null);
 }
 
-/** The Hermes projection runner when this machine mirrors cards into the Hermes board (BOARD_HERMES_PROJECTION=on or ORG_KANBAN_CMD), else null. */
-export const kanbanRunner = hermesProjection;
-
 function formatTask(t: TaskLink): string {
   return `${t.task_id}  ${t.assignee.padEnd(8)} ${(t.project_slug ?? '-') + (t.feature_slug ? `/${t.feature_slug}` : '')}${t.work_type ? `  [${t.work_type}]` : ''}  ${t.title}  (by ${t.created_by}, ${when(new Date(t.created_at))})`;
 }
@@ -429,7 +429,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       const chart = await orgChart();
       if (json) return (out(JSON.stringify(chart, null, 2)), 0);
       for (const a of chart.agents) {
-        out(`${a.name.padEnd(10)} ${a.role}${a.team_name ? `  [${a.team_name}${a.is_lead ? ', lead' : ''}]` : ''}${a.reports_to ? `  reports to ${a.reports_to}` : ''}  (${a.runtime}${a.model ? `, ${a.model}` : ''})${a.paused ? `  PAUSED: ${a.paused_reason ?? 'no reason given'}` : ''}`);
+        out(`${a.name.padEnd(10)} ${a.role}${a.team_name ? `  [${a.team_name}${a.is_lead ? ', lead' : ''}]` : ''}${a.reports_to ? `  reports to ${a.reports_to}` : ''}  (${a.runtime}${a.model ? `, ${a.model}` : ''}${a.effort ? `, effort ${a.effort}` : ''}${a.overridden ? ', override' : ''})${a.paused ? `  PAUSED: ${a.paused_reason ?? 'no reason given'}` : ''}`);
       }
       return 0;
     }
@@ -440,8 +440,36 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       const until = str(opts.until);
       if (!scope) throw new OrgError(`${cmd} <agent|team|all> --reason "..." [--until "when"]`);
       const by = identityName();
-      const n = cmd === 'pause' ? await pauseAgents(by, scope, true, reason, until) : await resumeAgents(by, scope);
+      const lane = /^lane:(.+)$/.exec(scope)?.[1];
+      const n = lane ? await pauseLane(by, lane, cmd === 'pause', reason)
+        : cmd === 'pause' ? await pauseAgents(by, scope, true, reason, until) : await resumeAgents(by, scope);
       out(json ? JSON.stringify({ scope, paused: cmd === 'pause', agents: n }) : `${cmd === 'pause' ? 'paused' : 'resumed'} ${n} agent(s) in ${scope}`);
+      return 0;
+    }
+    case 'set': {
+      const [agent] = pos;
+      if (!agent) throw new OrgError('set <agent> --runtime R --model M [--effort E] | set <agent> --clear');
+      const by = identityName();
+      if (opts.clear === true) {
+        const had = await clearOverride(by, agent);
+        out(json ? JSON.stringify({ agent, cleared: had }) : had ? `${agent}: override cleared; org.yaml applies again` : `${agent}: no override to clear`);
+        return 0;
+      }
+      const o = await setOverride(by, agent, { runtime: str(opts.runtime), model: str(opts.model), effort: str(opts.effort) });
+      out(json ? JSON.stringify(o) : `${agent}: override set (${[o.runtime && `runtime ${o.runtime}`, o.model && `model ${o.model}`, o.effort && `effort ${o.effort}`].filter(Boolean).join(', ')}); applies on the next claim`);
+      return 0;
+    }
+    case 'overrides': {
+      const os = await listOverrides();
+      if (json) return (out(JSON.stringify(os, null, 2)), 0);
+      out(os.length ? os.map((o) => `${o.agent.padEnd(10)} ${[o.runtime, o.model, o.effort && `effort ${o.effort}`].filter(Boolean).join(' ')}  set by ${o.set_by} ${when(new Date(o.set_at))}`).join('\n') : 'no overrides');
+      return 0;
+    }
+    case 'breaker': {
+      // The credit breaker: run from the dispatcher's tick, or by hand with --dry-run to see what it would pause.
+      const acts = await runBreaker(identityName(), breakerLimitsFromEnv(), { dryRun: opts['dry-run'] === true });
+      if (json) return (out(JSON.stringify(acts)), 0);
+      out(acts.length ? acts.map((a) => `${a.runtime}: ${a.reason} (${opts['dry-run'] === true ? 'dry run' : `${a.paused} bot(s) paused`})`).join('\n') : 'breaker: nothing to pause');
       return 0;
     }
     case 'board': {
@@ -607,7 +635,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         const r = await createTask(await me(), {
           assignee: assignee === 'none' ? null : assignee, title, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, repo: str(opts.repo),
           body: str(opts.body), board: str(opts.board), priority: num(opts.priority, 'priority'), deps: str(opts.after)?.split(',').map((x) => x.trim()).filter(Boolean), run,
-        }, kanbanRunner());
+        });
         if (json) out(JSON.stringify(r));
         else out(`card ${r.task_id} ${r.link.assignee ? `for ${r.link.assignee}` : 'unassigned'}: ${r.link.title}${r.link.project_slug ? ` (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})` : ''} [${r.card.status}]${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
         return 0;
@@ -618,7 +646,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         if (!card || !assignee) throw new OrgError('task assign <card> <bot> [--project <slug>] [--feature f]');
         const r = await assignTask(await me(), {
           taskId: card, assignee, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, repo: str(opts.repo), board: str(opts.board), run,
-        }, kanbanRunner());
+        });
         if (json) out(JSON.stringify(r));
         else out(`card ${r.task_id} now ${r.link.assignee}'s: ${r.link.title}${r.link.project_slug ? ` (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})` : ''}${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
         return 0;
@@ -626,7 +654,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       if (sub === 'redo') {
         const [, card, changes] = pos;
         if (!card || !changes) throw new OrgError('task redo <review card> "<what to change>"');
-        const r = await redoTask(await me(), card, changes, kanbanRunner(), run);
+        const r = await redoTask(await me(), card, changes, run);
         if (json) out(JSON.stringify(r));
         else out(r.escalated ? `round ${r.rounds} refused: escalated to the lead${r.message ? ` (message ${r.message.id})` : ''}` : `round ${r.rounds}: card ${r.task_id} for the builder; ${card} waits for it${r.message ? `; mention ${r.message.id}` : ''}`);
         return 0;
@@ -653,7 +681,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         if (!name || !project) throw new OrgError('graph apply <template> --project <slug> [--feature f] [--team t] [--dry-run]');
         const g = graphs[name];
         if (!g) throw new OrgError(`no graph template "${name}" (cli-org graph list)`);
-        const r = await applyGraph(await me(), g, { project, feature: str(opts.feature), team: str(opts.team), board: str(opts.board), dryRun: opts['dry-run'] === true, run }, kanbanRunner());
+        const r = await applyGraph(await me(), g, { project, feature: str(opts.feature), team: str(opts.team), board: str(opts.board), dryRun: opts['dry-run'] === true, run });
         if (json) out(JSON.stringify(r));
         else {
           out(`${opts['dry-run'] === true ? 'would create' : 'created'} ${r.cards.length} cards for ${project}${str(opts.feature) ? `/${str(opts.feature)}` : ''} (${name}):`);

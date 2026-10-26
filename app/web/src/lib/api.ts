@@ -363,15 +363,7 @@ export interface TelegramStatus {
   bots_distinct: boolean;
 }
 
-export interface HubAgent {
-  name: string;
-  family: 'claude' | 'hermes' | 'org';
-  description?: string;
-  model?: string;
-  team?: string | null;
-}
-
-/** A card for a bot with its tracker project and feature (task_links); status lives on the kanban. */
+/** A card for a bot with its tracker project and feature (GET /api/org/tasks, read from the board's cards). */
 export interface TaskLink {
   task_id: string;
   board: string;
@@ -386,29 +378,6 @@ export interface TaskLink {
   kind?: string;
   work_type?: string | null;
   created_at: string;
-}
-
-export interface KanbanTask {
-  id: string;
-  title: string;
-  body: string | null;
-  assignee: string | null;
-  status: string;
-  priority: number;
-  created_by: string | null;
-  created_at: number;
-  started_at: number | null;
-  completed_at: number | null;
-  result: string | null;
-}
-
-export interface KanbanTaskDetail {
-  task: KanbanTask;
-  latest_summary: string | null;
-  parents: string[];
-  children: string[];
-  comments: { author: string; body: string; created_at: number }[];
-  events: { kind: string; payload: Record<string, unknown> | null; created_at: number }[];
 }
 
 // ---- the board module: the kanban record in the engine (/api/board) ----
@@ -613,12 +582,12 @@ export interface UsageCredits {
 }
 export interface UsageSeriesRow { bucket: string; key: string; input: number; cache_write: number; cache_read: number; output: number; calls: number }
 /** The labels every call carries (usage_facts); a filter is `dimension=a,b` and a group is one dimension. */
-export const USAGE_DIMENSIONS = ['agent', 'team', 'reason', 'action', 'work_type', 'project', 'feature', 'task', 'host', 'headless', 'surface', 'lane', 'model', 'source'] as const;
+export const USAGE_DIMENSIONS = ['agent', 'team', 'reason', 'action', 'work_type', 'project', 'feature', 'task', 'host', 'headless', 'surface', 'lane', 'model', 'provider', 'source'] as const;
 export type UsageDimension = (typeof USAGE_DIMENSIONS)[number];
 export type UsageFilters = Partial<Record<UsageDimension, string[]>>;
 export const USAGE_DIMENSION_LABELS: Record<UsageDimension, string> = {
   agent: 'bot', team: 'team', reason: 'woken by', action: 'action', work_type: 'work', project: 'project', feature: 'feature', task: 'card',
-  host: 'host', headless: 'headless', surface: 'surface', lane: 'lane', model: 'model', source: 'runtime',
+  host: 'host', headless: 'headless', surface: 'surface', lane: 'lane', model: 'model', provider: 'provider', source: 'runtime',
 };
 export function usageFilterParams(f: UsageFilters): Record<string, string> {
   return Object.fromEntries(USAGE_DIMENSIONS.filter((d) => f[d]?.length).map((d) => [d, f[d]!.join(',')]));
@@ -659,6 +628,27 @@ export interface RunningRow {
 }
 export interface RunningNow { host: string; at: string; rows: RunningRow[]; configured: Record<string, number> }
 export interface UsageHost { slug: string; display: string; kind: 'laptop' | 'server' | 'pi'; chip: string | null; notes: string | null }
+/** One summary of a finished agent session (`secondbrain summarize`). touched and metrics are computed, the rest is model-written. */
+export interface AgentSummary {
+  id: number; session_id: number; harness: string | null; host: string; profile: string | null; project: string | null;
+  started_at: string | null; ended_at: string | null; request: string; done: string; learned: string; open_items: string;
+  outcome: 'finished' | 'partial' | 'blocked' | 'failed' | 'unknown';
+  touched: { files_edited: string[]; files_read: number; cards: string[]; tools: Record<string, number>; skills: string[] };
+  metrics: { steps: number; prompts: number; tool_calls: number; error_steps: number; duration_s: number | null; calls: number;
+    input_tokens: number; cache_write_tokens: number; cache_read_tokens: number; output_tokens: number; models: string[] };
+  writer_provider: string | null; writer_model: string | null; title: string | null; external_id: string; source: string; proposed_facts: number;
+}
+export interface SummaryFilters { outcome?: string[]; harness?: string[]; host?: string[]; project?: string[]; q?: string }
+export interface SummaryOverview {
+  from: string; to: string; tz: string; summarized: number; skipped: number; proposed_facts: number;
+  outcomes: { key: string; n: number }[];
+  days: { day: string; sessions: number; finished: number; stuck: number; tokens: number; errors_per_session: number }[];
+  writers: { key: string; n: number; input: number; output: number }[];
+}
+export interface SummaryFact {
+  id: number; summary_id: number; subject: string; claim: string; status: 'proposed' | 'promoted' | 'rejected'; fact_id: number | null;
+  project: string | null; harness: string | null; host: string; session_id: number; external_id: string; source: string; request: string;
+}
 /** One row of /usage/agent-sessions: a session from any harness and host. `cost_usd` only for non-Claude harnesses (Hermes's own estimate). */
 export interface AgentSessionRow {
   id: number; source: string; harness: string; profile: string | null; provider: string | null; host: string;
@@ -1247,18 +1237,6 @@ export const api = {
   telegram: () => request<TelegramStatus>('/hub/telegram'),
   setTelegram: (change: { default: 'claude' | 'hermes' } | { claude: 'on' | 'off' }) =>
     request<TelegramStatus>('/hub/telegram', undefined, json('POST', change)),
-  hubAgents: () => request<{ lanes: HubAgent[]; profiles: HubAgent[]; bots?: HubAgent[] }>('/hub/agents'),
-  boards: () => request<{ boards: { slug: string; name: string }[] }>('/hub/boards'),
-  board: (board: string) => request<{ board: string; tasks: KanbanTask[] }>('/hub/board', { board }),
-  task: (id: string, board: string) => request<KanbanTaskDetail>(`/hub/tasks/${id}`, { board }),
-  taskLog: (id: string, offset: number) => request<EventPage>(`/hub/tasks/${id}/log`, { offset }),
-  createTask: (t: { board: string; title: string; body: string; assignee: string; project?: string; feature?: string }) =>
-    request<KanbanTask & { link?: TaskLink }>('/hub/tasks', undefined, json('POST', t)),
-  commentTask: (id: string, board: string, text: string) =>
-    request<{ ok: true }>(`/hub/tasks/${id}/comment`, undefined, json('POST', { board, text })),
-  /** Moves a card to a lane, a Hermes profile or a bot (a bot needs the tracker project; "none" unassigns). */
-  assignTask: (id: string, t: { board: string; assignee: string; project?: string; feature?: string }) =>
-    request<KanbanTask & { link?: TaskLink }>(`/hub/tasks/${id}/assign`, undefined, json('POST', t)),
   claudeChats: () => request<{ chats: ClaudeChat[] }>('/hub/chats'),
   chatPresets: () => request<{ presets: ChatPreset[] }>('/presets'),
   putChatPreset: (name: string, body: Pick<ChatPreset, 'harness' | 'config'>) =>
@@ -1335,6 +1313,12 @@ export const api = {
   usageSeries: (p: { from: string; to: string; bucket: 'hour' | 'day'; tz: string; group: 'type' | UsageDimension }, f: UsageFilters = {}) =>
     request<{ bucket: string; tz: string; rows: UsageSeriesRow[] }>('/usage/series', { ...p, ...usageFilterParams(f) }),
   usageFacets: (from: string, to: string, f: UsageFilters = {}) => request<UsageFacets>('/usage/facets', { from, to, ...usageFilterParams(f) }),
+  summaries: (from: string, to: string, f: SummaryFilters = {}) =>
+    request<{ summaries: AgentSummary[] }>('/summaries', { from, to, q: f.q, outcome: f.outcome?.join(','), harness: f.harness?.join(','), host: f.host?.join(','), project: f.project?.join(',') }),
+  summaryOverview: (from: string, to: string, tz: string) => request<SummaryOverview>('/summaries/overview', { from, to, tz }),
+  summaryFacts: (status: 'proposed' | 'promoted' | 'rejected' = 'proposed') => request<{ facts: SummaryFact[] }>('/summaries/facts', { status }),
+  promoteSummaryFact: (id: number) => request<{ id: number; fact_id: number }>(`/summaries/facts/${id}/promote`, undefined, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
+  rejectSummaryFact: (id: number) => request<{ id: number }>(`/summaries/facts/${id}/reject`, undefined, { method: 'POST' }),
   usageHosts: () => request<{ hosts: UsageHost[] }>('/usage/hosts'),
   usageSessions: (from: string, to: string, f: UsageFilters = {}) => request<{ sessions: UsageSessionRow[] }>('/usage/sessions', { from, to, ...usageFilterParams(f) }),
   usageSession: (host: string, externalId: string, source: string) =>
