@@ -95,6 +95,16 @@ export function sumUsage(messages: unknown[]): UsageTotals {
   return t;
 }
 
+/**
+ * What the token budget counts: tokens the run paid for as new work. A cache read is the same prompt read again on
+ * the next turn (a provider bills it at a fraction), so counting it ends a run after a handful of turns while it has
+ * spent almost nothing: an 11-turn run read an 18k-token prompt from cache 11 times (197 760 tokens) and hit a
+ * 200 000 cap at $0.0014. `usage.total` still includes it, so the ledger and the trace report what was processed.
+ */
+export function budgetTokens(u: Pick<UsageTotals, 'input' | 'output' | 'cacheWrite'>): number {
+  return u.input + u.output + u.cacheWrite;
+}
+
 export function lastText(messages: unknown[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i] as AssistantMessage;
@@ -220,7 +230,7 @@ export class ZenAgent {
         if (message.stopReason === 'error' || message.stopReason === 'aborted') return undefined;
         const usage = sumUsage(this.agent.state.messages);
         const minutes = (Date.now() - this.startedAt) / 60_000;
-        if (this.turns >= this.budget.turns || usage.total >= this.budget.tokens || minutes >= this.budget.minutes) {
+        if (this.turns >= this.budget.turns || budgetTokens(usage) >= this.budget.tokens || minutes >= this.budget.minutes) {
           this.stopped = 'budget';
           return { action: 'end' };
         }

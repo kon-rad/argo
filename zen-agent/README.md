@@ -51,7 +51,7 @@ Secrets come from the environment only: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `
 | `persona.definitions` | `.claude/agents` | `<name>.md`, frontmatter dropped: the identity Claude Code runs the agent with |
 | `persona.memory` | `.agents/org/memory` | `<name>.md`: the playbook, read in full at the start of a run |
 | `tools` | all seven | `fs`, `shell`, `skills`, `knowledge`, `kanban`, `org`, `subagent`. A set whose backend is not configured contributes nothing |
-| `budget` | 40 turns, 400 000 tokens, 30 minutes | Per run. `--max-turns`, `--max-tokens`, `--max-minutes`, or a card's `## Budget` line |
+| `budget` | 40 turns, 400 000 tokens, 30 minutes | Per run. Tokens are input + output + cache writes; a cache read (the same prompt read again each turn) is not counted, so a long run does not stop early while spending almost nothing. `--max-turns`, `--max-tokens`, `--max-minutes`, or a card's `## Budget` line |
 | `context.cap` | `0.6` | Fraction of the model's context window that triggers compaction |
 | `context.keepTurns` | `6` | User turns kept verbatim after a compaction |
 | `context.parts` | rules 6000, persona 3000, playbook 2000, skills 1500, handoff 500, task 4000, thread 2000, tracker 1500, github 1500, recall 2000 | Token caps per prompt part, the fetched parts included; 0 is unlimited. `handoff` is what the previous run concluded (`--handoff-file`), so a fresh run needs no resumed transcript |

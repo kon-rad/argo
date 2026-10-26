@@ -177,7 +177,11 @@ class Bridge:
         if result.get("error"):
             reply += f"\n\n(error: {str(result['error'])[:300]})"
         if self.cfg.footer and usage.get("total") is not None:
-            reply += f"\n\n[{usage['total']} tokens, {result.get('turns')} turns]"
+            # New work, as the run's budget counts it; the cached re-reads are shown apart because they are cheap.
+            has_split = usage.get("input") is not None or usage.get("output") is not None
+            new = ((usage.get("input") or 0) + (usage.get("output") or 0) + (usage.get("cacheWrite") or 0)) if has_split else usage["total"]
+            cached = f" + {usage['cacheRead']} cached" if usage.get("cacheRead") else ""
+            reply += f"\n\n[{new} tokens{cached}, {result.get('turns')} turns]"
         return reply
 
     def command(self, chat_id: int, text: str) -> Optional[str]:

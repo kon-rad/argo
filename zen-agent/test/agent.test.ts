@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { ZenAgent } from '../src/agent.js';
+import { ZenAgent, budgetTokens, sumUsage } from '../src/agent.js';
 import { loadConfig, type ZenConfig } from '../src/config.js';
 import { Session } from '../src/session.js';
 
@@ -187,4 +187,13 @@ test('delegate runs a child with its own session and returns its report', async 
   const meta = Session.load(cfg.sessionsDir, child).meta as unknown as { parent: string; tools: string[] };
   assert.equal(meta.parent, r.sessionId);
   assert.ok(!meta.tools.includes('delegate'), 'a child cannot delegate');
+});
+
+test('the token budget counts new work, not the prompt re-read from cache', () => {
+  const turn = { role: 'assistant', usage: { input: 3000, output: 100, cacheRead: 18000, cacheWrite: 0, cost: { total: 0.0001 } } };
+  const run = sumUsage(Array.from({ length: 11 }, () => turn));
+  assert.equal(run.total, 11 * 21100); // what was processed: the ledger and the trace still say this
+  assert.equal(run.cacheRead, 11 * 18000);
+  assert.equal(budgetTokens(run), 11 * 3100); // what the cap sees: 34 100, under a 200 000 cap
+  assert.equal(budgetTokens({ input: 10, output: 5, cacheWrite: 7 }), 22); // a cache write is new work
 });
