@@ -10,6 +10,8 @@ export interface OpenAiCompatConfig {
   fetchFn?: typeof fetch;
   /** Extra headers some gateways want (OpenRouter's attribution headers). */
   headers?: Record<string, string>;
+  /** Extra top-level request fields (`reasoning_effort: "none"` turns a thinking model's reasoning off). */
+  body?: Record<string, unknown> | undefined;
 }
 
 interface Chunk {
@@ -84,6 +86,7 @@ export function openAiCompatProvider(cfg: OpenAiCompatConfig): ChatProvider {
             messages,
             stream: true,
             stream_options: { include_usage: true },
+            ...cfg.body,
             ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
             ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
           }),

@@ -91,12 +91,12 @@ Without an agent-hub or a `zen-agent serve`, the live tabs say so and the rest s
 
 ## usage
 
-A ledger of Claude Code, zen-agent and Hermes usage: tokens per run, which bot, why it woke, which card and project, the work type, runtime and host; plus plan percentages and API credit balances. zen-agent runs come from their traces (`ZEN_SESSIONS_DIR`, default `<vault>/.zen/sessions`) with the size of every system-prompt part and a real dollar cost, which the page shows; Claude Code runs on a subscription never show dollars.
+A ledger of Claude Code, zen-agent and Hermes usage: tokens per run, which bot, why it woke, which card and project, the work type, runtime and host; plus plan percentages and API credit balances. zen-agent runs come from their traces (`ZEN_SESSIONS_DIR`, default `<vault>/.zen/sessions`) with the size of every system-prompt part and a real dollar cost, which the page shows; Claude Code runs on a subscription never show dollars. The Summaries tab shows one model-written summary per finished session with counted metrics, and holds the facts a session proposes until you approve them ([summaries.md](summaries.md)).
 
 | | |
 |---|---|
 | Page | `/usage`, with filters in the URL |
-| CLI | `secondbrain usage-sync`, `usage-push`, `usage-backfill`, `credits` |
+| CLI | `secondbrain usage-sync`, `usage-push`, `usage-backfill`, `credits`, `summarize`, `summarize-eval` |
 | Timers (server) | `usage-sync`, `credits-sync`, and the usage importer |
 
 ## map

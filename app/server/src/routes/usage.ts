@@ -39,7 +39,7 @@ function stripCost(v: unknown): unknown {
 
 /** The labels a call carries (usage_facts columns), by the name the API and the page use. */
 export const DIMENSIONS = {
-  host: 'host', source: 'source', surface: 'surface', headless: 'headless', model: 'model',
+  host: 'host', source: 'source', provider: 'provider', surface: 'surface', headless: 'headless', model: 'model',
   agent: 'agent_name', team: 'team_slug', reason: 'reason', action: 'action', work_type: 'work_type',
   project: 'project_slug', feature: 'feature_slug', task: 'task_id', lane: 'lane',
 } as const;
@@ -93,13 +93,13 @@ function eventsSql(filters: Filters, params: unknown[]): string {
   const where = filterSql(filters, params);
   return `
   WITH claude AS (
-    SELECT f.ts, f.model, f.host, f.sid, f.source, f.surface, f.headless, f.agent_name, f.team_slug, f.reason, f.action,
+    SELECT f.ts, f.model, f.provider, f.host, f.sid, f.source, f.surface, f.headless, f.agent_name, f.team_slug, f.reason, f.action,
       f.work_type, f.project_slug, f.feature_slug, f.task_id, f.lane, f.run_id,
       f.input, f.cache_write, f.cache_read, f.output, 1 AS calls, f.cost_usd
-    FROM usage_facts f
+    FROM (SELECT uf.*, 'anthropic'::text AS provider FROM usage_facts uf) f
     WHERE f.ts >= $1 AND f.ts < $2${where}),
   hermes_all AS (
-    SELECT h.observed_at AS ts, h.model, h.host, h.session_id AS sid, 'hermes' AS source, 'hermes' AS surface, true AS headless,
+    SELECT h.observed_at AS ts, h.model, nullif(h.billing_provider, '') AS provider, h.host, h.session_id AS sid, 'hermes' AS source, 'hermes' AS surface, true AS headless,
       h.profile AS agent_name, NULL::text AS team_slug, NULL::text AS reason, NULL::text AS action, NULL::text AS work_type,
       NULL::text AS project_slug, NULL::text AS feature_slug, NULL::text AS task_id, NULL::text AS lane, NULL::text AS run_id,
       GREATEST(h.input_tokens - COALESCE(lag(h.input_tokens) OVER w, 0), 0) AS input,

@@ -1,0 +1,19 @@
+[Unit]
+Description=Second Brain: summarize finished agent sessions (local model first, then Together, then OpenRouter)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+# A batch of at most 50 sessions per run; a model that is down only costs a retry on the next tick.
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-summarize.js --limit 50
+# Exit 1 = every session in the batch failed (all providers down), so the unit shows as failed; some failing exits 0.
+TimeoutStartSec=1800
+Nice=10
+PrivateTmp=true
+NoNewPrivileges=true
