@@ -30,6 +30,8 @@
   "org": { "command": "cli-org" },
   "tracker": { "command": "cli-projects" },
   "github": { "command": "gh" },
+  "machines": {},
+  "$machines_example": "Connected computers running Ollama, name -> { url, contextWindow? }, e.g. { \"box\": { \"url\": \"http://192.0.2.10:11434\", \"contextWindow\": 32000 } }. Their installed models are discovered live and offered as ollama-box/<tag>. Or set OLLAMA_MACHINES=box=http://192.0.2.10:11434. contextWindow = that server's OLLAMA_CONTEXT_LENGTH.",
   "providers": {
     "ollama": {
       "api": "openai-completions",

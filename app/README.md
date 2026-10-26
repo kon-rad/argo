@@ -133,6 +133,7 @@ Configuration comes from the **vault-root** `.env`, never a copy inside the engi
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | — | chat module: a provider is offered when its key is set (Together's key counts too; Ollama needs none) |
 | `RERANK_URL`, `RERANK_API_KEY`, `RERANK_MODEL` | — | chat module: a Cohere-compatible reranker for retrieval; unset keeps the switch off |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | For the local embedding provider |
+| `OLLAMA_MACHINES` | unset | chat module: connected computers running Ollama, `name=url` pairs (`box1=http://192.0.2.10:11434,box2=...`); each is a provider `ollama-<name>` with its models discovered live |
 | `ORG_OWNER` | `owner` | org module: your name on the agent message board (the human agent) |
 | `TTS_URL`, `TTS_MODEL` | `http://127.0.0.1:8880`, Kokoro | voice module: the local OpenAI-compatible speech server |
 | `INDEXER` | `on` | `off` on a machine that uses another machine's database: it then never scans or embeds |

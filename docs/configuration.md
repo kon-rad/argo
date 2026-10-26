@@ -46,8 +46,11 @@ Used by the `chat` module and by the embedder's optional contextual-enrichment s
 | `TOGETHER_API_KEY` | unset | Together AI (shared with embeddings and the database page) |
 | `OPENROUTER_API_KEY` | unset | OpenRouter |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | A local Ollama needs no key and is always offered |
+| `OLLAMA_MACHINES` | unset | Connected computers that run Ollama: comma-separated `name=url` pairs, e.g. `box1=http://192.0.2.10:11434,box2=http://192.0.2.11:11434`. See below |
 | `RERANK_URL`, `RERANK_API_KEY` | unset | A Cohere-compatible `/rerank` endpoint (Together, Cohere, Jina) for the chat's optional reranking step. Unset: the switch is off |
 | `RERANK_MODEL` | `Salesforce/Llama-Rank-V1` | The reranker model at that endpoint |
+
+**Connected computers.** Each `name=url` pair in `OLLAMA_MACHINES` adds a chat provider with id `ollama-<name>` and label `Ollama · <name>`. The name is `[a-z0-9][a-z0-9_-]*`; the url is the machine's Ollama base, with no `/v1`. The models are not listed in any file: the app asks the machine (`GET <url>/api/tags`, 2.5 s timeout) each time the settings modal opens, cached for about 20 s, and offers every model except embedding models (BERT family, or "embed" in the name). The first model is the default. A machine that does not answer stays in the list as `(offline)` and cannot be picked; it never slows or breaks the rest. Invalid pairs are skipped with one warning at start. The single-host `ollama` provider (`OLLAMA_URL`) is unchanged. The zen-agent harness reads the same variable the same way.
 
 The Embeddings source's config (Sources page) takes `contextualize` (boolean), `context_provider` and `context_model` for the enrichment step; see [rag.md](rag.md).
 

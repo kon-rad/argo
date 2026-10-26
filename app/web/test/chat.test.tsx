@@ -156,3 +156,30 @@ describe('ChatPanel', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('ChatSettingsModal with connected machines', () => {
+  it('offers discovered machine models and marks an offline machine', async () => {
+    const { default: ChatSettingsModal } = await import('../src/components/chat/ChatSettingsModal.js');
+    const options = {
+      ...OPTIONS,
+      providers: [
+        ...OPTIONS.providers,
+        { id: 'ollama-box1', label: 'Ollama · box1', configured: true, env: null, machine: true, default: 'qwen3:8b', models: [{ id: 'qwen3:8b', label: 'qwen3:8b' }, { id: 'hf.co/acme/chat-gguf:Q4_K_M', label: 'hf.co/acme/chat-gguf:Q4_K_M' }] },
+        { id: 'ollama-box2', label: 'Ollama · box2', configured: false, env: null, machine: true, offline: true, default: '', models: [] },
+      ],
+      settings: { ...OPTIONS.settings, provider: 'ollama-box1', model: 'qwen3:8b' },
+    };
+    const client = new QueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <ChatSettingsModal options={options as never} onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+    const offline = screen.getByRole('option', { name: 'Ollama · box2 (offline)' }) as HTMLOptionElement;
+    expect(offline.disabled).toBe(true);
+    expect(screen.getByRole('option', { name: 'Anthropic (set ANTHROPIC_API_KEY)' })).toBeTruthy();
+    const modelSelect = screen.getByLabelText('Model');
+    expect(within(modelSelect).getByRole('option', { name: 'hf.co/acme/chat-gguf:Q4_K_M' })).toBeTruthy();
+    cleanup();
+  });
+});

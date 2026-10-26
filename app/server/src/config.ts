@@ -26,6 +26,9 @@ const Schema = z.object({
   // the rest of the app runs perfectly well with no embeddings at all.
   TOGETHER_API_KEY: z.string().optional(),
   OLLAMA_URL: z.string().default('http://127.0.0.1:11434'),
+  // Other computers that run Ollama, as `name=url` pairs: `box1=http://192.0.2.10:11434,box2=...`.
+  // Each shows up as a chat provider `ollama-<name>` whose models are discovered live.
+  OLLAMA_MACHINES: z.string().default(''),
   // Chat providers (chat module, and the optional contextual-enrichment step of the
   // embedder). A provider is offered only when its key is set; see app/config/llm-presets.json.
   ANTHROPIC_API_KEY: z.string().optional(),
@@ -195,6 +198,40 @@ if (parsed.data.DEPLOYMENT === 'server') {
   }
 }
 
+export interface OllamaMachine {
+  name: string;
+  /** The machine's Ollama base, without /v1 and without a trailing slash. */
+  url: string;
+}
+
+/** Parses `name=url,name=url`. Invalid pairs are returned in `skipped`, never thrown. */
+export function parseOllamaMachines(raw: string): { machines: OllamaMachine[]; skipped: string[] } {
+  const machines: OllamaMachine[] = [];
+  const skipped: string[] = [];
+  for (const pair of raw.split(',').map((x) => x.trim()).filter(Boolean)) {
+    const eq = pair.indexOf('=');
+    const name = eq > 0 ? pair.slice(0, eq).trim() : '';
+    const url = eq > 0 ? pair.slice(eq + 1).trim().replace(/\/+$/, '') : '';
+    let ok = /^[a-z0-9][a-z0-9_-]*$/.test(name) && /^https?:\/\/[^\s/]+/.test(url);
+    if (ok) {
+      try {
+        new URL(url);
+      } catch {
+        ok = false;
+      }
+    }
+    if (!ok || machines.some((m) => m.name === name)) skipped.push(pair);
+    else machines.push({ name, url });
+  }
+  return { machines, skipped };
+}
+
+const ollamaMachines = parseOllamaMachines(parsed.data.OLLAMA_MACHINES);
+if (ollamaMachines.skipped.length) {
+  // The logger imports this file, so the one warning goes to stderr directly.
+  console.warn(`OLLAMA_MACHINES: skipped ${ollamaMachines.skipped.length} invalid entr${ollamaMachines.skipped.length === 1 ? 'y' : 'ies'} (expected name=http://host:11434)`);
+}
+
 export const config = {
   appRoot,
   vaultRoot: resolve(parsed.data.VAULT_ROOT),
@@ -203,6 +240,7 @@ export const config = {
   logLevel: parsed.data.LOG_LEVEL,
   togetherApiKey: parsed.data.TOGETHER_API_KEY,
   ollamaUrl: parsed.data.OLLAMA_URL.replace(/\/+$/, ''),
+  ollamaMachines: ollamaMachines.machines,
   rerankApiKey: parsed.data.RERANK_API_KEY,
   rerankUrl: parsed.data.RERANK_URL?.replace(/\/+$/, ''),
   rerankModel: parsed.data.RERANK_MODEL,

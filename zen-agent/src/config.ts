@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
+import { parseMachines } from './machines.js';
 
 /**
  * zen.json: everything a run needs that is not a secret. Secrets (API keys,
@@ -29,6 +30,19 @@ export interface ProviderConfig {
   /** Variable that holds the key; null or absent for a keyless local server. */
   apiKeyEnv?: string | null;
   models: ProviderModelConfig[];
+}
+
+/** A computer that runs Ollama and is reachable from here: its installed models become the provider `ollama-<name>`. */
+export interface MachineConfig {
+  /** Ollama's base URL (no /v1), e.g. `http://192.0.2.10:11434`. */
+  url: string;
+  /** Shown in pickers instead of the key. */
+  name?: string;
+  /**
+   * Context window to assume (and the cap on a model's own). The OpenAI-compatible endpoint cannot ask for one: the
+   * server's OLLAMA_CONTEXT_LENGTH decides, so set this to it. Default 32 000.
+   */
+  contextWindow?: number;
 }
 
 export type KanbanConfig =
@@ -89,6 +103,8 @@ export interface ZenConfig {
   /** GitHub's CLI (the `github` fetcher). */
   github: { command: string };
   providers: Record<string, ProviderConfig>;
+  /** Connected computers running Ollama, by name; the OLLAMA_MACHINES variable adds to and overrides these. */
+  machines: Record<string, MachineConfig>;
 }
 
 export const DEFAULTS: ZenConfig = {
@@ -117,6 +133,7 @@ export const DEFAULTS: ZenConfig = {
   tracker: { command: 'cli-projects' },
   github: { command: 'gh' },
   providers: {},
+  machines: {},
 };
 
 export function expandHome(p: string): string {
@@ -168,6 +185,10 @@ export function loadConfig(opts: LoadOptions = {}): ZenConfig {
   }
   let cfg = merge(DEFAULTS, fromFile);
   if (env['ZEN_MODEL']) cfg = { ...cfg, model: env['ZEN_MODEL'] };
+  // Only well-formed entries are machines: a `$comment` key or a typo must not become a provider that crashes the catalogue.
+  cfg = { ...cfg, machines: Object.fromEntries(Object.entries(cfg.machines ?? {}).filter(([n, m]) => /^[a-z0-9][a-z0-9_-]*$/.test(n) && typeof (m as MachineConfig | null)?.url === 'string')) };
+  const fromEnv = parseMachines(env['OLLAMA_MACHINES']);
+  if (Object.keys(fromEnv).length) cfg = { ...cfg, machines: { ...cfg.machines, ...Object.fromEntries(Object.entries(fromEnv).map(([n, m]) => [n, { ...cfg.machines[n], ...m }])) } };
   cfg = merge(cfg, opts.overrides ?? {});
 
   const workdir = opts.workdir ? workdir0 : under(workdir0, cfg.workdir);

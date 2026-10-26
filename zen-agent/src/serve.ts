@@ -5,7 +5,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { dirname, join } from 'node:path';
 import { ZenAgent } from './agent.js';
-import { THINKING_LEVELS, type Budget, type ThinkingLevel, type ZenConfig } from './config.js';
+import { THINKING_LEVELS, type Budget, type ProviderModelConfig, type ThinkingLevel, type ZenConfig } from './config.js';
+import { refreshMachines } from './machines.js';
 import { availableProviders, buildModels, pickModel } from './models.js';
 import { listPersonas, loadPersona } from './persona.js';
 import { newSessionId, Session, ZERO_USAGE, type SessionLine, type UsageTotals } from './session.js';
@@ -112,6 +113,10 @@ export class ChatHost {
   private readonly probeMs: number;
   private readonly chats = new Map<string, Live>();
   private catalogue: { at: number; value: { providers: ProviderRow[]; models: ModelRow[] } } | null = null;
+  /** Connected computers: the models each had when last seen, the last probe, and the probe in flight. */
+  private readonly machineModels = new Map<string, ProviderModelConfig[]>();
+  private machines: { at: number; value: Awaited<ReturnType<typeof refreshMachines>> } | null = null;
+  private machinesBusy: Promise<Awaited<ReturnType<typeof refreshMachines>>> | null = null;
 
   constructor(private readonly opts: Omit<ServeOptions, 'token' | 'host' | 'port'>) {
     this.cfg = opts.config;
@@ -134,20 +139,43 @@ export class ChatHost {
     }
   }
 
+  // ----- connected computers -----
+
+  /**
+   * Asks every configured machine what it has installed and registers `ollama-<name>` for it, so a chat can name one
+   * of its models. Cached for ten probe timeouts (offline ones too, so a sleeping machine costs one wait, not one per
+   * message); concurrent callers share one probe.
+   */
+  async refreshMachines(): Promise<Awaited<ReturnType<typeof refreshMachines>>> {
+    if (!Object.keys(this.cfg.machines).length) return new Map();
+    if (this.machines && Date.now() - this.machines.at < this.probeMs * 10) return this.machines.value;
+    this.machinesBusy ??= refreshMachines(this.models, this.cfg.machines, this.machineModels, this.fetch, this.probeMs)
+      .then((value) => {
+        this.machines = { at: Date.now(), value };
+        return value;
+      })
+      .finally(() => {
+        this.machinesBusy = null;
+      });
+    return this.machinesBusy;
+  }
+
   // ----- catalogue -----
 
   /** Providers and models with what the UI needs to grey out: a key in the environment, and for custom endpoints a liveness probe. */
   async catalog(): Promise<{ providers: ProviderRow[]; models: ModelRow[] }> {
     if (this.catalogue && Date.now() - this.catalogue.at < this.probeMs * 10) return this.catalogue.value;
+    const machines = await this.refreshMachines();
     const configured = new Set(await availableProviders(this.models));
     const reach = new Map<string, boolean>();
+    for (const [id, m] of machines) reach.set(id, m.reachable);
     await Promise.all(
       Object.entries(this.cfg.providers).map(async ([id, p]) => {
         reach.set(id, await this.probe(p.baseUrl));
       }),
     );
     const providers: ProviderRow[] = this.models.getProviders().map((p) => {
-      const custom = this.cfg.providers[p.id];
+      const custom = this.cfg.providers[p.id] ?? machines.get(p.id)?.config;
       return {
         id: p.id,
         name: p.name,
@@ -166,7 +194,7 @@ export class ChatHost {
       context_window: m.contextWindow,
       reasoning: Boolean(m.reasoning),
       configured: configured.has(m.provider),
-      reachable: this.cfg.providers[m.provider] ? reach.get(m.provider) ?? false : null,
+      reachable: this.cfg.providers[m.provider] || machines.has(m.provider) ? reach.get(m.provider) ?? false : null,
     }));
     this.catalogue = { at: Date.now(), value: { providers, models } };
     return this.catalogue.value;
@@ -394,10 +422,16 @@ const ROUTES: [string, RegExp, Handler][] = [
   ['GET', /^\/zen\/personas$/, (h) => ({ personas: h.personas() })],
   ['GET', /^\/zen\/skills$/, (h) => ({ skills: h.skills() })],
   ['GET', /^\/zen\/chats$/, (h) => ({ chats: h.list(), epoch: h.epoch })],
-  ['POST', /^\/zen\/chats$/, (h, _m, body) => h.create(parseCreate(body))],
+  ['POST', /^\/zen\/chats$/, async (h, _m, body) => {
+    await h.refreshMachines();
+    return h.create(parseCreate(body));
+  }],
   ['GET', new RegExp(`^/zen/chats/(${CHAT})$`), (h, m) => h.get(m[1]!)],
   ['GET', new RegExp(`^/zen/chats/(${CHAT})/events$`), (h, m, _b, url) => h.page(m[1]!, Math.max(0, Number(url.searchParams.get('offset') ?? 0) || 0))],
-  ['POST', new RegExp(`^/zen/chats/(${CHAT})/messages$`), (h, m, body) => h.send(m[1]!, textOf(body))],
+  ['POST', new RegExp(`^/zen/chats/(${CHAT})/messages$`), async (h, m, body) => {
+    await h.refreshMachines();
+    return h.send(m[1]!, textOf(body));
+  }],
   ['POST', new RegExp(`^/zen/chats/(${CHAT})/steer$`), (h, m, body) => h.steer(m[1]!, textOf(body))],
   ['POST', new RegExp(`^/zen/chats/(${CHAT})/interrupt$`), (h, m) => ({ ok: true, chat: h.interrupt(m[1]!) })],
 ];

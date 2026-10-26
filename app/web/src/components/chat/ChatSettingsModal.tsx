@@ -85,7 +85,7 @@ export default function ChatSettingsModal({ options, onClose }: { options: ChatO
               <select id="chat-provider" className={field} value={provider} onChange={(e) => { setCustom(false); setProvider(e.target.value); }}>
                 {options.providers.map((p) => (
                   <option key={p.id} value={p.id} disabled={!p.configured}>
-                    {p.label}{p.configured ? '' : ` (set ${p.env})`}
+                    {p.label}{p.configured ? '' : p.machine ? ' (offline)' : ` (set ${p.env})`}
                   </option>
                 ))}
               </select>

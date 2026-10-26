@@ -67,6 +67,7 @@ Secrets come from the environment only: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `
 | `org.command` | `cli-org` | The message board CLI; the `org` tools appear only when it is on the PATH and a persona is set. Also the `thread` and `recall` fetchers |
 | `tracker.command`, `github.command` | `cli-projects`, `gh` | The commands behind the `tracker` and `github` fetchers |
 | `providers` | `{}` | Extra endpoints: `{ "<id>": { "api": "openai-completions" \| "anthropic-messages", "baseUrl", "apiKeyEnv"?, "models": [{ "id", "contextWindow"?, "maxTokens"?, "reasoning"? }] } }` |
+| `machines` | `{}` | Connected computers that run Ollama: `{ "<name>": { "url": "http://host:11434", "name"?, "contextWindow"? } }`. Each becomes the provider `ollama-<name>` whose models are whatever the machine has installed right now (`/api/tags`, embedding models left out), so a model pulled there appears without editing anything: `--model ollama-<name>/<tag>`. `contextWindow` (default 32 000) is the window assumed and the cap on a model's own: Ollama's OpenAI-compatible endpoint cannot ask for one, the server's `OLLAMA_CONTEXT_LENGTH` decides, so set it to that. The `OLLAMA_MACHINES` variable (`name=url,name=url`) adds to and overrides this key. A machine that stops answering keeps its last models, greyed out as unreachable |
 
 `zen-agent config` prints the effective configuration. `zen-agent models --available` lists the models whose provider has a key.
 
