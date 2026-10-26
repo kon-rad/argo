@@ -74,6 +74,7 @@ nav:
       - Vault sync: sync.md
       - Modules: modules.md
       - Retrieval and the chat module: rag.md
+      - Memory, and how to check it works: memory.md
       - Agent harness: agent-harness.md
       - Agent persona memory: agent-memory.md
       - Deployment: deployment.md
