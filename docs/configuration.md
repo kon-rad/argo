@@ -73,7 +73,7 @@ Deploy settings (`DEPLOY_*`) are read by `deploy.sh` only: see [deployment.md](d
 
 | Variable | Module | Default | Purpose |
 |---|---|---|---|
-| `AGENT_HUB_URL`, `AGENT_HUB_TOKEN` | `agents` | unset | The agent-hub service that serves the kanban board and chats. Unset: those tabs say so |
+| `AGENT_HUB_URL`, `AGENT_HUB_TOKEN` | `agents` | unset | The agent-hub service that serves Claude chats and the Telegram toggle. Unset: those tabs say so |
 | `ZEN_AGENT_URL`, `ZEN_AGENT_TOKEN` | `agents` | unset | The `zen-agent serve` process behind `/api/zen` (the zen-agent chat page). The token is the serve process's `ZEN_SERVE_TOKEN`. Unset: the page says so |
 | `HERMES_HOME` | `agents`, archive | `~/.hermes` | Hermes's home on this machine |
 | `ARCHIVE_SSH_HOST`, `REMOTE_HERMES_HOME`, `REMOTE_HERMES_USER` | archive | unset | Pull a server's Hermes history over ssh; unset skips the pull |
@@ -83,7 +83,6 @@ Deploy settings (`DEPLOY_*`) are read by `deploy.sh` only: see [deployment.md](d
 | `ORG_VAULT_ASSIGNEE` | `org` | `vault-session` | The kanban assignee for vault work: a Claude Code session on your machine that no dispatcher spawns (lowercase, `a-z0-9-`). Cards on boards that still use the old slug `m4` keep working |
 | `ORG_SESSION_MAX_RUNS` | `org` | `3` | Runs one remembered `claude-code` agent session carries before the next wake starts fresh. `1` never resumes. Not used by the `zen-agent` lane, whose wakes are always fresh |
 | `BOARD_LEASE_MINUTES` | `board` | `60` | How long a claimed card stays a lane's without a heartbeat before the `board-reclaim` sweep puts it back to ready |
-| `BOARD_HERMES_PROJECTION` | `board` | `off` | `on` mirrors every card the engine makes into the Hermes board with `hermes kanban` (`ORG_KANBAN_CMD` names the binary), while Hermes still runs the bots |
 | `BOARD_URL`, `BOARD_TOKEN` | `board` | unset | On a machine that is not the server: `cli-board` and agents reach the board over HTTPS as the roster member the token names (`cli-board token create <agent>`). Unset: the database connection is used |
 | `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES` | `org` | `2`, `15` | A card that keeps waking its bot waits 15, then 30 minutes between wakes, and after 2 re-wakes in 24 h is held until a person wakes it (`wake-add --reason owner`) |
 | `ORG_TZ` | `org` | `UTC` | The local day for "one routine wakeup per day" and the dispatcher's quiet hours (an IANA zone name) |

@@ -21,7 +21,6 @@ import {
   getAgent,
   getThread,
   handoff,
-  hermesProjection,
   importOrg,
   KINDS,
   listChannels,
@@ -37,7 +36,6 @@ import {
   standup,
   whoami,
   type Agent,
-  type KanbanRunner,
   type Kind,
   type Message,
   type TaskLink,
@@ -263,9 +261,6 @@ export function reflectSummary(r: ReflectResult): Record<string, unknown> {
 async function rerenderCore(agent: string): Promise<void> {
   await writeCore(config.vaultRoot, agent, memorySettingsFor(config.vaultRoot, agent).memory.core_budget_tokens).catch(() => null);
 }
-
-/** The Hermes projection runner when this machine mirrors cards into the Hermes board (BOARD_HERMES_PROJECTION=on or ORG_KANBAN_CMD), else null. */
-export const kanbanRunner = hermesProjection;
 
 function formatTask(t: TaskLink): string {
   return `${t.task_id}  ${t.assignee.padEnd(8)} ${(t.project_slug ?? '-') + (t.feature_slug ? `/${t.feature_slug}` : '')}${t.work_type ? `  [${t.work_type}]` : ''}  ${t.title}  (by ${t.created_by}, ${when(new Date(t.created_at))})`;
@@ -607,7 +602,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         const r = await createTask(await me(), {
           assignee: assignee === 'none' ? null : assignee, title, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, repo: str(opts.repo),
           body: str(opts.body), board: str(opts.board), priority: num(opts.priority, 'priority'), deps: str(opts.after)?.split(',').map((x) => x.trim()).filter(Boolean), run,
-        }, kanbanRunner());
+        });
         if (json) out(JSON.stringify(r));
         else out(`card ${r.task_id} ${r.link.assignee ? `for ${r.link.assignee}` : 'unassigned'}: ${r.link.title}${r.link.project_slug ? ` (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})` : ''} [${r.card.status}]${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
         return 0;
@@ -618,7 +613,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         if (!card || !assignee) throw new OrgError('task assign <card> <bot> [--project <slug>] [--feature f]');
         const r = await assignTask(await me(), {
           taskId: card, assignee, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, repo: str(opts.repo), board: str(opts.board), run,
-        }, kanbanRunner());
+        });
         if (json) out(JSON.stringify(r));
         else out(`card ${r.task_id} now ${r.link.assignee}'s: ${r.link.title}${r.link.project_slug ? ` (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})` : ''}${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
         return 0;
@@ -626,7 +621,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       if (sub === 'redo') {
         const [, card, changes] = pos;
         if (!card || !changes) throw new OrgError('task redo <review card> "<what to change>"');
-        const r = await redoTask(await me(), card, changes, kanbanRunner(), run);
+        const r = await redoTask(await me(), card, changes, run);
         if (json) out(JSON.stringify(r));
         else out(r.escalated ? `round ${r.rounds} refused: escalated to the lead${r.message ? ` (message ${r.message.id})` : ''}` : `round ${r.rounds}: card ${r.task_id} for the builder; ${card} waits for it${r.message ? `; mention ${r.message.id}` : ''}`);
         return 0;
@@ -653,7 +648,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         if (!name || !project) throw new OrgError('graph apply <template> --project <slug> [--feature f] [--team t] [--dry-run]');
         const g = graphs[name];
         if (!g) throw new OrgError(`no graph template "${name}" (cli-org graph list)`);
-        const r = await applyGraph(await me(), g, { project, feature: str(opts.feature), team: str(opts.team), board: str(opts.board), dryRun: opts['dry-run'] === true, run }, kanbanRunner());
+        const r = await applyGraph(await me(), g, { project, feature: str(opts.feature), team: str(opts.team), board: str(opts.board), dryRun: opts['dry-run'] === true, run });
         if (json) out(JSON.stringify(r));
         else {
           out(`${opts['dry-run'] === true ? 'would create' : 'created'} ${r.cards.length} cards for ${project}${str(opts.feature) ? `/${str(opts.feature)}` : ''} (${name}):`);

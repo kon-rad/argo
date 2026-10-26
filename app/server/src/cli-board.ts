@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import {
@@ -8,7 +7,7 @@ import {
 import { config } from './config.js';
 import { pool, setDatabaseUrl } from './db.js';
 import { agentDatabaseUrl, parseArgs } from './cli-org.js';
-import { assignTask, createTask, getAgent, hermesProjection, OrgError } from './org.js';
+import { assignTask, createTask, getAgent, OrgError } from './org.js';
 
 /**
  * cli-board (also `secondbrain board`): the board from a terminal, for people and agents. Design: docs/board-design.md
@@ -36,7 +35,7 @@ const USAGE = `cli-board <command>
   watch [--board b]                           board events as JSON lines, until stopped
   reclaim                                     lost leases back to ready, due schedules to ready (a timer runs this)
   token create <agent> [--label "where it runs"] | list | revoke <id>     (owner, database door)
-  import <file.json> | --hermes [--board b] [--check]    cards from the Hermes board's list --json / show --json; --check reports drift only
+  import <file.json> [--board b] [--check]    LEGACY migration tool: cards from a saved Hermes kanban export (list --json / show --json); --check reports drift only. Never calls hermes
 
   Doors: BOARD_URL + BOARD_TOKEN → HTTPS as the token's agent; else the database (ORG_AGENT + SB_ORG_DB_URL → the RLS role; else the owner).`;
 
@@ -158,13 +157,13 @@ export class DbBoard implements BoardClient {
   show(id: string) { return getCard(id, this.viewer); }
   async create(c: Record<string, unknown>) {
     const b = c as { title: string; assignee?: string | null; body?: string; contract?: Contract; project?: string; feature?: string; board?: string; priority?: number; work?: string; needs?: string; repo?: string; ship_now?: boolean; kind?: string; deps?: string[] };
-    const r = await createTask(await getAgent(this.me), { assignee: b.assignee ?? null, title: b.title, body: b.body, contract: b.contract, project: b.project, feature: b.feature, board: b.board, priority: b.priority, type: b.work, needs: b.needs, repo: b.repo, shipNow: b.ship_now, kind: b.kind, deps: b.deps, run: process.env.ORG_RUN }, hermesProjection());
+    const r = await createTask(await getAgent(this.me), { assignee: b.assignee ?? null, title: b.title, body: b.body, contract: b.contract, project: b.project, feature: b.feature, board: b.board, priority: b.priority, type: b.work, needs: b.needs, repo: b.repo, shipNow: b.ship_now, kind: b.kind, deps: b.deps, run: process.env.ORG_RUN });
     return { card: r.card, message: r.message };
   }
   async comment(id: string, body: string) { await commentCard(this.me, id, body); }
   async assign(id: string, assignee: string | null, o: { project?: string; feature?: string; work?: string; needs?: string }) {
     if (assignee === null) return assignCard(this.me, id, null);
-    return (await assignTask(await getAgent(this.me), { taskId: id, assignee, project: o.project, feature: o.feature, type: o.work, needs: o.needs, run: process.env.ORG_RUN }, hermesProjection())).card;
+    return (await assignTask(await getAgent(this.me), { taskId: id, assignee, project: o.project, feature: o.feature, type: o.work, needs: o.needs, run: process.env.ORG_RUN })).card;
   }
   move(id: string, status: string, note?: string) { return moveCard(this.me, id, status, note); }
   link(id: string, dependsOn: string) { return linkCards(this.me, id, dependsOn); }
@@ -200,16 +199,6 @@ export function parseHermesExport(text: string): HermesCard[] {
     const o = d as { task?: Record<string, unknown>; comments?: unknown; parents?: unknown } & Record<string, unknown>;
     const task = HermesDoc.parse(o.task ?? o);
     return { ...(task as unknown as HermesCard), comments: (o.comments as HermesCard['comments']) ?? undefined, parents: (o.parents as string[]) ?? undefined };
-  });
-}
-
-function hermesExport(board: string, env: NodeJS.ProcessEnv): Promise<string> {
-  const cmd = env.ORG_KANBAN_CMD ?? 'hermes';
-  return new Promise((ok, fail) => {
-    execFile(cmd, ['kanban', '--board', board, 'list', '--json', '--all'], { env, timeout: 60_000, maxBuffer: 64_000_000 }, (err, stdout, stderr) => {
-      if (err) fail(new OrgError(`kanban: ${(stderr || err.message).trim().slice(0, 300)}`));
-      else ok(stdout);
-    });
   });
 }
 
@@ -339,7 +328,7 @@ export async function main(argv: string[], out: (s: string) => void = console.lo
     }
     case 'import': {
       const board = str(opts.board) ?? 'exo';
-      const text = opts.hermes === true ? await hermesExport(board, env) : pos[0] ? readFileSync(pos[0], 'utf8') : (() => { throw new OrgError('import <file.json> | --hermes [--board b] [--check]'); })();
+      const text = pos[0] ? readFileSync(pos[0], 'utf8') : (() => { throw new OrgError('import <file.json> [--board b] [--check]  (legacy migration tool)'); })();
       const docs = parseHermesExport(text);
       if (opts.check === true) {
         const d = await driftReport(board, docs);

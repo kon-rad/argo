@@ -225,7 +225,7 @@ describe('agent persona memory', () => {
       expect(b.episode.id).toBe(a.episode.id);
       expect(a.episode).toMatchObject({ reason: 'task', outcome: 'done', turn_count: 4, cost_usd: '0.1200', summary: 'Worked card t_abc123. Finished. done' });
 
-      const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build the thing' }, null)).task_id;
+      const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build the thing' })).task_id;
       const ws = await claimWakeups('rune', 'run-9');
       expect(ws).toHaveLength(1);
       const out: string[] = [];

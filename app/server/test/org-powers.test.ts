@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { agentDatabaseUrl, main, plainSnippet } from '../src/cli-org.js';
 import { query } from '../src/db.js';
-import { applyGraph, assignTask, createTask, dm, getAgent, importOrg, neededCapability, nodeNeed, post, type KanbanRunner } from '../src/org.js';
+import { applyGraph, assignTask, createTask, dm, getAgent, importOrg, neededCapability, nodeNeed, post } from '../src/org.js';
 import {
   dedupeVaultHits, forget, listFacts, recallExcluded, recallFacts, recallMemoryFiles, remember, shipCheck, shipDecide, shapeVaultHits, shipRequest, terms,
 } from '../src/org-powers.js';
@@ -36,12 +36,6 @@ const ORG = {
   channels: { 'all-hands': { members: '*' }, leads: { members: ['owner', 'atlas', 'juno'] } },
 };
 
-let n = 0;
-const runner: KanbanRunner = async (args) => {
-  if (args[3] !== 'create') return '';
-  n++;
-  return JSON.stringify({ id: `t_${String(n).padStart(6, '0')}` });
-};
 const PR = 'https://github.com/kon-rad/argo-exo/pull/12';
 
 async function wakes(): Promise<{ agent_name: string; reason: string }[]> {
@@ -50,7 +44,6 @@ async function wakes(): Promise<{ agent_name: string; reason: string }[]> {
 
 describe('bot powers', () => {
   beforeEach(async () => {
-    n = 0;
     await truncateAll();
     await importOrg(ORG);
     await query(`INSERT INTO projects (slug, title, team_slug, stage) VALUES ('argo-exo', 'Exo', 'platform', 'building')`);
@@ -76,15 +69,15 @@ describe('bot powers', () => {
 
   it('a coding card goes only to a bot with code, and the refusal names who can', async () => {
     const owner = await getAgent('owner');
-    await expect(createTask(owner, { assignee: 'lena', title: 'Fix the dispatcher', project: 'argo-exo', type: 'coding' }, runner))
+    await expect(createTask(owner, { assignee: 'lena', title: 'Fix the dispatcher', project: 'argo-exo', type: 'coding' }))
       .rejects.toThrow(/lena doesn't have the code capability.*rune, sable/);
-    const r = await createTask(owner, { assignee: 'rune', title: 'Fix the dispatcher', project: 'argo-exo', type: 'coding' }, runner);
+    const r = await createTask(owner, { assignee: 'rune', title: 'Fix the dispatcher', project: 'argo-exo', type: 'coding' });
     expect(r.link).toMatchObject({ needs: 'code', ship_now: false });
-    await expect(assignTask(owner, { taskId: 't_abcdef', assignee: 'juno', project: 'argo-exo', needs: 'm1' }, runner)).rejects.toThrow(/echo/);
+    await expect(assignTask(owner, { taskId: 't_abcdef', assignee: 'juno', project: 'argo-exo', needs: 'm1' })).rejects.toThrow(/echo/);
   });
 
   it('a card note names the bot without waking it a second time', async () => {
-    const r = await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Tidy', project: 'argo-exo' }, runner);
+    const r = await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Tidy', project: 'argo-exo' });
     expect(r.message).toMatchObject({ channel_slug: 'platform', mentions: [] });
     expect(r.message!.body).toBe(`card ${r.task_id} for rune: Tidy (argo-exo)`);
     // The ready card wakes rune once (reason task); the note adds no mention wake on top.
@@ -96,17 +89,17 @@ describe('bot powers', () => {
       { id: 'build', kind: 'build', assign: 'rune', title: 'Build', after: [] },
       { id: 'review', kind: 'review', assign: 'lena', title: 'Review', after: ['build'] },
     ] };
-    await expect(applyGraph(await getAgent('owner'), g as never, { project: 'argo-exo', team: 'platform' }, runner)).rejects.toThrow(/lena doesn't have the review/);
+    await expect(applyGraph(await getAgent('owner'), g as never, { project: 'argo-exo', team: 'platform' })).rejects.toThrow(/lena doesn't have the review/);
   });
 
   it('only the owner marks a card ship-now', async () => {
-    await expect(createTask(await getAgent('atlas'), { assignee: 'rune', title: 'x', project: 'argo-exo', shipNow: true }, runner)).rejects.toThrow(/only the owner/);
-    const r = await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Ship it', project: 'argo-exo', type: 'coding', shipNow: true }, runner);
+    await expect(createTask(await getAgent('atlas'), { assignee: 'rune', title: 'x', project: 'argo-exo', shipNow: true })).rejects.toThrow(/only the owner/);
+    const r = await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Ship it', project: 'argo-exo', type: 'coding', shipNow: true });
     expect(r.link.ship_now).toBe(true);
   });
 
   it('request → owner approves → merge check passes for that PR only; the requester is woken', async () => {
-    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build', project: 'argo-exo', type: 'coding' }, runner)).task_id;
+    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build', project: 'argo-exo', type: 'coding' })).task_id;
     const r = await shipRequest(await getAgent('atlas'), { card, summary: 'adds the m1 gate; 85 tests pass', pr: PR, deploy: 'argo-exo-agents' });
     expect(r).toMatchObject({ created: true, approval: { status: 'pending', requested_by: 'atlas' } });
     expect(r.message).toMatchObject({ channel_slug: 'platform', kind: 'question-for-owner', task_id: card });
@@ -127,7 +120,7 @@ describe('bot powers', () => {
   });
 
   it('a ship-now card is approved at once; a bot without code, merge or deploy can not ask', async () => {
-    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Hotfix', project: 'argo-exo', type: 'coding', shipNow: true }, runner)).task_id;
+    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Hotfix', project: 'argo-exo', type: 'coding', shipNow: true })).task_id;
     const r = await shipRequest(await getAgent('rune'), { card, summary: 'hotfix', pr: PR });
     expect(r.approval).toMatchObject({ status: 'approved', ship_now: true, decided_by: 'owner' });
     expect(r.message).toBeNull();
@@ -137,7 +130,7 @@ describe('bot powers', () => {
   });
 
   it('the database refuses a bot that decides through the RLS role', async () => {
-    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build', project: 'argo-exo', type: 'coding' }, runner)).task_id;
+    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build', project: 'argo-exo', type: 'coding' })).task_id;
     const r = await shipRequest(await getAgent('rune'), { card, summary: 's', pr: PR });
     const url = agentDatabaseUrl(`postgres://sb_org@${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${process.env.SB_TEST_DB ?? 'secondbrain_test'}`, 'rune');
     const c = new pg.Client({ connectionString: url });
@@ -154,7 +147,7 @@ describe('bot powers', () => {
   });
 
   it('the approvals routes list and decide as the owner', async () => {
-    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build', project: 'argo-exo', type: 'coding' }, runner)).task_id;
+    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build', project: 'argo-exo', type: 'coding' })).task_id;
     const r = await shipRequest(await getAgent('rune'), { card, summary: 's', pr: PR });
     const app = createApp({ modules: ALL_MODULES });
     const list = await request(app).get('/api/org/approvals').expect(200);
