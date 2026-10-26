@@ -136,6 +136,9 @@ const Schema = z.object({
   // Read-only bearer token for a kiosk's Projects panel (GET /api/feed/projects).
   // Unset = the feed route does not exist.
   PROJECTS_FEED_TOKEN: z.string().min(32).optional(),
+  // Read-only bearer token for an agent on this machine (zen-agent's knowledge tool): GET /api/search, /api/search/global
+  // and /api/file/source, from loopback only and never through a proxy. Unset = the token does nothing.
+  KNOWLEDGE_TOKEN: z.string().min(32).optional(),
   // A local OpenAI-compatible speech server (e.g. mlx-audio running Kokoro),
   // localhost only. Used by the voice module's Listen button; never on a server.
   TTS_URL: z.string().url().default('http://127.0.0.1:8880'),
@@ -249,6 +252,7 @@ export const config = {
   zenAgentUrl: parsed.data.ZEN_AGENT_URL,
   zenAgentToken: parsed.data.ZEN_AGENT_TOKEN,
   projectsFeedToken: parsed.data.PROJECTS_FEED_TOKEN,
+  knowledgeToken: parsed.data.KNOWLEDGE_TOKEN,
   boardLeaseMinutes: parsed.data.BOARD_LEASE_MINUTES,
   boardUrl: parsed.data.BOARD_URL?.replace(/\/+$/, ''),
   boardToken: parsed.data.BOARD_TOKEN,

@@ -74,6 +74,8 @@ The keys, in the order you are likely to touch them:
 | `budget` | 40 turns, 400 000 tokens, 30 minutes | Per run; `--max-turns`, `--max-tokens`, `--max-minutes`, or the card's `## Budget` line |
 | `tools` | all seven sets | `fs`, `shell`, `skills`, `knowledge`, `kanban`, `org`, `subagent`. A set whose backend is not configured contributes nothing |
 | `knowledge` | off | `{ "kind": "secondbrain", "url": "http://127.0.0.1:3000", "headersEnv": "ZEN_SB_HEADERS" }` |
+
+The search endpoints need a login, and an agent cannot type a TOTP code. On the same machine as the app, set `KNOWLEDGE_TOKEN` in the app's env (see [configuration](configuration.md)) and give the agent `ZEN_SB_HEADERS={"Authorization":"Bearer <token>"}`. The token opens only the three read paths the knowledge tool calls, from loopback only. From another machine, use a copied session cookie in the same variable, or an SSH tunnel to the app's loopback port.
 | `kanban` | off | `{ "kind": "cli", "command": "hermes", "board": "exo" }` or `{ "kind": "hub", "url": "http://127.0.0.1:8787", "tokenEnv": "AGENT_HUB_TOKEN", "board": "exo" }` |
 | `org.command` | `cli-org` | The message board CLI; its tools appear only when it is on the PATH and a persona is set |
 | `persona.org`, `persona.definitions`, `persona.memory` | `.agents/org/org.json`, `.claude/agents`, `.agents/org/memory` | Where personas come from |
