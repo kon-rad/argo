@@ -138,7 +138,8 @@ const Schema = z.object({
   PROJECTS_FEED_TOKEN: z.string().min(32).optional(),
   // Read-only bearer token for an agent on this machine (zen-agent's knowledge tool): GET /api/search, /api/search/global
   // and /api/file/source, from loopback only and never through a proxy. Unset = the token does nothing.
-  KNOWLEDGE_TOKEN: z.string().min(32).optional(),
+  // A blank value (the line uncommented with nothing after it) means unset, not a startup failure.
+  KNOWLEDGE_TOKEN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(32).optional()),
   // A local OpenAI-compatible speech server (e.g. mlx-audio running Kokoro),
   // localhost only. Used by the voice module's Listen button; never on a server.
   TTS_URL: z.string().url().default('http://127.0.0.1:8880'),

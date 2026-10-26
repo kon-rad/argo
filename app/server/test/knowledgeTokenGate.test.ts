@@ -8,7 +8,7 @@ function run(over: { method?: string; path?: string; auth?: string | undefined; 
   const req = {
     method: over.method ?? 'GET',
     path: over.path ?? '/search',
-    headers: { ...(over.auth !== undefined ? { authorization: over.auth } : { authorization: `Bearer ${TOKEN}` }), ...(over.headers ?? {}) },
+    headers: { host: '127.0.0.1:5123', ...(over.auth !== undefined ? { authorization: over.auth } : { authorization: `Bearer ${TOKEN}` }), ...(over.headers ?? {}) },
     socket: { remoteAddress: over.addr ?? '127.0.0.1' },
   } as unknown as Request;
   const res = { locals: {} as Record<string, unknown> } as unknown as Response;
@@ -50,6 +50,15 @@ describe('knowledgeTokenGate', () => {
   it('refuses a request that came through a proxy, even from loopback (Caddy adds a forwarding header)', () => {
     for (const h of ['x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-port', 'forwarded', 'x-real-ip']) {
       expect(run({ headers: { [h]: '203.0.113.9' } }).flagged).toBe(false);
+    }
+  });
+
+  it('refuses a request whose Host is not a loopback name, even with no forwarding header (a relay that stripped them)', () => {
+    for (const host of ['sb.example.com', 'sb.example.com:443', '127.0.0.1.evil.example', 'localhost.example.com', '203.0.113.9:5123', '']) {
+      expect(run({ headers: { host } }).flagged).toBe(false);
+    }
+    for (const host of ['127.0.0.1', '127.0.0.1:5123', 'localhost:3000', 'LOCALHOST', '[::1]:5123']) {
+      expect(run({ headers: { host } }).flagged).toBe(true);
     }
   });
 
