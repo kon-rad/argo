@@ -66,6 +66,7 @@ nav:
       - Configuration and secrets: onboarding/08-config-and-secrets.md
       - Orchestrate agents: onboarding/09-orchestrate-agents.md
       - Adapt it: onboarding/10-adapt-it.md
+      - Connect Telegram: onboarding/11-telegram.md
   - Reference:
       - Getting started: getting-started.md
       - Architecture: architecture.md

@@ -16,6 +16,7 @@ You do not need all of it. The first three pages give you a vault, the app and o
 | 7 | [Configuration and secrets](08-config-and-secrets.md) | Where every setting and key lives, on each machine | 10 min |
 | 8 | [Orchestrate agents](09-orchestrate-agents.md) | Rules, skills, contracts, dev logs, a tracker and a board: the orchestration model | 20 min |
 | 9 | [Adapt it to your notes, app, business or startup](10-adapt-it.md) | Recipes for four kinds of users, and what to leave out | 10 min |
+| 10 | [Connect Telegram](11-telegram.md) | Create a bot and talk to your agents from your phone | 15 min |
 
 ## Before you start
 
