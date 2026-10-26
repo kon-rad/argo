@@ -88,11 +88,13 @@ done
 echo "→ shipping source to $HOST:$APP_DIR"
 ssh "$HOST" "mkdir -p $APP_DIR"
 rsync -az --delete \
-  --exclude node_modules --exclude dist --exclude 'web/dist' --exclude data \
+  --exclude node_modules --exclude dist --exclude 'web/dist' --exclude data --exclude vault-sync \
   --exclude .git --exclude .DS_Store \
   "$APP_ROOT/" "$HOST:$APP_DIR/"
-# The vault sync is one stdlib Python file from tools/, outside app/: ship it next to the app
-# (the rsync above has --delete, so it is sent again on every deploy).
+# The vault sync is one stdlib Python file from tools/, outside app/: ship it next to the app.
+# The rsync above excludes vault-sync, so a deploy that runs without DEPLOY_VAULT_SYNC=1 (the server's
+# own deploy-watch, say) leaves an installed sync in place instead of deleting it and failing the
+# timer every 15 minutes (2026-10-26: the vault stopped syncing after exactly such a deploy).
 if [ "$WITH_VAULT_SYNC" = 1 ]; then
   ssh "$HOST" "mkdir -p $APP_DIR/vault-sync"
   rsync -az "$ENGINE_ROOT/tools/sbsync.py" "$HOST:$APP_DIR/vault-sync/sbsync.py"
