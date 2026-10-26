@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import type { AgentEvent } from '@earendil-works/pi-agent-core';
+import type { Models } from '@earendil-works/pi-ai';
 import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
@@ -7,6 +8,7 @@ import { parseArgs } from 'node:util';
 import { ZenAgent, type RunResult } from './agent.js';
 import { loadConfig, THINKING_LEVELS, type Budget, type ThinkingLevel, type ZenConfig } from './config.js';
 import { decide, findLocalRules, loadLocalRules } from './guard.js';
+import { refreshMachines } from './machines.js';
 import { availableProviders, buildModels } from './models.js';
 import { listPersonas, loadPersona } from './persona.js';
 import { Session } from './session.js';
@@ -122,6 +124,14 @@ function budgetFlags(f: Flags): Partial<Budget> {
   if (f['max-tokens']) out.tokens = Number(f['max-tokens']);
   if (f['max-minutes']) out.minutes = Number(f['max-minutes']);
   return out;
+}
+
+/** The model catalogue with the connected computers' installed models registered, or undefined when there are none (the agent then builds its own). */
+async function liveModels(cfg: ZenConfig): Promise<Models | undefined> {
+  if (!Object.keys(cfg.machines).length) return undefined;
+  const models = buildModels(cfg);
+  await refreshMachines(models, cfg.machines, new Map());
+  return models;
 }
 
 function config(f: Flags): ZenConfig {
@@ -240,11 +250,12 @@ async function main(argv: string[]): Promise<number> {
       const persona = name ? loadPersona(cfg, name) : null;
       // A DM, handoff or mention wake: the thread it answers is the only board history in the prompt.
       const ctx = await wakeContext({ cfg, card: null, persona, thread: threadFlag(flags), fetchers: fetchFlag(flags) ?? [] });
-      const zen = new ZenAgent({ config: cfg, persona, budget: budgetFlags(flags), ...runOptions(flags), parts: ctx.parts, fetchers: ctx.fetchers, resume: flags.resume, onEvent: flags.json ? undefined : printer(flags.quiet === true) });
+      const zen = new ZenAgent({ config: cfg, persona, budget: budgetFlags(flags), ...runOptions(flags), parts: ctx.parts, fetchers: ctx.fetchers, resume: flags.resume, models: await liveModels(cfg), onEvent: flags.json ? undefined : printer(flags.quiet === true) });
       return report(await zen.run(prompt), flags);
     }
     case 'chat': {
-      const zen = new ZenAgent({ config: config(flags), persona: personaOf(flags), budget: { turns: 10_000, tokens: 50_000_000, minutes: 100_000, ...budgetFlags(flags) }, ...runOptions(flags), resume: flags.resume, onEvent: printer(flags.quiet === true) });
+      const chatCfg = config(flags);
+      const zen = new ZenAgent({ config: chatCfg, persona: personaOf(flags), budget: { turns: 10_000, tokens: 50_000_000, minutes: 100_000, ...budgetFlags(flags) }, ...runOptions(flags), resume: flags.resume, models: await liveModels(chatCfg), onEvent: printer(flags.quiet === true) });
       const rl = createInterface({ input: process.stdin, output: process.stderr });
       process.stderr.write(`zen-agent chat: ${zen.persona?.name ?? 'default'} on ${zen.model.provider}/${zen.model.id}; session ${zen.session.id}. /quit to leave.\n`);
       for (;;) {
@@ -278,7 +289,7 @@ async function main(argv: string[]): Promise<number> {
       const persona = personaOf(flags);
       const kb = makeKanban(cfg.kanban, process.env, fetch);
       if (!kb) throw new Error('wake needs a kanban backend in zen.json ("kanban": {"kind": "board", ...})');
-      const r = await runWake({ cfg, kb, cardId, board: flags.board, persona, budget: budgetFlags(flags), ...runOptions(flags), thread: threadFlag(flags), fetchers: fetchFlag(flags), onEvent: flags.json ? undefined : printer(flags.quiet === true) });
+      const r = await runWake({ cfg, kb, cardId, board: flags.board, persona, budget: budgetFlags(flags), ...runOptions(flags), thread: threadFlag(flags), fetchers: fetchFlag(flags), models: await liveModels(cfg), onEvent: flags.json ? undefined : printer(flags.quiet === true) });
       return report(r, flags);
     }
     case 'lane': {
@@ -304,7 +315,7 @@ async function main(argv: string[]): Promise<number> {
         const beat = setInterval(() => void kb.heartbeat?.(claimed.id, {}).catch(() => {}), 60_000);
         let r: RunResult;
         try {
-          r = await runWake({ cfg, kb, cardId: claimed.id, board: flags.board, persona: who, budget: budgetFlags(flags), task: flags.task, fetchers: fetchFlag(flags), canComplete: true, onEvent: flags.json ? undefined : printer(flags.quiet === true) });
+          r = await runWake({ cfg, kb, cardId: claimed.id, board: flags.board, persona: who, budget: budgetFlags(flags), task: flags.task, fetchers: fetchFlag(flags), canComplete: true, models: await liveModels(cfg), onEvent: flags.json ? undefined : printer(flags.quiet === true) });
         } finally {
           clearInterval(beat);
         }
@@ -319,7 +330,8 @@ async function main(argv: string[]): Promise<number> {
       }
     }
     case 'models': {
-      const models = buildModels(config(flags));
+      const cfg = config(flags);
+      const models = (await liveModels(cfg)) ?? buildModels(cfg);
       const avail = new Set(await availableProviders(models));
       const rows = models
         .getModels()

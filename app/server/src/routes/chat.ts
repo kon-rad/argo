@@ -18,7 +18,7 @@ import { listPersonas, personaDefinition, DEFAULT_PERSONA } from '../chat/person
 import { config } from '../config.js';
 import { query } from '../db.js';
 import type { EmbeddingProvider } from '../embeddings/provider.js';
-import { buildChatProvider, pickProvider, providerCatalog, type ProviderCatalog } from '../llm/registry.js';
+import { buildChatProvider, pickProvider, providerCatalogWithMachines, type ProviderCatalog } from '../llm/registry.js';
 import { LlmError, type ChatMessage, type ChatProvider } from '../llm/types.js';
 import { log } from '../logger.js';
 import { buildSystemPrompt } from '../rag/prompt.js';
@@ -33,7 +33,7 @@ export interface ChatOptions {
   /** Overridden in tests with a fake model. */
   buildProvider?: (id: string, model: string) => ChatProvider;
   /** Overridden in tests with a fixed catalog. */
-  catalog?: () => ProviderCatalog;
+  catalog?: () => ProviderCatalog | Promise<ProviderCatalog>;
   /** Overridden in tests; otherwise built from RERANK_URL and RERANK_API_KEY. */
   reranker?: () => Reranker | null;
 }
@@ -95,7 +95,7 @@ function sse(res: Response, event: string, data: unknown): void {
 
 export function chatRouter(opts: ChatOptions): Router {
   const router = Router();
-  const catalog = opts.catalog ?? (() => providerCatalog());
+  const catalog = opts.catalog ?? (() => providerCatalogWithMachines());
   const build = opts.buildProvider ?? ((id: string, model: string) => buildChatProvider(id, model));
   const reranker = opts.reranker ?? defaultReranker;
 
@@ -125,7 +125,7 @@ export function chatRouter(opts: ChatOptions): Router {
   router.get(
     '/options',
     wrap(async (_req, res) => {
-      const cat = catalog();
+      const cat = await catalog();
       const [personas, stored] = await Promise.all([listPersonas(), readSettings()]);
       const { rows } = await query<{ chunks: number; model: string | null }>(
         `SELECT count(*)::int AS chunks, (SELECT model FROM vault_chunks LIMIT 1) AS model FROM vault_chunks`,
@@ -145,7 +145,7 @@ export function chatRouter(opts: ChatOptions): Router {
   router.get(
     '/settings',
     wrap(async (_req, res) => {
-      res.json({ settings: await effective(await readSettings(), catalog()) });
+      res.json({ settings: await effective(await readSettings(), await catalog()) });
     }),
   );
 
@@ -153,7 +153,7 @@ export function chatRouter(opts: ChatOptions): Router {
     '/settings',
     wrap(async (req, res) => {
       const patch = parseOr400(SettingsPatch, req.body);
-      const cat = catalog();
+      const cat = await catalog();
       if (patch.provider && !cat.providers.some((p) => p.id === patch.provider)) {
         throw new HttpError(400, `unknown provider "${patch.provider}"`);
       }
@@ -231,7 +231,7 @@ export function chatRouter(opts: ChatOptions): Router {
       const conversation = await getConversation(id);
       if (!conversation) throw new HttpError(404, `no conversation ${id}`);
 
-      const cat = catalog();
+      const cat = await catalog();
       const stored = await readSettings();
       const choice = resolveModel(cat, {
         provider: body.provider ?? conversation.provider ?? stored.provider,

@@ -813,6 +813,9 @@ export interface ChatProviderOption {
   env: string | null;
   default: string;
   models: { id: string; label?: string }[];
+  /** A connected computer running Ollama; `offline` when it did not answer. */
+  machine?: boolean;
+  offline?: boolean;
 }
 
 export interface ChatPersona {

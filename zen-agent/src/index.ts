@@ -4,6 +4,7 @@ export { assemble, buildSystemPrompt, clip, estimateTokens, type Assembled, type
 export { compact, cutIndex, renderForSummary, transcriptTokens } from './compaction.js';
 export { checkPath, checkShell, decide, findLocalRules, isSecretPath, loadLocalRules, shellWords, toolPayload, type GuardPayload, type LocalRules } from './guard.js';
 export { runHook, runHooks, writeClaudeTranscript, type HookResult } from './hooks.js';
+export { discoverMachine, machineProvider, machineProviderId, parseMachines, refreshMachines } from './machines.js';
 export { availableProviders, buildModels, customProvider, pickModel } from './models.js';
 export { listPersonas, loadPersona, personaHeader, readOrg, type Persona } from './persona.js';
 export { newSessionId, Session, type SessionLine, type SessionSummary, type UsageTotals } from './session.js';
