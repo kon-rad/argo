@@ -643,6 +643,13 @@ export interface OrgWakeRow {
   dm?: number; mention?: number; task?: number; tokens?: number; output?: number;
   avg_minutes: number | null; last_wake: string | null;
 }
+/** One agent process (or an unfinished claim) alive on the server's host right now: GET /usage/running. */
+export interface RunningRow {
+  kind: 'bot' | 'lane' | 'other'; name: string; runtime: string; model: string | null; pid: number | null; user: string | null;
+  elapsedSec: number | null; startedAt: string | null; runId: string | null; reason: string | null; ref: string | null;
+  state: 'running' | 'claimed'; configured: { runtime: string; model: string | null } | null; detail: string | null;
+}
+export interface RunningNow { host: string; at: string; rows: RunningRow[]; configured: Record<string, number> }
 export interface UsageHost { slug: string; display: string; kind: 'laptop' | 'server' | 'pi'; chip: string | null; notes: string | null }
 /** One row of /usage/agent-sessions: a session from any harness and host. `cost_usd` only for non-Claude harnesses (Hermes's own estimate). */
 export interface AgentSessionRow {
@@ -1330,6 +1337,7 @@ export const api = {
     request<{ session: AgentSessionRow; runs: AgentSessionRun[]; steps: AgentStep[]; next: number | null }>(
       `/usage/agent-sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}`, { source: source ?? undefined, offset }),
   usageRuns: (from: string, to: string, f: UsageFilters = {}) => request<{ runs: UsageRun[] }>('/usage/runs', { from, to, ...usageFilterParams(f) }),
+  usageRunning: () => request<RunningNow>('/usage/running'),
   usageOrgWakes: (from: string, to: string) => request<{ agents: OrgWakeRow[] }>('/usage/org-wakes', { from, to }),
 };
 

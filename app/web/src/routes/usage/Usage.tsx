@@ -10,6 +10,7 @@ import StackedBars, { type BarSeries } from '../../components/charts/StackedBars
 import { bucketEnd, formatTokens, money, planText, TYPE_SERIES } from './format.js';
 import { zoned } from '../../lib/time.js';
 import AgentSessions from './AgentSessions.js';
+import Running from './Running.js';
 
 const RANGES = [{ label: '24 h', days: 1 }, { label: '7 d', days: 7 }, { label: '30 d', days: 30 }, { label: '90 d', days: 90 }];
 const GROUP_COLORS = ['var(--chart-bar)', 'var(--ink)', '#c2410c', '#15803d', '#7c3aed', '#0e7490', '#b45309', '#be123c', '#4d7c0f', '#6d28d9'];
@@ -155,7 +156,7 @@ function who(r: UsageRun): { dim: UsageDimension; value: string } | null {
   return null;
 }
 
-export default function Usage() {
+function UsageOverview() {
   const [sp, setSp] = useSearchParams();
   const days = Number(sp.get('days')) || 1;
   const group: Group = isGroup(sp.get('group')) ? (sp.get('group') as Group) : 'type';
@@ -349,6 +350,32 @@ export default function Usage() {
           </tbody>
         </table></div>
       </section>
+    </div>
+  );
+}
+
+/** Two views on one route: the spend overview (the default) and what is running on the server now (`?view=running`). */
+export default function Usage() {
+  const [sp, setSp] = useSearchParams();
+  const view = sp.get('view') === 'running' ? 'running' : 'usage';
+  const pick = (v: 'usage' | 'running') => {
+    const next = new URLSearchParams(sp);
+    if (v === 'usage') next.delete('view'); else next.set('view', v);
+    setSp(next, { replace: true });
+  };
+  const tab = (v: 'usage' | 'running', label: string) => (
+    <button type="button" role="tab" aria-selected={view === v} onClick={() => pick(v)}
+      className={`px-3 py-1.5 text-sm ${view === v ? 'border-b-2 border-[var(--ink)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}>{label}</button>
+  );
+  return (
+    <div className="flex h-full flex-col">
+      <div role="tablist" aria-label="Usage views" className="flex shrink-0 gap-1 border-b border-[var(--rule)] px-4 pt-2">
+        {tab('usage', 'Usage')}
+        {tab('running', 'Running now')}
+      </div>
+      <div className="min-h-0 flex-1">
+        {view === 'running' ? <div className="h-full overflow-auto p-4"><Running /></div> : <UsageOverview />}
+      </div>
     </div>
   );
 }
