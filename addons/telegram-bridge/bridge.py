@@ -133,9 +133,14 @@ class Bridge:
         self.cfg, self.tg, self.state = cfg, tg, state
         self.runner = runner or subprocess.run
 
-    def argv(self, session: Optional[str]) -> List[str]:
+    def argv(self, session: Optional[str], message_id: Optional[int] = None) -> List[str]:
         c = self.cfg
         a = [c.zen_bin, "run", "--json", "--quiet"]
+        # Labels the usage page reads from the trace (usage/zenTrace.ts): a work type to filter on, and a wake reason
+        # whose ref is the Telegram message id, never the chat id or the text.
+        a += ["--meta", "work_type=telegram", "--meta", "channel=telegram"]
+        if message_id is not None:
+            a += ["--meta-json", json.dumps({"reasons": [{"reason": "telegram", "ref": str(message_id)}]})]
         for flag, val in (("--persona", c.persona), ("--model", c.model), ("--tools", c.tools),
                           ("--max-turns", c.max_turns), ("--max-tokens", c.max_tokens)):
             if val:
@@ -144,7 +149,7 @@ class Bridge:
             a += ["--resume", session]
         return a
 
-    def run_agent(self, chat_id: int, text: str) -> str:
+    def run_agent(self, chat_id: int, text: str, message_id: Optional[int] = None) -> str:
         chat = self.state.chat(chat_id)
         note = ""
         if chat["session"] and chat["runs"] >= self.cfg.max_runs:
@@ -152,7 +157,7 @@ class Bridge:
             note = "(Started a fresh conversation: the last one had run long enough to cost more than it helps.)\n\n"
         try:
             # The prompt goes in on stdin, so a message that starts with "-" can never be read as a flag.
-            proc = self.runner(self.argv(chat["session"]), input=text, capture_output=True, text=True,
+            proc = self.runner(self.argv(chat["session"], message_id), input=text, capture_output=True, text=True,
                                timeout=self.cfg.run_timeout, cwd=self.cfg.workdir)
         except subprocess.TimeoutExpired:
             return f"The run took longer than {self.cfg.run_timeout // 60} minutes and was stopped."
@@ -204,7 +209,7 @@ class Bridge:
             stop = threading.Event()
             threading.Thread(target=self.typing, args=(chat_id, stop), daemon=True).start()
             try:
-                reply = self.run_agent(chat_id, text)
+                reply = self.run_agent(chat_id, text, msg.get("message_id"))
             finally:
                 stop.set()
         for part in chunks(reply):

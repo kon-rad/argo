@@ -33,8 +33,8 @@ def make(tmp_path, runner, **env):
     return bridge.Bridge(cfg, tg, bridge.State(cfg.state_file), runner=runner), tg
 
 
-def update(text, sender=OWNER, chat_type="private", uid=1):
-    return {"update_id": uid, "message": {"from": {"id": sender}, "chat": {"id": sender, "type": chat_type}, "text": text}}
+def update(text, sender=OWNER, chat_type="private", uid=1, mid=77):
+    return {"update_id": uid, "message": {"message_id": mid, "from": {"id": sender}, "chat": {"id": sender, "type": chat_type}, "text": text}}
 
 
 def ok_runner(calls, text="done", session="s-1", total=120):
@@ -173,3 +173,15 @@ def test_token_never_appears_in_errors(tmp_path, monkeypatch):
         assert "SECRET" not in str(e)
     else:
         raise AssertionError("expected RuntimeError")
+
+
+def test_runs_are_labelled_for_the_usage_page_without_the_chat_id_or_text(tmp_path):
+    calls = []
+    b, tg = make(tmp_path, ok_runner(calls))
+    b.handle(update("secret question", mid=4242))
+    argv = calls[0][0]
+    assert argv[argv.index("--meta") + 1] == "work_type=telegram"
+    assert "channel=telegram" in argv
+    meta = json.loads(argv[argv.index("--meta-json") + 1])
+    assert meta == {"reasons": [{"reason": "telegram", "ref": "4242"}]}
+    assert str(OWNER) not in " ".join(argv) and "secret question" not in " ".join(argv)
