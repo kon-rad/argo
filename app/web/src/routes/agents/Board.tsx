@@ -148,7 +148,7 @@ export function CardNotes({ refs, resolved }: { refs: string[]; resolved: Record
       {paths.slice(0, 4).map((p) => (
         <Link key={p} to={fileHref(p)} title={p}
           className="max-w-full truncate rounded bg-[var(--paper-sunk)] px-1.5 py-0.5 text-[0.7rem] text-[var(--accent)] underline-offset-2 hover:underline">
-          {p.split('/').pop()}
+          {p.split('/').filter(Boolean).pop()}{p.endsWith('/') ? '/' : ''}
         </Link>
       ))}
       {paths.length > 4 && <span className="text-[0.7rem] text-[var(--ink-faint)]">+{paths.length - 4} more</span>}

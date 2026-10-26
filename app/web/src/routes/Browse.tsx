@@ -1,6 +1,7 @@
 import { useLocation } from 'react-router-dom';
 import Tree from '../components/Tree.js';
 import FileView from '../components/FileView.js';
+import FolderView from '../components/FolderView.js';
 
 /** `/file/Areas/work/note.md` → `Areas/work/note.md`. */
 function pathFromLocation(pathname: string): string {
@@ -33,7 +34,7 @@ export default function Browse() {
       </aside>
       <section className={`min-w-0 flex-1 overflow-y-auto md:block ${path ? '' : 'hidden'}`}>
         {path ? (
-          <FileView key={path} path={path} />
+          path.endsWith('/') ? <FolderView key={path} path={path.replace(/\/+$/, '')} /> : <FileView key={path} path={path} />
         ) : (
           <div className="flex h-full items-center justify-center p-8 text-center text-[var(--ink-dim)]">
             <p>
