@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { creditHistory, latestCredits } from '../credits.js';
 import { query } from '../db.js';
 import { expandSteps } from '../archive/steps.js';
+import { running } from '../usage/running.js';
 import { agentSessionsRouter } from './agentSessions.js';
 import { HttpError, parseOr400, wrap } from './http.js';
 
@@ -317,6 +318,11 @@ export function usageRouter(): Router {
       text = parts.find((p) => p.key === part)?.text ?? r.rows[0].content_text ?? '';
     }
     res.json({ id: r.rows[0].id, raw: source === 'claude-code' ? stripCost(raw) : raw, ...(text !== undefined ? { text } : {}) });
+  }));
+
+  // Agent processes alive on this host right now, joined with claimed wakeups and the roster's runtime and model.
+  router.get('/running', wrap(async (_req, res) => {
+    res.json(await running());
   }));
 
   // The agent company's wakes per agent (org_wakeups): how much of the shared
