@@ -132,10 +132,10 @@ describe('folders and mentions', () => {
 
   it('links a known @agent and skips unknown names, emails and links', () => {
     const known = new Set(['juno', 'sol']);
-    expect(splitMentions('ask @juno or @nobody, mail me@juno.com', known)).toEqual([
+    expect(splitMentions('ask @juno or @nobody, see a_b@juno', known)).toEqual([
       { type: 'text', value: 'ask ' },
       { type: 'mention', name: 'juno' },
-      { type: 'text', value: ' or @nobody, mail me@juno.com' },
+      { type: 'text', value: ' or @nobody, see a_b@juno' },
     ]);
     const out = unified().use(remarkParse).use(remarkMentions, known).use(remarkStringify).processSync('hi @sol and `@juno`').toString();
     expect(out).toContain('[@sol](agent:sol)');
