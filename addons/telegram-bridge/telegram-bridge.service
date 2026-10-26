@@ -10,6 +10,10 @@ Wants=network-online.target
 User=<user>
 WorkingDirectory=/path/to/vault
 EnvironmentFile=/home/<user>/.zen/telegram-bridge.env
+# The model key zen-agent needs (for example OPENROUTER_API_KEY). A second file, or add the key to the file above; a
+# shell started by hand does not have it, which is why a test from your own terminal can fail with "Provider is not
+# configured" while the service works.
+# EnvironmentFile=/path/to/the/file/with/the/model/key
 Environment=PATH=/home/<user>/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/python3 /path/to/vault/.secondbrain/addons/telegram-bridge/bridge.py
 Restart=on-failure

@@ -294,7 +294,7 @@ The dispatcher runs as the deploy's service user, never as the owner, with `fs.r
 | Daily brief text | The same, as a routine of the chief-of-staff persona | 4 |
 | Daily brief audio (TTS) | Unchanged: a script step after the text routine, not an agent | never |
 | Other scheduled research or update jobs | Routines, each with a task file in the vault | 4, one at a time |
-| Telegram chat (owner ↔ an agent) | Hermes and Claude Code keep their own bots. zen-agent has no transport by design; the [`telegram-bridge`](../addons/telegram-bridge/README.md) add-on is a separate process that calls `zen-agent run --resume …` per message, on its own bot | built |
+| Telegram chat (owner ↔ an agent) | Hermes and Claude Code keep their own bots. zen-agent has no transport by design; the [`telegram-bridge`](https://github.com/kon-rad/secondbrain/blob/main/addons/telegram-bridge/README.md) add-on is a separate process that calls `zen-agent run --resume …` per message, on its own bot | built |
 | Hermes usage in the ledger | Unchanged (`hermes_usage_snapshots`, the usage-ledger plugin) | — |
 
 Hermes's hooks and skills wiring in [agent-harness.md](agent-harness.md) stay for whatever still runs there.
