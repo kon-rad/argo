@@ -44,12 +44,15 @@ const clip = (s: string, n: number) => {
 /** One line per step that matters. Thinking, system and meta records are dropped; tool output is kept only when it failed. */
 export function lines(parts: StepPart[]): string[] {
   const out: string[] = [];
-  for (const p of parts) {
+  // The last response is how the session ended (a report, an answer, a hand-off): clipped to 1,000 characters it
+  // read as an agent that was cut off, so it keeps more room than the running commentary.
+  const lastResponse = parts.map((p) => p.step).lastIndexOf('response');
+  parts.forEach((p, i) => {
     if (p.step === 'prompt') out.push(`[prompt] ${clip(p.text, 1500)}`);
-    else if (p.step === 'response') out.push(`[response] ${clip(p.text, 1000)}`);
+    else if (p.step === 'response') out.push(`[response] ${clip(p.text, i === lastResponse ? 3500 : 1000)}`);
     else if (p.step === 'tool_call') out.push(`[tool] ${p.toolName ?? 'tool'}: ${clip(toolSummary(p.toolName ?? '', p.text), 160)}`);
     else if (p.step === 'tool_result' && p.isError) out.push(`[error] ${clip(p.text, 240)}`);
-  }
+  });
   return out.filter((l) => l.length > 10);
 }
 

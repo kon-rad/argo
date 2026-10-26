@@ -174,3 +174,14 @@ describe('the judge', () => {
     expect(combine([1, null, 0.5])).toBe(0.75);
   });
 });
+
+describe('how a session ends', () => {
+  it('keeps the last response nearly whole so a finished report is not read as cut off', () => {
+    const long = 'Report: ' + 'x'.repeat(2500) + ' THE END';
+    const mk = (step: 'response' | 'prompt', text: string) => ({ key: text.slice(0, 4), step, text, toolName: null, toolCallId: null, isError: null });
+    const c = compact([mk('prompt', 'write the report'), mk('response', 'y'.repeat(2000)), mk('response', long)], 24000);
+    expect(c.text).toContain('THE END'); // the last response is kept (up to 3,500 characters)
+    expect(c.text).toMatch(/y{900,}\s*\[\.\.\.\]/); // an earlier response is still clipped to about 1,000
+    expect(c.text).not.toContain('y'.repeat(1100));
+  });
+});
