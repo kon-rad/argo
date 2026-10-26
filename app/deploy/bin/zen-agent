@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# zen-agent on the app user's PATH (installed to ~/.local/bin by deploy.sh). zen-agent ships in the engine
+# (sibling of app/), not under app/, so it is built into @APP_HOME@/zen-agent rather than @APP_DIR@.
+set -eo pipefail   # no -u: the env file holds bcrypt hashes with $-sequences the shell would flag
+set -a; . /etc/secondbrain/env; set +a
+exec node --no-warnings @APP_HOME@/zen-agent/dist/src/cli.js "$@"
