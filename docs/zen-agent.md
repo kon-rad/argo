@@ -84,6 +84,8 @@ The keys, in the order you are likely to touch them:
 | `guard.local`, `guard.log`, `guard.hooks` | first `.agents/guard.local.json` up from the working directory; `~/.cache/agent-guard.log`; none | The vault's rules, the block log, and the `preToolUse` and `stop` hook commands |
 | `providers` | `{}` | Extra endpoints: `{ "<id>": { "api": "openai-completions" \| "anthropic-messages", "baseUrl", "apiKeyEnv"?, "models": [{ "id", "contextWindow"?, "maxTokens"? }] } }` |
 
+The search endpoints need a login, and an agent cannot type a TOTP code. On the same machine as the app, set `KNOWLEDGE_TOKEN` in the app's env (see [configuration](configuration.md)) and give the agent `ZEN_SB_HEADERS={"Authorization":"Bearer <token>"}`. The token opens only the three read paths the knowledge tool calls, from loopback only. From another machine, use a copied session cookie in the same variable, or an SSH tunnel to the app's loopback port.
+
 `zen-agent config` prints the effective configuration with every path resolved. `zen-agent models --available` lists the models whose provider has a key.
 
 ### 3.3 Run

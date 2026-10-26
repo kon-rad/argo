@@ -26,6 +26,7 @@ import type { FundDeps } from './fund.js';
 import { orgRouter } from './routes/org.js';
 import { friendlyRouter, type FriendlyOptions } from './routes/friendly.js';
 import { rawRouter } from './routes/raw.js';
+import { knowledgeTokenGate } from './auth/knowledgeToken.js';
 import { projectsFeedRouter, projectsRouter } from './routes/projects.js';
 import { ringRouter, type RingRouterOptions } from './routes/ring.js';
 import { runsRouter } from './routes/runs.js';
@@ -79,6 +80,8 @@ export interface AppOptions {
   board?: Partial<BoardRouterOptions>;
   /** Overridden in tests; otherwise PROJECTS_FEED_TOKEN. */
   projectsFeedToken?: string;
+  /** Test override for KNOWLEDGE_TOKEN. */
+  knowledgeToken?: string;
   /** Overridden in tests: temp settings and cache, and a fake speech server. */
   voice?: Partial<VoiceOptions>;
   /** Overridden in tests with fake providers and a fixed encryption key. */
@@ -170,11 +173,13 @@ export function createApp(opts: AppOptions = {}): express.Express {
     // this after checkOrigin made every non-GET board call 403 "cross-origin request refused" before the
     // board's own token check ever ran (docs/zen-runtime.md phase 2 pilot, 2026-10-25).
     if (modules.has('board')) app.use('/api/board', boardRouter({ sessionGate: auth.requireSession, hub: opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }, ...opts.board }));
+    // A read-only token for a local agent, for three GET paths (auth/knowledgeToken.ts). It only flags the request.
+    app.use('/api', knowledgeTokenGate(opts.knowledgeToken ?? config.knowledgeToken));
     app.use('/api', auth.checkOrigin);
     app.use('/api/auth', auth.router);
     // Everything below this line needs a session. Routes are only ever added
     // below it, so a new endpoint is protected by default.
-    app.use('/api', auth.requireSession);
+    app.use('/api', (req, res, next) => (res.locals.knowledgeToken ? next() : auth.requireSession(req, res, next)));
   } else {
     if (modules.has('board')) app.use('/api/board', boardRouter({ hub: opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }, ...opts.board }));
     app.get('/api/auth/me', (_req, res) => {
