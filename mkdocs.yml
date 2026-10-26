@@ -76,6 +76,7 @@ nav:
       - Modules: modules.md
       - Retrieval and the chat module: rag.md
       - Memory, and how to check it works: memory.md
+      - The golden set, a recall test: memory-golden-set.md
       - Agent harness: agent-harness.md
       - Agent persona memory: agent-memory.md
       - Deployment: deployment.md

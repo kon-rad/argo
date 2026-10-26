@@ -102,6 +102,8 @@ Read these as a baseline, not a verdict. The pattern matches only the CLI spelli
 
 ## Does it help? A recall test you can repeat
 
+The full method, with the kinds of case to include and how to read a run, is on [The golden set](memory-golden-set.md).
+
 Build a **golden set**: 15 to 30 questions whose answer you already know, each with a string that must appear in the top hits (a path or a distinctive phrase). Run them through `recall` and score them. Rerun after any change to the index, the embedder, or the recall code.
 
 ```sh
