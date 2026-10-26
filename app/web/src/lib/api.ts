@@ -363,15 +363,7 @@ export interface TelegramStatus {
   bots_distinct: boolean;
 }
 
-export interface HubAgent {
-  name: string;
-  family: 'claude' | 'hermes' | 'org';
-  description?: string;
-  model?: string;
-  team?: string | null;
-}
-
-/** A card for a bot with its tracker project and feature (task_links); status lives on the kanban. */
+/** A card for a bot with its tracker project and feature (GET /api/org/tasks, read from the board's cards). */
 export interface TaskLink {
   task_id: string;
   board: string;
@@ -386,29 +378,6 @@ export interface TaskLink {
   kind?: string;
   work_type?: string | null;
   created_at: string;
-}
-
-export interface KanbanTask {
-  id: string;
-  title: string;
-  body: string | null;
-  assignee: string | null;
-  status: string;
-  priority: number;
-  created_by: string | null;
-  created_at: number;
-  started_at: number | null;
-  completed_at: number | null;
-  result: string | null;
-}
-
-export interface KanbanTaskDetail {
-  task: KanbanTask;
-  latest_summary: string | null;
-  parents: string[];
-  children: string[];
-  comments: { author: string; body: string; created_at: number }[];
-  events: { kind: string; payload: Record<string, unknown> | null; created_at: number }[];
 }
 
 // ---- the board module: the kanban record in the engine (/api/board) ----
@@ -1268,18 +1237,6 @@ export const api = {
   telegram: () => request<TelegramStatus>('/hub/telegram'),
   setTelegram: (change: { default: 'claude' | 'hermes' } | { claude: 'on' | 'off' }) =>
     request<TelegramStatus>('/hub/telegram', undefined, json('POST', change)),
-  hubAgents: () => request<{ lanes: HubAgent[]; profiles: HubAgent[]; bots?: HubAgent[] }>('/hub/agents'),
-  boards: () => request<{ boards: { slug: string; name: string }[] }>('/hub/boards'),
-  board: (board: string) => request<{ board: string; tasks: KanbanTask[] }>('/hub/board', { board }),
-  task: (id: string, board: string) => request<KanbanTaskDetail>(`/hub/tasks/${id}`, { board }),
-  taskLog: (id: string, offset: number) => request<EventPage>(`/hub/tasks/${id}/log`, { offset }),
-  createTask: (t: { board: string; title: string; body: string; assignee: string; project?: string; feature?: string }) =>
-    request<KanbanTask & { link?: TaskLink }>('/hub/tasks', undefined, json('POST', t)),
-  commentTask: (id: string, board: string, text: string) =>
-    request<{ ok: true }>(`/hub/tasks/${id}/comment`, undefined, json('POST', { board, text })),
-  /** Moves a card to a lane, a Hermes profile or a bot (a bot needs the tracker project; "none" unassigns). */
-  assignTask: (id: string, t: { board: string; assignee: string; project?: string; feature?: string }) =>
-    request<KanbanTask & { link?: TaskLink }>(`/hub/tasks/${id}/assign`, undefined, json('POST', t)),
   claudeChats: () => request<{ chats: ClaudeChat[] }>('/hub/chats'),
   chatPresets: () => request<{ presets: ChatPreset[] }>('/presets'),
   putChatPreset: (name: string, body: Pick<ChatPreset, 'harness' | 'config'>) =>

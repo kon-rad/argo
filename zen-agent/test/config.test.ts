@@ -28,7 +28,7 @@ test('zen.json merges deeply, the environment picks the model, flags win', () =>
       vault: 'vault',
       budget: { turns: 5 },
       context: { parts: { rules: 10 } },
-      kanban: { kind: 'cli', command: 'hermes', board: 'exo' },
+      kanban: { kind: 'board', url: 'http://127.0.0.1:5123', tokenEnv: 'BOARD_TOKEN', board: 'exo' },
       providers: { ollama: { api: 'openai-completions', baseUrl: 'http://127.0.0.1:11434/v1', models: [{ id: 'qwen3:8b' }] } },
     }),
   );
@@ -39,7 +39,7 @@ test('zen.json merges deeply, the environment picks the model, flags win', () =>
   assert.equal(cfg.context.parts['rules'], 10);
   assert.equal(cfg.context.parts['persona'], 3000);
   assert.equal(cfg.rules[0], join(dir, 'vault', 'AGENTS.md'));
-  assert.equal(cfg.kanban.kind, 'cli');
+  assert.equal(cfg.kanban.kind, 'board');
   assert.ok(cfg.providers['ollama']);
   const over = loadConfig({ workdir: dir, env: { ZEN_MODEL: 'together/x' }, overrides: { model: 'faux/faux-1' } });
   assert.equal(over.model, 'faux/faux-1');

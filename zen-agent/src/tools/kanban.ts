@@ -1,17 +1,14 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from '@earendil-works/pi-ai';
-import { execFile } from 'node:child_process';
 import type { KanbanConfig } from '../config.js';
 import { clipOutput, text, tool, type ToolContext } from './index.js';
 
 /**
- * The kanban board as typed tools. Three backends: `board` is the engine's own
+ * The kanban board as typed tools. One backend: `board` is the engine's own
  * board (the secondbrain app's /api/board, a per-machine token from the
- * environment; every verb, plus claim and heartbeat for the lane loop), `hub`
- * is agent-hub's HTTP API (list, show, create, comment, assign), `cli` is the
- * Hermes board's command line (`hermes kanban`, which also completes and blocks
- * cards). The tool set the model sees is whatever the backend can do, so it
- * never calls what will fail.
+ * environment; every verb, plus claim and heartbeat for the lane loop). The tool
+ * set the model sees is whatever the backend can do, so it never calls what
+ * will fail.
  */
 export interface Card {
   id: string;
@@ -36,7 +33,7 @@ export interface CardDetail {
 }
 
 export interface KanbanBackend {
-  readonly kind: 'board' | 'hub' | 'cli';
+  readonly kind: 'board';
   readonly board: string;
   list(board?: string): Promise<Card[]>;
   show(id: string, board?: string): Promise<CardDetail>;
@@ -56,52 +53,6 @@ const CARD_ID = /^t_[0-9a-f]{6,32}$/;
 function checkId(id: string): string {
   if (!CARD_ID.test(id)) throw new Error(`bad card id "${id}" (t_ followed by hex)`);
   return id;
-}
-
-export class HubKanban implements KanbanBackend {
-  readonly kind = 'hub' as const;
-  private readonly url: string;
-  constructor(
-    url: string,
-    private readonly token: string,
-    readonly board: string,
-    private readonly fetchFn: typeof fetch,
-  ) {
-    this.url = url.replace(/\/+$/, '');
-  }
-
-  private async call<T>(method: 'GET' | 'POST', path: string, query?: Record<string, string | undefined>, body?: unknown): Promise<T> {
-    const q = new URLSearchParams();
-    for (const [k, v] of Object.entries(query ?? {})) if (v) q.set(k, v);
-    const res = await this.fetchFn(`${this.url}${path}${q.size ? `?${q}` : ''}`, {
-      method,
-      headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
-      signal: AbortSignal.timeout(30_000),
-    });
-    const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-    if (!res.ok) {
-      const msg = typeof data?.['error'] === 'string' ? data['error'] : (data?.['error'] as { message?: string } | undefined)?.message;
-      throw new Error(`kanban ${res.status}${msg ? `: ${msg}` : ''}`);
-    }
-    return data as T;
-  }
-
-  async list(board = this.board): Promise<Card[]> {
-    return (await this.call<{ tasks: Card[] }>('GET', '/board', { board })).tasks;
-  }
-  async show(id: string, board = this.board): Promise<CardDetail> {
-    return this.call('GET', `/tasks/${checkId(id)}`, { board });
-  }
-  async create(c: { title: string; body: string; assignee: string; board?: string; project?: string; feature?: string }): Promise<Card> {
-    return this.call('POST', '/tasks', undefined, { ...c, board: c.board ?? this.board });
-  }
-  async comment(id: string, body: string, board = this.board): Promise<void> {
-    await this.call('POST', `/tasks/${checkId(id)}/comment`, undefined, { board, text: body });
-  }
-  async assign(id: string, assignee: string, opts: { board?: string; project?: string; feature?: string } = {}): Promise<void> {
-    await this.call('POST', `/tasks/${checkId(id)}/assign`, undefined, { board: opts.board ?? this.board, assignee, project: opts.project, feature: opts.feature });
-  }
 }
 
 /** A card as the engine's board returns it (docs/board-design.md section 5.1), reduced to what the tools show. */
@@ -197,75 +148,12 @@ export class BoardKanban implements KanbanBackend {
   }
 }
 
-export type Exec = (cmd: string, args: string[]) => Promise<string>;
-
-export const execKanban: Exec = (cmd, args) =>
-  new Promise((ok, fail) => {
-    execFile(cmd, args, { timeout: 30_000, maxBuffer: 4_000_000 }, (err, stdout, stderr) => {
-      if (err) fail(new Error(`kanban: ${(stderr || err.message).trim().slice(0, 400)}`));
-      else ok(stdout);
-    });
-  });
-
-export class CliKanban implements KanbanBackend {
-  readonly kind = 'cli' as const;
-  constructor(
-    private readonly command: string,
-    readonly board: string,
-    private readonly author: string,
-    private readonly exec: Exec = execKanban,
-  ) {}
-
-  private run(board: string, args: string[]): Promise<string> {
-    return this.exec(this.command, ['kanban', '--board', board, ...args]);
-  }
-  private json<T>(out: string): T {
-    try {
-      return JSON.parse(out) as T;
-    } catch {
-      throw new Error(`kanban: expected JSON, got: ${out.slice(0, 200)}`);
-    }
-  }
-
-  async list(board = this.board): Promise<Card[]> {
-    const doc = this.json<Card[] | { tasks?: Card[] }>(await this.run(board, ['list', '--json']));
-    return Array.isArray(doc) ? doc : (doc.tasks ?? []);
-  }
-  async show(id: string, board = this.board): Promise<CardDetail> {
-    const doc = this.json<Partial<CardDetail> & Card>(await this.run(board, ['show', checkId(id), '--json']));
-    return { task: doc.task ?? doc, comments: doc.comments ?? [], parents: doc.parents, children: doc.children, latest_summary: doc.latest_summary ?? null };
-  }
-  async create(c: { title: string; body: string; assignee: string; board?: string }): Promise<Card> {
-    const out = await this.run(c.board ?? this.board, ['create', `--body=${c.body}`, '--assignee', c.assignee, '--created-by', this.author, '--json', '--', c.title]);
-    const doc = this.json<Card | { task: Card }>(out);
-    return 'task' in doc ? doc.task : doc;
-  }
-  async comment(id: string, body: string, board = this.board): Promise<void> {
-    await this.run(board, ['comment', '--author', this.author, '--', checkId(id), body]);
-  }
-  async assign(id: string, assignee: string, opts: { board?: string } = {}): Promise<void> {
-    await this.run(opts.board ?? this.board, ['assign', checkId(id), assignee]);
-  }
-  async complete(id: string, result?: string, board = this.board): Promise<void> {
-    await this.run(board, ['complete', checkId(id), ...(result ? ['--result', result] : [])]);
-  }
-  async block(id: string, reason: string, board = this.board): Promise<void> {
-    await this.run(board, ['block', checkId(id), reason]);
-  }
-}
-
-export function makeKanban(cfg: KanbanConfig, env: NodeJS.ProcessEnv, fetchFn: typeof fetch, author: string, exec?: Exec): KanbanBackend | null {
+export function makeKanban(cfg: KanbanConfig, env: NodeJS.ProcessEnv, fetchFn: typeof fetch): KanbanBackend | null {
   if (cfg.kind === 'board') {
     const token = env[cfg.tokenEnv];
     if (!token) throw new Error(`kanban: ${cfg.tokenEnv} is not set (a board token from \`cli-board token create\`)`);
     return new BoardKanban(cfg.url, token, cfg.board, fetchFn);
   }
-  if (cfg.kind === 'hub') {
-    const token = env[cfg.tokenEnv];
-    if (!token) throw new Error(`kanban: ${cfg.tokenEnv} is not set`);
-    return new HubKanban(cfg.url.replace(/\/+$/, ''), token, cfg.board, fetchFn);
-  }
-  if (cfg.kind === 'cli') return new CliKanban(cfg.command, cfg.board, author, exec);
   return null;
 }
 
@@ -285,7 +173,7 @@ export function formatDetail(d: CardDetail): string {
 }
 
 export function kanbanTools(ctx: ToolContext, backend?: KanbanBackend | null): AgentTool<any>[] {
-  const kb = backend === undefined ? makeKanban(ctx.cfg.kanban, ctx.env, ctx.fetch, ctx.persona?.name ?? 'zen-agent') : backend;
+  const kb = backend === undefined ? makeKanban(ctx.cfg.kanban, ctx.env, ctx.fetch) : backend;
   if (!kb) return [];
   const max = ctx.cfg.shell.maxOutput;
   const Board = Type.Optional(Type.String({ description: `Board slug (default ${kb.board})` }));

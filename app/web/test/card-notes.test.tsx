@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { CardNotes } from '../src/routes/agents/Board.js';
+import { CardNotes } from '../src/components/CardNotes.js';
 import { ChatInput } from '../src/components/ChatInput.js';
 
 afterEach(() => cleanup());

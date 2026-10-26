@@ -244,7 +244,7 @@ export interface NewCard {
   node?: string;
   rounds?: number;
   shipNow?: boolean;
-  /** A fixed id (the Hermes projection's, while both boards run). */
+  /** A fixed id (the legacy importer's); normally the board function mints it. */
   id?: string;
   scheduledFor?: Date;
 }
@@ -285,7 +285,7 @@ export interface ClaimOpts {
   leaseMinutes?: number;
   wakeup?: number;
   /** Claim this exact card, not just the next ready one: a lane (cc-dispatcher) that already picked a task from its
-   * own sorted, filtered list needs the same "claim this one or fail" guarantee Hermes's `kanban claim <id>` gives. */
+   * own sorted, filtered list needs the same "claim this one or fail" guarantee the old Hermes `kanban claim <id>` gave. */
   taskId?: string;
 }
 
@@ -450,7 +450,7 @@ export class BoardBus {
   }
 }
 
-// ---- the mirror: cards from the Hermes board's `--json` output ------------------------------------------
+// ---- legacy migration: cards from a saved Hermes board `--json` export (file only, never a live call) ----
 
 export interface HermesCard {
   id: string;
@@ -550,7 +550,7 @@ export async function driftReport(board: string, docs: HermesCard[]): Promise<{ 
  * Pause and resume: the cutover's phase 1b control plane (vault: kanban-board/dev-log/2026-10-26_cutover-phase0-inventory.md).
  * One owner-only switch in Postgres stops new claims for one bot, a team's bots, or the whole board. A pause stops
  * *new* work only; a run that already holds a lease keeps its card. The gate lives inside board_card_claim, so every
- * backend (cc-dispatcher over the projection, zen-agent over this API) sees the same pause without reading a file.
+ * backend (cc-dispatcher, zen-agent over this API) sees the same pause without reading a file.
  */
 export interface BoardSettings {
   board_slug: string;

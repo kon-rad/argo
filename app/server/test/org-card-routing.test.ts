@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { query } from '../src/db.js';
-import { assignTask, botRepos, createTask, getAgent, importOrg, isVaultAssignee, VAULT_ASSIGNEE, type KanbanRunner } from '../src/org.js';
+import { assignTask, botRepos, createTask, getAgent, importOrg, isVaultAssignee, VAULT_ASSIGNEE } from '../src/org.js';
 import { truncateAll } from './helpers.js';
 
 /**
@@ -28,16 +28,9 @@ const ORG = {
   channels: { 'all-hands': { members: '*' }, leads: { members: ['owner', 'sol', 'atlas', 'juno'] } },
 };
 
-const calls: string[][] = [];
-const runner: KanbanRunner = async (args) => {
-  calls.push(args);
-  return args[3] === 'create' ? JSON.stringify({ id: `t_${String(calls.length).padStart(6, '0')}` }) : '';
-};
-const arg = (args: string[], flag: string) => args[args.indexOf(flag) + 1];
 
 describe('card routing by repo', () => {
   beforeEach(async () => {
-    calls.length = 0;
     const dir = mkdtempSync(join(tmpdir(), 'sb-repos-'));
     writeFileSync(join(dir, 'bot-repos.toml'), `work_dir = "${dir}"\n\n[repos.argo-exo]\ngithub = "x/argo-exo"\n\n[repos.secondbrain]\ngithub = "x/secondbrain"\n`);
     writeFileSync(join(dir, 'created-repos.json'), JSON.stringify({ 'bot-made': { github: 'ArgoOrg/bot-made' } }));
@@ -58,52 +51,50 @@ describe('card routing by repo', () => {
   it("a lead's coding card names a repo the bots reach", async () => {
     const atlas = await getAgent('atlas');
     const card = { assignee: 'rune', title: 'Build it', project: 'argo-exo', type: 'coding' };
-    await expect(createTask(atlas, card, runner)).rejects.toThrow(/names its repo: --repo <name> \(one of argo-exo, secondbrain, bot-made\)/);
-    await expect(createTask(atlas, { ...card, repo: 'secret-repo' }, runner)).rejects.toThrow(/no bot can push to secret-repo/);
-    await expect(createTask(atlas, { ...card, repo: 'vault' }, runner)).rejects.toThrow(/vault code is worked by a Claude Code session on the owner's machine.*task create vault-session/);
-    const r = await createTask(atlas, { ...card, repo: 'bot-made' }, runner);
-    expect(calls.at(-1)!.find((a) => a.startsWith('--body='))).toContain('Assigned by atlas. Repo: bot-made.');
+    await expect(createTask(atlas, card)).rejects.toThrow(/names its repo: --repo <name> \(one of argo-exo, secondbrain, bot-made\)/);
+    await expect(createTask(atlas, { ...card, repo: 'secret-repo' })).rejects.toThrow(/no bot can push to secret-repo/);
+    await expect(createTask(atlas, { ...card, repo: 'vault' })).rejects.toThrow(/vault code is worked by a Claude Code session on the owner's machine.*task create vault-session/);
+    const r = await createTask(atlas, { ...card, repo: 'bot-made' });
+    expect(r.card.body).toContain('Assigned by atlas. Repo: bot-made.');
     expect(r.link.assignee).toBe('rune');
   });
 
   it('vault work goes to the vault session: a kanban assignee no dispatcher spawns, no board note', async () => {
     expect(VAULT_ASSIGNEE).toBe('vault-session');
     const atlas = await getAgent('atlas');
-    const r = await createTask(atlas, { assignee: VAULT_ASSIGNEE, title: 'Build news_digest.py', project: 'argo-exo', type: 'coding' }, runner);
-    const args = calls[0]!;
-    expect(arg(args, '--assignee')).toBe('vault-session');
-    expect(args.find((a) => a.startsWith('--body='))).toContain("Repo: vault. Worked by a Claude Code session on the owner's machine; no bot wakes for it.");
+    const r = await createTask(atlas, { assignee: VAULT_ASSIGNEE, title: 'Build news_digest.py', project: 'argo-exo', type: 'coding' });
+    expect(r.card.assignee).toBe('vault-session');
+    expect(r.card.body).toContain("Repo: vault. Worked by a Claude Code session on the owner's machine; no bot wakes for it.");
     expect(r.link).toMatchObject({ assignee: 'vault-session', created_by: 'atlas' });
     expect(r.message).toBeNull();
-    await expect(createTask(atlas, { assignee: VAULT_ASSIGNEE, title: 'Exo fix', project: 'argo-exo', repo: 'argo-exo' }, runner)).rejects.toThrow(/vault-session takes vault work only/);
-    await expect(createTask(await getAgent('rune'), { assignee: VAULT_ASSIGNEE, title: 'x', project: 'argo-exo' }, runner)).rejects.toThrow(/rune can't give the vault session a card: leads do/);
+    await expect(createTask(atlas, { assignee: VAULT_ASSIGNEE, title: 'Exo fix', project: 'argo-exo', repo: 'argo-exo' })).rejects.toThrow(/vault-session takes vault work only/);
+    await expect(createTask(await getAgent('rune'), { assignee: VAULT_ASSIGNEE, title: 'x', project: 'argo-exo' })).rejects.toThrow(/rune can't give the vault session a card: leads do/);
   });
 
   it('an existing card moves to the vault session with assign', async () => {
-    const r = await assignTask(await getAgent('owner'), { taskId: 't_47e2a857', assignee: VAULT_ASSIGNEE, project: 'argo-exo', repo: 'vault' }, runner);
-    expect(calls.find((c) => c.includes('assign'))).toEqual(['kanban', '--board', 'exo', 'assign', 't_47e2a857', 'vault-session']);
+    const r = await assignTask(await getAgent('owner'), { taskId: 't_47e2a857', assignee: VAULT_ASSIGNEE, project: 'argo-exo', repo: 'vault' });
     expect(r.link.assignee).toBe('vault-session');
   });
 
   it('the legacy slug m4 still names the vault session, and cards keep that assignee', async () => {
     expect(isVaultAssignee('m4')).toBe(true);
     expect(isVaultAssignee('rune')).toBe(false);
-    const r = await createTask(await getAgent('atlas'), { assignee: 'm4', title: 'Old board card', project: 'argo-exo', type: 'coding' }, runner);
-    expect(arg(calls[0]!, '--assignee')).toBe('m4');
+    const r = await createTask(await getAgent('atlas'), { assignee: 'm4', title: 'Old board card', project: 'argo-exo', type: 'coding' });
+    expect(r.card.assignee).toBe('m4');
     expect(r.link).toMatchObject({ assignee: 'm4', created_by: 'atlas' });
-    await expect(createTask(await getAgent('atlas'), { assignee: 'm4', title: 'x', project: 'argo-exo', repo: 'argo-exo' }, runner)).rejects.toThrow(/m4 takes vault work only/);
+    await expect(createTask(await getAgent('atlas'), { assignee: 'm4', title: 'x', project: 'argo-exo', repo: 'argo-exo' })).rejects.toThrow(/m4 takes vault work only/);
   });
 
   it('sol (dispatch) gives any bot a card; another lead still only its own team', async () => {
-    const r = await assignTask(await getAgent('sol'), { taskId: 't_aaaaaa', assignee: 'lena', project: 'argo-exo' }, runner);
+    const r = await assignTask(await getAgent('sol'), { taskId: 't_aaaaaa', assignee: 'lena', project: 'argo-exo' });
     expect(r.link).toMatchObject({ assignee: 'lena', created_by: 'owner' });   // created_by stays the card's maker; the assign is an event by sol
     expect((await query<{ actor: string }>(`SELECT actor FROM card_events WHERE card_id = 't_aaaaaa' AND kind = 'assigned'`)).rows).toEqual([{ actor: 'sol' }]);
     expect(r.message).toMatchObject({ channel_slug: 'leads', body: 'card t_aaaaaa for lena: Old card (argo-exo)', mentions: [] });
-    await expect(assignTask(await getAgent('atlas'), { taskId: 't_bbbbbb', assignee: 'lena', project: 'argo-exo' }, runner))
+    await expect(assignTask(await getAgent('atlas'), { taskId: 't_bbbbbb', assignee: 'lena', project: 'argo-exo' }))
       .rejects.toThrow(/atlas can't give lena a card/);
   });
 
   it('dispatch is a power, not something a card can need', async () => {
-    await expect(createTask(await getAgent('owner'), { assignee: 'sol', title: 'x', project: 'argo-exo', needs: 'dispatch' }, runner)).rejects.toThrow(/--needs dispatch/);
+    await expect(createTask(await getAgent('owner'), { assignee: 'sol', title: 'x', project: 'argo-exo', needs: 'dispatch' })).rejects.toThrow(/--needs dispatch/);
   });
 });

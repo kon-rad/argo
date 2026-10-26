@@ -27,7 +27,6 @@
   "shell": { "timeoutS": 120, "maxOutput": 12000 },
   "knowledge": { "kind": "secondbrain", "url": "http://127.0.0.1:3000", "headersEnv": "ZEN_SB_HEADERS" },
   "kanban": { "kind": "board", "url": "http://127.0.0.1:5123", "tokenEnv": "BOARD_TOKEN", "board": "exo" },
-  "$kanban_alternatives": "{ \"kind\": \"cli\", \"command\": \"hermes\", \"board\": \"exo\" } for the Hermes board; { \"kind\": \"hub\", \"url\": \"http://127.0.0.1:5140\", \"tokenEnv\": \"AGENT_HUB_TOKEN\", \"board\": \"exo\" } for agent-hub",
   "org": { "command": "cli-org" },
   "tracker": { "command": "cli-projects" },
   "github": { "command": "gh" },

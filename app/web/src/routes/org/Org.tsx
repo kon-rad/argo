@@ -73,7 +73,7 @@ function MessageCard({ m, teams, showChannel, big }: { m: OrgMessage; teams: Map
         {showChannel && <Link to={`/org?channel=${encodeURIComponent(m.channel_slug)}`} className="text-xs text-[var(--accent)]">{channelLabel(m.channel_slug)}</Link>}
         <span className="text-xs text-[var(--ink-faint)]" title={zoned(m.created_at, 'Asia/Tokyo')}>{ago(m.created_at)}</span>
         <span className="text-xs text-[var(--ink-faint)]">#{m.id}</span>
-        {m.task_id && <Link to={`/agents/board/${m.task_id}`} className="text-xs text-[var(--accent)]">task {m.task_id}</Link>}
+        {m.task_id && <Link to={`/board/${m.task_id}`} className="text-xs text-[var(--accent)]">task {m.task_id}</Link>}
         {m.project_slug && (
           <Link to="/projects?view=board" className="text-xs text-[var(--accent)]">
             {m.project_slug}{m.feature_slug ? ` / ${m.feature_slug}` : ''}
@@ -402,7 +402,7 @@ function Approvals() {
         <span className="font-mono text-xs">#{a.id}</span>
         <span className={a.status === 'pending' ? 'font-semibold' : 'text-[var(--ink-dim)]'}>{a.status}{a.ship_now ? ' (ship-now)' : ''}</span>
         <Link className="text-[var(--accent)]" to={`/org/agents/${a.requested_by}`}>{a.requested_by}</Link>
-        <Link className="text-xs text-[var(--accent)]" to={`/agents/board/${a.task_id}`}>{a.task_id}</Link>
+        <Link className="text-xs text-[var(--accent)]" to={`/board/${a.task_id}`}>{a.task_id}</Link>
         {a.pr_url && <a className="text-xs text-[var(--accent)] underline" href={a.pr_url} target="_blank" rel="noreferrer">PR</a>}
         {a.deploy_target && <span className="text-xs">deploy {a.deploy_target}</span>}
         <span className="ml-auto text-xs text-[var(--ink-dim)]">{ago(a.created_at)}</span>

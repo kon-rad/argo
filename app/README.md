@@ -145,7 +145,7 @@ Everything beyond browse, search and the database page is a module. A module tha
 | Module | What it adds |
 |---|---|
 | `ring` | The Ring page: wearable ring data a client pushes in |
-| `agents` | Agents and Cron pages over an agent-hub (Claude chats, Hermes history, and its kanban until the `board` module replaces it) and over `zen-agent serve` (zen-agent chats with a live trace; `ZEN_AGENT_URL`, `ZEN_AGENT_TOKEN`) |
+| `agents` | Agents and Cron pages over an agent-hub (Claude chats and Hermes history) and over `zen-agent serve` (zen-agent chats with a live trace; `ZEN_AGENT_URL`, `ZEN_AGENT_TOKEN`) |
 | `projects` | A project tracker (divisions, projects, features, verifications) on `/projects`, `cli-projects`, a kiosk feed and a rendered markdown report |
 | `org` | An agent company's message board on `/org` (`cli-org`): channels, DMs, wakeups for a dispatcher, row-level security per agent |
 | `board` | The kanban board on `/board` (`cli-board`): cards next to the tracker and the org, written through `board_*` SQL functions, claimed and finished by lanes, reachable from any machine with a per-device token (see `docs/board-design.md`) |

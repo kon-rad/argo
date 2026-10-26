@@ -276,8 +276,8 @@ async function main(argv: string[]): Promise<number> {
       if (flags.resume !== undefined) throw new Error('wake never resumes a session: every wake is a fresh run (continuity is the memory file and org_remember). --resume is for run and chat.');
       const cfg = config(flags);
       const persona = personaOf(flags);
-      const kb = makeKanban(cfg.kanban, process.env, fetch, persona ?? 'zen-agent');
-      if (!kb) throw new Error('wake needs a kanban backend in zen.json ("kanban": {"kind": "board" | "cli" | "hub", ...})');
+      const kb = makeKanban(cfg.kanban, process.env, fetch);
+      if (!kb) throw new Error('wake needs a kanban backend in zen.json ("kanban": {"kind": "board", ...})');
       const r = await runWake({ cfg, kb, cardId, board: flags.board, persona, budget: budgetFlags(flags), ...runOptions(flags), thread: threadFlag(flags), fetchers: fetchFlag(flags), onEvent: flags.json ? undefined : printer(flags.quiet === true) });
       return report(r, flags);
     }
@@ -287,7 +287,7 @@ async function main(argv: string[]): Promise<number> {
       // releases the card so the next wake finds it ready.
       const cfg = config(flags);
       const persona = personaOf(flags);
-      const kb = makeKanban(cfg.kanban, process.env, fetch, persona ?? 'zen-agent');
+      const kb = makeKanban(cfg.kanban, process.env, fetch);
       if (!kb?.claim) throw new Error('lane needs the engine\'s board in zen.json ("kanban": {"kind": "board", ...})');
       const agent = flags.agent ?? (flags.runtime ? undefined : persona ?? undefined);
       const runtime = flags.runtime ?? (agent ? undefined : 'zen-agent');
