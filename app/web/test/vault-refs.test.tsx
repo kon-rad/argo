@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
-import { collectVaultRefs, remarkVaultPaths, splitVaultPaths } from '../src/lib/vaultRefs.js';
+import { collectVaultRefs, remarkMentions, remarkVaultPaths, splitMentions, splitVaultPaths } from '../src/lib/vaultRefs.js';
 import { remarkWikilink } from '../src/lib/wikilink.js';
 import { VaultMarkdown } from '../src/components/VaultMarkdown.js';
 
@@ -118,5 +118,38 @@ describe('VaultMarkdown', () => {
     fireEvent.click(button);
     fireEvent.click(await screen.findByTestId('preview-backdrop'));
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
+describe('folders and mentions', () => {
+  it('finds folder refs of two or more segments and leaves URLs alone', () => {
+    expect(paths('kit at Areas/argo/media/kits/2026-10-27_usage-page/, notes in Areas/argo/x/.')).toEqual([
+      'Areas/argo/media/kits/2026-10-27_usage-page/',
+      'Areas/argo/x/',
+    ]);
+    expect(paths('see https://host.com/a/b/ and src/ and and/or')).toEqual([]);
+  });
+
+  it('links a known @agent and skips unknown names, emails and links', () => {
+    const known = new Set(['juno', 'sol']);
+    expect(splitMentions('ask @juno or @nobody, mail me@juno.com', known)).toEqual([
+      { type: 'text', value: 'ask ' },
+      { type: 'mention', name: 'juno' },
+      { type: 'text', value: ' or @nobody, mail me@juno.com' },
+    ]);
+    const out = unified().use(remarkParse).use(remarkMentions, known).use(remarkStringify).processSync('hi @sol and `@juno`').toString();
+    expect(out).toContain('[@sol](agent:sol)');
+    expect(out).not.toContain('agent:juno');
+  });
+
+  it('renders a mention as a link to the agent page', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(
+      JSON.stringify(String(url).includes('/org/chart') ? { teams: [], agents: [{ name: 'juno' }] } : { resolved: {} }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={qc}><MemoryRouter><VaultMarkdown text="over to @juno now" /></MemoryRouter></QueryClientProvider>);
+    const a = await screen.findByRole('link', { name: '@juno' });
+    expect(a.getAttribute('href')).toBe('/org/agents/juno');
   });
 });

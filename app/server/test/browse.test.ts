@@ -90,6 +90,11 @@ describe('GET /api/file/resolve', () => {
     });
   });
 
+  it('resolves a folder ref ending in a slash to the folder, and an empty one to null', async () => {
+    const res = await request(app).get('/api/file/resolve').query({ ref: ['notes/sub/', 'notes/', 'nope/none/'] });
+    expect(res.body.resolved).toEqual({ 'notes/sub/': 'notes/sub/', 'notes/': 'notes/', 'nope/none/': null });
+  });
+
   it('takes a single ref, none, and refuses a flood', async () => {
     expect((await request(app).get('/api/file/resolve').query({ ref: 'top' })).body.resolved).toEqual({ top: 'top.md' });
     expect((await request(app).get('/api/file/resolve')).body.resolved).toEqual({});
