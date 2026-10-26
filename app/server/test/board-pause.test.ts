@@ -116,13 +116,17 @@ describe('board pause and resume', () => {
     await expect(setDispatch('owner', false)).rejects.toThrow(/needs a reason/);
   });
 
-  it('a pause is an event on the board, so the page and the history see it', async () => {
+  it('a pause leaves an audit line on #platform, so the owners and leads see it', async () => {
+    // card_events.card_id is NOT NULL by design (a card-scoped log), and a pause has no card, so the control-plane
+    // audit line goes to #platform as a status message authored by whoever acted.
     await pauseAgents('owner', 'rune', true, 'audit');
-    const ev = await query<{ kind: string; payload: { scope: string; agents: number } }>(`SELECT kind, payload FROM card_events WHERE kind = 'paused' ORDER BY id DESC LIMIT 1`);
-    expect(ev.rows[0]!.payload).toMatchObject({ scope: 'rune' });
+    const m = await query<{ channel_slug: string; author: string; kind: string; body: string }>(`SELECT channel_slug, author, kind, body FROM org_messages ORDER BY id DESC LIMIT 1`);
+    expect(m.rows[0]).toMatchObject({ channel_slug: 'platform', author: 'owner', kind: 'status' });
+    expect(m.rows[0]!.body).toContain('paused: rune');
+    expect(m.rows[0]!.body).toContain('audit');
     await resumeAgents('owner', 'rune');
-    const ev2 = await query<{ kind: string }>(`SELECT kind FROM card_events WHERE kind = 'resumed' ORDER BY id DESC LIMIT 1`);
-    expect(ev2.rows[0]!.kind).toBe('resumed');
+    const m2 = await query<{ body: string }>(`SELECT body FROM org_messages ORDER BY id DESC LIMIT 1`);
+    expect(m2.rows[0]!.body).toContain('resumed: rune');
   });
 
   it('claim contention with two connections still holds with a pause on another agent', async () => {
