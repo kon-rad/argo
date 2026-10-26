@@ -12,6 +12,7 @@ import { zoned } from '../../lib/time.js';
 import AgentSessions from './AgentSessions.js';
 import Summaries from './Summaries.js';
 import Running from './Running.js';
+import { useLiveCount } from './LiveAgents.js';
 
 const RANGES = [{ label: '24 h', days: 1 }, { label: '7 d', days: 7 }, { label: '30 d', days: 30 }, { label: '90 d', days: 90 }];
 const GROUP_COLORS = ['var(--chart-bar)', 'var(--ink)', '#c2410c', '#15803d', '#7c3aed', '#0e7490', '#b45309', '#be123c', '#4d7c0f', '#6d28d9'];
@@ -357,6 +358,7 @@ function UsageOverview() {
 
 /** Two views on one route: the spend overview (the default) and what is running on the server now (`?view=running`). */
 export default function Usage() {
+  const liveCount = useLiveCount();
   const [sp, setSp] = useSearchParams();
   const view = sp.get('view') === 'running' ? 'running' : sp.get('view') === 'summaries' ? 'summaries' : 'usage';
   const pick = (v: 'usage' | 'running' | 'summaries') => {
@@ -373,7 +375,10 @@ export default function Usage() {
       <div role="tablist" aria-label="Usage views" className="flex shrink-0 gap-1 border-b border-[var(--rule)] px-4 pt-2">
         {tab('usage', 'Usage')}
         {tab('summaries', 'Summaries')}
-        {tab('running', 'Running now')}
+        {tab('running', 'Server processes')}
+        <Link to="/usage/live" className="ml-auto mb-1 flex items-center gap-1.5 self-center rounded border border-[var(--rule)] px-2 py-0.5 text-sm hover:bg-[var(--paper-sunk)]">
+          <span className="inline-block h-2 w-2 rounded-full bg-[#1f9d63]" />Running now{liveCount !== null ? ` · ${liveCount}` : ''}
+        </Link>
       </div>
       <div className="min-h-0 flex-1">
         {view === 'running' ? <div className="h-full overflow-auto p-4"><Running /></div>

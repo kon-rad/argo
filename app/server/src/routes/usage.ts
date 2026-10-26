@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { creditHistory, latestCredits } from '../credits.js';
 import { query } from '../db.js';
 import { expandSteps } from '../archive/steps.js';
+import { live, stopProcess } from '../usage/live.js';
 import { running } from '../usage/running.js';
 import { agentSessionsRouter } from './agentSessions.js';
 import { HttpError, parseOr400, wrap } from './http.js';
@@ -323,6 +324,19 @@ export function usageRouter(): Router {
   // Agent processes alive on this host right now, joined with claimed wakeups and the roster's runtime and model.
   router.get('/running', wrap(async (_req, res) => {
     res.json(await running());
+  }));
+
+  // Every agent working now on every machine, grouped by machine; the live page polls this.
+  router.get('/live', wrap(async (_req, res) => {
+    res.json(await live());
+  }));
+
+  // SIGTERM (or SIGKILL with force) to an agent process on this server. Nothing else can be signalled.
+  router.post('/live/stop', wrap(async (req, res) => {
+    const b = parseOr400(z.object({ pid: z.number().int().positive(), force: z.boolean().default(false), startedAt: z.string().optional() }), req.body);
+    const r = await stopProcess(b.pid, b.force, b.startedAt);
+    if (!r.ok) throw new HttpError(r.status, r.error);
+    res.json(r);
   }));
 
   // The agent company's wakes per agent (org_wakeups): how much of the shared

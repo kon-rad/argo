@@ -627,6 +627,16 @@ export interface RunningRow {
   state: 'running' | 'claimed'; configured: { runtime: string; model: string | null } | null; detail: string | null;
 }
 export interface RunningNow { host: string; at: string; rows: RunningRow[]; configured: Record<string, number> }
+/** One agent working now, from GET /usage/live. Mirrors server/src/usage/live.ts. */
+export interface LiveAgent {
+  id: string; machine: string; harness: string; name: string; model: string | null;
+  task: { cardId: string | null; label: string | null; reason: string | null } | null;
+  source: 'process' | 'session'; turns: number | null; tokens: { input: number; output: number } | null;
+  startedAt: string | null; lastActivityAt: string | null; elapsedSec: number | null;
+  log: { host: string; externalId: string; source: string } | null; pid: number | null; runId: string | null; stoppable: boolean;
+}
+export interface LiveMachine { slug: string; display: string; kind: string | null; agents: LiveAgent[] }
+export interface LiveNow { at: string; serverMachine: string; total: number; machines: LiveMachine[] }
 export interface UsageHost { slug: string; display: string; kind: 'laptop' | 'server' | 'pi'; chip: string | null; notes: string | null }
 /** One summary of a finished agent session (`secondbrain summarize`). touched and metrics are computed, the rest is model-written. */
 export interface AgentSummary {
@@ -1334,6 +1344,9 @@ export const api = {
       `/usage/agent-sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}`, { source: source ?? undefined, offset }),
   usageRuns: (from: string, to: string, f: UsageFilters = {}) => request<{ runs: UsageRun[] }>('/usage/runs', { from, to, ...usageFilterParams(f) }),
   usageRunning: () => request<RunningNow>('/usage/running'),
+  usageLive: () => request<LiveNow>('/usage/live'),
+  usageLiveStop: (pid: number, force: boolean, startedAt: string | null) =>
+    request<{ ok: true; pid: number; signal: string }>('/usage/live/stop', undefined, json('POST', { pid, force, ...(startedAt ? { startedAt } : {}) })),
   usageOrgWakes: (from: string, to: string) => request<{ agents: OrgWakeRow[] }>('/usage/org-wakes', { from, to }),
 };
 
