@@ -65,7 +65,13 @@ beforeEach(async () => {
 describe('the record', () => {
   it('the import makes roster rows for the vault session and a lane, so every assignee has a key', async () => {
     const rows = (await query<{ name: string; runtime: string; team_slug: string | null }>(`SELECT name, runtime, team_slug FROM org_agents WHERE runtime IN ('session', 'claude-code') AND team_slug IS NULL ORDER BY name`)).rows;
-    expect(rows).toEqual([{ name: 'cc-writer', runtime: 'claude-code', team_slug: null }, { name: 'vault-session', runtime: 'session', team_slug: null }]);
+    expect(rows).toEqual([
+      { name: 'cc-dispatcher', runtime: 'session', team_slug: null },
+      { name: 'cc-writer', runtime: 'claude-code', team_slug: null },
+      { name: 'claude-telegram', runtime: 'session', team_slug: null },
+      { name: 'm4', runtime: 'session', team_slug: null },
+      { name: 'vault-session', runtime: 'session', team_slug: null },
+    ]);
     // A second import keeps the vault session; agents gone from the file are retired, the session row is not.
     await importOrg({ ...ORG, agents: Object.fromEntries(Object.entries(ORG.agents).filter(([n]) => n !== 'lena')) });
     expect((await query<{ n: number }>(`SELECT count(*)::int AS n FROM org_agents WHERE retired_at IS NOT NULL`)).rows[0]!.n).toBe(1);

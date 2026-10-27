@@ -60,9 +60,9 @@ describe('row-level security for sb_org', () => {
     const members = await sql<{ channel_slug: string }>(asAgent('lena'), `SELECT DISTINCT channel_slug FROM org_channel_members ORDER BY 1`);
     expect(members.map((m) => m.channel_slug)).toEqual(['all-hands', 'media', 'media-standup']);
     // The roster stays readable: who reports to whom is not a secret inside the company.
-    // Five from the org file plus the vault session row the import makes (runtime session).
+    // Five from the org file plus the four session rows the import makes (vault session, claude-telegram, cc-dispatcher, m4).
     const agents = await sql<{ n: number }>(asAgent('lena'), `SELECT count(*)::int AS n FROM org_agents`);
-    expect(agents[0]!.n).toBe(6);
+    expect(agents[0]!.n).toBe(9);
     // Nothing without a name.
     const anon = await sql<{ n: number }>(`postgres://sb_org@${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${TEST_DB}`, `SELECT count(*)::int AS n FROM org_messages`);
     expect(anon[0]!.n).toBe(0);
