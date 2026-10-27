@@ -179,6 +179,16 @@ export async function importOrg(input: unknown): Promise<{ agents: number; teams
        ON CONFLICT (name) DO UPDATE SET runtime = 'session', role = EXCLUDED.role, reports_to = EXCLUDED.reports_to, org_version = EXCLUDED.org_version, retired_at = NULL, updated_at = now()`,
       [config.orgVaultAssignee, VAULT_ROLE, doc.ceo, doc.version],
     );
+    // Service lanes that post and claim cards but are not roster bots: they stay session rows so cards, comments and
+    // runs keep a valid author. An org file that names one as a real agent wins.
+    for (const [name, role] of SYSTEM_SESSIONS) {
+      if (doc.agents[name]) continue;
+      await tx.query(
+        `INSERT INTO org_agents (name, runtime, role, reports_to, org_version) VALUES ($1, 'session', $2, $3, $4)
+         ON CONFLICT (name) DO UPDATE SET runtime = 'session', role = EXCLUDED.role, reports_to = EXCLUDED.reports_to, org_version = EXCLUDED.org_version, retired_at = NULL, updated_at = now()`,
+        [name, role, doc.ceo, doc.version],
+      );
+    }
     const { rowCount: retired } = await tx.query(
       `UPDATE org_agents SET retired_at = now(), updated_at = now() WHERE retired_at IS NULL AND runtime <> 'session' AND NOT (name = ANY ($1))`,
       [Object.keys(doc.agents)],
@@ -958,6 +968,12 @@ const BOARD_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
 export const VAULT_ASSIGNEE = config.orgVaultAssignee;
 const LEGACY_VAULT_ASSIGNEE = 'm4';
 export const VAULT_REPO = 'vault';
+/** Lanes outside the roster that still act on the board: the Telegram bridge, the dispatcher and the M4's vault-code lane. */
+const SYSTEM_SESSIONS: [string, string][] = [
+  ['claude-telegram', 'Telegram bridge: files and answers cards for the owner'],
+  ['cc-dispatcher', 'Dispatcher: wakes bots and runs their cards'],
+  ['m4', "Claude Code on the owner's M4: vault code cards"],
+];
 const VAULT_ROLE = "Claude Code session on the owner's machine (vault work)";
 
 /** True for the configured vault assignee and the legacy slug. */
