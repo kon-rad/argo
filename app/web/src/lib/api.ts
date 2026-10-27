@@ -1173,26 +1173,7 @@ export interface OrgMemoryStats {
   proposals: number;
 }
 
-export interface Venture {
-  slug: string; name: string; kind: string; summary: string | null; parent: string | null; division: string | null;
-  home_path: string | null; goals: string[]; links: { label: string; url: string }[]; sort: number;
-  projects: { slug: string; title: string; stage: string; health: string | null }[];
-  children: string[]; has_readme: boolean; has_brand: boolean;
-}
-export interface VentureBrand {
-  tokens: Record<string, unknown>; body: string; file: string;
-  assets: { logo: string[]; fonts: string[]; images: string[] };
-}
-export interface VentureKpi {
-  key: string; label: string; unit: string; money: boolean; target: number | null;
-  value: number | null; sampled_at: string | null; placeholder: boolean;
-}
-export type VentureDetail = Venture & { brand: VentureBrand | null; kpis: VentureKpi[] };
-
 export const api = {
-  ventures: () => request<{ kinds: string[]; ventures: Venture[] }>('/ventures'),
-  venture: (slug: string) => request<VentureDetail>(`/ventures/${slug}`),
-  scaffoldVenture: (slug: string) => request<{ created: string[]; skipped: string[] }>(`/ventures/${slug}/scaffold`, undefined, { method: 'POST' }),
   chatOptions: () => request<ChatOptions>('/chat/options'),
   chatSettings: () => request<{ settings: ChatSettings }>('/chat/settings'),
   putChatSettings: (patch: ChatSettingsPatch) => request<{ settings: ChatSettings }>('/chat/settings', undefined, json('PUT', patch)),

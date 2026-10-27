@@ -147,7 +147,7 @@ Everything beyond browse, search and the database page is a module. A module tha
 |---|---|
 | `ring` | The Ring page: wearable ring data a client pushes in |
 | `agents` | Agents and Cron pages over an agent-hub (Claude chats and Hermes history) and over `zen-agent serve` (zen-agent chats with a live trace; `ZEN_AGENT_URL`, `ZEN_AGENT_TOKEN`) |
-| `projects` | A project tracker (ventures, divisions, projects, features, verifications) on `/projects` and `/ventures`, `cli-projects`, a kiosk feed and a rendered markdown report |
+| `projects` | A project tracker (divisions, projects, features, verifications) on `/projects`, `cli-projects`, a kiosk feed and a rendered markdown report |
 | `org` | An agent company's message board on `/org` (`cli-org`): channels, DMs, wakeups for a dispatcher, row-level security per agent |
 | `board` | The kanban board on `/board` (`cli-board`): cards next to the tracker and the org, written through `board_*` SQL functions, claimed and finished by lanes, reachable from any machine with a per-device token (see `docs/board-design.md`) |
 | `usage` | A ledger of Claude Code and Hermes usage on `/usage`, with plan percentages and API credit balances; also the ingest route each machine's agent ledger syncs to (below) |
@@ -190,8 +190,6 @@ Settings that don't fit one env line live in the vault, in `secondbrain.json` at
 | `metrics` | map | The numbers the map tracks, each with a `collect` source (YouTube, X, Instagram, a Base balance) or a `sum` of others |
 | `tv.episodesDir`, `tv.shows` | tv | Where episodes live (default `tv/episodes`) and each show's name |
 | `livestream.youtube`, `.twitch`, `.kick` | livestream | Your channel on each platform |
-| `ventures.kinds` | projects | Allowed venture kinds (default product, program, community, brand, platform); add your own, e.g. `client` |
-| `metrics[].venture` | projects | Ties a metric to a venture so its generated `kpis.md` and page list it |
 | `projects.reportFile` | projects | Where `cli-projects render` writes the report (default `projects.md`) |
 
 Then `secondbrain scan` to build the index and `secondbrain embed` to build the vector index. Every setting: [docs/configuration.md](../docs/configuration.md).

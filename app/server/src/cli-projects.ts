@@ -15,7 +15,6 @@ import {
   upsertDivision,
   upsertTeam,
 } from './projects.js';
-import { getVenture, listVentures, scaffoldVenture, upsertVenture, writeKpiFiles } from './ventures.js';
 import { renderMarkdown, renderStandup, renderTelegram } from './projects-report.js';
 import { settings } from './settings.js';
 
@@ -30,15 +29,9 @@ const USAGE = `cli-projects: the project tracker (Postgres). Every agent and the
   verify <project>/<feature> --pass|--fail --check "what you ran" [--kind test|manual|deploy|review|metric] [--evidence "..."]
   team <team> --name N [--mission M] [--lead L] [--members a,b]
   division <division> --name N [--mission M] [--head H] [--sort N]
-  venture <slug> --name N [--kind K] [--summary S] [--parent V] [--division D] [--home PATH] [--goals W1,M2] [--links "Label=url,..."] [--sort N]
-                                                     create or update a venture (a thing you run; owns a vault folder)
-  ventures                                           venture tree, one line each
-  venture-scaffold <slug>                            create its home folder: README.md and brand/brand.md (never overwrites)
-  venture-brand <slug> [--format json|md]            brand.md tokens and assets, for skills that need the venture's colors and fonts
-  venture-kpis                                       rewrite <home>/kpis.md for every venture (only when the numbers changed)
   import <file.json>                                 teams + projects + features, idempotent
 
-fields: --title --venture --division --team --area --stage idea|designing|building|testing|live|parked|done --health green|yellow|red
+fields: --title --division --team --area --stage idea|designing|building|testing|live|parked|done --health green|yellow|red
         --priority N --goals W1,M2 --needs "what the owner must do" --blocked "on what" --started D --due D
         --devlog PATH --design PATH --paths a,b --repos a,b --owner WHO --notes PATH --note "why"
         --unverified "why it ships without a passing check" (live/done only)
@@ -67,7 +60,7 @@ export function parseArgs(argv: string[]): Args {
 }
 
 const FIELD: Record<string, { key: string; kind: 'text' | 'int' | 'list' }> = {
-  title: { key: 'title', kind: 'text' }, venture: { key: 'venture', kind: 'text' }, team: { key: 'team', kind: 'text' }, division: { key: 'division', kind: 'text' }, area: { key: 'area', kind: 'text' },
+  title: { key: 'title', kind: 'text' }, team: { key: 'team', kind: 'text' }, division: { key: 'division', kind: 'text' }, area: { key: 'area', kind: 'text' },
   stage: { key: 'stage', kind: 'text' }, health: { key: 'health', kind: 'text' }, priority: { key: 'priority', kind: 'int' },
   goals: { key: 'goals', kind: 'list' }, needs: { key: 'needs_owner', kind: 'text' }, blocked: { key: 'blocked_on', kind: 'text' },
   started: { key: 'started', kind: 'text' }, due: { key: 'due', kind: 'text' }, devlog: { key: 'devlog_path', kind: 'text' },
@@ -76,27 +69,15 @@ const FIELD: Record<string, { key: string; kind: 'text' | 'int' | 'list' }> = {
   note: { key: 'note', kind: 'text' }, unverified: { key: 'unverified', kind: 'text' },
 };
 
-const VENTURE_FIELD: Record<string, { key: string; kind: 'text' | 'int' | 'list' | 'links' }> = {
-  name: { key: 'name', kind: 'text' }, kind: { key: 'kind', kind: 'text' }, summary: { key: 'summary', kind: 'text' },
-  parent: { key: 'parent', kind: 'text' }, division: { key: 'division', kind: 'text' }, home: { key: 'home_path', kind: 'text' },
-  goals: { key: 'goals', kind: 'list' }, links: { key: 'links', kind: 'links' }, sort: { key: 'sort', kind: 'int' },
-};
-
 /** --flag value pairs → a patch object; "none" clears (null, or [] for lists). */
-export function patchFrom(opts: Args['opts'], fields: Record<string, { key: string; kind: string }> = FIELD): Record<string, unknown> {
+export function patchFrom(opts: Args['opts']): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   for (const [flag, raw] of Object.entries(opts)) {
-    const f = fields[flag];
+    const f = FIELD[flag];
     if (!f) continue;
     if (raw === true) throw new TrackerError(`--${flag} needs a value`);
-    if (raw === 'none') patch[f.key] = f.kind === 'list' || f.kind === 'links' ? [] : null;
-    else if (f.kind === 'links') {
-      patch[f.key] = raw.split(',').map((pair) => {
-        const i = pair.indexOf('=');
-        if (i < 1) throw new TrackerError(`--links wants "Label=https://url,Label2=https://url" (got "${pair}")`);
-        return { label: pair.slice(0, i).trim(), url: pair.slice(i + 1).trim() };
-      });
-    } else if (f.kind === 'int') patch[f.key] = Number(raw);
+    if (raw === 'none') patch[f.key] = f.kind === 'list' ? [] : null;
+    else if (f.kind === 'int') patch[f.key] = Number(raw);
     else if (f.kind === 'list') patch[f.key] = raw.split(',').map((s) => s.trim()).filter(Boolean);
     else patch[f.key] = raw;
   }
@@ -220,41 +201,6 @@ async function main(argv: string[]): Promise<number> {
         sort: typeof opts.sort === 'string' ? Number(opts.sort) : 0,
       });
       console.log(`saved division ${slug}`);
-      return 0;
-    }
-    case 'venture': {
-      if (!pos[0]) throw new TrackerError('venture <slug> --name N');
-      const r = await upsertVenture(pos[0], patchFrom(opts, VENTURE_FIELD), by, { create: typeof opts.name === 'string' });
-      console.log(r.created ? `added venture ${pos[0]}` : `updated venture ${pos[0]}`);
-      return 0;
-    }
-    case 'ventures': {
-      const all = await listVentures(vault);
-      const line = (v: (typeof all)[number], indent: string) =>
-        console.log(`${indent}${v.slug} [${v.kind}]${v.division ? ` division=${v.division}` : ''} home=${v.home_path ?? '-'}${v.home_path && !v.has_readme ? ' (no README)' : ''} projects=${v.projects.length}  ${v.name}`);
-      for (const v of all.filter((x) => !x.parent)) {
-        line(v, '');
-        for (const c of all.filter((x) => x.parent === v.slug)) line(c, '  ');
-      }
-      return 0;
-    }
-    case 'venture-scaffold': {
-      if (!pos[0]) throw new TrackerError('venture-scaffold <slug>');
-      const r = await scaffoldVenture(vault, pos[0]);
-      for (const f of r.created) console.log(`created ${f}`);
-      for (const f of r.skipped) console.log(`kept ${f}`);
-      return 0;
-    }
-    case 'venture-brand': {
-      if (!pos[0]) throw new TrackerError('venture-brand <slug>');
-      const v = await getVenture(vault, pos[0]);
-      if (!v.brand) throw new TrackerError(`venture "${pos[0]}" has no brand file (run venture-scaffold, then fill ${v.home_path ?? '<home>'}/brand/brand.md)`);
-      console.log(opts.format === 'md' ? `${v.brand.file}\n${JSON.stringify(v.brand.tokens, null, 2)}\n\n${v.brand.body}` : JSON.stringify(v.brand, null, 2));
-      return 0;
-    }
-    case 'venture-kpis': {
-      const wrote = await writeKpiFiles(vault);
-      console.log(wrote.length ? wrote.map((f) => `wrote ${f}`).join('\n') : 'kpis unchanged');
       return 0;
     }
     case 'import': {
