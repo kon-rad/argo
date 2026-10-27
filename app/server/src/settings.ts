@@ -31,8 +31,6 @@ const Metric = z.object({
   goal: z.string().optional(),
   /** Else the division it belongs to. */
   division: z.string().optional(),
-  /** The venture it measures; the venture's generated kpis.md lists it. */
-  venture: z.string().optional(),
   target: z.number().positive().optional(),
   /** Money is never drawn on the kiosk view. */
   money: z.boolean().default(false),
@@ -138,12 +136,6 @@ const Settings = z.object({
     })
     .prefault({}),
   metrics: z.array(Metric).default([]),
-  ventures: z
-    .object({
-      /** Allowed `kind` values. The engine's defaults are product, program, community, brand, platform; add your own (client, fund). */
-      kinds: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/)).min(1).default(['product', 'program', 'community', 'brand', 'platform']),
-    })
-    .prefault({}),
   tv: z
     .object({
       /** Vault-relative folder of episodes, one subfolder each with an episode.md. */

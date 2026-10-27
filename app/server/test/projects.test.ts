@@ -12,6 +12,7 @@ import {
   getBoard,
   importSeed,
   kioskSummary,
+  removeProject,
   nextActionFrom,
   parseGoals,
   upsertFeature,
@@ -108,6 +109,16 @@ describe('parsers', () => {
 
 describe('writes and the verification gate', () => {
   beforeEach(truncateAll);
+
+  it('removes a project with its features, and a dry run removes nothing', async () => {
+    await seedBasic();
+    expect(await removeProject('lifeos', { dryRun: true })).toEqual({ features: 2 });
+    expect((await query(`SELECT 1 FROM projects WHERE slug = 'lifeos'`)).rowCount).toBe(1);
+    expect(await removeProject('lifeos')).toEqual({ features: 2 });
+    expect((await query(`SELECT 1 FROM projects WHERE slug = 'lifeos'`)).rowCount).toBe(0);
+    expect((await query(`SELECT 1 FROM features WHERE project_slug = 'lifeos'`)).rowCount).toBe(0);
+    await expect(removeProject('lifeos')).rejects.toThrow(/no project/);
+  });
 
   it('records every stage move with who and why', async () => {
     await seedBasic();

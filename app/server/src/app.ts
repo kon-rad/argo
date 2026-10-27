@@ -28,7 +28,6 @@ import { friendlyRouter, type FriendlyOptions } from './routes/friendly.js';
 import { rawRouter } from './routes/raw.js';
 import { knowledgeTokenGate } from './auth/knowledgeToken.js';
 import { projectsFeedRouter, projectsRouter } from './routes/projects.js';
-import { venturesRouter } from './routes/ventures.js';
 import { ringRouter, type RingRouterOptions } from './routes/ring.js';
 import { runsRouter } from './routes/runs.js';
 import { searchRouter, type ProviderFactory } from './routes/search.js';
@@ -236,10 +235,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
   }
   if (modules.has('usage')) app.use('/api/usage', usageRouter());
   if (modules.has('usage')) app.use('/api/summaries', summariesRouter());
-  if (modules.has('projects')) {
-    app.use('/api/projects', projectsRouter(vaultRoot));
-    app.use('/api/ventures', venturesRouter(vaultRoot));
-  }
+  if (modules.has('projects')) app.use('/api/projects', projectsRouter(vaultRoot));
   if (modules.has('org')) app.use('/api/org', orgRouter(vaultRoot));
   if (modules.has('map')) app.use('/api/map', mapRouter());
   if (modules.has('tv')) app.use('/api/tv', tvRouter(vaultRoot));

@@ -47,7 +47,6 @@ export const ProjectPatch = z
     title: Text.max(200),
     team: Slug.nullable(),
     division: Slug.nullable(),
-    venture: Slug.nullable(),
     area: Text.max(100).nullable(),
     stage: z.enum(STAGES),
     health: z.enum(['green', 'yellow', 'red']).nullable(),
@@ -134,7 +133,7 @@ export class TrackerError extends Error {
 // ---------------------------------------------------------------- writes
 
 const PROJECT_COLS: Record<string, string> = {
-  title: 'title', team: 'team_slug', division: 'division_slug', venture: 'venture_slug', area: 'area', stage: 'stage', health: 'health', priority: 'priority',
+  title: 'title', team: 'team_slug', division: 'division_slug', area: 'area', stage: 'stage', health: 'health', priority: 'priority',
   goals: 'goals', needs_owner: 'needs_owner', blocked_on: 'blocked_on', started: 'started', due: 'due',
   devlog_path: 'devlog_path', design_path: 'design_path', paths: 'paths', repos: 'repos',
 };
@@ -188,6 +187,17 @@ async function divisionMustExist(tx: TxClient, division: string | null | undefin
   if (!rowCount) throw new TrackerError(`no division "${division}"`);
 }
 
+/** Deletes a project and, by cascade, its features, stage history and verifications. Cards and memory links keep their rows with the project cleared. */
+export async function removeProject(slug: string, opts: { dryRun?: boolean } = {}): Promise<{ features: number }> {
+  Slug.parse(slug);
+  const { rows } = await query<{ n: string }>(`SELECT count(*)::text AS n FROM features WHERE project_slug = $1`, [slug]);
+  const features = Number(rows[0]?.n ?? 0);
+  if (opts.dryRun) return { features };
+  const { rowCount } = await query(`DELETE FROM projects WHERE slug = $1`, [slug]);
+  if (!rowCount) throw new TrackerError(`no project "${slug}"`);
+  return { features };
+}
+
 /** Creates the project when `create` is set (title and stage required), else updates it. */
 export async function upsertProject(
   slug: string,
@@ -200,10 +210,6 @@ export async function upsertProject(
   return withTransaction(async (tx) => {
     await teamMustExist(tx, patch.team);
     await divisionMustExist(tx, patch.division);
-    if (patch.venture) {
-      const { rowCount } = await tx.query(`SELECT 1 FROM ventures WHERE slug = $1`, [patch.venture]);
-      if (!rowCount) throw new TrackerError(`no venture "${patch.venture}"`);
-    }
     const cur = await tx.query<{ stage: Stage }>(`SELECT stage FROM projects WHERE slug = $1 FOR UPDATE`, [slug]);
     if (!cur.rows[0]) {
       if (!opts.create) throw new TrackerError(`no project "${slug}" (add it first)`, 404);

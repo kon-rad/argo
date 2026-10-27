@@ -13,7 +13,7 @@ export async function truncateAll(): Promise<void> {
                cron_jobs, cron_runs, cron_outputs, agents_sync_runs,
                livestream_sessions, livestream_viewer_samples, livestream_x_broadcasts, livestream_notices,
                org_agent_memory, org_agent_episodes, memory_facts, org_approvals, board_tokens, org_agent_overrides, card_runs, card_events, card_comments, card_deps, cards, board_settings, boards, org_wakeups, org_reads, org_messages, org_channel_members, org_channels, org_agents,
-               verifications, stage_changes, features, projects, ventures, teams, divisions,
+               verifications, stage_changes, features, projects, teams, divisions,
                ingest_batches, ingest_devices, llm_exchanges, llm_blobs,
                usage_calls, usage_runs, plan_usage_snapshots, hermes_usage_snapshots, usage_files, provider_credit_snapshots,
                metric_samples, map_edges, map_nodes, map_layouts,
