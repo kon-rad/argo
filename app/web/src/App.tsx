@@ -10,6 +10,7 @@ import Ring from './routes/Ring.js';
 import Agents from './routes/agents/Agents.js';
 import Usage from './routes/usage/Usage.js';
 import UsageSession from './routes/usage/UsageSession.js';
+import LiveAgents from './routes/usage/LiveAgents.js';
 import Cron from './routes/Cron.js';
 import NavMenu, { type NavItem } from './components/NavMenu.js';
 import MobileMenu, { MenuButton } from './components/MobileMenu.js';
@@ -231,6 +232,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           <Route path="/cron" element={<Cron />} />
           <Route path="/cron/:profile/:jobId" element={<Cron />} />
           {modules.has('usage') && <Route path="/usage" element={<Usage />} />}
+          {modules.has('usage') && <Route path="/usage/live" element={<LiveAgents />} />}
           {modules.has('usage') && <Route path="/usage/session/:host/:externalId" element={<UsageSession />} />}
           <Route path="/ring" element={<Ring />} />
           {modules.has('projects') && <Route path="/projects" element={<Projects />} />}

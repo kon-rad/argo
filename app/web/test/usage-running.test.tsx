@@ -34,7 +34,7 @@ describe('Running now tab', () => {
     mockFetch();
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/usage']}><Usage /></MemoryRouter></QueryClientProvider>);
     expect(screen.getByRole('tab', { name: 'Usage' }).getAttribute('aria-selected')).toBe('true');
-    fireEvent.click(screen.getByRole('tab', { name: 'Running now' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Server processes' }));
     expect(await screen.findByRole('heading', { name: /Bots/ })).toBeTruthy();
     expect(screen.getByRole('heading', { name: /Lane workers/ })).toBeTruthy();
     expect(screen.getByRole('heading', { name: /Other agent sessions/ })).toBeTruthy();
@@ -49,6 +49,6 @@ describe('Running now tab', () => {
     mockFetch();
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/usage?view=running']}><Usage /></MemoryRouter></QueryClientProvider>);
     expect(await screen.findByRole('heading', { name: /Bots/ })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Running now' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'Server processes' }).getAttribute('aria-selected')).toBe('true');
   });
 });
