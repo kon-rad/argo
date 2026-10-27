@@ -187,6 +187,17 @@ async function divisionMustExist(tx: TxClient, division: string | null | undefin
   if (!rowCount) throw new TrackerError(`no division "${division}"`);
 }
 
+/** Deletes a project and, by cascade, its features, stage history and verifications. Cards and memory links keep their rows with the project cleared. */
+export async function removeProject(slug: string, opts: { dryRun?: boolean } = {}): Promise<{ features: number }> {
+  Slug.parse(slug);
+  const { rows } = await query<{ n: string }>(`SELECT count(*)::text AS n FROM features WHERE project_slug = $1`, [slug]);
+  const features = Number(rows[0]?.n ?? 0);
+  if (opts.dryRun) return { features };
+  const { rowCount } = await query(`DELETE FROM projects WHERE slug = $1`, [slug]);
+  if (!rowCount) throw new TrackerError(`no project "${slug}"`);
+  return { features };
+}
+
 /** Creates the project when `create` is set (title and stage required), else updates it. */
 export async function upsertProject(
   slug: string,
