@@ -54,7 +54,7 @@ function SidePanel({ id, metrics, onClose, onPick }: { id: string; metrics: MapM
   const metric = d?.node.kind === 'metric' ? metrics.find((m) => m.key === d.node.ref) : undefined;
   const open = d?.node.kind === 'note' && d.node.ref
     ? `/file/${d.node.ref}`
-    : d?.node.kind === 'project' || d?.node.kind === 'feature' || d?.node.kind === 'division' ? '/projects'
+    : d?.node.kind === 'project' || d?.node.kind === 'feature' || d?.node.kind === 'division' ? '/ventures'
     : d?.node.kind === 'mission' && d.node.ref ? `/file/${d.node.ref}` : null;
   return (
     <aside className="absolute right-0 top-0 z-10 flex h-full w-[min(380px,100%)] flex-col gap-3 overflow-y-auto border-l border-[var(--rule)] bg-[var(--paper)] p-4 text-[var(--ink)]" data-testid="map-panel">

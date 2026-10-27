@@ -14,7 +14,6 @@ import LiveAgents from './routes/usage/LiveAgents.js';
 import Cron from './routes/Cron.js';
 import NavMenu, { type NavItem } from './components/NavMenu.js';
 import MobileMenu, { MenuButton } from './components/MobileMenu.js';
-import Projects from './routes/Projects.js';
 import Ventures from './routes/Ventures.js';
 import Tv from './routes/Tv.js';
 import Media from './routes/Media.js';
@@ -236,7 +235,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           {modules.has('usage') && <Route path="/usage/live" element={<LiveAgents />} />}
           {modules.has('usage') && <Route path="/usage/session/:host/:externalId" element={<UsageSession />} />}
           <Route path="/ring" element={<Ring />} />
-          {modules.has('projects') && <Route path="/projects" element={<Projects />} />}
+          {modules.has('projects') && <Route path="/projects" element={<Navigate to="/ventures" replace />} />}
           {modules.has('projects') && <Route path="/ventures" element={<Ventures />} />}
           {modules.has('projects') && <Route path="/ventures/:slug" element={<Ventures />} />}
           {modules.has('org') && <Route path="/org/*" element={<Org />} />}
@@ -279,7 +278,6 @@ function menus(modules: Set<string>, meta: AppMeta | undefined, openChat: () => 
   ];
   const work: NavItem[] = [
     ...on('projects', { to: '/ventures', label: 'Ventures' }),
-    ...on('projects', { to: '/projects', label: 'Projects' }),
     ...on('org', { to: '/org', label: 'Org' }),
     ...on('board', { to: '/board', label: 'Board' }),
     ...on('fund', { to: '/fund', label: 'Fund' }),
