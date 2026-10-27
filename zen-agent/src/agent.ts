@@ -13,6 +13,7 @@ import { buildModels, pickModel } from './models.js';
 import { loadPersona, type Persona } from './persona.js';
 import { newSessionId, Session, TRACE_VERSION, ZERO_USAGE, type SessionLine, type UsageTotals } from './session.js';
 import { discoverSkills, type Skill } from './skills.js';
+import { vaultLayout } from './tools/fs.js';
 import { buildTools, type ToolContext } from './tools/index.js';
 
 /**
@@ -166,6 +167,7 @@ export class ZenAgent {
       environment: {
         'working directory': cfg.workdir,
         vault: cfg.vault,
+        'vault top level': vaultLayout(cfg.vault),
         date: new Date().toISOString().slice(0, 10),
         model: `${this.model.provider}/${this.model.id}`,
         budget: `${this.budget.turns} turns, ${this.budget.tokens} tokens, ${this.budget.minutes} minutes; when you cannot finish, say BLOCKED: <reason> and stop`,
