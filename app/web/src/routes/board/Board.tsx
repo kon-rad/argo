@@ -21,6 +21,28 @@ const COLUMNS: { key: string; label: string; statuses: BoardStatus[] }[] = [
   { key: 'blocked', label: 'Blocked', statuses: ['blocked'] },
   { key: 'done', label: 'Done', statuses: ['done', 'archived'] },
 ];
+
+/** Sort options for the cards inside each column. Newest created first is the default. */
+export const SORTS = [
+  { key: 'newest', label: 'Newest first' },
+  { key: 'oldest', label: 'Oldest first' },
+  { key: 'updated', label: 'Recently updated' },
+  { key: 'priority', label: 'Priority (p1 first)' },
+] as const;
+export type SortKey = (typeof SORTS)[number]['key'];
+
+export function sortCards(cards: BoardCard[], sort: string | null | undefined): BoardCard[] {
+  const t = (iso: string | null | undefined): number => (iso ? Date.parse(iso) : 0);
+  const byNewest = (a: BoardCard, b: BoardCard): number => t(b.created_at) - t(a.created_at);
+  const cmp: Record<SortKey, (a: BoardCard, b: BoardCard) => number> = {
+    newest: byNewest,
+    oldest: (a, b) => -byNewest(a, b),
+    updated: (a, b) => t(b.updated_at) - t(a.updated_at) || byNewest(a, b),
+    priority: (a, b) => a.priority - b.priority || byNewest(a, b),
+  };
+  return [...cards].sort(cmp[(SORTS.some((o) => o.key === sort) ? sort : 'newest') as SortKey]);
+}
+
 const KINDS = ['work', 'spec', 'build', 'review', 'verify', 'doc', 'status', 'improve', 'revert'];
 
 export const age = (iso: string | null): string => {
@@ -82,6 +104,7 @@ export default function Board() {
   const assignee = params.get('assignee') ?? undefined;
   const kind = params.get('kind') ?? undefined;
   const q = params.get('q') ?? '';
+  const sort = params.get('sort') ?? 'newest';
   const set = (k: string, v: string): void => {
     const next = new URLSearchParams(params);
     if (v) next.set(k, v);
@@ -119,6 +142,9 @@ export default function Board() {
           {select('Any project', project, projects.map((p) => ({ value: p, label: p })), (v) => set('project', v))}
           {select('Anyone', assignee, assignees.map((a) => ({ value: a, label: a })), (v) => set('assignee', v))}
           {select('Any kind', kind, KINDS.map((k) => ({ value: k, label: k })), (v) => set('kind', v))}
+          <select value={sort} onChange={(e) => set('sort', e.target.value === 'newest' ? '' : e.target.value)} aria-label="Sort by" className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
+            {SORTS.map((o) => <option key={o.key} value={o.key}>Sort: {o.label}</option>)}
+          </select>
           <input value={q} onChange={(e) => set('q', e.target.value)} placeholder="Search cards" aria-label="Search cards"
             className="w-36 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs" />
           <span className="text-xs text-[var(--ink-faint)]">{list.length} cards · {live ? 'live' : 'refreshes every 15 s'}</span>
@@ -129,7 +155,7 @@ export default function Board() {
         {showNew && <NewCard board={board} chart={chart.data ?? null} onCreated={(id) => { setShowNew(false); navigate(`/board/${id}${location.search}`); }} />}
         <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3">
           {COLUMNS.map((col) => {
-            const rows = list.filter((c) => col.statuses.includes(c.status));
+            const rows = sortCards(list.filter((c) => col.statuses.includes(c.status)), sort);
             return (
               <section key={col.key} className="flex w-64 shrink-0 flex-col" aria-label={col.label}>
                 <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--ink-dim)]">

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import Board, { age, runtimeOf } from '../src/routes/board/Board.js';
+import Board, { age, runtimeOf, sortCards } from '../src/routes/board/Board.js';
 
 /** The board module's page: columns from the engine's cards, filters, the card panel, and writes as the owner. */
 
@@ -142,5 +142,18 @@ describe('Board page', () => {
     expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')!.init?.body))).toEqual({
       board: undefined, title: 'Write the docs', body: undefined, assignee: 'atlas', project: 'secondbrain-app', feature: 'board', kind: 'work', priority: 3,
     });
+  });
+});
+
+describe('sortCards', () => {
+  const a = card('t_a', 'a', 'todo', { created_at: '2026-10-20T00:00:00Z', updated_at: '2026-10-27T00:00:00Z', priority: 3 });
+  const b = card('t_b', 'b', 'todo', { created_at: '2026-10-25T00:00:00Z', updated_at: '2026-10-21T00:00:00Z', priority: 1 });
+  const c = card('t_c', 'c', 'todo', { created_at: '2026-10-23T00:00:00Z', updated_at: '2026-10-22T00:00:00Z', priority: 3 });
+  const ids = (s?: string) => sortCards([a, b, c] as never, s).map((x) => x.id);
+  it('defaults to newest created first', () => { expect(ids()).toEqual(['t_b', 't_c', 't_a']); expect(ids('bogus')).toEqual(['t_b', 't_c', 't_a']); });
+  it('sorts oldest, recently updated and priority', () => {
+    expect(ids('oldest')).toEqual(['t_a', 't_c', 't_b']);
+    expect(ids('updated')).toEqual(['t_a', 't_c', 't_b']);
+    expect(ids('priority')).toEqual(['t_b', 't_c', 't_a']);
   });
 });
