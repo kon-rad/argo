@@ -25,7 +25,7 @@ const USAGE = `cli-projects: the project tracker (Postgres). Every agent and the
   list                                               projects and features, one line each
   render [path]                                      write the markdown report to projects.reportFile (only if it changed)
   add-project <project> --title T --stage S [fields]
-  remove-project <project> [--yes]    deletes the project and its features; dry run without --yes
+  remove-project <project> [--into P] [--yes]   deletes it and its features, re-tags its memory facts to P; dry run without --yes
   add <project>/<feature> --title T [fields]         a new feature (starts in idea = backlog unless --stage)
   set <project>[/<feature>] [fields]                 update; a stage change is recorded with --note
   verify <project>/<feature> --pass|--fail --check "what you ran" [--kind test|manual|deploy|review|metric] [--evidence "..."]
@@ -146,10 +146,12 @@ async function main(argv: string[]): Promise<number> {
     case 'remove-project': {
       const { project } = target(pos[0]);
       const dry = opts.yes !== true;
-      const r = await removeProject(project, { dryRun: dry });
+      const into = typeof opts.into === 'string' ? opts.into : undefined;
+      const r = await removeProject(project, { dryRun: dry, into });
+      const facts = r.facts ? `, ${r.facts} memory facts ${into ? `re-tagged to ${into}` : 'untagged'}` : '';
       console.log(dry
-        ? `would remove project ${project} and ${r.features} features (with their stage history and verifications). Re-run with --yes.`
-        : `removed project ${project} and ${r.features} features`);
+        ? `would remove project ${project} and ${r.features} features${facts}. Re-run with --yes.`
+        : `removed project ${project} and ${r.features} features${facts}`);
       return 0;
     }
     case 'add': {

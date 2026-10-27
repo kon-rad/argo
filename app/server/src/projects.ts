@@ -187,15 +187,28 @@ async function divisionMustExist(tx: TxClient, division: string | null | undefin
   if (!rowCount) throw new TrackerError(`no division "${division}"`);
 }
 
-/** Deletes a project and, by cascade, its features, stage history and verifications. Cards and memory links keep their rows with the project cleared. */
-export async function removeProject(slug: string, opts: { dryRun?: boolean } = {}): Promise<{ features: number }> {
+/** Deletes a project and, by cascade, its features, stage history and verifications. Cards and messages keep their rows with the project cleared. Shared-memory facts tagged with it are re-tagged to `into` when given, else cleared. */
+export async function removeProject(slug: string, opts: { dryRun?: boolean; into?: string } = {}): Promise<{ features: number; facts: number }> {
   Slug.parse(slug);
-  const { rows } = await query<{ n: string }>(`SELECT count(*)::text AS n FROM features WHERE project_slug = $1`, [slug]);
-  const features = Number(rows[0]?.n ?? 0);
-  if (opts.dryRun) return { features };
-  const { rowCount } = await query(`DELETE FROM projects WHERE slug = $1`, [slug]);
-  if (!rowCount) throw new TrackerError(`no project "${slug}"`);
-  return { features };
+  if (opts.into) Slug.parse(opts.into);
+  if (opts.into === slug) throw new TrackerError('--into must be a different project');
+  const { rows } = await query<{ f: string; m: string }>(
+    `SELECT (SELECT count(*) FROM features WHERE project_slug = $1)::text AS f,
+            (SELECT count(*) FROM memory_facts WHERE project_slug = $1)::text AS m`,
+    [slug],
+  );
+  const out = { features: Number(rows[0]?.f ?? 0), facts: Number(rows[0]?.m ?? 0) };
+  if (opts.dryRun) return out;
+  await withTransaction(async (tx) => {
+    if (opts.into) {
+      const { rowCount } = await tx.query(`SELECT 1 FROM projects WHERE slug = $1`, [opts.into]);
+      if (!rowCount) throw new TrackerError(`no project "${opts.into}" to move facts into`);
+    }
+    await tx.query(`UPDATE memory_facts SET project_slug = $2 WHERE project_slug = $1`, [slug, opts.into ?? null]);
+    const { rowCount } = await tx.query(`DELETE FROM projects WHERE slug = $1`, [slug]);
+    if (!rowCount) throw new TrackerError(`no project "${slug}"`);
+  });
+  return out;
 }
 
 /** Creates the project when `create` is set (title and stage required), else updates it. */

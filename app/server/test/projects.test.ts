@@ -112,12 +112,25 @@ describe('writes and the verification gate', () => {
 
   it('removes a project with its features, and a dry run removes nothing', async () => {
     await seedBasic();
-    expect(await removeProject('lifeos', { dryRun: true })).toEqual({ features: 2 });
+    expect(await removeProject('lifeos', { dryRun: true })).toEqual({ features: 2, facts: 0 });
     expect((await query(`SELECT 1 FROM projects WHERE slug = 'lifeos'`)).rowCount).toBe(1);
-    expect(await removeProject('lifeos')).toEqual({ features: 2 });
+    expect(await removeProject('lifeos')).toEqual({ features: 2, facts: 0 });
     expect((await query(`SELECT 1 FROM projects WHERE slug = 'lifeos'`)).rowCount).toBe(0);
     expect((await query(`SELECT 1 FROM features WHERE project_slug = 'lifeos'`)).rowCount).toBe(0);
     await expect(removeProject('lifeos')).rejects.toThrow(/no project/);
+  });
+
+  it('keeps memory facts when their project is removed: re-tagged with --into, else untagged', async () => {
+    await seedBasic();
+    await upsertProject('parent', { title: 'Parent', stage: 'building' }, 'test', { create: true });
+    await query(`INSERT INTO memory_facts (subject, claim, source, author, project_slug) VALUES ('a', 'b', 'c', 'lena', 'lifeos')`);
+    await expect(removeProject('lifeos', { into: 'nope' })).rejects.toThrow(/no project "nope"/);
+    expect((await removeProject('lifeos', { into: 'parent' })).facts).toBe(1);
+    expect((await query(`SELECT project_slug FROM memory_facts`)).rows).toEqual([{ project_slug: 'parent' }]);
+    await upsertProject('other', { title: 'Other', stage: 'idea' }, 'test', { create: true });
+    await query(`UPDATE memory_facts SET project_slug = 'other'`);
+    await removeProject('other');
+    expect((await query(`SELECT project_slug FROM memory_facts`)).rows).toEqual([{ project_slug: null }]);
   });
 
   it('records every stage move with who and why', async () => {
