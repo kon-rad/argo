@@ -47,6 +47,7 @@ export const ProjectPatch = z
     title: Text.max(200),
     team: Slug.nullable(),
     division: Slug.nullable(),
+    venture: Slug.nullable(),
     area: Text.max(100).nullable(),
     stage: z.enum(STAGES),
     health: z.enum(['green', 'yellow', 'red']).nullable(),
@@ -133,7 +134,7 @@ export class TrackerError extends Error {
 // ---------------------------------------------------------------- writes
 
 const PROJECT_COLS: Record<string, string> = {
-  title: 'title', team: 'team_slug', division: 'division_slug', area: 'area', stage: 'stage', health: 'health', priority: 'priority',
+  title: 'title', team: 'team_slug', division: 'division_slug', venture: 'venture_slug', area: 'area', stage: 'stage', health: 'health', priority: 'priority',
   goals: 'goals', needs_owner: 'needs_owner', blocked_on: 'blocked_on', started: 'started', due: 'due',
   devlog_path: 'devlog_path', design_path: 'design_path', paths: 'paths', repos: 'repos',
 };
@@ -199,6 +200,10 @@ export async function upsertProject(
   return withTransaction(async (tx) => {
     await teamMustExist(tx, patch.team);
     await divisionMustExist(tx, patch.division);
+    if (patch.venture) {
+      const { rowCount } = await tx.query(`SELECT 1 FROM ventures WHERE slug = $1`, [patch.venture]);
+      if (!rowCount) throw new TrackerError(`no venture "${patch.venture}"`);
+    }
     const cur = await tx.query<{ stage: Stage }>(`SELECT stage FROM projects WHERE slug = $1 FOR UPDATE`, [slug]);
     if (!cur.rows[0]) {
       if (!opts.create) throw new TrackerError(`no project "${slug}" (add it first)`, 404);

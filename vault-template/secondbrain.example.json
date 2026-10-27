@@ -16,6 +16,7 @@
     { "key": "x.example.followers", "label": "X @example", "unit": "followers", "division": "writing",
       "collect": { "type": "x", "handle": "example" } }
   ],
+  "ventures": { "kinds": ["product", "program", "community", "brand", "platform", "client"] },
   "tv": {
     "episodesDir": "tv/episodes",
     "shows": { "weekly": "The weekly report" }
