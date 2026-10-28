@@ -111,6 +111,24 @@ function defaultSocialProviders(): Record<string, SocialProvider> {
   return providers;
 }
 
+/** Scripts only from this origin; fetches only from this origin plus `connectOrigins` (the bucket, for direct uploads). */
+export function contentSecurityPolicy(connectOrigins: string[] = []): string {
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob:",
+    "frame-src 'self'",
+    ["connect-src 'self'", ...connectOrigins].join(' '),
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'self'",
+  ].join('; ');
+}
+
+
 export function createApp(opts: AppOptions = {}): express.Express {
   const vaultRoot = opts.vaultRoot ?? config.vaultRoot;
 
@@ -302,25 +320,12 @@ export function createApp(opts: AppOptions = {}): express.Express {
   const index = join(config.webDist, 'index.html');
   if (existsSync(index)) {
     app.use(express.static(config.webDist, { index: false }));
+    // The uploads page PUTs file parts straight to the bucket, so the browser must be allowed to reach its origin.
+    const csp = contentSecurityPolicy(config.b2S3Endpoint && modules.has('uploads') ? [new URL(config.b2S3Endpoint).origin] : []);
     app.get(/.*/, (_req, res) => {
       // Scripts only from this origin: markdown from the vault is rendered by
       // React (no raw HTML), and this is the backstop if that ever changes.
-      res.setHeader(
-        'Content-Security-Policy',
-        [
-          "default-src 'self'",
-          "script-src 'self'",
-          "style-src 'self' 'unsafe-inline'",
-          "img-src 'self' data: blob: https:",
-          "media-src 'self' blob:",
-          "frame-src 'self'",
-          "connect-src 'self'",
-          "object-src 'none'",
-          "base-uri 'none'",
-          "form-action 'self'",
-          "frame-ancestors 'self'",
-        ].join('; '),
-      );
+      res.setHeader('Content-Security-Policy', csp);
       res.sendFile(index);
     });
   }

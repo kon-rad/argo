@@ -228,3 +228,13 @@ describe('M1 pull', () => {
     expect((await request(app).post(`/api/uploads/${id}/m1`).send({})).body.upload.m1_status).toBe('pending');
   });
 });
+
+describe('content security policy', () => {
+  it('lets the page reach the bucket only when an origin is passed', async () => {
+    const { contentSecurityPolicy } = await import('../src/app.js');
+    expect(contentSecurityPolicy()).toContain("connect-src 'self';");
+    expect(contentSecurityPolicy(['https://s3.us-west-004.backblazeb2.com'])).toContain(
+      "connect-src 'self' https://s3.us-west-004.backblazeb2.com;",
+    );
+  });
+});
