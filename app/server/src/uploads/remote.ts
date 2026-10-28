@@ -46,6 +46,8 @@ export function rcloneRemote(cfg: RcloneConfig): VaultRemote {
   const bin = cfg.bin ?? 'rclone';
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    // The remotes below live in the environment; no config file is read, so an unreadable $HOME can't break it.
+    RCLONE_CONFIG: '/dev/null',
     RCLONE_CONFIG_SBRAW_TYPE: 'b2',
     RCLONE_CONFIG_SBRAW_ACCOUNT: cfg.keyId,
     RCLONE_CONFIG_SBRAW_KEY: cfg.appKey,
