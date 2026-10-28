@@ -156,6 +156,7 @@ Everything beyond browse, search and the database page is a module. A module tha
 | `voice` | Read a note aloud through a local speech server (never on a server) |
 | `livestream` | A minute poller of your YouTube, Twitch and Kick channels and a public summary JSON |
 | `chat` | A chat panel that answers questions from retrieved passages, with citations; any provider's model; org agents as personas (see `docs/rag.md`) |
+| `uploads` | Upload files of 1 GB to 50 GB from any browser on `/uploads`: resumable chunks straight to Backblaze B2, filed into a vault folder you choose with a description, optionally pulled onto a second machine (see `docs/uploads.md`) |
 | `media` | A gallery of every image, video and audio file in the vault on `/media`, with a lightbox player; `.b2.md` stubs play from B2 where the original isn't on disk |
 
 ### Agent ledger (every machine that runs agents)
@@ -190,6 +191,7 @@ Settings that don't fit one env line live in the vault, in `secondbrain.json` at
 | `metrics` | map | The numbers the map tracks, each with a `collect` source (YouTube, X, Instagram, a Base balance) or a `sum` of others |
 | `tv.episodesDir`, `tv.shows` | tv | Where episodes live (default `tv/episodes`) and each show's name |
 | `livestream.youtube`, `.twitch`, `.kick` | livestream | Your channel on each platform |
+| `uploads.destinations`, `uploads.m1Dir` | uploads | Folder presets for the Uploads page (label, vault path, keywords) and where the second machine files its copy |
 | `projects.reportFile` | projects | Where `cli-projects render` writes the report (default `projects.md`) |
 
 Then `secondbrain scan` to build the index and `secondbrain embed` to build the vector index. Every setting: [docs/configuration.md](../docs/configuration.md).

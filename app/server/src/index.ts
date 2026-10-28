@@ -27,6 +27,7 @@ const server = app.listen(config.port, '127.0.0.1', () => {
   void loadEmbeddingConfig().catch((err) => log.warn('embedding config unavailable:', err));
   log.info(`deployment: ${config.deployment}${config.deployment === 'server' ? ` (login required, origin ${config.publicOrigin})` : ''}`);
   if (config.scanIntervalMinutes > 0) startAutoSync(connectors, config.scanIntervalMinutes);
+  (app.locals['uploadsWorker'] as { start(): void } | null | undefined)?.start();
 });
 
 let shuttingDown = false;

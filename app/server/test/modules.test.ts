@@ -17,7 +17,7 @@ describe('optional modules', () => {
     const paths = [
       '/api/ring', '/api/agents/chats', '/api/hub/telegram', '/api/usage/plan', '/api/projects/report',
       '/api/feed/projects', '/api/org/channels', '/api/map/graph', '/api/tv/episodes', '/api/voice/status', '/api/media',
-      '/api/social/accounts', '/api/fund', '/api/chat/options',
+      '/api/social/accounts', '/api/fund', '/api/chat/options', '/api/uploads/config',
     ];
     for (const path of paths) {
       const res = await request(app).get(path);

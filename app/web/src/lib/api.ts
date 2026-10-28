@@ -253,7 +253,7 @@ export interface RingNight {
 
 /** What this install has turned on (server: GET /api/meta). */
 export interface AppMeta {
-  modules: ('ring' | 'agents' | 'projects' | 'org' | 'board' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat')[];
+  modules: ('ring' | 'agents' | 'projects' | 'org' | 'board' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat' | 'uploads')[];
   owner: string;
   devLogPath: string | null;
   docsPath: string | null;

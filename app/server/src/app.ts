@@ -10,6 +10,9 @@ import { tvRouter } from './routes/tv.js';
 import { summariesRouter } from './routes/summaries.js';
 import { usageRouter } from './routes/usage.js';
 import { b2Router, type B2Options } from './routes/b2.js';
+import { mountUploads } from './uploads/setup.js';
+import { uploadsPullRouter } from './routes/uploadsPull.js';
+import type { UploadsRouterOptions } from './routes/uploads.js';
 import { boardRouter, type BoardRouterOptions } from './routes/board.js';
 import { chatRouter, type ChatOptions } from './routes/chat.js';
 import { errorHandlerFor } from './routes/http.js';
@@ -66,6 +69,9 @@ export interface AppOptions {
   b2?: B2Options;
   /** Overridden in tests so the ring pull never runs ssh. */
   ring?: Partial<RingRouterOptions>;
+  /** uploads module: a fake bucket and vault remote for tests. */
+  uploads?: Partial<UploadsRouterOptions>;
+  uploadsPullToken?: string;
   /** Overridden in tests so the Cron page never runs systemctl. */
   timers?: () => Promise<{ available: boolean; timers: unknown[] }>;
   /** Optional features to mount. Defaults to the MODULES env var. */
@@ -159,6 +165,9 @@ export function createApp(opts: AppOptions = {}): express.Express {
     : undefined;
   if (socialOpts) app.use('/api/social', socialCallbackRouter(socialOpts));
 
+  // The second machine's pull calls carry a bearer token, no session; they sit ahead of the session gate like the board's.
+  if (modules.has('uploads')) app.use('/api/uploads/pull', uploadsPullRouter(opts.uploadsPullToken ?? config.uploadsPullToken));
+
   if (remote) {
     const auth = createAuth(
       opts.auth ?? {
@@ -203,6 +212,11 @@ export function createApp(opts: AppOptions = {}): express.Express {
   app.use('/api/file', fileRouter(vaultRoot));
   app.use('/api/raw', rawRouter(vaultRoot));
   app.use('/api/b2', b2Router(vaultRoot, opts.b2 ?? { serveUrl: config.b2ServeUrl }));
+  if (modules.has('uploads')) {
+    const uploads = mountUploads(vaultRoot, opts.uploads);
+    app.use('/api/uploads', uploads.router);
+    app.locals['uploadsWorker'] = uploads.worker;
+  }
   app.use(
     '/api/search',
     searchRouter(opts.embeddingProvider ?? defaultEmbeddingProvider, [

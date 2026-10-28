@@ -28,7 +28,7 @@ New here? Start with the [onboarding path](onboarding/README.md): ten short page
 | [vault.md](vault.md) | You want to understand the vault template, `secondbrain-vault`, `AGENTS.md`, skills, and how to update the engine |
 | [configuration.md](configuration.md) | You need a setting: every env variable and every `secondbrain.json` key |
 | [sync.md](sync.md) | You work in the vault from more than one computer, or a server runs agents in it, and want every checkout committed, pulled and pushed on a timer without losing a note or leaking a key |
-| [modules.md](modules.md) | You want an optional feature (tracker, org board, kanban board, map, TV, usage, voice, livestream, ring, agents, chat) |
+| [modules.md](modules.md) | You want an optional feature (tracker, org board, kanban board, map, TV, usage, voice, livestream, ring, agents, chat, uploads) |
 | [kanban-board.md](kanban-board.md) | You want to use the board: the nine statuses, the three doors, every `cli-board` and `cli-org task` command, per-machine tokens, and the `hermes kanban` trap |
 | [board-design.md](board-design.md) | You want the board's architecture before changing its code: the record and the lanes, the tables, the write path, the rollout |
 | [rag.md](rag.md) | You want to know how notes become searchable passages and how the chat answers from them: chunking, embedding, hybrid retrieval, reranking, providers |

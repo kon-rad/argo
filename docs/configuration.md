@@ -20,7 +20,11 @@ The app reads `<vault>/.env` at start (`app/server/src/config.ts`), validates ev
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `DEPLOYMENT` | `local` | `local` (no login, loopback) or `server` (login required). See [deployment.md](deployment.md) |
 | `SUMMARIES`, `SUMMARIES_M1_URL` | unset | `SUMMARIES=on` makes the deploy script install the summaries timer. `SUMMARIES_M1_URL` is the home server's Ollama address that the default chain tries first. See [summaries.md](summaries.md) |
-| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`. Unknown names are ignored |
+| `B2_KEY_ID`, `B2_APP_KEY`, `B2_BUCKET`, `B2_S3_ENDPOINT` | unset | uploads: the bucket and its S3 endpoint. Presigned URLs are signed with this key; it never reaches the browser |
+| `B2STORE_CRYPT_PASSWORD`, `B2STORE_CRYPT_PASSWORD2` | unset | uploads: the rclone-crypt passwords when the vault part of the bucket is encrypted (the same ones `b2store` uses) |
+| `UPLOADS_MAX_GB` | `50` | uploads: the largest single file the page accepts |
+| `UPLOADS_PULL_TOKEN` | unset | uploads: bearer token (16+ characters) the second machine's puller sends |
+| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`, `uploads`. Unknown names are ignored |
 | `OWNER_NAME` | `owner` | Your name in the authenticator app and as a comment author |
 | `DEV_LOG_PATH`, `DOCS_PATH` | unset | Vault-relative notes the nav bar links to; unset hides the link |
 | `SCAN_INTERVAL_MINUTES` | `0` | Rescan and re-embed every N minutes; `0` means only when asked |
