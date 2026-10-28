@@ -1,4 +1,4 @@
--- db/migrations/1756000016200_uploads.sql
+-- db/migrations/1756000016300_uploads.sql
 -- Up Migration
 
 -- Large uploads (uploads module). The browser sends a big file to the bucket's plain `inbox/` prefix in
