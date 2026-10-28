@@ -42,6 +42,20 @@ export const Routine = z.object({
 });
 export type RoutineT = z.infer<typeof Routine>;
 
+/**
+ * The `wake_rules:` block of the org file: when a message wakes a bot. Stored as one row in `org_wake_rules`
+ * and read by the `org_messages_wake()` trigger. Every key is optional; see docs/org-yaml.md.
+ */
+export const WakeRules = z.object({
+  dm: z.boolean().optional(),
+  mention: z.boolean().optional(),
+  handoff: z.boolean().optional(),
+  bot_wakes_per_target_per_day: z.number().int().min(0).max(50).optional(),
+  owner_channel_post: z.enum(['none', 'wake_lead']).optional(),
+  channel_leads: z.record(z.string(), Name).optional(),
+}).strict();
+export type WakeRulesT = z.infer<typeof WakeRules>;
+
 export const OrgDoc = z.object({
   version: z.string().min(1),
   company: z.string().min(1),
@@ -76,6 +90,7 @@ export const OrgDoc = z.object({
       channels: z.array(z.string()).optional(),
     }),
   ),
+  wake_rules: WakeRules.optional(),
   channels: z.record(
     z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/),
     z.object({
@@ -146,7 +161,18 @@ export async function importOrg(input: unknown): Promise<{ agents: number; teams
     if (doc.agents[t.lead]?.team !== slug) throw new OrgError(`team ${slug}: lead ${t.lead} is not on the team`);
   }
 
+  for (const [ch, lead] of Object.entries(doc.wake_rules?.channel_leads ?? {})) {
+    if (!doc.channels[ch]) throw new OrgError(`wake_rules.channel_leads: unknown shared channel ${ch}`);
+    if (!doc.agents[lead] || doc.agents[lead]!.runtime === 'human') throw new OrgError(`wake_rules.channel_leads.${ch}: ${lead} is not a bot in agents`);
+  }
+
   return withTransaction(async (tx) => {
+    // One row, replaced whole: the org file is the only author of the wake rules, and a missing block means defaults.
+    await tx.query(
+      `INSERT INTO org_wake_rules (id, rules, org_version) VALUES (true, $1::jsonb, $2)
+       ON CONFLICT (id) DO UPDATE SET rules = EXCLUDED.rules, org_version = EXCLUDED.org_version, updated_at = now()`,
+      [JSON.stringify(doc.wake_rules ?? {}), doc.version],
+    );
     const humans = Object.entries(doc.agents).filter(([, a]) => a.runtime === 'human').map(([n]) => n);
     const byTeam = (slug: string): string[] => Object.entries(doc.agents).filter(([, a]) => a.team === slug).map(([n]) => n);
 
