@@ -127,7 +127,7 @@ Check the exact key names against your Hermes version; they have moved between r
 
 ### Option C: zen-agent (the cheap one)
 
-The [telegram-bridge add-on](https://github.com/kon-rad/secondbrain/blob/main/addons/telegram-bridge/README.md) is a small Python process that answers each message with one `zen-agent run` on the cheap model in your `zen.json`. Use it for everyday questions, board work and notes from your phone, and keep the Claude Code bot for work that needs Claude. It needs its own bot (a third one if you run both of the others), a token file outside the vault, and the allowlist:
+The [telegram-bridge add-on](https://github.com/kon-rad/argo/blob/main/addons/telegram-bridge/README.md) is a small Python process that answers each message with one `zen-agent run` on the cheap model in your `zen.json`. Use it for everyday questions, board work and notes from your phone, and keep the Claude Code bot for work that needs Claude. It needs its own bot (a third one if you run both of the others), a token file outside the vault, and the allowlist:
 
 ```bash
 mkdir -p ~/.zen && cp .secondbrain/addons/telegram-bridge/env.example ~/.zen/telegram-bridge.env

@@ -2,7 +2,7 @@
 
 ### The headless runtime for bot wakes: one loop, hooks on the loop, everything else a file
 
-**Status:** built and merged: `zen-agent/` on `main` since [kon-rad/secondbrain#38](https://github.com/kon-rad/secondbrain/pull/38). Fresh-context wakes, the `thread` part and the context fetchers are in; the roster switch and the dispatcher hand-off described in [Integration](#7-integration-with-the-second-brain) are the vault's side and still to do.
+**Status:** built and merged: `zen-agent/` on `main` since [kon-rad/argo#38](https://github.com/kon-rad/argo/pull/38). Fresh-context wakes, the `thread` part and the context fetchers are in; the roster switch and the dispatcher hand-off described in [Integration](#7-integration-with-the-second-brain) are the vault's side and still to do.
 **Written:** 2026-10-24
 **Goal:** Run one agent of the org, as a named persona, on one task, under a budget, with every input measured and every step traced, on whichever model the policy names.
 **Companion pages:** [Self-improving orchestration](self-improvement.md) (section 10 asked for this runtime), [Agent harness](agent-harness.md) (the guard and the gate it shares), [Retrieval](rag.md) (the search it calls).
@@ -330,4 +330,4 @@ The pilot is judged on the proposal's metrics: tokens per finished card, first-w
 - Agent Skills: [specification](https://agentskills.io/specification)
 - Claude Code: [hooks](https://code.claude.com/docs/en/hooks) · [subagents](https://code.claude.com/docs/en/sub-agents)
 - Anthropic: [effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
-- This repo: [self-improvement.md](self-improvement.md) · [agent-harness.md](agent-harness.md) · [rag.md](rag.md) · [`zen-agent/README.md`](https://github.com/kon-rad/secondbrain/blob/main/zen-agent/README.md)
+- This repo: [self-improvement.md](self-improvement.md) · [agent-harness.md](agent-harness.md) · [rag.md](rag.md) · [`zen-agent/README.md`](https://github.com/kon-rad/argo/blob/main/zen-agent/README.md)

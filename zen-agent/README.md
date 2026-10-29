@@ -202,7 +202,7 @@ The guard checks the text of tool calls, like the Python one; it is a guardrail,
 
 ## Using it from the second brain engine
 
-This folder is a standalone package inside the [secondbrain](https://github.com/kon-rad/secondbrain) repository: it imports nothing from `app/` and nothing imports it. It is the headless runtime the proposal in `docs/self-improvement.md` (section 10) asked for: bot wakes that cost a bounded, measured number of tokens, with the context assembled as code, the guard in process and a complete trace per run. The engine's roster accepts `runtime: zen-agent` next to `claude-code` and `hermes`, and its board module lets this runtime claim cards (`zen-agent lane`).
+This folder is a standalone package inside the [secondbrain](https://github.com/kon-rad/argo) repository: it imports nothing from `app/` and nothing imports it. It is the headless runtime the proposal in `docs/self-improvement.md` (section 10) asked for: bot wakes that cost a bounded, measured number of tokens, with the context assembled as code, the guard in process and a complete trace per run. The engine's roster accepts `runtime: zen-agent` next to `claude-code` and `hermes`, and its board module lets this runtime claim cards (`zen-agent lane`).
 
 To give it its own repository, split the folder with history:
 

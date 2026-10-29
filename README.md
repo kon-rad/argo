@@ -1,4 +1,5 @@
-# secondbrain
+# Argo
+### An agentic second brain, open source
 
 **An exocortex you own.** Your notes, your projects, your agents and your body's data in one private place: plain markdown in a git repo you control, an app that searches and maps it, and agents that work inside it under rules you write.
 
@@ -39,7 +40,7 @@ You don't need Exo to use secondbrain: it runs the same on a laptop or a small s
 | [`skills/`](skills/) | Shared agent skills (`SKILL.md`, used by both Claude Code and Hermes): `fact-check`, `ingest`, `company-report`, `org-member`, `livestream-x` |
 | `bin/secondbrain-vault` | Starts a vault, compiles its `AGENTS.md`, links the skills |
 | [`addons/tv-kiosk/`](addons/tv-kiosk/README.md) | Flash a Raspberry Pi that shows the app full screen on a TV |
-| [`docs/`](docs/README.md) | How it all works, how to set it up, every setting. Also a site: [kon-rad.github.io/secondbrain](https://kon-rad.github.io/secondbrain/) |
+| [`docs/`](docs/README.md) | How it all works, how to set it up, every setting. Also a site: [kon-rad.github.io/argo](https://kon-rad.github.io/argo/) |
 
 ### Modules
 
@@ -99,7 +100,7 @@ Markdown is the source of truth. Postgres is an index over it: drop the database
 
 ```bash
 mkdir my-vault && cd my-vault && git init
-git submodule add https://github.com/kon-rad/secondbrain.git .secondbrain
+git submodule add https://github.com/kon-rad/argo.git .secondbrain
 .secondbrain/bin/secondbrain-vault init .
 cp .env.example .env
 git add -A && git commit -m "new vault"
@@ -138,7 +139,7 @@ The launcher rebuilds and runs new migrations on the next start. More in [docs/v
 
 ## Documentation
 
-Everything below is also a site: **[kon-rad.github.io/secondbrain](https://kon-rad.github.io/secondbrain/)**, with search and navigation, built from `docs/` on every change.
+Everything below is also a site: **[kon-rad.github.io/argo](https://kon-rad.github.io/argo/)**, with search and navigation, built from `docs/` on every change.
 
 | Doc | |
 |---|---|

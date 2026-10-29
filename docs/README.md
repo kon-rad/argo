@@ -1,6 +1,6 @@
 # Documentation
 
-These pages are also published as a site at **https://kon-rad.github.io/secondbrain/**, built from this folder on every change to `main`.
+These pages are also published as a site at **https://kon-rad.github.io/argo/**, built from this folder on every change to `main`.
 
 New here? Start with the [onboarding path](onboarding/README.md): ten short pages from "I have notes somewhere" to a private knowledge base with agents working in it. Want it running right now? [getting-started.md](getting-started.md). Want to know how it fits together before you change it? [architecture.md](architecture.md).
 
@@ -43,11 +43,11 @@ New here? Start with the [onboarding path](onboarding/README.md): ten short page
 
 Also, in the repository:
 
-- [`app/README.md`](https://github.com/kon-rad/secondbrain/blob/main/app/README.md): the app's tech stack, search design and invariants.
-- [`addons/tv-kiosk/README.md`](https://github.com/kon-rad/secondbrain/blob/main/addons/tv-kiosk/README.md): a Raspberry Pi that shows the app on a TV.
-- [`zen-agent/README.md`](https://github.com/kon-rad/secondbrain/blob/main/zen-agent/README.md): zen-agent, the minimal headless agent runtime (pi agent core) that runs a roster persona with skills, the board and the knowledge base as tools, under a budget, with a trace per run.
-- [`CONTRIBUTING.md`](https://github.com/kon-rad/secondbrain/blob/main/CONTRIBUTING.md): how to send a change.
-- [`AGENTS.md`](https://github.com/kon-rad/secondbrain/blob/main/AGENTS.md): the rules AI coding agents follow when they change this repo.
+- [`app/README.md`](https://github.com/kon-rad/argo/blob/main/app/README.md): the app's tech stack, search design and invariants.
+- [`addons/tv-kiosk/README.md`](https://github.com/kon-rad/argo/blob/main/addons/tv-kiosk/README.md): a Raspberry Pi that shows the app on a TV.
+- [`zen-agent/README.md`](https://github.com/kon-rad/argo/blob/main/zen-agent/README.md): zen-agent, the minimal headless agent runtime (pi agent core) that runs a roster persona with skills, the board and the knowledge base as tools, under a budget, with a trace per run.
+- [`CONTRIBUTING.md`](https://github.com/kon-rad/argo/blob/main/CONTRIBUTING.md): how to send a change.
+- [`AGENTS.md`](https://github.com/kon-rad/argo/blob/main/AGENTS.md): the rules AI coding agents follow when they change this repo.
 
 ## Working on the docs
 

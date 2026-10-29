@@ -39,7 +39,7 @@ A vault is an empty folder that becomes a private git repo, with the engine insi
 
 ```bash
 mkdir my-vault && cd my-vault && git init
-git submodule add https://github.com/kon-rad/secondbrain.git .secondbrain
+git submodule add https://github.com/kon-rad/argo.git .secondbrain
 .secondbrain/bin/secondbrain-vault init .
 cp .env.example .env
 git add -A && git commit -m "new vault"

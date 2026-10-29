@@ -109,7 +109,7 @@ Hermes asks for consent to each exact hook command once per machine and records 
 
 ### zen-agent
 
-[zen-agent](https://github.com/kon-rad/secondbrain/blob/main/zen-agent/README.md) runs the guard in process (the same built-in rules and the same `guard.local.json`, ported to TypeScript) and runs `guard.py` and `devlog_gate.py` as hook commands when `zen.json` lists them under `guard.hooks.preToolUse` and `guard.hooks.stop`. Its skills come from the same `.agents/skills`. Every block is appended to the same `~/.cache/agent-guard.log`. Running the bots on it is described in [zen-runtime.md](zen-runtime.md).
+[zen-agent](https://github.com/kon-rad/argo/blob/main/zen-agent/README.md) runs the guard in process (the same built-in rules and the same `guard.local.json`, ported to TypeScript) and runs `guard.py` and `devlog_gate.py` as hook commands when `zen.json` lists them under `guard.hooks.preToolUse` and `guard.hooks.stop`. Its skills come from the same `.agents/skills`. Every block is appended to the same `~/.cache/agent-guard.log`. Running the bots on it is described in [zen-runtime.md](zen-runtime.md).
 
 ### Other agents
 

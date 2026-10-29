@@ -1,7 +1,7 @@
 name: docs
 
 # Builds docs/ into a static site with MkDocs and publishes it to GitHub Pages
-# (https://kon-rad.github.io/secondbrain/). Pull requests only build, so a broken
+# (https://kon-rad.github.io/argo/). Pull requests only build, so a broken
 # link or a bad mkdocs.yml fails the PR instead of the live site.
 #
 # One-time setup in the repository: Settings > Pages > Source: "GitHub Actions".

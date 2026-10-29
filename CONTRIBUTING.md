@@ -29,7 +29,7 @@ AI coding agents are welcome contributors. They follow [AGENTS.md](AGENTS.md), w
 You need git, Node.js 22+, Python 3.9+ (3.11+ recommended), and PostgreSQL 15+ with pgvector built for that Postgres. [docs/getting-started.md](docs/getting-started.md#1-install-the-prerequisites) has install steps for macOS and Ubuntu.
 
 ```bash
-git clone https://github.com/kon-rad/secondbrain.git
+git clone https://github.com/kon-rad/argo.git
 cd secondbrain/app
 npm ci
 npm run build

@@ -47,7 +47,7 @@ Hermes keeps only session totals. The plugin in `harness/hermes/usage-ledger/` a
 .secondbrain/harness/hermes/install-usage-ledger.sh ~/.hermes
 ```
 
-The agent ledger and `secondbrain agents-sync` read those files into the usage tables. See "Agent ledger" in the [app README](https://github.com/kon-rad/secondbrain/blob/main/app/README.md).
+The agent ledger and `secondbrain agents-sync` read those files into the usage tables. See "Agent ledger" in the [app README](https://github.com/kon-rad/argo/blob/main/app/README.md).
 
 ## Hermes on a server
 
