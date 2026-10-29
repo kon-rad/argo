@@ -161,6 +161,22 @@ const Settings = z.object({
       explorer: z.string().url().default('https://basescan.org'),
     })
     .prefault({}),
+  uploads: z
+    .object({
+      /** Folders the Uploads page offers, so "my vlog" lands in the right vault folder. `keywords` match the filename and description. */
+      destinations: z
+        .array(
+          z.object({
+            label: z.string().min(1),
+            path: z.string().min(1),
+            keywords: z.array(z.string().min(1)).default([]),
+          }),
+        )
+        .default([]),
+      /** Where the editing machine's puller puts working copies, relative to the editing machine user's home. */
+      m1Dir: z.string().default('Movies/inbox'),
+    })
+    .prefault({}),
   projects: z
     .object({
       /** Vault-relative file `cli-projects render` writes the report to. */

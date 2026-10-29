@@ -57,6 +57,18 @@ const Schema = z.object({
   // `b2store serve` on loopback, for streaming the big files that live only in
   // B2 (see .hermes/scripts/b2-offload.sh). Unset on the Mac: originals are local.
   B2_SERVE_URL: z.string().url().optional(),
+  // uploads module: browser uploads go straight to this bucket with presigned S3 multipart URLs (Backblaze B2's
+  // S3-compatible API), then the server streams each file into its encrypted vault path. The same names `b2store` reads.
+  B2_KEY_ID: z.string().optional(),
+  B2_APP_KEY: z.string().optional(),
+  B2_BUCKET: z.string().optional(),
+  B2_S3_ENDPOINT: z.string().url().optional(),
+  B2STORE_CRYPT_PASSWORD: z.string().optional(),
+  B2STORE_CRYPT_PASSWORD2: z.string().optional(),
+  // uploads module: the biggest single file the page accepts, in GB.
+  UPLOADS_MAX_GB: z.coerce.number().positive().default(50),
+  // uploads module: bearer token for the second machine that pulls working copies (unset: that route answers 401).
+  UPLOADS_PULL_TOKEN: z.string().min(16).optional(),
   // 0 = never (the Mac, where rescans are a button). The server sets 30.
   SCAN_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(0),
   // Optional features, comma separated (MODULE_NAMES below). Off unless listed.
@@ -168,7 +180,7 @@ const Schema = z.object({
   SOCIAL_X_MAX_CHARS: z.coerce.number().int().positive().default(280),
 });
 
-export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'board', 'usage', 'map', 'tv', 'voice', 'livestream', 'media', 'social', 'fund', 'chat'] as const;
+export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'board', 'usage', 'map', 'tv', 'voice', 'livestream', 'media', 'social', 'fund', 'chat', 'uploads'] as const;
 export type ModuleName = (typeof MODULE_NAMES)[number];
 
 /** `"ring, agents"` → {'ring', 'agents'}; unknown names are ignored. */
@@ -252,6 +264,14 @@ export const config = {
   scanIntervalMinutes: parsed.data.SCAN_INTERVAL_MINUTES,
   indexer: parsed.data.INDEXER === 'on',
   b2ServeUrl: parsed.data.B2_SERVE_URL,
+  b2KeyId: parsed.data.B2_KEY_ID,
+  b2AppKey: parsed.data.B2_APP_KEY,
+  b2Bucket: parsed.data.B2_BUCKET,
+  b2S3Endpoint: parsed.data.B2_S3_ENDPOINT,
+  b2CryptPassword: parsed.data.B2STORE_CRYPT_PASSWORD,
+  b2CryptPassword2: parsed.data.B2STORE_CRYPT_PASSWORD2,
+  uploadsMaxBytes: Math.floor(parsed.data.UPLOADS_MAX_GB * 1024 ** 3),
+  uploadsPullToken: parsed.data.UPLOADS_PULL_TOKEN,
   dataDir: resolve(appRoot, 'data'),
   modules: parseModules(parsed.data.MODULES),
   ownerName: parsed.data.OWNER_NAME,

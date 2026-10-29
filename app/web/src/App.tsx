@@ -17,6 +17,7 @@ import MobileMenu, { MenuButton } from './components/MobileMenu.js';
 import Projects from './routes/Projects.js';
 import Tv from './routes/Tv.js';
 import Media from './routes/Media.js';
+import Uploads from './routes/Uploads.js';
 import Fund from './routes/Fund.js';
 // three.js is large: the map loads only when it's opened.
 const MapPage = lazy(() => import('./routes/Map.js'));
@@ -241,6 +242,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           {modules.has('board') && <Route path="/board/:cardId" element={<BoardPage />} />}
           {modules.has('tv') && <Route path="/tv" element={<Tv />} />}
           {modules.has('media') && <Route path="/media" element={<Media />} />}
+          {modules.has('uploads') && <Route path="/uploads" element={<Uploads />} />}
           {modules.has('fund') && <Route path="/fund" element={<Fund />} />}
           {/* The page was /argo-tv before the engine port; old kiosk URLs land on /tv. */}
           {modules.has('tv') && <Route path="/argo-tv" element={<Navigate to={`/tv${location.search}`} replace />} />}
@@ -270,6 +272,7 @@ function menus(modules: Set<string>, meta: AppMeta | undefined, openChat: () => 
     ...on('chat', { label: 'Ask your second brain', onSelect: openChat }),
     ...on('map', { to: '/map', label: 'Brain map' }),
     ...on('media', { to: '/media', label: 'Media' }),
+    ...on('uploads', { to: '/uploads', label: 'Upload' }),
     { to: '/vector-search', label: 'Vector Search' },
     { to: '/database', label: 'Database' },
     { to: '/sources', label: 'Sources' },

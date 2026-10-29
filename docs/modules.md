@@ -196,6 +196,10 @@ A standard LinkedIn app gets a 60-day access token and **no refresh token** (Lin
 
 **Setting up Buffer.** Connect each account in Buffer once (the free plan has 3 channels and a lifetime limit on new connections, so don't connect test accounts). Instagram must be a Business or Creator account for automatic publishing. Put `BUFFER_API_KEY` in the server's env, then run `cli-social connect-buffer`: it adds one account per Instagram, YouTube and X channel and skips the rest.
 
+## uploads
+
+`MODULES=uploads`. Send files of 1 GB to 50 GB from any browser on `/uploads`, with a folder and a description, straight into the Backblaze B2 bucket your vault already uses. Design, setup (CORS rule, keys) and failure handling: [uploads.md](uploads.md).
+
 ## Adding a module
 
 A new optional feature is a new module, off by default. The checklist is in [`CONTRIBUTING.md`](https://github.com/kon-rad/secondbrain/blob/main/CONTRIBUTING.md#adding-a-module).
