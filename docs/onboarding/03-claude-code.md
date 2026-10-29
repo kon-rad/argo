@@ -62,7 +62,7 @@ claude -p "Follow the ingest skill for <url>. Stop when the note exists."
 
 Headless runs re-send the whole conversation on every turn, which is why the base rules carry a context budget: capped output, one task per run, steps written to a file rather than held in context. Keep prompts to one task and let the next run read the file.
 
-The base rules also ask for a completion contract on long tasks (outcome, verification, constraints, boundaries, stop condition). Put it in the prompt. Both the rules and the contract are in [`AGENTS.base.md`](https://github.com/kon-rad/secondbrain/blob/main/vault-template/AGENTS.base.md).
+The base rules also ask for a completion contract on long tasks (outcome, verification, constraints, boundaries, stop condition). Put it in the prompt. Both the rules and the contract are in [`AGENTS.base.md`](https://github.com/kon-rad/argo/blob/main/vault-template/AGENTS.base.md).
 
 ## An existing vault, or a vault made before a harness change
 

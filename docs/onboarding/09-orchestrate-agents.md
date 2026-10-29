@@ -36,7 +36,7 @@ A first skill most people write: a weekly review that reads the week's dev logs 
 
 ## Layer 2: a paper trail (dev logs and the `projects` module)
 
-**Dev logs** are the record humans read. Per project, under `Projects/<project>/`: a design note, a `dev-log/README.md` that starts with the six-field `Resume` block, and one dated entry per session that says what changed, why, what broke, how it was tested, which commits. The format is in the "Dev logs" section of [`AGENTS.base.md`](https://github.com/kon-rad/secondbrain/blob/main/vault-template/AGENTS.base.md); the gate enforces the entry, not the quality, so read them.
+**Dev logs** are the record humans read. Per project, under `Projects/<project>/`: a design note, a `dev-log/README.md` that starts with the six-field `Resume` block, and one dated entry per session that says what changed, why, what broke, how it was tested, which commits. The format is in the "Dev logs" section of [`AGENTS.base.md`](https://github.com/kon-rad/argo/blob/main/vault-template/AGENTS.base.md); the gate enforces the entry, not the quality, so read them.
 
 **The tracker** (`MODULES=projects`) is the record agents update. Projects and features with stages (`idea`, `designing`, `building`, `testing`, `live`, `parked`, `done`), and verifications: a feature goes `live` or `done` only after a passing check is recorded. Agents use `cli-projects` (`report`, `list`, `add`, `set`, `verify`, `render`), and the `company-report` skill teaches them when: at the end of any build session, and whenever you ask "how are the projects?" or "what's blocked on me?". `cli-projects render` writes a markdown report into the vault, so the tracker is searchable like everything else, and a goals table in `goalsFile` ties features to goals.
 

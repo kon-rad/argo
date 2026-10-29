@@ -30,7 +30,7 @@ Three things to know, because everything else follows from them:
 
 ```bash
 mkdir my-vault && cd my-vault && git init
-git submodule add https://github.com/kon-rad/secondbrain.git .secondbrain
+git submodule add https://github.com/kon-rad/argo.git .secondbrain
 .secondbrain/bin/secondbrain-vault init .
 cp .env.example .env
 git add -A && git commit -m "new vault"

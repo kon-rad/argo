@@ -63,4 +63,4 @@ git -C .secondbrain config user.email "<id>+<user>@users.noreply.github.com"
 
 1. **Rotate the secret first.** Assume anything that reached a public repo has been copied. Rewriting history doesn't un-publish it.
 2. Remove it from the current tree in a PR.
-3. If it must leave history too, that means rewriting it (`git filter-repo`), and because PR refs can't be rewritten, possibly recreating the repo. Report security problems privately: see [`SECURITY.md`](https://github.com/kon-rad/secondbrain/blob/main/SECURITY.md).
+3. If it must leave history too, that means rewriting it (`git filter-repo`), and because PR refs can't be rewritten, possibly recreating the repo. Report security problems privately: see [`SECURITY.md`](https://github.com/kon-rad/argo/blob/main/SECURITY.md).

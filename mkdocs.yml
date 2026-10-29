@@ -1,11 +1,11 @@
-# The docs site: https://kon-rad.github.io/secondbrain/
+# The docs site: https://kon-rad.github.io/argo/
 # Built from docs/ by .github/workflows/docs.yml. Preview locally with:
 #   pip install mkdocs-material && mkdocs serve
-site_name: secondbrain
+site_name: Argo
 site_description: An exocortex you own. Plain markdown in a git repo you control, an app that searches and maps it, and agents that work inside it under rules you write.
-site_url: https://kon-rad.github.io/secondbrain/
-repo_url: https://github.com/kon-rad/secondbrain
-repo_name: kon-rad/secondbrain
+site_url: https://kon-rad.github.io/argo/
+repo_url: https://github.com/kon-rad/argo
+repo_name: kon-rad/argo
 edit_uri: edit/main/docs/
 docs_dir: docs
 copyright: MIT licensed

@@ -33,7 +33,7 @@ You run coding agents in a repository and want them safer and more accountable, 
 1. Copy `harness/hooks/guard.py`, `devlog_gate.py` and their tests into your repo (MIT). Copy `harness/claude/settings.json` to `.claude/settings.json` and fix the paths. Hermes: the block in `harness/hermes-hooks.example.yaml`. Anything else: [Connect another harness](05-other-harnesses.md).
 2. Write an `AGENTS.md` and make `CLAUDE.md` one line, `@AGENTS.md`. If several repos share rules, keep the base in one place and compile it the way `secondbrain-vault rules` does: base plus a local file, with a `--check` in CI so nobody hand-edits the output.
 3. Add a `.agents/guard.local.json` with the folders that are off limits in this repo: generated code, fixtures, a sibling checkout.
-4. Put the "Context budget" and "Long tasks: completion contracts" sections of [`AGENTS.base.md`](https://github.com/kon-rad/secondbrain/blob/main/vault-template/AGENTS.base.md) in your rules as they are. They are the two sections with the best ratio of words to saved money.
+4. Put the "Context budget" and "Long tasks: completion contracts" sections of [`AGENTS.base.md`](https://github.com/kon-rad/argo/blob/main/vault-template/AGENTS.base.md) in your rules as they are. They are the two sections with the best ratio of words to saved money.
 5. Decide where dev logs live (`docs/dev-log/` is fine) and tell the gate with `devlog.roots`.
 
 What you will notice: force pushes and secret reads stop; "done" starts to come with a written record you can read on Monday; headless runs get cheaper.
@@ -87,4 +87,4 @@ You are building a product that includes agents, memory or a knowledge base for 
 - **Running every module.** Each one is a surface, a timer and a thing to understand. Turn one on when you can say what it is for.
 - **Editing the engine in place.** Your vault pins it. Changes go to a worktree and a pull request, and your pin moves when they merge. [vault.md](../vault.md#changing-the-engine-from-inside-your-vault) shows the two commands.
 
-That is the end of the onboarding. The reference docs start at [the documentation index](../README.md), and [CONTRIBUTING.md](https://github.com/kon-rad/secondbrain/blob/main/CONTRIBUTING.md) is where to go when you want to send a change back.
+That is the end of the onboarding. The reference docs start at [the documentation index](../README.md), and [CONTRIBUTING.md](https://github.com/kon-rad/argo/blob/main/CONTRIBUTING.md) is where to go when you want to send a change back.

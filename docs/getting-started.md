@@ -38,7 +38,7 @@ A vault is your own private git repo. The engine goes inside it as a submodule a
 
 ```bash
 mkdir my-vault && cd my-vault && git init
-git submodule add https://github.com/kon-rad/secondbrain.git .secondbrain
+git submodule add https://github.com/kon-rad/argo.git .secondbrain
 .secondbrain/bin/secondbrain-vault init .
 cp .env.example .env
 ```

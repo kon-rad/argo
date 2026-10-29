@@ -6,7 +6,7 @@ secondbrain is two things in one repo: a **knowledge base** you own outright, an
 
 | You get | How |
 |---|---|
-| Notes that outlive every tool | Plain markdown in a git repo, organised with [PARA](https://github.com/kon-rad/secondbrain/blob/main/vault-template/PARA%20Guide.md) (Projects, Areas, Research, Archives). Open it in Obsidian, VS Code, a phone editor or `cat` |
+| Notes that outlive every tool | Plain markdown in a git repo, organised with [PARA](https://github.com/kon-rad/argo/blob/main/vault-template/PARA%20Guide.md) (Projects, Areas, Research, Archives). Open it in Obsidian, VS Code, a phone editor or `cat` |
 | Search that finds things you forgot the words for | Keyword search (Postgres full text), semantic search (embeddings in pgvector) and a hybrid of both. Semantic search can run fully local with Ollama |
 | Links both ways | `[[wikilinks]]` become in-app links, and every note shows its backlinks |
 | Questions in plain language | The database page turns a question into read-only SQL over the index and the module tables |
@@ -52,7 +52,7 @@ You can adopt these one at a time, in any codebase or note folder, with no depen
 
 3. **A guard hook that fails open.** A short standard-library script in front of every tool call catches the mistakes that are expensive and boring: a secret printed into a transcript, a force push, a destructive sync. It matches text, so it is a guardrail and not a sandbox, and it allows anything it cannot parse so a hook bug never stops work. Copy `harness/hooks/guard.py` and its tests as they are. Pattern: [agent-harness.md](../agent-harness.md#the-guard).
 
-4. **A dev-log gate.** "Done" means a human-readable entry exists: what changed, why, how it was tested. The gate only asks once, and the `Resume` block at the top of each project's dev-log README is the handoff between sessions and agents. Pattern: [agent-harness.md](../agent-harness.md#the-dev-log-gate) and the "Dev logs" section of [`AGENTS.base.md`](https://github.com/kon-rad/secondbrain/blob/main/vault-template/AGENTS.base.md).
+4. **A dev-log gate.** "Done" means a human-readable entry exists: what changed, why, how it was tested. The gate only asks once, and the `Resume` block at the top of each project's dev-log README is the handoff between sessions and agents. Pattern: [agent-harness.md](../agent-harness.md#the-dev-log-gate) and the "Dev logs" section of [`AGENTS.base.md`](https://github.com/kon-rad/argo/blob/main/vault-template/AGENTS.base.md).
 
 5. **Completion contracts.** Outcome, verification, constraints, boundaries, stop condition. Written before the task, printed at the end. This is the single cheapest improvement to headless agent runs. Pattern: "Long tasks" in `AGENTS.base.md`.
 

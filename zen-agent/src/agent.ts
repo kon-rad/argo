@@ -197,7 +197,7 @@ export class ZenAgent {
       },
       streamFn: this.models.streamSimple.bind(this.models),
       sessionId: id,
-      identity: { attribution: { name: 'zen-agent', url: 'https://github.com/kon-rad/secondbrain' } },
+      identity: { attribution: { name: 'zen-agent', url: 'https://github.com/kon-rad/argo' } },
       toolExecution: 'sequential',
       beforeToolCall: async ({ toolCall, args }) => {
         const payload = toolPayload(toolCall.name, args, cfg.workdir);
