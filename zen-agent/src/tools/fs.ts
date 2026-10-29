@@ -1,7 +1,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from '@earendil-works/pi-ai';
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { clipOutput, text, tool, type ToolContext } from './index.js';
 
 /**
@@ -16,6 +16,76 @@ export function resolveIn(roots: string[], p: string, cwd: string): string {
   });
   if (!inside) throw new Error(`${p} is outside the agent's roots (${roots.join(', ')}); use bash for anything else`);
   return abs;
+}
+
+
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '.git', '.venv', '__pycache__']);
+
+function listNames(abs: string, all: boolean): string[] {
+  return readdirSync(abs, { withFileTypes: true })
+    .filter((e) => all || (!SKIP_DIRS.has(e.name) && !e.name.startsWith('.')))
+    .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
+    .sort();
+}
+
+/**
+ * The vault's top-level names for the system prompt, so the first call is not
+ * a guess. Folders end in /; hidden folders stay (a vault keeps skills and
+ * rules in some); .git and build folders go. Capped so a messy root stays small.
+ */
+export function vaultLayout(vault: string, max = 40): string {
+  try {
+    const skip = new Set([...SKIP_DIRS, '.zen', '.DS_Store']);
+    const names = readdirSync(vault, { withFileTypes: true })
+      .filter((e) => !skip.has(e.name) && !e.name.startsWith('.env'))
+      .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
+      .sort();
+    const shown = names.slice(0, max).join(' ');
+    return names.length > max ? `${shown} (+${names.length - max} more; list_dir to see them)` : shown;
+  } catch {
+    return '(unreadable)';
+  }
+}
+
+/** Edit distance, capped: enough to rank a typo or a near name, not a general diff. */
+function distance(a: string, b: string): number {
+  let prev: number[] = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row: number[] = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min((prev[j] ?? 0) + 1, (row[j - 1] ?? 0) + 1, (prev[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = row;
+  }
+  return prev[b.length] ?? 0;
+}
+
+/**
+ * A path that does not exist, with the way forward: the nearest folder that
+ * does exist, and the names in it closest to the one asked for. A small model
+ * guesses paths and mistypes them; this turns the error into the next call.
+ */
+export function notFound(abs: string, shown: string): Error {
+  let dir = abs;
+  while (!existsSync(dir) && dirname(dir) !== dir) dir = dirname(dir);
+  const want = basename(abs).toLowerCase();
+  let hint = '';
+  try {
+    const names = readdirSync(dir).filter((n) => !n.startsWith('.') || want.startsWith('.'));
+    const near = names
+      .map((n) => ({ n, d: distance(want, n.toLowerCase()) }))
+      .filter((x) => x.d <= Math.max(2, Math.floor(want.length / 3)))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 5)
+      .map((x) => x.n);
+    const shownDir = dir === abs ? shown : dir;
+    hint = near.length
+      ? ` Closest names in ${shownDir}: ${near.join(', ')}.`
+      : ` ${shownDir} has: ${listNames(dir, false).slice(0, 30).join(', ')}.`;
+  } catch {
+    /* the nearest ancestor is unreadable: say only that the path is missing */
+  }
+  return new Error(`${shown} does not exist.${hint}`);
 }
 
 export function fsTools(ctx: ToolContext): AgentTool<any>[] {
@@ -34,8 +104,12 @@ export function fsTools(ctx: ToolContext): AgentTool<any>[] {
     }),
     execute: async (a) => {
       const abs = at(a.path);
+      if (!existsSync(abs)) throw notFound(abs, a.path);
       const st = statSync(abs);
-      if (st.isDirectory()) throw new Error(`${a.path} is a directory; use list_dir`);
+      if (st.isDirectory()) {
+        const names = listNames(abs, false);
+        return text(clipOutput(`${a.path} is a folder, not a file. Its entries:\n${names.join('\n') || '(empty)'}`, ctx.cfg.shell.maxOutput), { path: abs, count: names.length });
+      }
       if (st.size > ctx.cfg.fs.maxRead && !a.limit) throw new Error(`${a.path} is ${st.size} bytes; read it with offset and limit`);
       const lines = readFileSync(abs, 'utf8').split('\n');
       const start = (a.offset ?? 1) - 1;
@@ -65,6 +139,7 @@ export function fsTools(ctx: ToolContext): AgentTool<any>[] {
     parameters: Type.Object({ path: Type.String(), old: Type.String(), new: Type.String() }),
     execute: async (a) => {
       const abs = at(a.path);
+      if (!existsSync(abs)) throw notFound(abs, a.path);
       const cur = readFileSync(abs, 'utf8');
       const first = cur.indexOf(a.old);
       if (first < 0) throw new Error(`old text not found in ${a.path}`);
@@ -84,11 +159,8 @@ export function fsTools(ctx: ToolContext): AgentTool<any>[] {
     }),
     execute: async (a) => {
       const abs = at(a.path ?? '.');
-      const skip = new Set(['node_modules', 'dist', 'build', '.git', '.venv', '__pycache__']);
-      const names = readdirSync(abs, { withFileTypes: true })
-        .filter((e) => a.all || (!skip.has(e.name) && !e.name.startsWith('.')))
-        .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
-        .sort();
+      if (!existsSync(abs)) throw notFound(abs, a.path ?? '.');
+      const names = listNames(abs, !!a.all);
       return text(clipOutput(names.join('\n') || '(empty)', ctx.cfg.shell.maxOutput), { path: abs, count: names.length });
     },
   });
