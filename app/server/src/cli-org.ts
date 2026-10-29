@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { config } from './config.js';
 import { pool, setDatabaseUrl } from './db.js';
+import { decide, recordDecision, recordOutcome, routeReport, TIERS, type Failure, type Result, type RoutingConfig, type Tier } from './org-router.js';
 import {
   addWakeup,
   applyGraph,
@@ -122,6 +123,13 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   graph list                               the card templates (.agents/org/graphs/*.yaml, compiled)
   graph apply <template> --project p [--feature f] [--team t] [--board exo] [--dry-run] [--json]
                                            one card per node for the project's team, each waiting on its parents; roots are mentioned
+
+  model routing (docs/org-routing.md; the config is .agents/org/routing.json, written by compile.py routing):
+  route decide --work <type> [--role work|review|merge|deploy] --tiers t1,t2 [--files N] [--path] [--spec low|ok] [--risk high]
+        [--text "<card text>"] [--author-tier t2] [--failures turn_cap_no_commit,tests_failed,review_changes,blocked]
+        [--down provider,..] [--config file] [--record --agent a [--card t_..] [--run id]] [--json]   pick the model; nothing is run
+  route outcome <decision id> <merged|rejected|parked|blocked|done|failed> [--turns N] [--tokens N] [--cost usd] [--from tier] [--verified]
+  route report [--days 7] [--json]                       escalation rate and cost per merged PR by tier
 
   shipping (nothing merges or deploys without the owner's yes, unless the owner made the card --ship-now):
   ship request <card> "<summary>" [--pr <github pr url>] [--deploy <target>]   ask the owner; a ship-now card is approved at once
@@ -765,6 +773,49 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       await forget(await me(), id, pos[1]);
       out(`fact #${id} closed`);
       return 0;
+    }
+    case 'route': {
+      const [sub] = pos;
+      if (sub === 'decide') {
+        const file = str(opts.config) ?? process.env.ORG_ROUTING_JSON ?? resolve('.agents/org/routing.json');
+        if (!existsSync(file)) throw new OrgError(`no routing config at ${file}; run compile.py routing or pass --config`);
+        const cfg = JSON.parse(readFileSync(file, 'utf8')) as RoutingConfig;
+        const tiers = (str(opts.tiers) ?? '').split(',').map((t) => t.trim()).filter(Boolean) as Tier[];
+        if (!tiers.length || tiers.some((t) => !(TIERS as readonly string[]).includes(t))) throw new OrgError(`--tiers takes a list from ${TIERS.join(', ')}`);
+        const work = str(opts.work);
+        if (!work) throw new OrgError('route decide --work <type> --tiers t1,t2 [...]');
+        const role = (str(opts.role) ?? 'work') as 'work' | 'review' | 'merge' | 'deploy';
+        if (!['work', 'review', 'merge', 'deploy'].includes(role)) throw new OrgError('--role: work, review, merge or deploy');
+        const authorTier = str(opts['author-tier']) as Tier | undefined;
+        if (authorTier && !(TIERS as readonly string[]).includes(authorTier)) throw new OrgError(`--author-tier: one of ${TIERS.join(', ')}`);
+        const d = decide(
+          {
+            work, role, text: str(opts.text), files: num(opts.files, 'files'), namedPath: opts.path === true, specClarity: str(opts.spec) === 'low' ? 'low' : 'ok',
+            risk: str(opts.risk) === 'high' ? 'high' : 'normal', envelope: tiers, authorTier,
+            failures: (str(opts.failures)?.split(',').map((f) => f.trim()).filter(Boolean) ?? []) as Failure[],
+            unhealthyProviders: str(opts.down)?.split(',').map((x) => x.trim()).filter(Boolean),
+          },
+          cfg,
+        );
+        const id = opts.record === true ? await recordDecision({ runId: str(opts.run) ?? run, cardId: str(opts.card), agent: str(opts.agent) ?? identityName(), d }) : undefined;
+        if (json) out(JSON.stringify({ ...d, decision_id: id }, null, 2));
+        else out(d.action === 'run' ? `run ${d.model} (${d.tier}, ${d.turns} turns): ${d.reason}${id ? ` [decision ${id}]` : ''}` : `${d.action}: ${d.reason}${id ? ` [decision ${id}]` : ''}`);
+        return d.action === 'run' ? 0 : 2;
+      }
+      if (sub === 'outcome') {
+        const [, id, result] = pos;
+        if (!id || !/^\d+$/.test(id) || !['merged', 'rejected', 'parked', 'blocked', 'done', 'failed'].includes(result ?? '')) throw new OrgError('route outcome <decision id> <merged|rejected|parked|blocked|done|failed> [--turns N] [--tokens N] [--cost usd] [--from tier] [--verified]');
+        await recordOutcome({ decisionId: Number(id), result: result as Result, turns: num(opts.turns, 'turns'), tokens: num(opts.tokens, 'tokens'), costUsd: dec(opts.cost, 'cost'), escalatedFrom: str(opts.from) as Tier | undefined, verified: opts.verified === true });
+        out(`decision ${id}: ${result}`);
+        return 0;
+      }
+      if (sub === 'report') {
+        const rows = await routeReport(num(opts.days, 'days') ?? 7);
+        if (json) out(JSON.stringify(rows, null, 2));
+        else out(rows.length ? rows.map((r) => `${r.tier}: ${r.decisions} runs, ${r.escalated} escalated, ${r.merged} merged, cost ${r.cost_usd ?? 'unknown'} USD, per merged ${r.cost_per_merged_usd ?? 'unknown'} USD`).join('\n') : 'no routed runs in that window');
+        return 0;
+      }
+      throw new OrgError('route decide|outcome|report');
     }
     case 'import': {
       if (!pos[0]) throw new OrgError('import <org.json>');
