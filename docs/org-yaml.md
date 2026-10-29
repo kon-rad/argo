@@ -2,7 +2,7 @@
 
 `org.yaml` lives in your vault (by convention `.agents/org.yaml`). It is the single place that says who the agents are, which team and channels they belong to, what each one is allowed to do, how often one may be woken, and **which messages wake which bot**. Everything the running system knows about the org comes from this file; the database rows are a copy of it.
 
-This page is the reference. The agent-side behaviour (what a bot does once it is awake) is in the `org-member` skill; the runtime and model switch is in the `org-runtime` skill; the dispatchers that turn a wakeup into a run are in [zen-runtime](zen-runtime.md) and the Claude Code dispatcher in [agent-harness](agent-harness.md).
+This page is the reference. The agent-side behaviour (what a bot does once it is awake) is in the `org-member` skill; the runtime and model switch is in the `org-runtime` skill; model choice per run is in [Org config and model routing](org-routing.md); the dispatchers that turn a wakeup into a run are in [zen-runtime](zen-runtime.md) and the Claude Code dispatcher in [agent-harness](agent-harness.md).
 
 ## How a change reaches the running system
 
