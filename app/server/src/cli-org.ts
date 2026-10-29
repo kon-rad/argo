@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { config } from './config.js';
 import { pool, setDatabaseUrl } from './db.js';
+import { cardFailures } from './dispatch/store.js';
 import { decide, recordDecision, recordOutcome, routeReport, TIERS, type Failure, type Result, type RoutingConfig, type Tier } from './org-router.js';
 import {
   addWakeup,
@@ -125,7 +126,7 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
                                            one card per node for the project's team, each waiting on its parents; roots are mentioned
 
   model routing (docs/org-routing.md; the config is .agents/org/routing.json, written by compile.py routing):
-  route decide --work <type> [--role work|review|merge|deploy] --tiers t1,t2 [--files N] [--path] [--spec low|ok] [--risk high]
+  route decide --work <type> [--role work|review|merge|deploy] --tiers t1,t2 [--files N] [--path] [--spec low|ok] [--risk high] [--card ID (reads its earlier failures)] [--down providers]
         [--text "<card text>"] [--author-tier t2] [--failures turn_cap_no_commit,tests_failed,review_changes,blocked]
         [--down provider,..] [--config file] [--record --agent a [--card t_..] [--run id]] [--json]   pick the model; nothing is run
   route outcome <decision id> <merged|rejected|parked|blocked|done|failed> [--turns N] [--tokens N] [--cost usd] [--from tier] [--verified]
@@ -792,7 +793,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
           {
             work, role, text: str(opts.text), files: num(opts.files, 'files'), namedPath: opts.path === true, specClarity: str(opts.spec) === 'low' ? 'low' : 'ok',
             risk: str(opts.risk) === 'high' ? 'high' : 'normal', envelope: tiers, authorTier,
-            failures: (str(opts.failures)?.split(',').map((f) => f.trim()).filter(Boolean) ?? []) as Failure[],
+            failures: (str(opts.failures) !== undefined ? str(opts.failures)!.split(',').map((f) => f.trim()).filter(Boolean) : str(opts.card) ? await cardFailures(str(opts.card)!) : []) as Failure[],
             unhealthyProviders: str(opts.down)?.split(',').map((x) => x.trim()).filter(Boolean),
           },
           cfg,
