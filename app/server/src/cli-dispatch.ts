@@ -1,10 +1,13 @@
 import { execFile } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { breakerLimitsFromEnv, runBreaker } from './breaker.js';
 import { classify } from './classify/index.js';
 import { config } from './config.js';
 import { pool } from './db.js';
-import { Dispatcher, type Runner } from './dispatch/index.js';
+import { Dispatcher, type Deps, type Runner } from './dispatch/index.js';
 import { OrgError } from './org.js';
+import type { RoutingConfig } from './org-router.js';
 import { settings } from './settings.js';
 
 // `secondbrain org-dispatch tick | routines`: the engine's dispatcher for bots on the zen-agent runtime
@@ -35,10 +38,18 @@ export async function main(argv: string[]): Promise<number> {
     return cmd ? 0 : 1;
   }
   if (!config.modules.has('org')) throw new OrgError('the org module is off (MODULES)');
+  const dispatch = settings().dispatch;
+  let router: Deps['router'];
+  if (dispatch.routing.mode !== 'off') {
+    const file = isAbsolute(dispatch.routing.config) ? dispatch.routing.config : join(config.vaultRoot, dispatch.routing.config);
+    if (!existsSync(file)) throw new OrgError(`dispatch.routing is ${dispatch.routing.mode} but ${file} is missing; run compile.py routing`);
+    router = { mode: dispatch.routing.mode, cfg: JSON.parse(readFileSync(file, 'utf8')) as RoutingConfig, maxTier: dispatch.routing.maxTier };
+  }
   const d = new Dispatcher({
     runner: execRunner,
     classify,
-    settings: settings().dispatch,
+    router,
+    settings: dispatch,
     config: {
       orgTz: config.orgTz, orgDispatchQuiet: config.orgDispatchQuiet, orgDispatchDailyTokens: config.orgDispatchDailyTokens,
       orgDispatchParallel: config.orgDispatchParallel, orgZenCommand: config.orgZenCommand, vaultRoot: config.vaultRoot,
