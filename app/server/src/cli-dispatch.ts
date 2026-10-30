@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
@@ -90,5 +91,5 @@ if (process.argv[1]?.endsWith('cli-dispatch.js') || process.argv[1]?.endsWith('c
   } finally {
     await pool.end();
   }
-  process.exit(code);
+  await exitFlushed(code);
 }

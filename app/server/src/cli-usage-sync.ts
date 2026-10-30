@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Host } from './archive/types.js';
@@ -28,4 +29,4 @@ try {
 } finally {
   await pool.end();
 }
-process.exit(code);
+await exitFlushed(code);

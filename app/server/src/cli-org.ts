@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -902,5 +903,5 @@ if (process.argv[1]?.endsWith('cli-org.js') || process.argv[1]?.endsWith('cli-or
   } finally {
     await pool.end();
   }
-  process.exit(code);
+  await exitFlushed(code);
 }

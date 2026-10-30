@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
@@ -263,4 +264,4 @@ try {
 } finally {
   await pool.end();
 }
-process.exit(code);
+await exitFlushed(code);

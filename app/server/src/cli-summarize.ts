@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { pool } from './db.js';
 import { buildDigest } from './summaries/digest.js';
 import { runSummaries } from './summaries/run.js';
@@ -37,4 +38,4 @@ try {
 } finally {
   await pool.end();
 }
-process.exit(code);
+await exitFlushed(code);

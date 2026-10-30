@@ -5,7 +5,7 @@ A bot keeps its persona, permissions and memory. **The model that runs a given j
 Where it sits: [org.yaml](org-yaml.md) says who the agents are and what they may do. The files described here say which models exist and what each is good for. The router joins the two when a card is about to run. Dispatch is in [agent-harness](agent-harness.md) and [zen-runtime](zen-runtime.md).
 
 !!! note "What is built, and what is not"
-    Built: the config files and their cross-checks (in your vault's `compile.py`), the router (`app/server/src/org-router.ts`), the `route_decisions` / `route_outcomes` / `config_applies` tables, `cli-org route decide|outcome|classify|report`, and `cli-org plan` / `apply` (the reconcile loop, below). The zen-agent dispatcher calls the router for card wakes (`dispatch.routing`, below), with signals from the card classifier (rules, plus an optional t0 model step), the card cost ceiling and per-provider daily caps. `cli-org route report --markdown` writes the weekly report page. Not built in the engine: routing for Claude Code bots (their dispatcher is separate and calls `cli-org route` itself) and the `agents/*.yaml` split (a vault compiler change). See [Rollout](#rollout).
+    Built: the config files and their cross-checks (in your vault's `compile.py`), the router (`app/server/src/org-router.ts`), the `route_decisions` / `route_outcomes` / `config_applies` tables, `cli-org route decide|outcome|classify|report`, and `cli-org plan` / `apply` (the reconcile loop, below). The zen-agent dispatcher calls the router for card wakes (`dispatch.routing`, below), with signals from the card classifier (rules, plus an optional t0 model step) and, if you configure them, optional money caps. `cli-org route report --markdown` writes the weekly report page. Not built in the engine: routing for Claude Code bots (their dispatcher is separate and calls `cli-org route` itself) and the `agents/*.yaml` split (a vault compiler change). See [Rollout](#rollout).
 
 ## Why it exists
 
@@ -191,7 +191,7 @@ Every decision carries a `reason` string and the `signals` that produced it, so 
 
 ### Budgets
 
-Turn and token caps per tier come from `tiers` in `routing.yaml`. Money caps are an optional `budgets` block beside it:
+Turn and token caps per tier come from `tiers` in `routing.yaml`. **Money caps are optional and off by default:** without a `budgets` block nothing is capped and the router never reads spend. Add the block only if you want them:
 
 ```yaml
 budgets:
@@ -360,6 +360,6 @@ Start with `enforce_model_floors: warn`, read the warnings, move the offending b
 
 - **Envelope:** the tiers from the bot's own model tier up to `maxTier`. Unset, the envelope is the bot's own tier only, so nothing climbs. A coder on a model below its floor is parked (needs the owner), never run.
 - **Escalation:** a budget stop (`stopped: budget`) is logged as `failed` and counts as a turn-cap miss on the next wake of that card, which then starts one tier up.
-- **Scope:** only cards with an id are routed. Card-less wakes (DMs, routines) keep the bot's model. Scope, named path, spec clarity and risk flags come from [the classifier](#the-classifier) (`dispatch.routing.classifier`); the router's own keyword scan still reads only the title. Spend for the [budgets](#budgets) is read from the log before each decision.
+- **Scope:** only cards with an id are routed. Card-less wakes (DMs, routines) keep the bot's model. Scope, named path, spec clarity and risk flags come from [the classifier](#the-classifier) (`dispatch.routing.classifier`); the router's own keyword scan still reads only the title. Spend is read from the log before each decision only when [money caps](#budgets) are configured.
 - **Models:** zen-agent needs `provider/model` ids, so the catalog entries a zen-agent bot uses must be named that way. A bot whose model is not in the catalog is skipped with a log line.
 - **Claude Code bots** (atlas, sable, rune, kael, idris, vera as of 2026-10-30) are not dispatched here; routing them needs the same call in their dispatcher.

@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import {
@@ -356,5 +357,5 @@ if (process.argv[1]?.endsWith('cli-board.js') || process.argv[1]?.endsWith('cli-
   } finally {
     await pool.end();
   }
-  process.exit(code);
+  await exitFlushed(code);
 }

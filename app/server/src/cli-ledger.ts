@@ -9,6 +9,7 @@
 //   ledger proxy-on | proxy-off   route Claude Code through the proxy, or straight to the API again
 //   ledger requeue             retry every row the server refused (after a server upgrade)
 //   ledger redact-captures     redact proxy captures not yet sent with this machine's env files (once, after adding --redact-env)
+import { exitFlushed } from './cli-exit.js';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -250,4 +251,4 @@ try {
   log(`failed: ${(err as Error).message}`);
   code = 1;
 }
-process.exit(code);
+await exitFlushed(code);

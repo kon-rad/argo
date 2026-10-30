@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { createInterface } from 'node:readline';
 import type { Host } from './archive/types.js';
 import { pool } from './db.js';
@@ -17,4 +18,4 @@ try {
 } finally {
   await pool.end();
 }
-process.exit(code);
+await exitFlushed(code);
