@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { hostname, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -239,5 +240,5 @@ if (process.argv[1]?.endsWith('cli-projects.js') || process.argv[1]?.endsWith('c
   } finally {
     await pool.end();
   }
-  process.exit(code);
+  await exitFlushed(code);
 }

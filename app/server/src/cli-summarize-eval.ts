@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pool, query } from './db.js';
@@ -54,4 +55,4 @@ try {
 } finally {
   await pool.end();
 }
-process.exit(code);
+await exitFlushed(code);

@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { pullRing } from './ring.js';
@@ -14,4 +15,4 @@ try {
 } finally {
   await pool.end();
 }
-process.exit(code);
+await exitFlushed(code);

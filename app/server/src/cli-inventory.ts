@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import pg from 'pg';
 import { config } from './config.js';
 import { parseArgs } from './cli-projects.js';
@@ -132,5 +133,5 @@ if (process.argv[1]?.endsWith('cli-inventory.js') || process.argv[1]?.endsWith('
   } finally {
     await pool.end();
   }
-  process.exit(code);
+  await exitFlushed(code);
 }

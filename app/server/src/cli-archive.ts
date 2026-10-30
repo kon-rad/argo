@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -33,4 +34,4 @@ try {
 } finally {
   await pool.end();
 }
-process.exit(code);
+await exitFlushed(code);

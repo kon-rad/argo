@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { pool } from './db.js';
 import { addManualSession, buildSummary, pollers, recordObservation, writeSummary, type Platform } from './livestream.js';
 import { fetchXBroadcast, hermesTelegram, parseBroadcastId, pollX, registerXBroadcast, remindXLink } from './livestream-x.js';
@@ -85,4 +86,4 @@ try {
 } finally {
   await pool.end();
 }
-process.exit(code);
+await exitFlushed(code);

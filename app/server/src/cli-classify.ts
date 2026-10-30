@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { classify, ClassifyError, labelDecision, recentDecisions } from './classify/index.js';
@@ -101,5 +102,5 @@ if (process.argv[1]?.endsWith('cli-classify.js') || process.argv[1]?.endsWith('c
   } finally {
     await pool.end();
   }
-  process.exit(code);
+  await exitFlushed(code);
 }
