@@ -4,7 +4,8 @@ import { isAbsolute, join, resolve } from 'node:path';
 import type { ClassifyInput, ClassifyResult } from '../classify/types.js';
 import { addWakeup, claimWakeups, finishWakeups, type Wakeup } from '../org.js';
 import type { DispatchSettings } from '../settings.js';
-import { decide, recordDecision, recordOutcome, TIERS, type RoutingConfig, type Tier } from '../org-router.js';
+import { classifyCard, loadCard } from '../org-classify.js';
+import { decide, recordDecision, recordOutcome, routeSpend, TIERS, type RoutingConfig, type Tier } from '../org-router.js';
 import * as store from './store.js';
 import type { MessageRow, Routine, ZenAgentRow } from './store.js';
 
@@ -305,7 +306,15 @@ export class Dispatcher {
         if (own) {
           const top = TIERS[Math.max(TIERS.indexOf(own.tier), router.maxTier ? TIERS.indexOf(router.maxTier) : 0)]!;
           const envelope = TIERS.filter((t) => TIERS.indexOf(t) >= TIERS.indexOf(own.tier) && TIERS.indexOf(t) <= TIERS.indexOf(top));
-          const d = decide({ work: link?.work_type ?? 'ops', text: link?.title, envelope, failures: await store.cardFailures(card) }, router.cfg);
+          // Signals from the card itself (org-classify.ts); the router's keyword scan still reads only the title.
+          const row = await loadCard(card);
+          const sig = row ? await classifyCard(row, this.deps.settings.routing.classifier) : null;
+          if (sig?.note) this.log(`${agent.name}: ${sig.note}`);
+          const d = decide({
+            work: link?.work_type ?? 'ops', text: link?.title, envelope, failures: await store.cardFailures(card), spend: await routeSpend(card, router.cfg),
+            ...(sig ? { files: sig.scope, namedPath: sig.namedPath, specClarity: sig.specClarity, risk: sig.risk,
+              classified: { source: sig.source, paths: sig.paths, repos: sig.repos, clarity: sig.clarity, riskFlags: sig.riskFlags, ...(sig.note ? { note: sig.note } : {}) } } : {}),
+          }, router.cfg);
           routeId = await recordDecision({ runId, cardId: card, agent: agent.name, d });
           this.log(`${agent.name}: route ${router.mode} ${d.action}${d.action === 'run' ? ` ${d.model} (${d.tier})` : ''}: ${d.reason}`);
           if (router.mode === 'on') {

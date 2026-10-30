@@ -80,3 +80,39 @@ describe('checkFixed', () => {
     expect(checkFixed('qwen', { work: 'coding', files: 1, namedPath: true, envelope: [] }, CFG).ok).toBe(false);
   });
 });
+
+describe('budgets', () => {
+  const B: RoutingConfig = {
+    ...CFG,
+    models: [...CFG.models, { id: 'gpt-mid', provider: 'openai', tier: 't2', can_code: true, local: false, price_in: 5, price_out: 20 }],
+    budgets: { card_ceiling_usd: 2, provider_daily_usd: { anthropic: 10, ollama: 0 } },
+  };
+
+  it('parks a card at its cost ceiling, before any other rule', () => {
+    const d = decide({ work: 'coding', files: 1, namedPath: true, envelope: ['t1', 't2'], spend: { cardUsd: 2.5 } }, B);
+    expect(d).toMatchObject({ action: 'park', reason: expect.stringMatching(/^card cost 2\.50 USD reached its ceiling of 2 USD/) });
+    expect(decide({ work: 'coding', files: 1, namedPath: true, envelope: ['t1', 't2'], spend: { cardUsd: 1.99 } }, B).action).toBe('run');
+  });
+
+  it('skips a capped provider inside the same tier', () => {
+    const d = decide({ work: 'coding', files: 2, envelope: ['t2'], spend: { providerTodayUsd: { anthropic: 10 } } }, B);
+    expect(d).toMatchObject({ action: 'run', model: 'gpt-mid', tier: 't2', reason: expect.stringMatching(/under its daily cap: gpt-mid/) });
+  });
+
+  it('waits instead of moving tier when every model on the tier is capped', () => {
+    const cfg: RoutingConfig = { ...B, budgets: { provider_daily_usd: { anthropic: 10, openai: 1 } } };
+    // haiku (t1) is capped; the router must not climb to t2 to spend elsewhere, nor fall to the local t1 model for coding.
+    const d = decide({ work: 'coding', files: 1, namedPath: true, envelope: ['t1', 't2', 't3'], spend: { providerTodayUsd: { anthropic: 12 } } }, cfg);
+    expect(d).toMatchObject({ action: 'wait', floor: 't1', reason: expect.stringMatching(/^daily cap reached on t1 \(anthropic 12\.00\/10 USD\)/) });
+  });
+
+  it('never caps a local model, even with a zero cap', () => {
+    expect(decide({ work: 'writing', envelope: ['t1'], spend: { providerTodayUsd: { ollama: 0 } } }, B)).toMatchObject({ action: 'run', model: 'qwen' });
+  });
+
+  it('keeps the classifier reading and the author tier in the logged signals', () => {
+    const classified = { source: 'rules' as const, paths: ['a.ts'], repos: 1, clarity: ['path'], riskFlags: [] };
+    const d = decide({ work: 'coding', role: 'review', authorTier: 't2', files: 1, envelope: ['t2'], classified }, B);
+    expect(d.signals).toMatchObject({ authorTier: 't2', classified });
+  });
+});

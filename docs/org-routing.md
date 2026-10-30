@@ -5,7 +5,7 @@ A bot keeps its persona, permissions and memory. **The model that runs a given j
 Where it sits: [org.yaml](org-yaml.md) says who the agents are and what they may do. The files described here say which models exist and what each is good for. The router joins the two when a card is about to run. Dispatch is in [agent-harness](agent-harness.md) and [zen-runtime](zen-runtime.md).
 
 !!! note "What is built, and what is not"
-    Built: the config files and their cross-checks (in your vault's `compile.py`), the router (`app/server/src/org-router.ts`), the `route_decisions` / `route_outcomes` / `config_applies` tables, and `cli-org route decide|outcome|report`. The zen-agent dispatcher calls the router for card wakes (`dispatch.routing`, below). Not built yet: routing for Claude Code bots (their dispatcher is separate), `cli-org plan` and `apply`, the `agents/*.yaml` split, and the t0 classifier. See [Rollout](#rollout).
+    Built: the config files and their cross-checks (in your vault's `compile.py`), the router (`app/server/src/org-router.ts`), the `route_decisions` / `route_outcomes` / `config_applies` tables, and `cli-org route decide|outcome|classify|report`. The zen-agent dispatcher calls the router for card wakes (`dispatch.routing`, below), with signals from the card classifier (rules, plus an optional t0 model step), the card cost ceiling and per-provider daily caps. `cli-org route report --markdown` writes the weekly report page. Not built yet: routing for Claude Code bots (their dispatcher is separate), `cli-org plan` and `apply`, and the `agents/*.yaml` split. See [Rollout](#rollout).
 
 ## Why it exists
 
@@ -114,13 +114,40 @@ signals -> hard floor -> bot's tier envelope -> start tier (+ escalations) -> ch
 |---|---|
 | Work type | The card type: research, coding, design, media, writing, sales, education, ops |
 | Role | `work`, `review`, `merge` or `deploy` |
-| Scope | Files the card names or a diff touched (`--files`); `0` means unknown |
-| Named path | The card names a verified path (`--path`) |
-| Spec clarity | `ok` or `low` (`--spec low`), given by the caller |
-| Risk | The repo or project risk class (`--risk high`), plus risk keywords found in the card text |
+| Scope | Files the card names or a diff touched (`--files`); `0` means unknown. The dispatcher reads it from the card ([classifier](#the-classifier)) |
+| Named path | The card names a path (`--path`) |
+| Spec clarity | `ok` or `low` (`--spec low`); the dispatcher reads it from the card |
+| Risk | The repo or project risk class (`--risk high`), risk flags from the classifier, plus risk keywords found in the card title |
 | Retries | The earlier failures on this card, oldest first |
+| Spend | Money already spent on the card and, today, per provider; read from the log for the [budgets](#budgets) |
 
-Everything is deterministic. There is no classifier in this version: spec clarity and risk come from the caller and the keyword list, so they are only as good as the intake step that fills them in.
+Everything the router does is deterministic. Only the classifier's optional model step is not, and it can only make a reading stricter.
+
+### The classifier
+
+`org-classify.ts` reads a card's title, body and contract (`cards` table) and returns the signals the router needs. `cli-org route classify --card <id>` prints them; the dispatcher logs them in `route_decisions.signals.classified`.
+
+| Signal | Rule |
+|---|---|
+| Paths | Tokens whose last segment has a source or config extension (`src/a.ts`, `Board.tsx`, `0001_init.sql`), slash paths in backticks or ending in `/`, and the contract's `scope` entries. URLs and prose like `and/or` are not paths |
+| Scope | Distinct named files; a named directory counts as two; more than one repo makes it at least two |
+| Named path | At least one path |
+| Repos | The card's `repo`, plus `github.com/<owner>/<repo>` and `--repo <name>` in the text |
+| Spec clarity | `ok` when any of: acceptance criteria (`Acceptance criteria`, `Done when`, a `- [ ]` checklist, the contract's `returns`), a verification command (a backticked `npm`, `npx`, `pytest`, `make`, `curl` and similar, a `Verify:` or `Test:` line, the contract's `verification`), a path or a URL. Otherwise `low` |
+| Risk flags | `migration` (migrate, `migrations/`, `.sql`), `auth` (auth, login, oauth, jwt, RLS, an `auth/` path), `secret` (secret, credential, password, API or private key, `.env`, `.pem`), `payment` (payment, billing, invoice, refund, Stripe, money, wallet), `deploy` (deploy, rsync, a `deploy/` path), `prod` (prod, production). Whole words only, so "product" or "author" do not match. Any flag makes the risk `high` |
+
+The optional model step asks a t0 model on an OpenAI-compatible endpoint (a local Ollama, for example) for strict JSON on spec clarity only. It may turn `ok` into `low`; it is not called when the rules already say `low`, and it never reads or changes risk. Any HTTP error, network error, timeout, non-JSON reply or unknown answer falls back to the rules reading, with a `note` saying why.
+
+```json
+{ "dispatch": { "routing": { "classifier": { "mode": "model", "model": "qwen3:4b", "baseUrl": "http://localhost:11434", "timeoutMs": 10000 } } } }
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `mode` | `rules` | `rules` only, or `model` to add the model step |
+| `model` | none | Model id on that endpoint; unset with `mode: model` means rules only |
+| `baseUrl` | none | Server root or its `/v1`; `/v1/chat/completions` is appended |
+| `timeoutMs` | `10000` | After this the step is abandoned and the rules reading stands |
 
 ### Hard floors
 
@@ -162,6 +189,25 @@ Past the top of the envelope the decision is `park`.
 
 Every decision carries a `reason` string and the `signals` that produced it, so a log line explains itself.
 
+### Budgets
+
+Turn and token caps per tier come from `tiers` in `routing.yaml`. Money caps are an optional `budgets` block beside it:
+
+```yaml
+budgets:
+  card_ceiling_usd: 5            # all routed runs on one card, all time
+  provider_daily_usd:            # per provider per UTC day
+    anthropic: 20
+    openrouter: 10
+```
+
+| Key | Effect when reached |
+|---|---|
+| `card_ceiling_usd` | The decision is `park` (`card cost X USD reached its ceiling of Y USD; needs the owner`), before any other rule except a permission block |
+| `provider_daily_usd.<provider>` | That provider's models are skipped **inside the tier the router chose**. If every model on that tier is capped, the decision is `wait` (`daily cap reached on t2 (...)`). A cap never moves a run to another tier: floors are not relaxed, and the router does not climb to spend elsewhere |
+
+Spend is read from the log: a run's cost is its `route_outcomes.cost_usd`, else the `total_cost_usd` that `usage_runs` logged for the same run id. Models marked `local: true` count zero and are never capped. Unset keys, or a `null` value, mean no cap. `compile.py routing` must copy the `budgets` block into `routing.json` for the router to see it.
+
 ### Fixed bots
 
 Leads, the merger and the deployer stay on a fixed model. `checkFixed(model, input, config)` runs the same floors against that model and reports a violation rather than hiding it.
@@ -171,7 +217,8 @@ Leads, the merger and the deployer stay on a fixed model. `checkFixed(model, inp
 ```
 cli-org route decide --work <type> --tiers t1,t2 [options]
 cli-org route outcome <decision id> <merged|rejected|parked|blocked|done|failed> [options]
-cli-org route report [--days 7] [--json]
+cli-org route classify --card <id> [--json]
+cli-org route report [--since 7d | --days 7] [--json | --markdown]
 ```
 
 | `decide` option | Meaning |
@@ -187,6 +234,7 @@ cli-org route report [--days 7] [--json]
 | `--failures a,b` | `turn_cap_no_commit`, `tests_failed`, `review_changes`, `blocked` |
 | `--down provider,..` | Providers to treat as unhealthy |
 | `--config file` | Path to `routing.json` (default: `$ORG_ROUTING_JSON`, then `.agents/org/routing.json`) |
+| `--card t_..` | Read the card's earlier failures and its spend for the budgets |
 | `--record --agent a --card t_..` | Write a `route_decisions` row and print its id |
 | `--json` | Machine output |
 
@@ -215,7 +263,22 @@ Migration `1756000016400_route-decisions.sql` adds:
 | `route_outcomes` | decision_id, result, turns, tokens, cost_usd, escalated_from, verified |
 | `config_applies` | id, git_sha, plan, applied_by, applied_at (reserved for `cli-org apply`) |
 
-`cli-org route report` returns, per tier: runs, how many escalated, how many were merged, total cost, and **cost per merged PR**. That last figure is the real comparison between cheap-and-retry and expensive-once. Cost stays `unknown` until outcomes carry a `--cost`.
+`cli-org route report` returns, per tier: runs, how many escalated, how many were merged, total cost, and **cost per merged PR**. That last figure is the real comparison between cheap-and-retry and expensive-once. A run's cost is its outcome's `--cost`, else what `usage_runs` logged for the run; it stays `unknown` when neither has one.
+
+`--since 7d` (or `--days 7`) sets the window. `--markdown` prints the weekly report as a standalone page, with a title and a generated-at line, ready to write to a vault file:
+
+```
+cli-org route report --since 7d --markdown > <vault>/org/routing-report.md
+```
+
+| Table | Read from | Why |
+|---|---|---|
+| Escalation rate by work type and tier | Run decisions; escalated when the outcome has `escalated_from` or the decision counted escalations | A tier that always escalates is the wrong default |
+| Cost per merged PR by tier | Run decisions and their outcomes | Cheap-and-retry against expensive-once |
+| Parked and blocked cards by cause | Non-run decisions (low spec clarity, floor above the envelope, top of the envelope, card cost ceiling, provider daily cap, no healthy model, permission block) and runs whose outcome was `parked` or `blocked` | Spec and permission problems no model fixes |
+| Reviewer rejection rate by author tier | Author runs whose outcome is `merged` or `rejected` | Calibrates the reviewer floor |
+
+A table with no rows reads "No data yet."
 
 Tune the rules from this report, not from guesses. Keep a note for each rule change in your harness experience log: the run that showed the problem, the change, and the run that showed it worked.
 
@@ -224,16 +287,18 @@ Tune the rules from this report, not from guesses. Keep a note for each rule cha
 | Phase | Ships | Verified by |
 |---|---|---|
 | 0 | Config files, cross-checks, `routing.json`, overview page | `compile.py check` flags a coder pinned to `can_code: false` |
-| 1 (this release) | Router, log tables, `cli-org route` | Router unit tests replay the failed run; the CLI gives `sonnet` for it |
+| 1 | Router, log tables, `cli-org route` | Router unit tests replay the failed run; the CLI gives `sonnet` for it |
 | 2 | Dispatcher asks the router before a wake and passes the model | A wake on a coding card runs on the routed model; a `route_decisions` row exists |
 | 3 | `cli-org plan` / `apply`: files reconcile to the database, retirement of removed bots | Add a throwaway bot by file, see it appear, remove it with `--prune`, history intact |
-| 4 | Split `agents:` into `agents/*.yaml`; t0 classifier; weekly report page | `cli-org import` output unchanged for the existing roster |
+| 4 (this release, engine part) | Card classifier (rules, optional t0 model step), card cost ceiling and provider daily caps, `route classify`, `route report --markdown` | Classifier, model fallback, cap and report tests; the report shows cost per merged PR by tier for two weeks |
+| 5 | Split `agents:` into `agents/*.yaml` | `cli-org import` output unchanged for the existing roster |
 
 Start with `enforce_model_floors: warn`, read the warnings, move the offending bots, then switch to `error`.
 
 ## Limits
 
-- The router needs inputs it cannot compute on its own yet (scope, spec clarity). Until intake fills them, it defaults to `scope 0` and `specClarity ok`, which is the lenient reading.
+- The classifier reads only what the card says. A card that names no file has scope `0` (unknown), so it is not asked for a spec even when its clarity is `low`; it runs at `coding_default`. `cli-org route decide` without `--files` and `--spec` still takes the lenient defaults.
+- Novelty (no similar card closed by a lower tier) is not a signal yet.
 - A model with a `null` price is ordered after a priced one inside a tier, so fill prices before you rely on cost ordering.
 - Local-model runs share their host with other work. The router has no queue-depth signal from the host, so a busy host is not seen.
 - Only an owner-run session should edit config. Make the config directory read-only to bots in your guard rules; the capability rows in the database stay the thing the wrappers check, so a bot that edited a file still could not grant itself a power.
@@ -252,8 +317,8 @@ Start with `enforce_model_floors: warn`, read the warnings, move the offending b
 | `shadow` | The decision and the run's outcome are logged to `route_decisions` / `route_outcomes`; the run is unchanged. Use first, then compare with `cli-org route report` |
 | `on` | A `run` decision sets `--model`, `--max-turns` and `--max-tokens`; `park`, `ask-spec`, `wait` and `blocked` finish the wakeup with the reason and start no run |
 
-- **Envelope:** the tiers from the bot's own model tier up to `maxTier`. Unset, the envelope is the bot's own tier only, so nothing climbs. A coder on a model below its floor is parked (needs Konrad), never run.
+- **Envelope:** the tiers from the bot's own model tier up to `maxTier`. Unset, the envelope is the bot's own tier only, so nothing climbs. A coder on a model below its floor is parked (needs the owner), never run.
 - **Escalation:** a budget stop (`stopped: budget`) is logged as `failed` and counts as a turn-cap miss on the next wake of that card, which then starts one tier up.
-- **Scope:** only cards with an id are routed. Card-less wakes (DMs, routines) keep the bot's model. Files touched, named path and spec clarity are not known to the dispatcher yet, so a coding card is treated as multi-file (floor `coding_default`).
+- **Scope:** only cards with an id are routed. Card-less wakes (DMs, routines) keep the bot's model. Scope, named path, spec clarity and risk flags come from [the classifier](#the-classifier) (`dispatch.routing.classifier`); the router's own keyword scan still reads only the title. Spend for the [budgets](#budgets) is read from the log before each decision.
 - **Models:** zen-agent needs `provider/model` ids, so the catalog entries a zen-agent bot uses must be named that way. A bot whose model is not in the catalog is skipped with a log line.
 - **Claude Code bots** (atlas, sable, rune, kael, idris, vera as of 2026-10-30) are not dispatched here; routing them needs the same call in their dispatcher.

@@ -97,6 +97,16 @@ const Dispatch = z
         config: z.string().default('.agents/org/routing.json'),
         /** Highest tier a card may climb to by escalation; unset: the bot's own model tier (no climbing). */
         maxTier: z.enum(['t0', 't1', 't2', 't3']).optional(),
+        /** Card signals: `rules` only, or `model` to let a t0 model (OpenAI-compatible endpoint) make spec clarity stricter. */
+        classifier: z
+          .object({
+            mode: z.enum(['rules', 'model']).default('rules'),
+            model: z.string().min(1).optional(),
+            /** The server root or its /v1, e.g. a local Ollama; /v1/chat/completions is appended. */
+            baseUrl: z.string().min(1).optional(),
+            timeoutMs: z.number().int().positive().default(10_000),
+          })
+          .prefault({}),
       })
       .prefault({}),
   })

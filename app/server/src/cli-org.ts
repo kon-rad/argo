@@ -6,7 +6,8 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { pool, setDatabaseUrl } from './db.js';
 import { cardFailures } from './dispatch/store.js';
-import { decide, recordDecision, recordOutcome, routeReport, TIERS, type Failure, type Result, type RoutingConfig, type Tier } from './org-router.js';
+import { classifyCard, loadCard } from './org-classify.js';
+import { decide, recordDecision, recordOutcome, routeReport, routeReportMarkdown, routeSpend, routeWeekly, TIERS, type Failure, type Result, type RoutingConfig, type Tier } from './org-router.js';
 import {
   addWakeup,
   applyGraph,
@@ -81,6 +82,7 @@ import {
   type ReflectResult,
 } from './org-memory.js';
 import { search } from './search.js';
+import { settings } from './settings.js';
 import { hybridSearch } from './semantic.js';
 import { defaultEmbeddingProvider, loadEmbeddingConfig } from './embeddings/factory.js';
 
@@ -130,7 +132,8 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
         [--text "<card text>"] [--author-tier t2] [--failures turn_cap_no_commit,tests_failed,review_changes,blocked]
         [--down provider,..] [--config file] [--record --agent a [--card t_..] [--run id]] [--json]   pick the model; nothing is run
   route outcome <decision id> <merged|rejected|parked|blocked|done|failed> [--turns N] [--tokens N] [--cost usd] [--from tier] [--verified]
-  route report [--days 7] [--json]                       escalation rate and cost per merged PR by tier
+  route classify --card <id> [--json]                    the card's signals: scope, named paths, repos, spec clarity, risk flags
+  route report [--since 7d | --days 7] [--json | --markdown]   escalation, cost per merged PR, parked/blocked causes, rejections
 
   shipping (nothing merges or deploys without the owner's yes, unless the owner made the card --ship-now):
   ship request <card> "<summary>" [--pr <github pr url>] [--deploy <target>]   ask the owner; a ship-now card is approved at once
@@ -795,6 +798,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
             risk: str(opts.risk) === 'high' ? 'high' : 'normal', envelope: tiers, authorTier,
             failures: (str(opts.failures) !== undefined ? str(opts.failures)!.split(',').map((f) => f.trim()).filter(Boolean) : str(opts.card) ? await cardFailures(str(opts.card)!) : []) as Failure[],
             unhealthyProviders: str(opts.down)?.split(',').map((x) => x.trim()).filter(Boolean),
+            spend: await routeSpend(str(opts.card) ?? null, cfg),
           },
           cfg,
         );
@@ -810,13 +814,34 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         out(`decision ${id}: ${result}`);
         return 0;
       }
+      if (sub === 'classify') {
+        const id = str(opts.card);
+        if (!id) throw new OrgError('route classify --card <id> [--json]');
+        const row = await loadCard(id);
+        if (!row) throw new OrgError(`no card ${id}`);
+        const sig = await classifyCard(row, settings().dispatch.routing.classifier);
+        if (json) out(JSON.stringify(sig, null, 2));
+        else out([
+          `${id} (${sig.work}): scope ${sig.scope}, ${sig.repos} repo(s), spec ${sig.specClarity}${sig.clarity.length ? ` (${sig.clarity.join(', ')})` : ''}, risk ${sig.risk}${sig.riskFlags.length ? ` (${sig.riskFlags.join(', ')})` : ''} [${sig.source}]`,
+          ...(sig.paths.length ? [`paths: ${sig.paths.join(', ')}`] : []),
+          ...(sig.note ? [sig.note] : []),
+        ].join('\n'));
+        return 0;
+      }
       if (sub === 'report') {
-        const rows = await routeReport(num(opts.days, 'days') ?? 7);
+        const since = str(opts.since);
+        if (since !== undefined && !/^\d+d$/.test(since)) throw new OrgError('--since takes a number of days, e.g. 7d');
+        const days = since ? Number(since.slice(0, -1)) : num(opts.days, 'days') ?? 7;
+        if (opts.markdown === true) {
+          out(routeReportMarkdown(await routeWeekly(days)));
+          return 0;
+        }
+        const rows = await routeReport(days);
         if (json) out(JSON.stringify(rows, null, 2));
         else out(rows.length ? rows.map((r) => `${r.tier}: ${r.decisions} runs, ${r.escalated} escalated, ${r.merged} merged, cost ${r.cost_usd ?? 'unknown'} USD, per merged ${r.cost_per_merged_usd ?? 'unknown'} USD`).join('\n') : 'no routed runs in that window');
         return 0;
       }
-      throw new OrgError('route decide|outcome|report');
+      throw new OrgError('route decide|outcome|classify|report');
     }
     case 'import': {
       if (!pos[0]) throw new OrgError('import <org.json>');
