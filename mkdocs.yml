@@ -78,6 +78,7 @@ nav:
       - Memory, and how to check it works: memory.md
       - The golden set, a recall test: memory-golden-set.md
       - Agent harness: agent-harness.md
+      - The agent company: agent-company.md
       - org.yaml and wake rules: org-yaml.md
       - Org config and model routing: org-routing.md
       - Agent persona memory: agent-memory.md
