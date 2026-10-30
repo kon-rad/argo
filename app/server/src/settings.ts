@@ -89,6 +89,16 @@ const Dispatch = z
     budgets: z.record(z.string(), BudgetSetting).default({}),
     /** zen-agent tool sets by wake reason (fs, shell, skills, knowledge, kanban, org, subagent). */
     tools: z.record(z.string(), z.array(z.string().min(1))).default({}),
+    /** Model routing (docs/org-routing.md). `shadow` logs what the router would pick and changes nothing; `on` applies it. */
+    routing: z
+      .object({
+        mode: z.enum(['off', 'shadow', 'on']).default('off'),
+        /** Vault-relative routing.json written by `compile.py routing`. */
+        config: z.string().default('.agents/org/routing.json'),
+        /** Highest tier a card may climb to by escalation; unset: the bot's own model tier (no climbing). */
+        maxTier: z.enum(['t0', 't1', 't2', 't3']).optional(),
+      })
+      .prefault({}),
   })
   .prefault({});
 

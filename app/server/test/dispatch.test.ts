@@ -292,3 +292,66 @@ describe('tick', () => {
     expect(r.runs).toBe(1); // picked up again in the same tick
   });
 });
+
+describe('model routing (docs/org-routing.md)', () => {
+  const cfg = {
+    tiers: { t0: { turns: 8 }, t1: { turns: 20 }, t2: { turns: 30 }, t3: { turns: 40 } },
+    floors: { coding_single_file_named_path: 't1', coding_default: 't2', high_risk: 't3', merge: 't3', deploy: 't3' },
+    escalation: { turn_cap_no_commit: 1, tests_failed_twice: 1, review_changes_twice: 1 },
+    risk_keywords: ['migration'],
+    models: [
+      { id: 'ollama/small', provider: 'ollama', tier: 't1', can_code: false, local: true },
+      { id: 'openrouter/mid', provider: 'anthropic', tier: 't2', can_code: true, local: false, price_in: 2, price_out: 10 },
+      { id: 'openrouter/top', provider: 'anthropic', tier: 't3', can_code: true, local: false, price_in: 4, price_out: 20 },
+    ],
+  } as const;
+  const routed = (model: string) => ({ ...ORG, agents: { ...ORG.agents, rune: { ...ORG.agents.rune, model } } });
+  const card = async (title = 'Fix the build', type = 'coding') => {
+    await query(`INSERT INTO boards (slug, name) VALUES ('exo', 'Exo') ON CONFLICT DO NOTHING`);
+    await query(`INSERT INTO cards (id, board_slug, title, assignee, created_by, work_type) VALUES ('t_abc123', 'exo', $1, 'rune', 'atlas', $2)`, [title, type]);
+    await addWakeup('rune', 'task', 't_abc123');
+  };
+  const withRouter = (h: ReturnType<typeof harness>, mode: 'shadow' | 'on', maxTier?: 't1' | 't2' | 't3') => {
+    (h.d as unknown as { deps: Deps }).deps.router = { mode, cfg: cfg as never, maxTier };
+  };
+
+  it('shadow mode logs the decision and changes nothing', async () => {
+    await importOrg(routed('openrouter/mid'));
+    const h = harness();
+    withRouter(h, 'shadow');
+    await card();
+    await h.d.tick();
+    expect(flag(h.calls[0]!.args, '--model')).toBe('openrouter/mid'); // the bot's own
+    const { rows } = await query<{ action: string; model: string; result: string }>(
+      `SELECT d.action, d.model, o.result FROM route_decisions d JOIN route_outcomes o ON o.decision_id = d.id WHERE d.card_id = 't_abc123'`);
+    expect(rows).toEqual([{ action: 'run', model: 'openrouter/mid', result: 'done' }]);
+  });
+
+  it('on: a coder on a model below its floor is parked, not run', async () => {
+    await importOrg(routed('ollama/small'));
+    const h = harness();
+    withRouter(h, 'on');
+    await card();
+    const r = await h.d.tick();
+    expect(r.runs).toBe(0);
+    expect(h.calls).toHaveLength(0);
+    const { rows } = await query<{ result: string }>(`SELECT result FROM org_wakeups WHERE agent_name = 'rune'`);
+    expect(rows[0]!.result).toMatch(/^routed park: floor t2/);
+  });
+
+  it('on: runs the routed model with the tier budget, and a budget stop escalates the next run when maxTier allows', async () => {
+    await importOrg(routed('openrouter/mid'));
+    const h = harness();
+    withRouter(h, 'on', 't3');
+    await card();
+    h.setResult({ code: 3, stdout: JSON.stringify({ text: 'out of turns', stopped: 'budget' }), stderr: '' });
+    await h.d.tick();
+    expect(flag(h.calls[0]!.args, '--model')).toBe('openrouter/mid');
+    expect(flag(h.calls[0]!.args, '--max-turns')).toBe('30');
+    await query(`INSERT INTO org_wakeups (agent_name, reason, ref) VALUES ('rune', 'task', 't_abc123')`); // a re-wake of the same card
+    await h.d.tick();
+    expect(flag(h.calls[1]!.args, '--model')).toBe('openrouter/top');
+    expect(flag(h.calls[1]!.args, '--max-turns')).toBe('40');
+    expect(meta(h.calls[1]!.args, 'tier')).toBe('t3');
+  });
+});

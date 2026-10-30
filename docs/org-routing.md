@@ -5,7 +5,7 @@ A bot keeps its persona, permissions and memory. **The model that runs a given j
 Where it sits: [org.yaml](org-yaml.md) says who the agents are and what they may do. The files described here say which models exist and what each is good for. The router joins the two when a card is about to run. Dispatch is in [agent-harness](agent-harness.md) and [zen-runtime](zen-runtime.md).
 
 !!! note "What is built, and what is not"
-    Built: the config files and their cross-checks (in your vault's `compile.py`), the router (`app/server/src/org-router.ts`), the `route_decisions` / `route_outcomes` / `config_applies` tables, and `cli-org route decide|outcome|report`. Not built yet: the dispatcher calling the router before every wake, `cli-org plan` and `apply`, the `agents/*.yaml` split, and the t0 classifier. See [Rollout](#rollout).
+    Built: the config files and their cross-checks (in your vault's `compile.py`), the router (`app/server/src/org-router.ts`), the `route_decisions` / `route_outcomes` / `config_applies` tables, and `cli-org route decide|outcome|report`. The zen-agent dispatcher calls the router for card wakes (`dispatch.routing`, below). Not built yet: routing for Claude Code bots (their dispatcher is separate), `cli-org plan` and `apply`, the `agents/*.yaml` split, and the t0 classifier. See [Rollout](#rollout).
 
 ## Why it exists
 
@@ -237,3 +237,23 @@ Start with `enforce_model_floors: warn`, read the warnings, move the offending b
 - A model with a `null` price is ordered after a priced one inside a tier, so fill prices before you rely on cost ordering.
 - Local-model runs share their host with other work. The router has no queue-depth signal from the host, so a busy host is not seen.
 - Only an owner-run session should edit config. Make the config directory read-only to bots in your guard rules; the capability rows in the database stay the thing the wrappers check, so a bot that edited a file still could not grant itself a power.
+
+## Dispatcher integration
+
+`secondbrain org-dispatch tick` calls `decide` for every card wake of a zen-agent bot. Set it in `secondbrain.json`:
+
+```json
+{ "dispatch": { "routing": { "mode": "shadow", "config": ".agents/org/routing.json", "maxTier": "t3" } } }
+```
+
+| Mode | Effect |
+|---|---|
+| `off` (default) | The bot's own model runs; the router is not read |
+| `shadow` | The decision and the run's outcome are logged to `route_decisions` / `route_outcomes`; the run is unchanged. Use first, then compare with `cli-org route report` |
+| `on` | A `run` decision sets `--model`, `--max-turns` and `--max-tokens`; `park`, `ask-spec`, `wait` and `blocked` finish the wakeup with the reason and start no run |
+
+- **Envelope:** the tiers from the bot's own model tier up to `maxTier`. Unset, the envelope is the bot's own tier only, so nothing climbs. A coder on a model below its floor is parked (needs Konrad), never run.
+- **Escalation:** a budget stop (`stopped: budget`) is logged as `failed` and counts as a turn-cap miss on the next wake of that card, which then starts one tier up.
+- **Scope:** only cards with an id are routed. Card-less wakes (DMs, routines) keep the bot's model. Files touched, named path and spec clarity are not known to the dispatcher yet, so a coding card is treated as multi-file (floor `coding_default`).
+- **Models:** zen-agent needs `provider/model` ids, so the catalog entries a zen-agent bot uses must be named that way. A bot whose model is not in the catalog is skipped with a log line.
+- **Claude Code bots** (atlas, sable, rune, kael, idris, vera as of 2026-10-30) are not dispatched here; routing them needs the same call in their dispatcher.

@@ -3,7 +3,7 @@ import { MODULE_NAMES } from '../src/config.js';
 
 /** Truncates every data table between tests. Migrations stay applied. */
 export async function truncateAll(): Promise<void> {
-  await query(`TRUNCATE vault_files, vault_links, vault_tags, vault_chunks,
+  await query(`TRUNCATE route_decisions, route_outcomes, vault_files, vault_links, vault_tags, vault_chunks,
                discord_reactions, discord_embeds, discord_attachments,
                discord_message_versions, discord_messages, discord_authors,
                discord_channels, discord_guilds, archive_messages, archive_sessions,

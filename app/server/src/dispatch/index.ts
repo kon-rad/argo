@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import type { ClassifyInput, ClassifyResult } from '../classify/types.js';
 import { addWakeup, claimWakeups, finishWakeups, type Wakeup } from '../org.js';
 import type { DispatchSettings } from '../settings.js';
+import { decide, recordDecision, recordOutcome, TIERS, type RoutingConfig, type Tier } from '../org-router.js';
 import * as store from './store.js';
 import type { MessageRow, Routine, ZenAgentRow } from './store.js';
 
@@ -32,6 +33,8 @@ export interface Deps {
   classify: Classifier;
   settings: DispatchSettings;
   config: DispatchConfig;
+  /** Model routing: absent or mode off, the bot's own model runs as before. */
+  router?: { mode: 'shadow' | 'on'; cfg: RoutingConfig; maxTier?: Tier };
   now?: () => Date;
   env?: NodeJS.ProcessEnv;
   log?: (line: string) => void;
@@ -292,6 +295,30 @@ export class Dispatcher {
           if (t.thinking) modelFlags.push('--thinking', t.thinking);
         }
       }
+      // The router (docs/org-routing.md): floors, the bot's envelope, escalation on earlier failures. `shadow` only logs.
+      let routeId: number | null = null;
+      let budgetNow = budget;
+      const router = this.deps.router;
+      if (router && card) {
+        const link = await store.taskLink(card);
+        const own = router.cfg.models.find((m) => m.id === agent.model || m.aliases?.includes(agent.model ?? ''));
+        if (own) {
+          const top = TIERS[Math.max(TIERS.indexOf(own.tier), router.maxTier ? TIERS.indexOf(router.maxTier) : 0)]!;
+          const envelope = TIERS.filter((t) => TIERS.indexOf(t) >= TIERS.indexOf(own.tier) && TIERS.indexOf(t) <= TIERS.indexOf(top));
+          const d = decide({ work: link?.work_type ?? 'ops', text: link?.title, envelope, failures: await store.cardFailures(card) }, router.cfg);
+          routeId = await recordDecision({ runId, cardId: card, agent: agent.name, d });
+          this.log(`${agent.name}: route ${router.mode} ${d.action}${d.action === 'run' ? ` ${d.model} (${d.tier})` : ''}: ${d.reason}`);
+          if (router.mode === 'on') {
+            if (d.action !== 'run') {
+              await finishWakeups(run.map((k) => k.w.id), { run: runId, exit: 0, result: `routed ${d.action}: ${d.reason}`.slice(0, 600) });
+              return out;
+            }
+            modelFlags.splice(0, modelFlags.length, '--model', d.model);
+            budgetNow = { ...budget, turns: d.turns, tokens: d.tokens ?? budget.tokens };
+            tier = d.tier;
+          }
+        } else this.log(`${agent.name}: route skipped, model ${agent.model ?? '(none)'} is not in the catalog`);
+      }
       // No tier model: the bot's own, override ?? roster, so `cli-org set` moves a bot to a model with no deploy.
       if (!modelFlags.includes('--model') && agent.model) modelFlags.push('--model', agent.model);
 
@@ -304,8 +331,8 @@ export class Dispatcher {
       if (tier) meta['tier'] = tier;
       if (agent.team_slug) meta['team'] = agent.team_slug;
       const metaFlags = Object.entries(meta).flatMap(([k, v]) => ['--meta', `${k}=${v}`]);
-      const common = ['--json', '--tools', tools.join(','), '--max-turns', String(budget.turns), '--max-tokens', String(budget.tokens),
-        '--max-minutes', String(budget.minutes), ...(handoffFile ? ['--handoff-file', handoffFile] : []), ...modelFlags, ...metaFlags];
+      const common = ['--json', '--tools', tools.join(','), '--max-turns', String(budgetNow.turns), '--max-tokens', String(budgetNow.tokens),
+        '--max-minutes', String(budgetNow.minutes), ...(handoffFile ? ['--handoff-file', handoffFile] : []), ...modelFlags, ...metaFlags];
       const args = card
         ? ['wake', card, '--task-file', taskFile, ...common]
         : ['run', '--file', taskFile, '--persona', agent.name, ...common];
@@ -321,6 +348,7 @@ export class Dispatcher {
         if (prev?.subtype === 'budget') result = `${result} (held: budget twice)`;
       }
       await finishWakeups(run.map((k) => k.w.id), { run: runId, exit: r.code, result });
+      if (routeId !== null) await recordOutcome({ decisionId: routeId, result: r.code === 0 ? 'done' : 'failed' });
       await this.deps.classify({
         decision: 'run-outcome', state: { text: parsed?.text ?? '', stopped: parsed?.stopped ?? (r.code === 0 ? 'done' : 'error'), exit: r.code },
         source: 'board', runId, agentName: agent.name, ref: card,

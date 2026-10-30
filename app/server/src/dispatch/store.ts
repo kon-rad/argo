@@ -116,3 +116,11 @@ export async function lastHeld(agent: string): Promise<string | null> {
        AND created_at > now() - interval '24 hours' ORDER BY id DESC LIMIT 1`, [agent]);
   return rows[0]?.body ?? null;
 }
+
+/** What went wrong on earlier routed runs of a card, oldest first: a budget stop is a turn-cap miss, a block stays a block. */
+export async function cardFailures(card: string): Promise<('turn_cap_no_commit' | 'blocked')[]> {
+  const { rows } = await query<{ result: string }>(
+    `SELECT o.result FROM route_decisions d JOIN route_outcomes o ON o.decision_id = d.id
+      WHERE d.card_id = $1 AND d.action = 'run' AND o.result IN ('failed', 'blocked') ORDER BY d.id`, [card]);
+  return rows.map((r) => (r.result === 'blocked' ? 'blocked' : 'turn_cap_no_commit'));
+}
