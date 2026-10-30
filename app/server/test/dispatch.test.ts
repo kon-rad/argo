@@ -354,4 +354,26 @@ describe('model routing (docs/org-routing.md)', () => {
     expect(flag(h.calls[1]!.args, '--max-turns')).toBe('40');
     expect(meta(h.calls[1]!.args, 'tier')).toBe('t3');
   });
+  it('feeds the card classifier into the decision: a two-repo card with no spec is asked for one, and the signals are logged', async () => {
+    await importOrg(routed('openrouter/mid'));
+    const h = harness();
+    withRouter(h, 'on', 't3');
+    await card();
+    await query(`UPDATE cards SET body = 'Update github.com/acme/sdk and github.com/acme/app to match' WHERE id = 't_abc123'`);
+    const r = await h.d.tick();
+    expect(r.runs).toBe(0);
+    const { rows } = await query<{ action: string; signals: { scope: number; specClarity: string; classified: { repos: number; source: string } } }>(
+      `SELECT action, signals FROM route_decisions WHERE card_id = 't_abc123'`);
+    expect(rows).toEqual([{ action: 'ask-spec', signals: expect.objectContaining({ scope: 2, specClarity: 'low', classified: expect.objectContaining({ repos: 2, source: 'rules' }) }) }]);
+  });
+
+  it('a risk flag in the card body raises the floor to the top tier', async () => {
+    await importOrg(routed('openrouter/mid'));
+    const h = harness();
+    withRouter(h, 'on', 't3');
+    await card();
+    await query(`UPDATE cards SET body = 'Edit server/src/a.ts, then deploy to production' WHERE id = 't_abc123'`);
+    await h.d.tick();
+    expect(flag(h.calls[0]!.args, '--model')).toBe('openrouter/top');
+  });
 });
