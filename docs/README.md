@@ -35,6 +35,7 @@ New here? Start with the [onboarding path](onboarding/README.md): ten short page
 | [agent-memory.md](agent-memory.md) | You run the org module's bots and want each one to keep a bounded memory of its own wakes, and to propose (never apply) changes to its own prompt or skills |
 | [summaries.md](summaries.md) | You want every agent session summarized by a local model (with paid fallbacks), the facts it learned held for your approval, a digest for a stand-up, and quality checks you can run |
 | [agent-harness.md](agent-harness.md) | You run Claude Code or Hermes in the vault and want to know what the guard and the dev-log gate do |
+| [agent-company.md](agent-company.md) | You want a company of named agents on a message board that wake for cards, DMs and mentions and report to you |
 | [deployment.md](deployment.md) | You want the app on a server behind a login |
 | [privacy.md](privacy.md) | You want to know how the engine stays free of personal data, and how to keep your fork that way |
 | [zen-runtime.md](zen-runtime.md) | You want the plan for running the bots on zen-agent instead of Claude Code headless and Hermes cron: rules and a Jev gate in front of every wake, DeepSeek V4 Flash on OpenRouter as the default, context as capped parts, every run and dollar on `/usage` |
