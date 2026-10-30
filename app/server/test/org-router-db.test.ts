@@ -1,4 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { pool, query } from '../src/db.js';
 import { main } from '../src/cli-org.js';
 import { decide, recordDecision, recordOutcome, routeReport, routeReportMarkdown, routeSpend, routeWeekly, type RoutingConfig } from '../src/org-router.js';
@@ -119,5 +122,18 @@ describe('cli-org route classify', () => {
     await main(['route', 'classify', '--card', 't_c1a551f', '--json'], (l: string) => lines.push(l));
     expect(JSON.parse(lines.join('\n'))).toMatchObject({ work: 'coding', scope: 1, namedPath: true, repos: 1, specClarity: 'ok', risk: 'high', riskFlags: ['migration'], source: 'rules' });
     await expect(main(['route', 'classify', '--card', 't_ffffff0'], () => undefined)).rejects.toThrow(/no card/);
+  });
+
+  it('route decide --card classifies the card when no signal flag is given; a flag wins', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'route-')), 'routing.json');
+    writeFileSync(file, JSON.stringify({ ...CFG, models: [...CFG.models, { id: 'opus', provider: 'anthropic', tier: 't3', can_code: true, local: false }] }));
+    const lines: string[] = [];
+    await main(['route', 'decide', '--work', 'coding', '--tiers', 't2,t3', '--card', 't_c1a551f', '--config', file, '--json'], (l: string) => lines.push(l));
+    const d = JSON.parse(lines.join('\n'));
+    expect(d).toMatchObject({ action: 'run', model: 'opus', tier: 't3' });
+    expect(d.signals.classified.riskFlags).toEqual(['migration']);
+    lines.length = 0;
+    await main(['route', 'decide', '--work', 'coding', '--tiers', 't2,t3', '--card', 't_c1a551f', '--risk', 'normal', '--config', file, '--json'], (l: string) => lines.push(l));
+    expect(JSON.parse(lines.join('\n'))).toMatchObject({ model: 'sonnet' });
   });
 });

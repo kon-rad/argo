@@ -128,7 +128,7 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
                                            one card per node for the project's team, each waiting on its parents; roots are mentioned
 
   model routing (docs/org-routing.md; the config is .agents/org/routing.json, written by compile.py routing):
-  route decide --work <type> [--role work|review|merge|deploy] --tiers t1,t2 [--files N] [--path] [--spec low|ok] [--risk high] [--card ID (reads its earlier failures)] [--down providers]
+  route decide --work <type> [--role work|review|merge|deploy] --tiers t1,t2 [--files N] [--path] [--spec low|ok] [--risk high] [--card ID (reads its earlier failures; classifies it when no signal flag is given)] [--down providers]
         [--text "<card text>"] [--author-tier t2] [--failures turn_cap_no_commit,tests_failed,review_changes,blocked]
         [--down provider,..] [--config file] [--record --agent a [--card t_..] [--run id]] [--json]   pick the model; nothing is run
   route outcome <decision id> <merged|rejected|parked|blocked|done|failed> [--turns N] [--tokens N] [--cost usd] [--from tier] [--verified]
@@ -792,10 +792,16 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         if (!['work', 'review', 'merge', 'deploy'].includes(role)) throw new OrgError('--role: work, review, merge or deploy');
         const authorTier = str(opts['author-tier']) as Tier | undefined;
         if (authorTier && !(TIERS as readonly string[]).includes(authorTier)) throw new OrgError(`--author-tier: one of ${TIERS.join(', ')}`);
+        // A card with no signal flags is read by the classifier, the same as the zen-agent dispatcher does; a flag wins.
+        const cardRow = str(opts.card) && [opts.files, opts.path, opts.spec, opts.risk].every((o) => o === undefined) ? await loadCard(str(opts.card)!) : null;
+        const sig = cardRow ? await classifyCard(cardRow, settings().dispatch.routing.classifier) : null;
         const d = decide(
           {
             work, role, text: str(opts.text), files: num(opts.files, 'files'), namedPath: opts.path === true, specClarity: str(opts.spec) === 'low' ? 'low' : 'ok',
-            risk: str(opts.risk) === 'high' ? 'high' : 'normal', envelope: tiers, authorTier,
+            risk: str(opts.risk) === 'high' ? 'high' : 'normal',
+            ...(sig ? { files: sig.scope, namedPath: sig.namedPath, specClarity: sig.specClarity, risk: sig.risk,
+              classified: { source: sig.source, paths: sig.paths, repos: sig.repos, clarity: sig.clarity, riskFlags: sig.riskFlags, ...(sig.note ? { note: sig.note } : {}) } } : {}),
+            envelope: tiers, authorTier,
             failures: (str(opts.failures) !== undefined ? str(opts.failures)!.split(',').map((f) => f.trim()).filter(Boolean) : str(opts.card) ? await cardFailures(str(opts.card)!) : []) as Failure[],
             unhealthyProviders: str(opts.down)?.split(',').map((x) => x.trim()).filter(Boolean),
             spend: await routeSpend(str(opts.card) ?? null, cfg),
