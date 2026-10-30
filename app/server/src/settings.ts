@@ -97,6 +97,8 @@ const Dispatch = z
         config: z.string().default('.agents/org/routing.json'),
         /** Highest tier a card may climb to by escalation; unset: the bot's own model tier (no climbing). */
         maxTier: z.enum(['t0', 't1', 't2', 't3']).optional(),
+        /** Vault-relative page `cli-org route report --write` (the weekly timer) writes. */
+        reportFile: z.string().min(1).default('routing-report.md'),
         /** Card signals: `rules` only, or `model` to let a t0 model (OpenAI-compatible endpoint) make spec clarity stricter. */
         classifier: z
           .object({

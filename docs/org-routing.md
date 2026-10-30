@@ -5,7 +5,7 @@ A bot keeps its persona, permissions and memory. **The model that runs a given j
 Where it sits: [org.yaml](org-yaml.md) says who the agents are and what they may do. The files described here say which models exist and what each is good for. The router joins the two when a card is about to run. Dispatch is in [agent-harness](agent-harness.md) and [zen-runtime](zen-runtime.md).
 
 !!! note "What is built, and what is not"
-    Built: the config files and their cross-checks (in your vault's `compile.py`), the router (`app/server/src/org-router.ts`), the `route_decisions` / `route_outcomes` / `config_applies` tables, and `cli-org route decide|outcome|classify|report`. The zen-agent dispatcher calls the router for card wakes (`dispatch.routing`, below), with signals from the card classifier (rules, plus an optional t0 model step), the card cost ceiling and per-provider daily caps. `cli-org route report --markdown` writes the weekly report page. Not built yet: routing for Claude Code bots (their dispatcher is separate), `cli-org plan` and `apply`, and the `agents/*.yaml` split. See [Rollout](#rollout).
+    Built: the config files and their cross-checks (in your vault's `compile.py`), the router (`app/server/src/org-router.ts`), the `route_decisions` / `route_outcomes` / `config_applies` tables, `cli-org route decide|outcome|classify|report`, and `cli-org plan` / `apply` (the reconcile loop, below). The zen-agent dispatcher calls the router for card wakes (`dispatch.routing`, below), with signals from the card classifier (rules, plus an optional t0 model step), the card cost ceiling and per-provider daily caps. `cli-org route report --markdown` writes the weekly report page. Not built in the engine: routing for Claude Code bots (their dispatcher is separate and calls `cli-org route` itself) and the `agents/*.yaml` split (a vault compiler change). See [Rollout](#rollout).
 
 ## Why it exists
 
@@ -253,6 +253,45 @@ $ cli-org route decide --work ops --role deploy --tiers t1,t2
 park: floor t3 (deploy -> t3; high risk -> t3) is above the bot's envelope (t1, t2); needs the owner, never run lower
 ```
 
+## cli-org plan and apply
+
+`cli-org import` writes the file and silently retires any agent it no longer names. `plan` and `apply` are the reviewed path: diff first, then write, and retire only when asked.
+
+```
+cli-org plan <org.json> [--prune] [--json]
+cli-org apply <org.json> [--prune] [--sha <git sha>] [--by <name>] [--json]
+```
+
+| Command or option | Does |
+|---|---|
+| `plan` | Dry run, exit 0. Prints agents added, un-retired and changed field by field (team, runtime, role, model, capabilities, reports_to, expertise, work, routines), agents that would retire, team adds, edits and removals, channel adds and removals, channel seat changes, and whether `wake_rules` changed. Writes nothing |
+| `apply` | Writes the additive changes and edits in one transaction and records a `config_applies` row (git sha, the plan as jsonb, who applied it, and what the drain did) |
+| `--prune` | Retire the agents the file dropped. Without it, `plan` and `apply` print `would retire X (pass --prune)` and leave the agent, its team and its channel seats as they are |
+| `--sha` | The commit of the org file, stored on the `config_applies` row |
+| `--by` | Who applied it (default: `ORG_AGENT`, then the file's `ceo`) |
+| `--json` | Machine output: the plan, or the apply result |
+
+Lines read `+` add, `~` change, `-` remove:
+
+```
+$ cli-org plan org.json
+org 3f2a91c:
++ agent nova
+~ agent rune: model - -> sonnet; capabilities [code] -> [code, review]
+- would retire vera (pass --prune): 2 open cards to atlas; 1 pending wakeup cancelled
+~ channel platform: +nova -vera
+```
+
+**Retirement**, for each pruned bot, inside the apply's transaction:
+
+1. Its pending (unclaimed) wakeups are closed with `result = cancelled: <bot> retired by cli-org apply`.
+2. Its open cards (anything but `done` and `archived`) go to its team's lead in the file, with a card comment naming the retirement. A card needing a capability the lead lacks, or a bot that is itself the lead, leaves the card unassigned for the owner to triage: cards never go to a human. The board functions do the move, with the file's `ceo` as caller, so `card_events` records it.
+3. Its capabilities are cleared, `retired_at` is set, and it loses its channel seats.
+
+Usage, the ledger, messages, card history and session rows stay. A bot with a run in flight (a claimed wakeup or a `running` card) is drained of its pending wakes and its other cards, but keeps its row and capabilities so the run can finish and report; `apply` says `deferred`, and the next `apply --prune` after the run ends retires it. Re-adding the agent to the file un-retires it and restores the file's capabilities.
+
+**Teams and channels** are archived, never deleted (migration `1756000016500_org-archive.sql` adds `archived_at` to `teams` and `org_channels`): projects, boards, cards and messages keep joining the row. A team the file dropped is refused, and nothing is applied, while it still has members after this apply or open cards on a board it owns; once empty it is archived and its lead cleared. Only teams the org wrote are considered: the project tracker shares the `teams` table. A channel the file no longer describes is archived and the bots lose their seats; the owner keeps reading its history. Naming the team or channel again (by `import` or `apply`) brings it back.
+
 ## The log and the weekly numbers
 
 Migration `1756000016400_route-decisions.sql` adds:
@@ -261,7 +300,7 @@ Migration `1756000016400_route-decisions.sql` adds:
 |---|---|
 | `route_decisions` | id, run_id, card_id, agent, action, signals, tier, model, reason, budget, created_at |
 | `route_outcomes` | decision_id, result, turns, tokens, cost_usd, escalated_from, verified |
-| `config_applies` | id, git_sha, plan, applied_by, applied_at (reserved for `cli-org apply`) |
+| `config_applies` | id, git_sha, plan, applied_by, applied_at (one row per `cli-org apply`) |
 
 `cli-org route report` returns, per tier: runs, how many escalated, how many were merged, total cost, and **cost per merged PR**. That last figure is the real comparison between cheap-and-retry and expensive-once. A run's cost is its outcome's `--cost`, else what `usage_runs` logged for the run; it stays `unknown` when neither has one.
 
@@ -280,6 +319,8 @@ cli-org route report --since 7d --markdown > <vault>/org/routing-report.md
 
 A table with no rows reads "No data yet."
 
+`--write [file]` writes the same page to a file instead, by default `dispatch.routing.reportFile` in your vault (`routing-report.md` unless you set it). With the `org` module on, `deploy.sh` installs `secondbrain-routing-report.timer`, which runs `route report --since 7d --write` every Sunday at 22:00 server time; your vault sync commits the page.
+
 Tune the rules from this report, not from guesses. Keep a note for each rule change in your harness experience log: the run that showed the problem, the change, and the run that showed it worked.
 
 ## Rollout
@@ -290,8 +331,8 @@ Tune the rules from this report, not from guesses. Keep a note for each rule cha
 | 1 | Router, log tables, `cli-org route` | Router unit tests replay the failed run; the CLI gives `sonnet` for it |
 | 2 | Dispatcher asks the router before a wake and passes the model | A wake on a coding card runs on the routed model; a `route_decisions` row exists |
 | 3 | `cli-org plan` / `apply`: files reconcile to the database, retirement of removed bots | Add a throwaway bot by file, see it appear, remove it with `--prune`, history intact |
-| 4 (this release, engine part) | Card classifier (rules, optional t0 model step), card cost ceiling and provider daily caps, `route classify`, `route report --markdown` | Classifier, model fallback, cap and report tests; the report shows cost per merged PR by tier for two weeks |
-| 5 | Split `agents:` into `agents/*.yaml` | `cli-org import` output unchanged for the existing roster |
+| 4 | Card classifier (rules, optional t0 model step), card cost ceiling and provider daily caps, `route classify`, `route report --markdown` | Classifier, model fallback, cap and report tests; the report shows cost per merged PR by tier for two weeks |
+| 5 | Split `agents:` into `agents/*.yaml` (vault compiler) | `cli-org import` output unchanged for the existing roster |
 
 Start with `enforce_model_floors: warn`, read the warnings, move the offending bots, then switch to `error`.
 

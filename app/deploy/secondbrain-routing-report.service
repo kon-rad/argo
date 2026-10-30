@@ -1,0 +1,16 @@
+[Unit]
+Description=Second Brain: write the weekly model-routing report into the vault (dispatch.routing.reportFile in secondbrain.json)
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# As the app user: owns the database and the vault checkout; git auto-sync commits the page.
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-org.js route report --since 7d --write
+TimeoutStartSec=60
+PrivateTmp=true
+NoNewPrivileges=true
