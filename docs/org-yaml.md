@@ -15,7 +15,7 @@ org.yaml  --(compile)-->  org-agents.json   (per-bot limits, tools, prompts)   r
 
 1. Edit `org.yaml` and commit it.
 2. Compile it. The compiler is part of your vault, not the engine; it refuses a file with errors and prints each one.
-3. Run `cli-org import <import document>` as the owner database role. It is idempotent: the file replaces the rows, and an agent dropped from the file is retired (never deleted, so its messages keep an author).
+3. Run `cli-org import <import document>` as the owner database role. It is idempotent: the file replaces the rows, and an agent dropped from the file is retired (never deleted, so its messages keep an author). To review a change before it lands, run `cli-org plan <import document>`, then `cli-org apply` instead: it retires a dropped agent only with `--prune` and drains it first (see [org-routing.md](org-routing.md#cli-org-plan-and-apply)).
 4. Dispatchers pick up the new roster on their own; do not restart a dispatcher, its startup releases every claimed wakeup and strands runs in flight.
 
 A vault that ships the `org-runtime` skill does steps 2 and 3 on the server with its `refresh` command.

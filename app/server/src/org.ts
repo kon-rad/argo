@@ -138,14 +138,8 @@ const MESSAGE_COLS = 'id, channel_slug, thread_id, author, kind, body, mentions,
 // Import: the compiled org file → agents, teams, channels, memberships
 // ---------------------------------------------------------------------------
 
-/**
- * Upserts everything the org file describes. Idempotent. Agents missing from
- * the file are retired (never deleted: messages keep their author); agents
- * present again are un-retired. Team channels are `<team>` and
- * `<team>-standup` unless the team lists its own. A human agent (the CEO) is a
- * member of every team and shared channel.
- */
-export async function importOrg(input: unknown): Promise<{ agents: number; teams: number; channels: number; retired: number }> {
+/** Parses the compiled org file and checks the rules the schema can't: teams, leads, reports_to, wake rules. */
+export function checkOrg(input: unknown): OrgDocT {
   const doc = OrgDoc.parse(input);
   const ceo = doc.agents[doc.ceo];
   if (!ceo) throw new OrgError(`ceo "${doc.ceo}" is not in agents`);
@@ -165,94 +159,153 @@ export async function importOrg(input: unknown): Promise<{ agents: number; teams
     if (!doc.channels[ch]) throw new OrgError(`wake_rules.channel_leads: unknown shared channel ${ch}`);
     if (!doc.agents[lead] || doc.agents[lead]!.runtime === 'human') throw new OrgError(`wake_rules.channel_leads.${ch}: ${lead} is not a bot in agents`);
   }
+  return doc;
+}
 
-  return withTransaction(async (tx) => {
-    // One row, replaced whole: the org file is the only author of the wake rules, and a missing block means defaults.
+export interface OrgChannelSpec {
+  slug: string;
+  kind: 'team' | 'shared';
+  team_slug: string | null;
+  purpose: string | null;
+  classification: string | null;
+  compartments: string[];
+  /** Everyone the file puts in the channel, humans (the owner) included. */
+  members: string[];
+}
+
+/** The channels the file describes: `<team>` and `<team>-standup` unless a team lists its own, then the shared ones. */
+export function orgChannels(doc: OrgDocT): OrgChannelSpec[] {
+  const humans = Object.entries(doc.agents).filter(([, a]) => a.runtime === 'human').map(([n]) => n);
+  const byTeam = (slug: string): string[] => Object.entries(doc.agents).filter(([, a]) => a.team === slug).map(([n]) => n);
+  const withHumans = (members: string[]): string[] => [...new Set([...members, ...humans])];
+  const out: OrgChannelSpec[] = [];
+  for (const [slug, t] of Object.entries(doc.teams)) {
+    for (const ch of t.channels ?? [slug, `${slug}-standup`]) {
+      out.push({
+        slug: ch, kind: 'team', team_slug: slug, classification: null, compartments: [], members: withHumans(byTeam(slug)),
+        purpose: ch.endsWith('-standup') ? `${t.name}: daily stand-up posts by the lead` : `${t.name}: the team's channel`,
+      });
+    }
+  }
+  for (const [slug, c] of Object.entries(doc.channels)) {
+    const members =
+      c.members === '*'
+        ? Object.keys(doc.agents)
+        : c.members.flatMap((m) => (doc.teams[m] ? byTeam(m) : doc.agents[m] ? [m] : (() => { throw new OrgError(`channel ${slug}: unknown member ${m}`); })()));
+    out.push({ slug, kind: 'shared', team_slug: null, purpose: c.purpose ?? null, classification: c.classification ?? null, compartments: c.compartments ?? [], members: withHumans(members) });
+  }
+  return out;
+}
+
+export interface WriteOrgOpts {
+  /** Retire every roster agent the file doesn't name (import). apply passes false and retires through its drain. */
+  retireMissing: boolean;
+  /** Agents the file doesn't name that stay as they are (apply without --prune): their team and channel seats are kept. */
+  keep?: Map<string, string | null>;
+}
+
+/**
+ * Writes the org file into the tables inside the caller's transaction: wake rules, teams, agents, the session rows,
+ * channels and memberships. A team or channel the file names is live again (archived_at cleared).
+ */
+export async function writeOrg(tx: TxClient, doc: OrgDocT, opts: WriteOrgOpts): Promise<{ channels: number; retired: number }> {
+  const keep = opts.keep ?? new Map<string, string | null>();
+  // One row, replaced whole: the org file is the only author of the wake rules, and a missing block means defaults.
+  await tx.query(
+    `INSERT INTO org_wake_rules (id, rules, org_version) VALUES (true, $1::jsonb, $2)
+     ON CONFLICT (id) DO UPDATE SET rules = EXCLUDED.rules, org_version = EXCLUDED.org_version, updated_at = now()`,
+    [JSON.stringify(doc.wake_rules ?? {}), doc.version],
+  );
+  const byTeam = (slug: string): string[] => [
+    ...Object.entries(doc.agents).filter(([, a]) => a.team === slug).map(([n]) => n),
+    ...[...keep].filter(([, t]) => t === slug).map(([n]) => n),
+  ];
+
+  for (const [slug, t] of Object.entries(doc.teams)) {
     await tx.query(
-      `INSERT INTO org_wake_rules (id, rules, org_version) VALUES (true, $1::jsonb, $2)
-       ON CONFLICT (id) DO UPDATE SET rules = EXCLUDED.rules, org_version = EXCLUDED.org_version, updated_at = now()`,
-      [JSON.stringify(doc.wake_rules ?? {}), doc.version],
+      `INSERT INTO teams (slug, name, lead, members) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, lead = EXCLUDED.lead, members = EXCLUDED.members, archived_at = NULL, updated_at = now()`,
+      [slug, t.name, t.lead, byTeam(slug)],
     );
-    const humans = Object.entries(doc.agents).filter(([, a]) => a.runtime === 'human').map(([n]) => n);
-    const byTeam = (slug: string): string[] => Object.entries(doc.agents).filter(([, a]) => a.team === slug).map(([n]) => n);
+  }
 
-    for (const [slug, t] of Object.entries(doc.teams)) {
-      await tx.query(
-        `INSERT INTO teams (slug, name, lead, members) VALUES ($1,$2,$3,$4)
-         ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, lead = EXCLUDED.lead, members = EXCLUDED.members, updated_at = now()`,
-        [slug, t.name, t.lead, byTeam(slug)],
-      );
-    }
-
-    // Two passes: reports_to is a self-reference.
-    for (const [name, a] of Object.entries(doc.agents)) {
-      await tx.query(
-        `INSERT INTO org_agents (name, team_slug, runtime, role, model, expertise, org_version, work, capabilities, routines)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
-         ON CONFLICT (name) DO UPDATE SET team_slug = EXCLUDED.team_slug, runtime = EXCLUDED.runtime, role = EXCLUDED.role,
-           model = EXCLUDED.model, expertise = EXCLUDED.expertise, org_version = EXCLUDED.org_version, work = EXCLUDED.work,
-           capabilities = EXCLUDED.capabilities, routines = EXCLUDED.routines, retired_at = NULL, updated_at = now()`,
-        [name, a.team ?? null, a.runtime, a.role, a.model ?? null, a.expertise ?? null, doc.version, a.work ?? null, [...new Set(a.capabilities ?? [])],
-          JSON.stringify(a.routines ?? [])],
-      );
-    }
-    for (const [name, a] of Object.entries(doc.agents)) {
-      await tx.query(`UPDATE org_agents SET reports_to = $2 WHERE name = $1`, [name, a.reports_to ?? null]);
-    }
-    // The vault session is a roster row too (runtime session), so cards for it have a foreign key; it is never retired.
+  // Two passes: reports_to is a self-reference.
+  for (const [name, a] of Object.entries(doc.agents)) {
     await tx.query(
-      `INSERT INTO org_agents (name, runtime, role, reports_to, expertise, org_version) VALUES ($1, 'session', $2, $3, 'vault code: skills, scripts, hooks, notes', $4)
+      `INSERT INTO org_agents (name, team_slug, runtime, role, model, expertise, org_version, work, capabilities, routines)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+       ON CONFLICT (name) DO UPDATE SET team_slug = EXCLUDED.team_slug, runtime = EXCLUDED.runtime, role = EXCLUDED.role,
+         model = EXCLUDED.model, expertise = EXCLUDED.expertise, org_version = EXCLUDED.org_version, work = EXCLUDED.work,
+         capabilities = EXCLUDED.capabilities, routines = EXCLUDED.routines, retired_at = NULL, updated_at = now()`,
+      [name, a.team ?? null, a.runtime, a.role, a.model ?? null, a.expertise ?? null, doc.version, a.work ?? null, [...new Set(a.capabilities ?? [])],
+        JSON.stringify(a.routines ?? [])],
+    );
+  }
+  for (const [name, a] of Object.entries(doc.agents)) {
+    await tx.query(`UPDATE org_agents SET reports_to = $2 WHERE name = $1`, [name, a.reports_to ?? null]);
+  }
+  // The vault session is a roster row too (runtime session), so cards for it have a foreign key; it is never retired.
+  await tx.query(
+    `INSERT INTO org_agents (name, runtime, role, reports_to, expertise, org_version) VALUES ($1, 'session', $2, $3, 'vault code: skills, scripts, hooks, notes', $4)
+     ON CONFLICT (name) DO UPDATE SET runtime = 'session', role = EXCLUDED.role, reports_to = EXCLUDED.reports_to, org_version = EXCLUDED.org_version, retired_at = NULL, updated_at = now()`,
+    [config.orgVaultAssignee, VAULT_ROLE, doc.ceo, doc.version],
+  );
+  // Service lanes that post and claim cards but are not roster bots: they stay session rows so cards, comments and
+  // runs keep a valid author. An org file that names one as a real agent wins.
+  for (const [name, role] of SYSTEM_SESSIONS) {
+    if (doc.agents[name]) continue;
+    await tx.query(
+      `INSERT INTO org_agents (name, runtime, role, reports_to, org_version) VALUES ($1, 'session', $2, $3, $4)
        ON CONFLICT (name) DO UPDATE SET runtime = 'session', role = EXCLUDED.role, reports_to = EXCLUDED.reports_to, org_version = EXCLUDED.org_version, retired_at = NULL, updated_at = now()`,
-      [config.orgVaultAssignee, VAULT_ROLE, doc.ceo, doc.version],
+      [name, role, doc.ceo, doc.version],
     );
-    // Service lanes that post and claim cards but are not roster bots: they stay session rows so cards, comments and
-    // runs keep a valid author. An org file that names one as a real agent wins.
-    for (const [name, role] of SYSTEM_SESSIONS) {
-      if (doc.agents[name]) continue;
-      await tx.query(
-        `INSERT INTO org_agents (name, runtime, role, reports_to, org_version) VALUES ($1, 'session', $2, $3, $4)
-         ON CONFLICT (name) DO UPDATE SET runtime = 'session', role = EXCLUDED.role, reports_to = EXCLUDED.reports_to, org_version = EXCLUDED.org_version, retired_at = NULL, updated_at = now()`,
-        [name, role, doc.ceo, doc.version],
-      );
-    }
-    const { rowCount: retired } = await tx.query(
+  }
+  let retired = 0;
+  if (opts.retireMissing) {
+    const { rowCount } = await tx.query(
       `UPDATE org_agents SET retired_at = now(), updated_at = now() WHERE retired_at IS NULL AND runtime <> 'session' AND NOT (name = ANY ($1))`,
       [Object.keys(doc.agents)],
     );
+    retired = rowCount ?? 0;
+  }
 
-    let channels = 0;
-    const setMembers = async (slug: string, members: string[]): Promise<void> => {
-      const all = [...new Set([...members, ...humans])];
-      await tx.query(`DELETE FROM org_channel_members WHERE channel_slug = $1 AND NOT (agent_name = ANY ($2))`, [slug, all]);
-      for (const m of all) {
-        await tx.query(`INSERT INTO org_channel_members (channel_slug, agent_name) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [slug, m]);
-      }
-    };
-    for (const [slug, t] of Object.entries(doc.teams)) {
-      for (const ch of t.channels ?? [slug, `${slug}-standup`]) {
-        await tx.query(
-          `INSERT INTO org_channels (slug, kind, team_slug, purpose) VALUES ($1,'team',$2,$3)
-           ON CONFLICT (slug) DO UPDATE SET kind = 'team', team_slug = EXCLUDED.team_slug, purpose = EXCLUDED.purpose`,
-          [ch, slug, ch.endsWith('-standup') ? `${t.name}: daily stand-up posts by the lead` : `${t.name}: the team's channel`],
-        );
-        await setMembers(ch, byTeam(slug));
-        channels++;
-      }
-    }
-    for (const [slug, c] of Object.entries(doc.channels)) {
+  const specs = orgChannels(doc);
+  for (const c of specs) {
+    if (c.kind === 'team') {
+      await tx.query(
+        `INSERT INTO org_channels (slug, kind, team_slug, purpose) VALUES ($1,'team',$2,$3)
+         ON CONFLICT (slug) DO UPDATE SET kind = 'team', team_slug = EXCLUDED.team_slug, purpose = EXCLUDED.purpose, archived_at = NULL`,
+        [c.slug, c.team_slug, c.purpose],
+      );
+    } else {
       await tx.query(
         `INSERT INTO org_channels (slug, kind, purpose, classification, compartments) VALUES ($1,'shared',$2,$3,$4)
-         ON CONFLICT (slug) DO UPDATE SET kind = 'shared', purpose = EXCLUDED.purpose, classification = EXCLUDED.classification, compartments = EXCLUDED.compartments`,
-        [slug, c.purpose ?? null, c.classification ?? null, c.compartments ?? []],
+         ON CONFLICT (slug) DO UPDATE SET kind = 'shared', purpose = EXCLUDED.purpose, classification = EXCLUDED.classification, compartments = EXCLUDED.compartments, archived_at = NULL`,
+        [c.slug, c.purpose, c.classification, c.compartments],
       );
-      const members =
-        c.members === '*'
-          ? Object.keys(doc.agents)
-          : c.members.flatMap((m) => (doc.teams[m] ? byTeam(m) : doc.agents[m] ? [m] : (() => { throw new OrgError(`channel ${slug}: unknown member ${m}`); })()));
-      await setMembers(slug, members);
-      channels++;
     }
-    return { agents: Object.keys(doc.agents).length, teams: Object.keys(doc.teams).length, channels, retired: retired ?? 0 };
+    // Kept agents hold their seats: apply without --prune leaves an agent the file dropped exactly as it was.
+    await tx.query(`DELETE FROM org_channel_members WHERE channel_slug = $1 AND NOT (agent_name = ANY ($2))`, [c.slug, [...c.members, ...keep.keys()]]);
+    for (const m of c.members) {
+      await tx.query(`INSERT INTO org_channel_members (channel_slug, agent_name) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [c.slug, m]);
+    }
+  }
+  return { channels: specs.length, retired };
+}
+
+/**
+ * Upserts everything the org file describes. Idempotent. Agents missing from
+ * the file are retired (never deleted: messages keep their author); agents
+ * present again are un-retired. Team channels are `<team>` and
+ * `<team>-standup` unless the team lists its own. A human agent (the CEO) is a
+ * member of every team and shared channel. `cli-org apply` (org-apply.ts) is the
+ * reviewed path: it diffs first and retires only with --prune.
+ */
+export async function importOrg(input: unknown): Promise<{ agents: number; teams: number; channels: number; retired: number }> {
+  const doc = checkOrg(input);
+  return withTransaction(async (tx) => {
+    const r = await writeOrg(tx, doc, { retireMissing: true });
+    return { agents: Object.keys(doc.agents).length, teams: Object.keys(doc.teams).length, channels: r.channels, retired: r.retired };
   });
 }
 
