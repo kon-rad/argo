@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pool, query } from '../src/db.js';
@@ -109,6 +109,14 @@ describe('weekly report', () => {
     await main(['route', 'report', '--since', '7d', '--markdown'], (l: string) => lines.push(l));
     expect(lines.join('\n')).toMatch(/^# Model routing report/);
     await expect(main(['route', 'report', '--since', 'week'], () => undefined)).rejects.toThrow(/--since/);
+  });
+
+  it('cli-org route report --write puts the page in a file (the weekly timer)', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'route-report-')), 'org', 'routing-report.md');
+    const lines: string[] = [];
+    await main(['route', 'report', '--since', '7d', '--write', file], (l: string) => lines.push(l));
+    expect(lines).toEqual([`wrote ${file}`]);
+    expect(readFileSync(file, 'utf8')).toMatch(/^# Model routing report/);
   });
 });
 

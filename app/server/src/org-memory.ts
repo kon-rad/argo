@@ -715,6 +715,9 @@ export const GUARDED_KEYS = ['tools', 'permission_mode', 'model', 'wakes_per_day
 /** Vault files no proposal may target, whatever the config says: the harness and the owner's rules. */
 const HARD_DENY = [/^AGENTS(\.base|\.local)?\.md$/, /^CLAUDE\.md$/, /^\.claude\//, /^\.agents\/guard/, /^\.agents\/org\//, /^\.agents\/improve\//, /^\.hermes\//, /(^|\/)hooks\//, /(^|\/)lanes\.toml$/, /^CURRENT\//, /^Areas\/Finance\//, /(^|\/)\.env/, /^\.secondbrain\//];
 
+/** One file per agent in the split config directory (`config/agents/<name>.yaml`); the whole file is its block. */
+export const agentFilePath = (agent: string): string => `.agents/org/config/agents/${agent}.yaml`;
+
 export type ProposalTarget = { kind: 'own_prompt'; path: string } | { kind: 'own_skills'; path: string };
 
 /** The agent's block of org.yaml (`agents:` → `  <name>:` to the next sibling key), as lines; null when absent. */
@@ -818,10 +821,13 @@ export function validateProposal(agent: string, settings: AgentMemorySettings, t
   if (!after.trim()) throw new OrgError('refused: the proposal empties the target');
   if (before === after) throw new OrgError('refused: the proposal changes nothing');
   if (target.kind === 'own_prompt') {
-    if (target.path !== '.agents/org/org.yaml') throw new OrgError('refused: own_prompt targets .agents/org/org.yaml only');
-    const b = blockKeys(before.split('\n'));
-    const a = blockKeys(after.split('\n'));
-    if (before.split('\n')[0] !== after.split('\n')[0]) throw new OrgError(`refused: the diff renames the agent block (${before.split('\n')[0]!.trim()})`);
+    const ownFile = agentFilePath(agent);
+    if (target.path !== '.agents/org/org.yaml' && target.path !== ownFile) throw new OrgError(`refused: own_prompt targets ${ownFile} or .agents/org/org.yaml only`);
+    // An agent file is the block without its `<name>:` header: wrap it so both layouts compare key by key.
+    const asBlock = (t: string): string[] => (target.path === ownFile ? [`${agent}:`, ...t.split('\n').map((l) => (l ? `  ${l}` : l))] : t.split('\n'));
+    const b = blockKeys(asBlock(before));
+    const a = blockKeys(asBlock(after));
+    if (target.path !== ownFile && before.split('\n')[0] !== after.split('\n')[0]) throw new OrgError(`refused: the diff renames the agent block (${before.split('\n')[0]!.trim()})`);
     for (const key of new Set([...b.keys(), ...a.keys()])) {
       if ((PROSE_KEYS as readonly string[]).includes(key)) continue;
       if (b.get(key) !== a.get(key)) throw new OrgError(`refused: the diff touches "${key}"; only ${PROSE_KEYS.join(', ')} may change`);
@@ -873,11 +879,15 @@ export function proposalTargets(vaultRoot: string, agent: string, settings: Agen
   const out: { target: ProposalTarget; before: string }[] = [];
   const si = settings.memory.self_improvement;
   if (si.targets.includes('own_prompt')) {
-    try {
-      const block = extractAgentBlock(readFileSync(join(vaultRoot, '.agents', 'org', 'org.yaml'), 'utf8'), agent);
-      if (block) out.push({ target: { kind: 'own_prompt', path: '.agents/org/org.yaml' }, before: block.lines.join('\n') });
-    } catch {
-      /* no org.yaml here */
+    const own = agentFilePath(agent);
+    if (existsSync(join(vaultRoot, own))) out.push({ target: { kind: 'own_prompt', path: own }, before: readFileSync(join(vaultRoot, own), 'utf8') });
+    else {
+      try {
+        const block = extractAgentBlock(readFileSync(join(vaultRoot, '.agents', 'org', 'org.yaml'), 'utf8'), agent);
+        if (block) out.push({ target: { kind: 'own_prompt', path: '.agents/org/org.yaml' }, before: block.lines.join('\n') });
+      } catch {
+        /* no org.yaml here */
+      }
     }
   }
   if (si.targets.includes('own_skills')) {

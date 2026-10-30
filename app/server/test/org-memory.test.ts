@@ -442,6 +442,15 @@ describe('agent persona memory', () => {
       expect(extractAgentBlock('teams:\n  x:\n    lead: a\n', 'rune')).toBeNull();
     });
 
+    it('takes the split config layout: one agents/<name>.yaml file is the whole block', () => {
+      const file = { kind: 'own_prompt' as const, path: '.agents/org/config/agents/rune.yaml' };
+      const before = 'role: Platform engineer\nmodel: sonnet\npersonality: Direct.\ncapabilities: [code]\n';
+      expect(validateProposal('rune', s, file, before, before.replace('Direct.', 'Direct, smallest diff first.')).changed).toBe(2);
+      expect(() => validateProposal('rune', s, file, before, before.replace('model: sonnet', 'model: opus'))).toThrow(/touches "model"/);
+      expect(() => validateProposal('rune', s, file, before, before.replace('[code]', '[code, deploy]'))).toThrow(/touches "capabilities"/);
+      expect(() => validateProposal('rune', s, { kind: 'own_prompt', path: '.agents/org/config/agents/atlas.yaml' }, before, before.replace('Direct.', 'x'))).toThrow(/own_prompt targets/);
+    });
+
     it('allows prose only, and names the field it refuses', () => {
       const before = runeBlock();
       const ok = validateProposal('rune', s, own, before, before.replace('Ship the platform cards with tests.', 'Ship the platform cards with tests, smallest diff first.'));

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { config } from './config.js';
@@ -138,7 +138,7 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
         [--down provider,..] [--config file] [--record --agent a [--card t_..] [--run id]] [--json]   pick the model; nothing is run
   route outcome <decision id> <merged|rejected|parked|blocked|done|failed> [--turns N] [--tokens N] [--cost usd] [--from tier] [--verified]
   route classify --card <id> [--json]                    the card's signals: scope, named paths, repos, spec clarity, risk flags
-  route report [--since 7d | --days 7] [--json | --markdown]   escalation, cost per merged PR, parked/blocked causes, rejections
+  route report [--since 7d | --days 7] [--json | --markdown | --write [file]]   escalation, cost per merged PR, parked/blocked causes, rejections
 
   shipping (nothing merges or deploys without the owner's yes, unless the owner made the card --ship-now):
   ship request <card> "<summary>" [--pr <github pr url>] [--deploy <target>]   ask the owner; a ship-now card is approved at once
@@ -843,6 +843,14 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         const since = str(opts.since);
         if (since !== undefined && !/^\d+d$/.test(since)) throw new OrgError('--since takes a number of days, e.g. 7d');
         const days = since ? Number(since.slice(0, -1)) : num(opts.days, 'days') ?? 7;
+        if (opts.write !== undefined) {
+          // The weekly timer's call: the page goes to dispatch.routing.reportFile in the vault (or the path given).
+          const path = str(opts.write) ?? join(config.vaultRoot, settings().dispatch.routing.reportFile);
+          mkdirSync(dirname(path), { recursive: true });
+          writeFileSync(path, routeReportMarkdown(await routeWeekly(days)));
+          out(`wrote ${path}`);
+          return 0;
+        }
         if (opts.markdown === true) {
           out(routeReportMarkdown(await routeWeekly(days)));
           return 0;

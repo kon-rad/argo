@@ -359,6 +359,8 @@ has social && unit secondbrain-social
 # org-dispatch: only with the org module and ORG_DISPATCH=on (here or in the server's env file).
 grep -qsE '^ORG_DISPATCH=on$' /etc/secondbrain/env && WITH_DISPATCH=on
 if has org && [ "$WITH_DISPATCH" = on ]; then unit secondbrain-dispatch; fi
+# The weekly routing report page: whenever the org module is on (it is empty until a dispatcher routes).
+has org && unit secondbrain-routing-report
 # summaries: only with SUMMARIES=on in the server's env file (it needs a model to call: docs/summaries.md).
 grep -qsE '^SUMMARIES=on$' /etc/secondbrain/env && has usage && unit secondbrain-summarize
 [ "$WITH_EMBED" = 1 ] && unit secondbrain-embed

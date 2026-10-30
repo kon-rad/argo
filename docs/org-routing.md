@@ -319,6 +319,8 @@ cli-org route report --since 7d --markdown > <vault>/org/routing-report.md
 
 A table with no rows reads "No data yet."
 
+`--write [file]` writes the same page to a file instead, by default `dispatch.routing.reportFile` in your vault (`routing-report.md` unless you set it). With the `org` module on, `deploy.sh` installs `secondbrain-routing-report.timer`, which runs `route report --since 7d --write` every Sunday at 22:00 server time; your vault sync commits the page.
+
 Tune the rules from this report, not from guesses. Keep a note for each rule change in your harness experience log: the run that showed the problem, the change, and the run that showed it worked.
 
 ## Rollout
