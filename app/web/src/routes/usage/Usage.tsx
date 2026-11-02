@@ -6,6 +6,7 @@ import {
   type CreditProvider, type PlanCurrent, type UsageCredits, type UsageDimension, type UsageFacets, type UsageFilters, type UsageRun, type UsageSeriesRow,
 } from '../../lib/api.js';
 import LineChart from '../../components/charts/LineChart.js';
+import { AgentAvatar } from '../../components/AgentAvatar.js';
 import StackedBars, { type BarSeries } from '../../components/charts/StackedBars.js';
 import { bucketEnd, formatTokens, money, planText, TYPE_SERIES } from './format.js';
 import { zoned } from '../../lib/time.js';
@@ -303,7 +304,7 @@ function UsageOverview() {
               return (
                 <tr key={`${r.host}|${r.run_id ?? r.session_id}`} className="border-t border-[var(--rule)]">
                   <td><Link className="underline" to={`/usage/session/${r.host}/${encodeURIComponent(r.session_id)}?source=${r.runtime ?? 'claude-code'}`}>{r.started_at ? zoned(r.started_at, tz) : (r.run_id ?? r.session_id.slice(0, 8))}</Link>{r.runtime && r.runtime !== 'claude-code' ? <span className="ml-1 text-xs text-[var(--ink-faint)]" title={r.tier ? `${r.runtime}, tier ${r.tier}` : r.runtime}>{r.runtime}</span> : null}</td>
-                  <td>{w ? <Pick dim={w.dim} value={w.value} onPick={addFilter}>{r.agent_name ? <Link className="underline" to={`/org/agents/${r.agent_name}`} onClick={(e) => e.stopPropagation()}>{r.agent_name}</Link> : r.lane}</Pick> : ''}{r.resumed ? <span className="text-xs text-[var(--ink-faint)]" title="resumed its session"> ↻</span> : null}</td>
+                  <td>{w ? <Pick dim={w.dim} value={w.value} onPick={addFilter}>{r.agent_name ? <Link className="inline-flex items-center gap-1 underline" to={`/org/agents/${r.agent_name}`} onClick={(e) => e.stopPropagation()}><AgentAvatar name={r.agent_name} size={16} />{r.agent_name}</Link> : r.lane}</Pick> : ''}{r.resumed ? <span className="text-xs text-[var(--ink-faint)]" title="resumed its session"> ↻</span> : null}</td>
                   <td><Pick dim="reason" value={r.reason} onPick={addFilter} /></td>
                   <td>{r.task_id ? <Link className="underline" to={`/board/${r.task_id}`} title={r.card_title ?? ''}>{r.task_id}</Link> : ''}</td>
                   <td><Pick dim="project" value={r.project_slug} onPick={addFilter}>{r.project_slug}{r.feature_slug ? `/${r.feature_slug}` : ''}</Pick></td>
@@ -336,7 +337,7 @@ function UsageOverview() {
           <tbody>
             {(orgWakes.data?.agents ?? []).map((a) => (
               <tr key={a.agent_name} className="border-t border-[var(--rule)]">
-                <td><Link className="underline" to={`/org/agents/${a.agent_name}`}>{a.agent_name}</Link> <span className="text-xs text-[var(--ink-dim)]">{a.role}</span>
+                <td><Link className="inline-flex items-center gap-1 underline" to={`/org/agents/${a.agent_name}`}><AgentAvatar name={a.agent_name} team={a.team_slug} size={18} />{a.agent_name}</Link> <span className="text-xs text-[var(--ink-dim)]">{a.role}</span>
                   {' '}<button type="button" className="text-xs text-[var(--ink-dim)] hover:underline" onClick={() => addFilter('agent', a.agent_name)}>filter</button></td>
                 <td>{a.team_slug ?? ''}</td>
                 <td className="text-right">{a.wakes}</td><td className="text-right">{a.done}</td><td className="text-right">{a.open}</td>

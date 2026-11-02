@@ -5,6 +5,7 @@ import { ApiError, api, ZEN_THINKING, type NewZenChat, type ZenChat as ZenChatRo
 import { useEventLog } from '../../lib/useEventLog.js';
 import EventFeed from '../../components/EventFeed.js';
 import { ChatInput } from '../../components/ChatInput.js';
+import { AgentAvatar } from '../../components/AgentAvatar.js';
 import { useStickToBottom } from '../../lib/useStickToBottom.js';
 import HarnessSwitch from './HarnessSwitch.js';
 import PresetLauncher from './PresetLauncher.js';
@@ -50,7 +51,7 @@ export default function ZenChat() {
                 className={`w-full border-b border-[var(--rule)] px-3 py-2 text-left text-sm hover:bg-[var(--paper-sunk)] ${chatId === c.id ? 'bg-[var(--paper-sunk)]' : ''}`}>
                 <div className="truncate font-medium">{c.title || 'untitled'}</div>
                 <div className="flex gap-2 text-xs text-[var(--ink-dim)]">
-                  <span className="truncate">{c.persona ?? 'default'} · {shortModel(c.model)}</span>
+                  <span className="flex min-w-0 items-center gap-1 truncate">{c.persona && <AgentAvatar name={c.persona} size={14} />}{c.persona ?? 'default'} · {shortModel(c.model)}</span>
                   <StatusLabel c={c} />
                   <span className="ml-auto shrink-0">{new Date(c.updated_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                 </div>
@@ -233,6 +234,7 @@ function Conversation({ id, onBack, onContinue }: { id: string; onBack: () => vo
       <div className="flex items-center gap-2 border-b border-[var(--rule)] px-3 py-2 text-sm">
         <button type="button" onClick={onBack} className="text-[var(--ink-dim)] md:hidden" aria-label="Back">←</button>
         <span className="truncate font-medium">{chat ? chat.title || 'untitled' : '…'}</span>
+        {chat?.persona && <AgentAvatar name={chat.persona} size={22} />}
         {chat && (
           <span className="truncate text-xs text-[var(--ink-dim)]" title={`${chat.model} · tools: ${chat.tools.join(', ') || 'none'} · thinking ${chat.thinking} · session ${chat.session_id}`}>
             {chat.persona ?? 'default'} · {chat.model} · {chat.tools.join(', ') || 'no tools'}{chat.thinking !== 'off' ? ` · thinking ${chat.thinking}` : ''}

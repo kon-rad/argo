@@ -44,6 +44,7 @@ import {
   type Message,
   type TaskLink,
 } from './org.js';
+import { generateAvatar, setAvatar, subjectsFromDb, subjectsFromOrgFile } from './org-avatars.js';
 import { applyOrg, formatApply, formatPlan, planOrgFile } from './org-apply.js';
 import { clearOverride, dispatchState, listOverrides, pauseAgents, pauseLane, resumeAgents, setDispatch, setOverride } from './board.js';
 import { breakerLimitsFromEnv, runBreaker } from './breaker.js';
@@ -163,6 +164,12 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
           [--result "..."] [--turns N] [--cost USD] [--duration S] [--log path] [--transcript path] [--dry-run]
                                            record the episode and, when configured, the cheap-model reflection (wake-done does this)
   propose-improvement <agent> --memory-id <id> [--dry-run]   one self-improvement card from a recurring friction; a human applies it
+
+  avatars (docs/org-yaml.md "Avatars"; the image model needs GEMINI_API_KEY):
+  avatar show [<name>] [--json]            the portrait path and prompt of one bot, or of every bot
+  avatar generate <name>|--all [--force] [--dry-run] [--org <org.json>] [--dir <folder>] [--no-db]
+                                           draw the portrait from its avatar_prompt (skips bots whose file exists unless --force);
+                                           writes the image under the vault, records the path on the row, prints the org-file line
 
   dispatcher only (cc-dispatcher runs these as hermes):
   wake-claim <agent> --by <run id> --json  claim every open wakeup of the agent; prints them
@@ -877,6 +884,41 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       });
       out(json ? JSON.stringify(r, null, 2) : formatApply(r));
       return 0;
+    }
+    case 'avatar': {
+      const sub = pos[0];
+      const names = pos.slice(1);
+      if (sub === 'show') {
+        const rows = await subjectsFromDb(names);
+        if (json) return (out(JSON.stringify(rows, null, 2)), 0);
+        for (const a of rows) out(`${a.name.padEnd(12)} ${a.avatar ?? '(no avatar)'}${a.avatar_prompt ? `\n             ${a.avatar_prompt.replace(/\s+/g, ' ').trim()}` : ''}`);
+        return 0;
+      }
+      if (sub === 'generate') {
+        if (!names.length && !opts['all']) throw new OrgError('avatar generate <name>... | --all');
+        const subjects = opts['org']
+          ? subjectsFromOrgFile(JSON.parse(readFileSync(String(opts['org']), 'utf8')), names)
+          : await subjectsFromDb(names);
+        const useDb = !opts['no-db'] && !opts['org'];
+        let failed = 0;
+        for (const a of subjects) {
+          try {
+            const r = await generateAvatar(a, { force: !!opts['force'], dryRun: !!opts['dry-run'], ...(typeof opts['dir'] === 'string' ? { dir: opts['dir'] } : {}) });
+            if (r.skipped === 'exists') out(`${a.name}: kept ${r.path} (--force to redraw)`);
+            else if (r.skipped === 'dry-run') out(`${a.name}: would write ${r.path}\n--- prompt ---\n${r.note ?? ''}\n---`);
+            else {
+              let recorded = '';
+              if (useDb) recorded = (await setAvatar(a.name, r.path)) ? ', row updated' : ', no roster row';
+              out(`${a.name}: wrote ${r.path} (${Math.round(r.bytes / 1024)} KB${recorded})  add to its org entry:  avatar: ${r.path}`);
+            }
+          } catch (err) {
+            failed++;
+            console.error(`${a.name}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+        return failed ? 1 : 0;
+      }
+      throw new OrgError('avatar show [<name>] | avatar generate <name>... | --all');
     }
     case 'import': {
       if (!pos[0]) throw new OrgError('import <org.json>');

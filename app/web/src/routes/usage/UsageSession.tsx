@@ -3,6 +3,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, type AgentSessionRun, type AgentStep } from '../../lib/api.js';
 import { zoned } from '../../lib/time.js';
+import { AgentAvatar } from '../../components/AgentAvatar.js';
 import { formatTokens } from './format.js';
 import { duration, groupTurns, toolSummary, type ToolPair } from './steps.js';
 
@@ -99,7 +100,7 @@ function Runs({ runs }: { runs: AgentSessionRun[] }) {
   return <>{runs.map((run) => (
     <div key={run.run_id} className="mt-2 rounded border border-[var(--rule)] p-2 text-sm">
       {run.agent_name
-        ? <><Link className="underline" to={`/org/agents/${run.agent_name}`}>{run.agent_name}</Link>{run.task_id ? <> on card <Link className="underline" to={`/board/${run.task_id}`}>{run.task_id}</Link></> : ''}</>
+        ? <><Link className="inline-flex items-center gap-1 underline" to={`/org/agents/${run.agent_name}`}><AgentAvatar name={run.agent_name} size={18} />{run.agent_name}</Link>{run.task_id ? <> on card <Link className="underline" to={`/board/${run.task_id}`}>{run.task_id}</Link></> : ''}</>
         : <>Task {run.task_id ?? '?'} on {run.lane ?? '?'}</>}
       {' '}· {run.num_turns ?? '?'} turns · {run.subtype ?? ''}{run.started_at ? ` · ${zoned(run.started_at, tz)}` : ''}
       {run.verify_name && (

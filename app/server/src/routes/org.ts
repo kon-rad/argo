@@ -25,6 +25,8 @@ import {
 import { listApprovals, listFacts, shipDecide } from '../org-powers.js';
 import { corePath, listEpisodes, listMemory, listProposals, memorySettingsFor, memoryStats } from '../org-memory.js';
 import { config } from '../config.js';
+import { query } from '../db.js';
+import { mimeOf, resolveVaultFile } from '../org-avatars.js';
 import { HttpError, intParam, parseOr400, wrap } from './http.js';
 
 /**
@@ -122,6 +124,24 @@ export function orgRouter(vaultRoot: string): Router {
       res.json({
         teams: chart.teams,
         agents: chart.agents.map((a) => ({ ...a, activity: activity[a.name] ?? null, caps: limits[a.name] ?? null })),
+      });
+    }),
+  );
+
+  // An agent's portrait, the vault file its org entry names (docs/org-yaml.md "Avatars"). 404 when it has none or the
+  // file is missing, so the pages fall back to the name chip. Cached for an hour: a redraw changes the file, not the URL.
+  router.get(
+    '/avatar/:name',
+    wrap(async (req, res) => {
+      const name = parseOr400(Name, req.params['name']);
+      const { rows } = await query<{ avatar: string | null }>(`SELECT avatar FROM org_agents WHERE name = $1 AND retired_at IS NULL`, [name]);
+      const abs = resolveVaultFile(vaultRoot, rows[0]?.avatar);
+      const mime = abs ? mimeOf(abs) : null;
+      if (!abs || !mime) throw new HttpError(404, `no avatar for ${name}`);
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.type(mime);
+      res.sendFile(abs, { dotfiles: 'allow' }, (err) => {
+        if (err && !res.headersSent) res.status(404).json({ error: `no avatar file for ${name}` });
       });
     }),
   );
