@@ -1,6 +1,6 @@
 # Connect Telegram
 
-Talk to your agents from your phone. A Telegram bot is a chat that one of your agents answers: you send "research X" or "what is on the board?", the agent works in your vault under the same rules and guard as at your desk, and replies in the chat. This page creates a bot, connects it to Claude Code or Hermes, and checks it end to end.
+Talk to your agents from your phone. A Telegram bot is a chat that one of your agents answers: you send "research X" or "what is on the board?", the agent works in your vault under the same rules and guard as at your desk, and replies in the chat. This page creates a bot, connects it to Claude Code, Hermes or zen-agent with one command, and checks it end to end, including where the chats show up afterwards.
 
 You need a vault with an agent already connected ([Claude Code](03-claude-code.md) or [Hermes](04-hermes.md)), and a machine that stays on, usually the server from [Connect servers and computers](06-connect-machines.md). A laptop works for a trial, but the bot goes quiet when the laptop sleeps.
 
@@ -11,7 +11,7 @@ You need a vault with an agent already connected ([Claude Code](03-claude-code.m
 | The bot | An account Telegram creates for you through BotFather. It has a **token** (a secret) and a username |
 | The poller | One agent process that holds the token and listens for messages. **A token has exactly one poller**: two processes on one bot break both |
 | The allowlist | The Telegram user IDs the agent will answer. Anyone else who finds the bot is ignored |
-| The agent | Claude Code (through its Telegram channel plugin) or Hermes (through its gateway), running in your vault |
+| The agent | Claude Code (through its Telegram channel plugin), Hermes (through its gateway) or zen-agent (through the bridge add-on), running in your vault |
 
 **Use one bot per agent.** If you run both Claude Code and Hermes on Telegram, create two bots. Switching one token between agents is how you end up with two pollers. Hermes is also the one that delivers scheduled jobs (a morning brief, a daily draft), so give it a bot that stays on Hermes.
 
@@ -30,7 +30,102 @@ Send any message to `@userinfobot`. It replies with your numeric ID. In a privat
 
 ## 3. Connect it to an agent
 
-Pick the agent you want on this bot. The token goes in a file on the machine that runs the agent, never in the vault's tracked files.
+One command does the connecting, on the machine that runs the agent, as the user the agent runs as. It asks for the token (typed hidden, or piped in), writes it to the agent's own token file outside the vault with mode 600, writes the allowlist, renders the systemd units from the engine's templates, enables them, and registers the bot in `secondbrain.json` so its chats are labelled on `/usage`. The token never appears on the command line, in a log or in the output.
+
+| Agent | Command | What you get |
+|---|---|---|
+| Claude Code | `secondbrain telegram add --agent claude-code --allow <your user id> --username <yourbot>` | Claude Code in its own tmux server under `claude-telegram.service`, a nightly `/clear` timer (19:00 UTC; `--clear-at HH:MM` changes it), a settings file that turns prompts off and denies reading secret files, and a system prompt for a phone chat |
+| Hermes | `secondbrain telegram add --agent hermes --allow <your user id>` | The token in the Hermes home's env file and the exact config lines to add; Hermes's gateway does the polling |
+| zen-agent (the cheap one) | `secondbrain telegram add --agent zen-agent --allow <your user id> --persona <name>` | The bridge's env file filled in and the [bridge add-on](https://github.com/kon-rad/argo/blob/main/addons/telegram-bridge/README.md) under `telegram-bridge.service` |
+
+`--name` names the bot on `/usage` (defaults: `claude`, `hermes`, `zen`). `--allow` takes several ids with commas. Without password-less `sudo` the command still writes every file and prints the `install` and `systemctl` lines for you to run; `--no-install` does only that. Run it again to change anything: it rewrites the files in place.
+
+Install the Claude Code channel plugin first if you have not (`telegram` in `claude-plugins-official`, through Claude Code's `/plugin` command), and read the sandbox note in the appendix before you leave a bot running: a session started by systemd cannot answer permission prompts, so it runs without them and the deny rules in the settings file are what hold.
+
+Send the bot a message. It should answer in the chat.
+
+## 4. Check it
+
+```
+secondbrain telegram status
+```
+
+One line per bot: the token (valid against Telegram's `getMe`, invalid, or missing), the unit's state, whether the plugin process is up inside the session (Claude Code), how many of its chats are on `/usage` and when the last one was, and the link. It exits non-zero and says what to do when something is off, including two bots on one token. Run it from the server, where the database is; from a laptop it checks everything but the sessions.
+
+| Check | By hand | Pass |
+|---|---|---|
+| The token is valid | `set -a; . ~/.claude/channels/telegram/.env; set +a; curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" \| jq .ok` | `true` |
+| One poller per token | `status` compares every bot's token file | No `share one token` line |
+| The service is up | `systemctl is-active claude-telegram` | `active` |
+| The plugin is running | `pgrep -f 'bun server.ts'` | A process ID |
+| It answers you | Send the bot `hello` from the account in `allowFrom` | A reply in the chat |
+| It ignores strangers | Message the bot from a second Telegram account | No reply |
+| The guard holds | Ask it to `cat .env` | A block whose reason starts with `guard:` |
+| The chat is on `/usage` | Wait five minutes, then `status` again, or open `/usage?s_channel=telegram` | The chat is listed with a `telegram · <bot>` chip |
+
+The `getMe` line sources the token without printing it. Do not drop the `jq .ok`: the full reply is harmless, but a habit of echoing the URL is not.
+
+## 5. Where the chats show up
+
+Every Telegram conversation is a session on the app's `/usage` page, whichever agent answered it, next to your terminal sessions: the prompts as you typed them, the agent's thinking, tool calls and replies, tokens and model. The collectors that put them there run on a server every five minutes (`secondbrain usage-sync` for Claude Code transcripts and zen-agent traces, `secondbrain agents-sync` for Hermes), so a chat appears within a few minutes.
+
+Each one carries a **channel** label, `telegram`, and the name of the bot. Filter the sessions list by `channel` (the URL keeps it: `/usage?s_channel=telegram`), or use the same filter on the token charts. `secondbrain telegram add` registers each bot in `secondbrain.json` so the label can say which one answered; this is what it writes:
+
+```json
+{
+  "telegram": {
+    "bots": [
+      { "name": "claude", "agent": "claude-code", "username": "yourbot" },
+      { "name": "hermes", "agent": "hermes" },
+      { "name": "zen", "agent": "zen-agent", "persona": "sol" }
+    ]
+  }
+}
+```
+
+`name` is what the page shows; `agent` is which harness polls that bot. A Hermes profile other than `~/.hermes` adds `"profile": "<name>"`; the zen bridge passes its name with `BRIDGE_BOT_NAME`, which the command sets. Without this block the label is still `telegram`, just without a bot name.
+
+What the label holds, and what it does not: the channel, the bot's name and the sender's Telegram handle. Chat ids, user ids and message ids are never written into the label (the raw transcript keeps whatever the harness logged, on your own server). Sessions stored before the label existed get it with `secondbrain archive-steps --relabel`.
+
+The nightly `/clear` timer starts a new Claude Code session each day; those command records are classed as session notes, not prompts, so the session's title is the first thing you actually sent.
+
+## 6. Add, change and remove a connection
+
+| To | Run |
+|---|---|
+| Allow another person | `secondbrain telegram allow add <bot> <user id>` (Hermes: edit its config and restart the gateway). Anyone on the list can run your agent, so keep it to people you would give your terminal |
+| Remove a person | `secondbrain telegram allow remove <bot> <user id>`. It refuses to leave the list empty |
+| Replace a leaked token | `/revoke` in BotFather, then `secondbrain telegram add` again with the same `--agent` and `--name`; it rewrites the token file and restarts the unit |
+| Move a bot to another agent | `secondbrain telegram remove <bot> --keep-token`, then `add` with the new `--agent`. Never run two pollers on one token |
+| Pause the bot | `sudo systemctl disable --now claude-telegram` (Hermes: stop the gateway). Messages sent meanwhile wait on Telegram's side for a short time, then are dropped |
+| Remove it | `secondbrain telegram remove <bot>`: stops and deletes the units, deletes the token and allowlist files, drops the config entry. Then `/deletebot` in BotFather |
+
+## 7. Make requests show up on your board
+
+If you use the [kanban board](../board-design.md), have the Telegram agent file a card for every request before it starts work, so the request shows on the board and a lost session can be resumed from the card. That is a skill in your vault's `.agents/skills/` plus one line in `AGENTS.local.md`: "Every request sent on Telegram gets a card on the board before the work starts." Give every card an assignee; an unassigned card is invisible work.
+
+## 8. Get a ping when an agent needs you
+
+A bot can also message you first. A server script that posts to Telegram's `sendMessage` method with the bot's token and your user ID as `chat_id` is enough for approvals and failures, and it needs no running poller because it only sends. The engine's `app/deploy/org-notify.sh` does this using the Claude Code bot's token and the first ID in `allowFrom`. Keep messages under about 3,500 characters (Telegram's limit is 4,096).
+
+## Security notes
+
+- The allowlist is the only thing between the internet and an agent with shell access to your vault. Keep it short.
+- Token and allowlist files are `chmod 600`, outside the vault, and denied to the agent's file tools (`Read(**/.env)`, and the channel folder in your deny rules) so a prompt injection cannot make the agent read them.
+- Everything an agent writes into a chat is stored by Telegram. Do not ask a Telegram-connected agent to print secrets or private journal text. Read [Privacy](07-privacy.md) for where each kind of data goes.
+- Telegram cloud chats are not end-to-end encrypted, bots included.
+- Anything you paste into a note, a dev log or a commit message must pass the leak check; real chat IDs are one of the things `scripts/check-public.sh` looks for.
+
+## What this page does not cover
+
+- A bot per agent persona. One bot with one agent is the supported shape; routing one chat to several agents is your own work.
+- Group chats. The setup above assumes private chats with an allowlist.
+- A Telegram transport for the standalone [zen-agent](../zen-agent.md). It has none; a bridge that calls `zen-agent run` per message is a later add-on.
+
+
+## Appendix: the same by hand
+
+What `secondbrain telegram add` does, for a machine without systemd, a fork, or when you want to see every file. The templates it renders are in `app/deploy/telegram/`; the units it writes are these.
 
 ### Option A: Claude Code
 
@@ -136,77 +231,5 @@ set -a; . ~/.zen/telegram-bridge.env; set +a; python3 .secondbrain/addons/telegr
 ```
 
 It prints `bridge: up as @yourbot` when the token is good. The add-on's README has the systemd unit, the cost limits (`BRIDGE_MAX_TURNS`, `BRIDGE_MAX_TOKENS`, a fresh session every 20 messages) and the commands `/new` and `/status`. It refuses to start with an empty allowlist.
-
-## 4. Check it
-
-Run these in order. The first that fails is the problem.
-
-| Check | How | Pass |
-|---|---|---|
-| The token is valid | `set -a; . ~/.claude/channels/telegram/.env; set +a; curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" \| jq .ok` | `true` |
-| One poller per token | Only one agent unit uses this token. Compare the tokens of your Claude Code bot and your Hermes bot | They differ |
-| The service is up | `systemctl is-active claude-telegram` | `active` |
-| The plugin is running | `pgrep -f 'bun server.ts'` | A process ID |
-| It answers you | Send the bot `hello` from the account in `allowFrom` | A reply in the chat |
-| It ignores strangers | Message the bot from a second Telegram account | No reply |
-| The guard holds | Ask it to `cat .env` | A block whose reason starts with `guard:` |
-
-The `getMe` line sources the token without printing it. Do not drop the `jq .ok`: the full reply is harmless, but a habit of echoing the URL is not.
-
-## 4b. Where the chats show up
-
-Every Telegram conversation is a session on the app's `/usage` page, whichever agent answered it, next to your terminal sessions: the prompts as you typed them, the agent's thinking, tool calls and replies, tokens and model. The collectors that put them there run on a server every five minutes (`secondbrain usage-sync` for Claude Code transcripts and zen-agent traces, `secondbrain agents-sync` for Hermes), so a chat appears within a few minutes.
-
-Each one carries a **channel** label, `telegram`, and the name of the bot. Filter the sessions list by `channel` (the URL keeps it: `/usage?s_channel=telegram`), or use the same filter on the token charts. Name your bots once in `secondbrain.json` so the label can say which one answered:
-
-```json
-{
-  "telegram": {
-    "bots": [
-      { "name": "claude", "agent": "claude-code", "username": "yourbot" },
-      { "name": "hermes", "agent": "hermes" },
-      { "name": "zen", "agent": "zen-agent", "persona": "sol" }
-    ]
-  }
-}
-```
-
-`name` is what the page shows; `agent` is which harness polls that bot. A Hermes profile other than `~/.hermes` adds `"profile": "<name>"`; the zen bridge passes its name with `BRIDGE_BOT_NAME`. Without this block the label is still `telegram`, just without a bot name.
-
-What the label holds, and what it does not: the channel, the bot's name and the sender's Telegram handle. Chat ids, user ids and message ids are never written into the label (the raw transcript keeps whatever the harness logged, on your own server). Sessions stored before the label existed get it with `secondbrain archive-steps --relabel`.
-
-A long-running Claude Code bot is best cleared every night (a timer that sends `/clear` into its tmux session), which starts a new session each day; those command records are classed as session notes, not prompts, so the session's title is the first thing you actually sent.
-
-## 5. Add, change and remove a connection
-
-| To | Do |
-|---|---|
-| Allow another person | Add their ID to `allowFrom` in `access.json`, or Hermes's allowed-users setting. Restart the agent. Anyone on the list can run your agent, so keep it to people you would give your terminal |
-| Replace a leaked token | `/revoke` in BotFather, put the new token in the same file, restart the agent |
-| Move a bot to another agent | Stop the old poller first, then start the new one. Never run both |
-| Pause the bot | `sudo systemctl disable --now claude-telegram` (Hermes: stop the gateway). Messages sent meanwhile wait on Telegram's side for a short time, then are dropped |
-| Remove it | Disable the unit, delete the token file, and delete the bot with `/deletebot` in BotFather |
-
-## 6. Make requests show up on your board
-
-If you use the [kanban board](../board-design.md), have the Telegram agent file a card for every request before it starts work, so the request shows on the board and a lost session can be resumed from the card. That is a skill in your vault's `.agents/skills/` plus one line in `AGENTS.local.md`: "Every request sent on Telegram gets a card on the board before the work starts." Give every card an assignee; an unassigned card is invisible work.
-
-## 7. Get a ping when an agent needs you
-
-A bot can also message you first. A server script that posts to Telegram's `sendMessage` method with the bot's token and your user ID as `chat_id` is enough for approvals and failures, and it needs no running poller because it only sends. The engine's `app/deploy/org-notify.sh` does this using the Claude Code bot's token and the first ID in `allowFrom`. Keep messages under about 3,500 characters (Telegram's limit is 4,096).
-
-## Security notes
-
-- The allowlist is the only thing between the internet and an agent with shell access to your vault. Keep it short.
-- Token and allowlist files are `chmod 600`, outside the vault, and denied to the agent's file tools (`Read(**/.env)`, and the channel folder in your deny rules) so a prompt injection cannot make the agent read them.
-- Everything an agent writes into a chat is stored by Telegram. Do not ask a Telegram-connected agent to print secrets or private journal text. Read [Privacy](07-privacy.md) for where each kind of data goes.
-- Telegram cloud chats are not end-to-end encrypted, bots included.
-- Anything you paste into a note, a dev log or a commit message must pass the leak check; real chat IDs are one of the things `scripts/check-public.sh` looks for.
-
-## What this page does not cover
-
-- A bot per agent persona. One bot with one agent is the supported shape; routing one chat to several agents is your own work.
-- Group chats. The setup above assumes private chats with an allowlist.
-- A Telegram transport for the standalone [zen-agent](../zen-agent.md). It has none; a bridge that calls `zen-agent run` per message is a later add-on.
 
 Next: [Privacy](07-privacy.md) for what leaves your machine, or back to the [onboarding overview](README.md).

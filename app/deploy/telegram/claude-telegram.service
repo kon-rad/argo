@@ -1,0 +1,34 @@
+[Unit]
+Description=Second Brain: Claude Code on Telegram bot "@BOT_NAME@" (channel plugin), in the vault
+After=network-online.target
+Wants=network-online.target
+
+# Rendered by `secondbrain telegram add --agent claude-code` (docs/onboarding/11-telegram.md). Claude Code runs as one
+# interactive session inside its own tmux server (-L @SOCKET@): a shared tmux server would live in another unit's
+# cgroup and systemd would see this unit as exited. Look inside: sudo -iu @BOT_USER@ tmux -L @SOCKET@ attach -t @SOCKET@
+# (detach with Ctrl-b d). The bot token and the allowlist are in @BOT_HOME@/.claude/channels/telegram/, mode 600,
+# and the settings file denies the session's own file tools from reading them.
+# No one is at the keyboard, so the session runs without permission prompts and the settings file's deny rules
+# (no sudo, no secret files) are what hold. The vault guard hook applies in every mode.
+# ExecStartPre sleep: on a quick restart the new session can come up while the old plugin is still exiting and be
+# left without the Telegram connection. ExecStartPost fails the start if the plugin's process never appears, so
+# Restart=on-failure tries again.
+[Service]
+Type=forking
+User=@BOT_USER@
+Group=@BOT_USER@
+WorkingDirectory=@VAULT_DIR@
+Environment=HOME=@BOT_HOME@
+Environment=PATH=@BOT_HOME@/.bun/bin:@BOT_HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=DISABLE_AUTOUPDATER=1
+ExecStartPre=/bin/sleep 8
+ExecStart=/usr/bin/tmux -L @SOCKET@ new-session -d -s @SOCKET@ -x 160 -y 50 -c @VAULT_DIR@ "@CLAUDE_BIN@ --channels plugin:telegram@claude-plugins-official --settings @SETTINGS_FILE@ --permission-mode bypassPermissions --append-system-prompt-file @PROMPT_FILE@"
+ExecStartPost=@CHECK_SCRIPT@
+ExecStop=/usr/bin/tmux -L @SOCKET@ kill-session -t @SOCKET@
+Restart=on-failure
+RestartSec=60
+TimeoutStartSec=120
+MemoryMax=900M
+
+[Install]
+WantedBy=multi-user.target
