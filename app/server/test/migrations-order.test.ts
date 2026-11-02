@@ -8,6 +8,9 @@ import { describe, expect, it } from 'vitest';
  * then fail the deploy once the first of the pair is applied (2026-11-02: 1756000016600_org-agent-avatar next to
  * 1756000016600_session-channel rolled the deploy back). Keep every prefix unique.
  */
+/** Pairs that shipped before this check existed and are applied everywhere; nothing new may join this list. */
+const HISTORICAL = new Set(['1756000012800_ring-sync-log.sql and 1756000012800_task-links-graph.sql']);
+
 describe('migrations', () => {
   it('have unique numeric prefixes', () => {
     const dir = join(import.meta.dirname, '..', '..', 'db', 'migrations');
@@ -21,6 +24,6 @@ describe('migrations', () => {
       if (other) dupes.push(`${other} and ${n}`);
       seen.set(prefix, n);
     }
-    expect(dupes, 'migrations sharing a numeric prefix').toEqual([]);
+    expect(dupes.filter((d) => !HISTORICAL.has(d)), 'migrations sharing a numeric prefix').toEqual([]);
   });
 });
