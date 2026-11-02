@@ -1,3 +1,5 @@
+import { zenChannel } from '../archive/channel.js';
+import { channelMeta } from '../archive/channelMeta.js';
 import { clean, sha256 } from '../archive/clean.js';
 import type { Host, ParsedMessage, SessionInput } from '../archive/types.js';
 import { classifyZenAction } from './actions.js';
@@ -76,7 +78,9 @@ export function parseZenTrace(records: unknown[], host: Host, logPath: string, f
   if (!KNOWN_TRACE_VERSIONS.has(version)) throw new Error(`zen-agent trace version ${version} is newer than this parser knows (${logPath})`);
 
   const id = meta.id as string;
-  const dispatch = dispatchOf(meta);
+  // A resumed run appends its own meta line; its labels (the dispatcher's or the bridge's) are the current ones.
+  const latestMeta = [...lines].reverse().find((l) => l.type === 'meta' && str(l.id) === id) ?? meta;
+  const dispatch = dispatchOf(latestMeta);
   const modelSpec = str(meta.model);
   const slash = modelSpec?.indexOf('/') ?? -1;
   const metaProvider = modelSpec && slash > 0 ? modelSpec.slice(0, slash) : null;
@@ -151,7 +155,8 @@ export function parseZenTrace(records: unknown[], host: Host, logPath: string, f
     source: 'zen-agent', host, externalId: id, parentExternalId: str(meta.parent), project: null, title, model: modelSpec,
     startedAt, endedAt, messageCount: messages.length, inputTokens, outputTokens, costUsd: run.totalCostUsd,
     meta: { persona: meta.persona ?? null, parts: run.parts, budget: run.budget, tools: meta.tools ?? null, skills: meta.skills ?? null,
-      dispatch, stopped, resumed: meta.resumed ?? null, version },
+      dispatch, stopped, resumed: meta.resumed ?? null, version,
+      ...channelMeta(zenChannel(dispatch, run.reasons), 'zen-agent', str(dispatch.bot)) },
     b2Path: null,
   };
   return { run, calls, session: { input, messages } };

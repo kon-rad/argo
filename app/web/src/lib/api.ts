@@ -663,6 +663,8 @@ export interface SummaryFact {
 export interface AgentSessionRow {
   id: number; source: string; harness: string; profile: string | null; provider: string | null; host: string;
   external_id: string; parent_external_id: string | null; project: string | null; title: string | null; first_prompt: string | null;
+  /** Where the prompts came from when not a keyboard: 'telegram', 'web', 'remote-control'; the bot's configured name. */
+  channel: string | null; channel_bot: string | null;
   started_at: string | null; ended_at: string | null; steps: number; tool_calls: number; errors: number; subagents: number;
   models: string[]; calls: number; input: number; cache_write: number; cache_read: number; output: number; reasoning: number;
   cost_usd?: number | null;
@@ -679,13 +681,13 @@ export interface AgentSessionRun {
   verify_metric: number | null; verify_output: string | null;
 }
 export interface AgentSessionFilters {
-  harness?: string[]; host?: string[]; profile?: string[]; provider?: string[]; tool?: string[];
+  harness?: string[]; host?: string[]; profile?: string[]; provider?: string[]; channel?: string[]; tool?: string[];
   q?: string; errors?: boolean; subagents?: boolean;
 }
-export type AgentSessionFacets = Record<'harness' | 'host' | 'profile' | 'provider' | 'tool', Array<{ value: string; n: number }>>;
+export type AgentSessionFacets = Record<'harness' | 'host' | 'profile' | 'provider' | 'channel' | 'tool', Array<{ value: string; n: number }>>;
 const agentParams = (f: AgentSessionFilters): Params => ({
   harness: f.harness?.join(','), host: f.host?.join(','), profile: f.profile?.join(','), provider: f.provider?.join(','),
-  tool: f.tool?.join(','), q: f.q, errors: f.errors ? '1' : undefined, subagents: f.subagents ? '1' : undefined,
+  channel: f.channel?.join(','), tool: f.tool?.join(','), q: f.q, errors: f.errors ? '1' : undefined, subagents: f.subagents ? '1' : undefined,
 });
 
 export interface UsageMessage {

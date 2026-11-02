@@ -153,6 +153,30 @@ Run these in order. The first that fails is the problem.
 
 The `getMe` line sources the token without printing it. Do not drop the `jq .ok`: the full reply is harmless, but a habit of echoing the URL is not.
 
+## 4b. Where the chats show up
+
+Every Telegram conversation is a session on the app's `/usage` page, whichever agent answered it, next to your terminal sessions: the prompts as you typed them, the agent's thinking, tool calls and replies, tokens and model. The collectors that put them there run on a server every five minutes (`secondbrain usage-sync` for Claude Code transcripts and zen-agent traces, `secondbrain agents-sync` for Hermes), so a chat appears within a few minutes.
+
+Each one carries a **channel** label, `telegram`, and the name of the bot. Filter the sessions list by `channel` (the URL keeps it: `/usage?s_channel=telegram`), or use the same filter on the token charts. Name your bots once in `secondbrain.json` so the label can say which one answered:
+
+```json
+{
+  "telegram": {
+    "bots": [
+      { "name": "claude", "agent": "claude-code", "username": "yourbot" },
+      { "name": "hermes", "agent": "hermes" },
+      { "name": "zen", "agent": "zen-agent", "persona": "sol" }
+    ]
+  }
+}
+```
+
+`name` is what the page shows; `agent` is which harness polls that bot. A Hermes profile other than `~/.hermes` adds `"profile": "<name>"`; the zen bridge passes its name with `BRIDGE_BOT_NAME`. Without this block the label is still `telegram`, just without a bot name.
+
+What the label holds, and what it does not: the channel, the bot's name and the sender's Telegram handle. Chat ids, user ids and message ids are never written into the label (the raw transcript keeps whatever the harness logged, on your own server). Sessions stored before the label existed get it with `secondbrain archive-steps --relabel`.
+
+A long-running Claude Code bot is best cleared every night (a timer that sends `/clear` into its tmux session), which starts a new session each day; those command records are classed as session notes, not prompts, so the session's title is the first thing you actually sent.
+
 ## 5. Add, change and remove a connection
 
 | To | Do |

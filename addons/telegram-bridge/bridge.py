@@ -38,6 +38,8 @@ class Config:
         self.allowed = {int(x) for x in e.get("TELEGRAM_ALLOWED_USERS", "").replace(" ", "").split(",") if x}
         self.zen_bin = e.get("ZEN_AGENT_BIN", "zen-agent")
         self.persona = e.get("ZEN_PERSONA", "").strip()
+        # The bot's name in secondbrain.json `telegram.bots`, so the usage page shows "telegram · <name>" on its sessions.
+        self.bot_name = e.get("BRIDGE_BOT_NAME", "").strip()
         self.model = e.get("ZEN_MODEL", "").strip()
         self.tools = e.get("ZEN_TOOLS", "").strip()
         self.max_turns = e.get("BRIDGE_MAX_TURNS", "").strip()
@@ -136,9 +138,11 @@ class Bridge:
     def argv(self, session: Optional[str], message_id: Optional[int] = None) -> List[str]:
         c = self.cfg
         a = [c.zen_bin, "run", "--json", "--quiet"]
-        # Labels the usage page reads from the trace (usage/zenTrace.ts): a work type to filter on, and a wake reason
-        # whose ref is the Telegram message id, never the chat id or the text.
+        # Labels the usage page reads from the trace (usage/zenTrace.ts): a work type and a channel to filter on, the
+        # bot's configured name, and a wake reason whose ref is the Telegram message id, never the chat id or the text.
         a += ["--meta", "work_type=telegram", "--meta", "channel=telegram"]
+        if c.bot_name:
+            a += ["--meta", f"bot={c.bot_name}"]
         if message_id is not None:
             a += ["--meta-json", json.dumps({"reasons": [{"reason": "telegram", "ref": str(message_id)}]})]
         for flag, val in (("--persona", c.persona), ("--model", c.model), ("--tools", c.tools),

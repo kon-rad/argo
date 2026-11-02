@@ -10,6 +10,8 @@ import * as store from '../archive/store.js';
 import type { Host } from '../archive/types.js';
 import { readHermesCounters } from '../usage/hermesCounters.js';
 import { findHomes, hermesTimezone, type HermesHome } from './homes.js';
+import { hermesChannel } from '../archive/channel.js';
+import { channelMeta } from '../archive/channelMeta.js';
 import { readHermesCalls } from '../usage/hermesCalls.js';
 import { recordHermesCounters, upsertCalls } from '../usage/store.js';
 
@@ -88,7 +90,7 @@ async function syncSessions(home: HermesHome, host: Host, tz: string | null, tmp
     const ids = new Map<string, number>();
     for (const s of sessions) {
       const r = await store.upsertSession(tx, {
-        ...s, source, meta: { ...s.meta, profile: home.profile, timezone: tz },
+        ...s, source, meta: { ...s.meta, profile: home.profile, timezone: tz, ...channelMeta(hermesChannel(s.meta.source), 'hermes', home.profile) },
       });
       ids.set(s.externalId, r.id);
       if (r.changed) c.sessions++;
