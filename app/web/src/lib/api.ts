@@ -1056,6 +1056,8 @@ export interface OrgChartAgent {
   reports_to: string | null;
   model: string | null;
   expertise: string | null;
+  /** Vault-relative portrait (served at /api/org/avatar/<name>), or null. */
+  avatar?: string | null;
   is_lead: boolean;
   session_id: string | null;
   session_started: string | null;

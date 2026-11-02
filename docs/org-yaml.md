@@ -31,7 +31,35 @@ A vault that ships the `org-runtime` skill does steps 2 and 3 on the server with
 | `channels` | Shared channels: `members` (`"*"`, team names, or agent names), `purpose`, optional `classification` and `compartments` |
 | `wake_rules` | When a message wakes a bot (next section) |
 
-An agent needs `role`, `team` and `reports_to` (its team lead or the CEO). Optional: `runtime` (`claude-code`, `hermes`, `codex`, `zen-agent`, `human`), `model`, `capabilities` (`code`, `review`, `merge`, `deploy`, `m1`, `web`, `dispatch`), `expertise`, `work`, `channels`, and the per-agent overrides of `wakes_per_day`, `cooldown_minutes` and `max_runtime`.
+An agent needs `role`, `team` and `reports_to` (its team lead or the CEO). Optional: `runtime` (`claude-code`, `hermes`, `codex`, `zen-agent`, `human`), `model`, `capabilities` (`code`, `review`, `merge`, `deploy`, `m1`, `web`, `dispatch`), `expertise`, `work`, `channels`, `avatar` and `avatar_prompt` (below), and the per-agent overrides of `wakes_per_day`, `cooldown_minutes` and `max_runtime`.
+
+## Avatars
+
+An agent may have a portrait. Two optional keys on its entry:
+
+| Key | Holds |
+|---|---|
+| `avatar` | A vault-relative image (`.jpg`, `.png` or `.webp`). The app serves it at `GET /api/org/avatar/<name>` and shows it on `/org` (chart, agent pages, every author chip in the channels), on the `/usage` runs, wakes and running lists, in agent session views and in the Agents chat when a persona is chosen. An agent without one gets a round chip with its initial in its team colour |
+| `avatar_prompt` | What to draw: one or two sentences about this agent's motif and posture. The shared style goes in front of it (below), so the prompt only says what makes this agent different |
+
+Both reach the `org_agents` row through `cli-org import` (columns `avatar`, `avatar_prompt`).
+
+**Drawing them.** `cli-org avatar generate <name>` (or `--all`) sends the style text, the reference image and the agent's prompt to a Gemini image model (`GEMINI_API_KEY` in the environment), writes the image under the vault and records the path on the row. A bot whose file already exists is skipped unless `--force`. `--dry-run` prints the prompt and writes nothing; `--org <org.json>` reads the bots from a compiled org file instead of the database (a vault whose roster is not imported yet) and `--no-db` skips the row update. `cli-org avatar show` lists the paths and prompts. The file it writes is named `<name>.<ext>` next to the agent's current `avatar`, else in `org.avatars.dir`; add the printed `avatar:` line to the agent's entry so the next import keeps it.
+
+`secondbrain.json`:
+
+```json
+"org": {
+  "avatars": {
+    "dir": "Areas/team/avatars",
+    "reference": "Areas/team/avatars/sol.jpg",
+    "style": "Square portrait of one character for a team roster: a low-poly bust in gold on a plain dark background, no text.",
+    "model": "gemini-3-pro-image-preview"
+  }
+}
+```
+
+`dir` defaults to `.agents/org/avatars`; `reference` and `style` are optional (without them the engine's generic low-poly brief is used); `model` is any Gemini model that returns images. Most vaults ignore image files in git; a folder of avatars that the server must serve needs an exception (`!Areas/team/avatars/*.jpg`) or the images never reach the server's checkout.
 
 ## Wake rules
 

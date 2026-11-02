@@ -154,9 +154,28 @@ const TelegramBot = z.object({
 });
 const Telegram = z.object({ bots: z.array(TelegramBot).default([]) }).prefault({});
 
+/** The org module's portraits (docs/org-yaml.md "Avatars"): where `cli-org avatar generate` writes and what every image shares. */
+const OrgSettings = z
+  .object({
+    avatars: z
+      .object({
+        /** Vault-relative folder for generated portraits whose agent names no `avatar` path yet. */
+        dir: z.string().min(1).default('.agents/org/avatars'),
+        /** Vault-relative image sent with every prompt as the style reference (one finished portrait works best). */
+        reference: z.string().min(1).optional(),
+        /** Style text put in front of every agent's own prompt; unset: the engine's generic low-poly brief. */
+        style: z.string().min(1).optional(),
+        /** Gemini image model name. */
+        model: z.string().min(1).default('gemini-3-pro-image-preview'),
+      })
+      .prefault({}),
+  })
+  .prefault({});
+
 const Settings = z.object({
   chat: Chat,
   telegram: Telegram,
+  org: OrgSettings,
   summaries: Summaries,
   classify: Classify,
   dispatch: Dispatch,

@@ -71,6 +71,9 @@ export const OrgDoc = z.object({
       reports_to: Name.optional(),
       model: z.string().optional(),
       expertise: z.string().optional(),
+      /** A vault-relative image the app serves at /api/org/avatar/<name>, and the text `cli-org avatar generate` draws it from. */
+      avatar: z.string().min(1).optional(),
+      avatar_prompt: z.string().min(1).optional(),
       work: z.enum(['research', 'coding', 'design', 'media', 'writing', 'sales', 'education', 'ops']).optional(),
       capabilities: z.array(z.enum(['code', 'review', 'merge', 'deploy', 'm1', 'web', 'dispatch'])).optional(),
       channels: z.array(z.string()).optional(),
@@ -114,6 +117,8 @@ export interface Agent {
   /** What the bot may do beyond the board (code, review, merge, deploy, m1, web); the wrappers read this. */
   capabilities: string[];
   retired_at: Date | null;
+  /** Vault-relative portrait, or null (org-avatars.ts). */
+  avatar?: string | null;
 }
 
 export interface Message {
@@ -232,13 +237,14 @@ export async function writeOrg(tx: TxClient, doc: OrgDocT, opts: WriteOrgOpts): 
   // Two passes: reports_to is a self-reference.
   for (const [name, a] of Object.entries(doc.agents)) {
     await tx.query(
-      `INSERT INTO org_agents (name, team_slug, runtime, role, model, expertise, org_version, work, capabilities, routines)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+      `INSERT INTO org_agents (name, team_slug, runtime, role, model, expertise, org_version, work, capabilities, routines, avatar, avatar_prompt)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
        ON CONFLICT (name) DO UPDATE SET team_slug = EXCLUDED.team_slug, runtime = EXCLUDED.runtime, role = EXCLUDED.role,
          model = EXCLUDED.model, expertise = EXCLUDED.expertise, org_version = EXCLUDED.org_version, work = EXCLUDED.work,
-         capabilities = EXCLUDED.capabilities, routines = EXCLUDED.routines, retired_at = NULL, updated_at = now()`,
+         capabilities = EXCLUDED.capabilities, routines = EXCLUDED.routines, avatar = EXCLUDED.avatar, avatar_prompt = EXCLUDED.avatar_prompt,
+         retired_at = NULL, updated_at = now()`,
       [name, a.team ?? null, a.runtime, a.role, a.model ?? null, a.expertise ?? null, doc.version, a.work ?? null, [...new Set(a.capabilities ?? [])],
-        JSON.stringify(a.routines ?? [])],
+        JSON.stringify(a.routines ?? []), a.avatar ?? null, a.avatar_prompt ?? null],
     );
   }
   for (const [name, a] of Object.entries(doc.agents)) {
@@ -315,7 +321,7 @@ export async function importOrg(input: unknown): Promise<{ agents: number; teams
 
 export async function getAgent(name: string): Promise<Agent> {
   const { rows } = await query<Agent>(
-    `SELECT name, team_slug, runtime, role, reports_to, model, expertise, capabilities, retired_at FROM org_agents WHERE name = $1`,
+    `SELECT name, team_slug, runtime, role, reports_to, model, expertise, capabilities, retired_at, avatar FROM org_agents WHERE name = $1`,
     [name],
   );
   const a = rows[0];
@@ -655,7 +661,7 @@ export async function orgChart(): Promise<{ teams: { slug: string; name: string;
     `SELECT t.slug, t.name, t.lead FROM teams t WHERE EXISTS (SELECT 1 FROM org_agents a WHERE a.team_slug = t.slug AND a.retired_at IS NULL) ORDER BY t.sort, t.slug`,
   );
   const { rows: agents } = await query<ChartAgent>(
-    `SELECT a.name, a.team_slug, e.runtime, a.role, a.reports_to, e.model, a.expertise, a.retired_at, t.name AS team_name,
+    `SELECT a.name, a.team_slug, e.runtime, a.role, a.reports_to, e.model, a.expertise, a.retired_at, a.avatar, t.name AS team_name,
             EXISTS (SELECT 1 FROM teams x WHERE x.lead = a.name) AS is_lead, a.session_id, a.session_started,
             e.paused, a.paused_reason, a.paused_at, e.overridden, e.effort
        FROM org_agents a JOIN org_agents_effective e ON e.name = a.name LEFT JOIN teams t ON t.slug = a.team_slug

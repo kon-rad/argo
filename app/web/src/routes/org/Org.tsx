@@ -9,6 +9,8 @@ import { ago, zoned } from '../../lib/time.js';
 import { useStickToBottom } from '../../lib/useStickToBottom.js';
 import { ChatInput } from '../../components/ChatInput.js';
 import { VaultMarkdown } from '../../components/VaultMarkdown.js';
+import { AgentAvatar } from '../../components/AgentAvatar.js';
+import { teamColor } from '../../lib/teamColor.js';
 
 /**
  * The agent company: Argo's named agents on teams, talking in channels and DMs
@@ -27,13 +29,7 @@ const KIND_LABEL: Record<string, string> = {
   standup: 'stand-up', reflection: 'reflection', reply: '',
 };
 
-/** A stable colour per team so an author's chip says where they sit without a legend. */
-export function teamColor(team: string | null): string {
-  if (!team) return 'var(--ink-dim)';
-  let h = 0;
-  for (const c of team) h = (h * 31 + c.charCodeAt(0)) % 360;
-  return `hsl(${h} 50% 42%)`;
-}
+export { teamColor };
 
 export function channelLabel(slug: string): string {
   if (slug.startsWith('dm:')) return slug.slice(3).split(':').join(' ↔ ');
@@ -47,7 +43,8 @@ function useTeams(): Map<string, string | null> {
 
 function AuthorChip({ name, team }: { name: string; team: string | null }) {
   return (
-    <Link to={`/org/agents/${name}`} className="rounded px-1.5 py-0.5 text-[0.7rem] font-medium text-white" style={{ background: teamColor(team) }}>
+    <Link to={`/org/agents/${name}`} className="inline-flex items-center gap-1 rounded py-0.5 pl-0.5 pr-1.5 text-[0.7rem] font-medium text-white" style={{ background: teamColor(team) }}>
+      <AgentAvatar name={name} team={team} size={18} />
       {name}
     </Link>
   );
@@ -273,6 +270,7 @@ function Chart() {
   const card = (a: OrgChartAgent) => (
     <Link key={a.name} to={`/org/agents/${a.name}`} className="block rounded border border-[var(--rule)] bg-[var(--paper)] p-2 text-sm hover:border-[var(--accent)]">
       <div className="flex items-center gap-2">
+        <AgentAvatar name={a.name} team={a.team_slug} avatar={a.avatar === undefined ? undefined : a.avatar} size={40} />
         <span className="rounded px-1.5 py-0.5 text-[0.7rem] font-medium text-white" style={{ background: teamColor(a.team_slug) }}>{a.name}</span>
         <span className="font-medium">{a.role}</span>
         {a.is_lead && <span className="text-[0.65rem] text-[var(--ink-faint)]">lead</span>}
@@ -523,6 +521,7 @@ function AgentPage() {
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
+        <AgentAvatar name={p.agent.name} team={p.agent.team_slug} size={64} />
         <span className="rounded px-2 py-1 text-sm font-medium text-white" style={{ background: teamColor(p.agent.team_slug) }}>{p.agent.name}</span>
         <h1 className="text-lg font-semibold tracking-tight">{p.agent.role}</h1>
         <span className="text-sm text-[var(--ink-dim)]">
