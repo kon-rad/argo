@@ -140,8 +140,23 @@ const Summaries = z
   })
   .prefault({});
 
+/** One Telegram bot: which agent answers it, so a session's channel label can name the bot (channel.ts). */
+const TelegramBot = z.object({
+  /** Short name shown on /usage, e.g. "claude" */
+  name: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
+  agent: z.enum(['claude-code', 'hermes', 'zen-agent']),
+  /** The bot's Telegram username, without @ (informational) */
+  username: z.string().optional(),
+  /** Hermes: the profile whose gateway polls this bot ('main' for ~/.hermes). Unset: any profile */
+  profile: z.string().optional(),
+  /** zen-agent: the persona the bridge runs */
+  persona: z.string().optional(),
+});
+const Telegram = z.object({ bots: z.array(TelegramBot).default([]) }).prefault({});
+
 const Settings = z.object({
   chat: Chat,
+  telegram: Telegram,
   summaries: Summaries,
   classify: Classify,
   dispatch: Dispatch,
@@ -212,6 +227,7 @@ export type ChatSettingsOverrides = z.infer<typeof Chat>;
 export type ClassifySettings = z.infer<typeof Classify>;
 export type DispatchSettings = z.infer<typeof Dispatch>;
 export type MetricSetting = z.infer<typeof Metric>;
+export type TelegramBotSetting = z.infer<typeof TelegramBot>;
 
 export function parseSettings(raw: unknown): SecondBrainSettings {
   return Settings.parse(raw ?? {});

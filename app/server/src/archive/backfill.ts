@@ -1,4 +1,6 @@
 import { query, withTransaction } from '../db.js';
+import { hermesChannel, isLocalCommandText, parseChannelTag, stripChannelTag, zenChannel } from './channel.js';
+import { channelMeta } from './channelMeta.js';
 import { PATTERNS, redactor } from './redact.js';
 import { stepFields } from './steps.js';
 
@@ -90,4 +92,75 @@ export async function redactExisting(opts: { batch: number; dryRun: boolean; log
   }
   opts.log(`redact: ${changed} messages and ${sessions} sessions ${opts.dryRun ? 'would be ' : ''}rewritten`);
   return { scanned, changed, sessions, lastId };
+}
+
+/**
+ * Labels sessions stored before the channel column existed (channel.ts): Claude Code sessions whose
+ * prompts carry a `<channel …>` tag get `meta.channel` and the tag stripped from `content_text`, slash
+ * command records become `meta` steps, Hermes sessions take it from their `source`, zen-agent runs
+ * from their dispatch labels. Safe to re-run: a labelled session is skipped.
+ */
+export async function relabelChannels(opts: { batch: number; log: Log }): Promise<{ sessions: number; messages: number; commands: number }> {
+  const out = { sessions: 0, messages: 0, commands: 0 };
+  // Claude Code: the tag is at the start of a prompt's text.
+  for (;;) {
+    const { rows } = await query<{ id: number; source: string; meta: Record<string, unknown> }>(
+      `SELECT s.id, s.source, s.meta FROM archive_sessions s WHERE s.source = 'claude-code' AND NOT (s.meta ? 'channel')
+         AND EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id = s.id AND m.content_text LIKE '<channel %')
+       ORDER BY s.id LIMIT $1`, [opts.batch]);
+    if (!rows.length) break;
+    for (const s of rows) {
+      const { rows: msgs } = await query<{ id: number; content_text: string }>(
+        `SELECT id, content_text FROM archive_messages WHERE session_id = $1 AND content_text LIKE '<channel %' ORDER BY seq`, [s.id]);
+      const tag = msgs.map((m) => parseChannelTag(m.content_text)).find((t) => t) ?? null;
+      await withTransaction(async (tx) => {
+        for (const m of msgs) {
+          await tx.query(`UPDATE archive_messages SET content_text = $2 WHERE id = $1`, [m.id, stripChannelTag(m.content_text)]);
+          out.messages++;
+        }
+        // `|| '{}'` keeps the row from being picked again when the tag names a channel this version doesn't know.
+        await tx.query(`UPDATE archive_sessions SET meta = meta || $2::jsonb, updated_at = now() WHERE id = $1`,
+          [s.id, JSON.stringify({ channel: null, ...channelMeta(tag, 'claude-code') })]);
+      });
+      out.sessions++;
+    }
+    opts.log(`relabel: ${out.sessions} Claude Code sessions (last id ${rows[rows.length - 1]!.id})`);
+  }
+  // Slash commands typed at the keyboard were stored as prompts; they are session records.
+  for (;;) {
+    const { rows } = await query<{ id: number; content_text: string }>(
+      `SELECT m.id, m.content_text FROM archive_messages m JOIN archive_sessions s ON s.id = m.session_id
+       WHERE s.source = 'claude-code' AND m.step = 'prompt' AND (m.content_text LIKE '<command-name>%' OR m.content_text LIKE '<local-command-%')
+       ORDER BY m.id LIMIT $1`, [opts.batch]);
+    const ids = rows.filter((r) => isLocalCommandText(r.content_text)).map((r) => r.id);
+    if (!ids.length) break;
+    await query(`UPDATE archive_messages SET step = 'meta' WHERE id = ANY ($1::bigint[])`, [ids]);
+    out.commands += ids.length;
+    if (ids.length < rows.length) break;
+  }
+  // Hermes: the gateway's source column came along in meta.
+  const { rows: hermes } = await query<{ id: number; source: string; src: string; profile: string | null }>(
+    `SELECT id, source, meta ->> 'source' AS src, meta ->> 'profile' AS profile FROM archive_sessions
+     WHERE harness = 'hermes' AND meta ->> 'channel' IS NULL AND meta ->> 'source' IN ('telegram', 'api_server')`);
+  for (const h of hermes) {
+    await query(`UPDATE archive_sessions SET meta = meta || $2::jsonb, updated_at = now() WHERE id = $1`,
+      [h.id, JSON.stringify(channelMeta(hermesChannel(h.src), 'hermes', h.profile))]);
+    out.sessions++;
+  }
+  // zen-agent: the bridge's labels are in meta.dispatch.
+  const { rows: zen } = await query<{ id: number; dispatch: Record<string, unknown> | null }>(
+    `SELECT id, meta -> 'dispatch' AS dispatch FROM archive_sessions
+     WHERE source = 'zen-agent' AND meta ->> 'channel' IS NULL AND (meta -> 'dispatch' ->> 'channel' IS NOT NULL OR meta -> 'dispatch' ->> 'reasons' LIKE '%telegram%')`);
+  for (const z of zen) {
+    const d = z.dispatch ?? {};
+    let reasons: Array<{ reason: string | null }> = [];
+    try { reasons = typeof d.reasons === 'string' ? JSON.parse(d.reasons) : Array.isArray(d.reasons) ? d.reasons as never : []; } catch { reasons = []; }
+    const ch = zenChannel(d, reasons);
+    if (!ch) continue;
+    await query(`UPDATE archive_sessions SET meta = meta || $2::jsonb, updated_at = now() WHERE id = $1`,
+      [z.id, JSON.stringify(channelMeta(ch, 'zen-agent', typeof d.bot === 'string' ? d.bot : null))]);
+    out.sessions++;
+  }
+  opts.log(`relabel: ${out.sessions} sessions labelled, ${out.messages} prompts unwrapped, ${out.commands} command records reclassified`);
+  return out;
 }

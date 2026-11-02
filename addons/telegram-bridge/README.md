@@ -19,7 +19,7 @@ A Telegram bot that answers through [zen-agent](../../zen-agent/README.md). Each
 
 ## Where it shows up
 
-Every run is a zen-agent session in the vault's `.zen/sessions`, so `secondbrain usage-sync` (every five minutes on a server) puts it on the `/usage` page with the rest: tokens, cost in dollars, model, the session viewer with the full text of each message and answer. The bridge labels each run `work_type=telegram` and gives it a `telegram` wake reason whose ref is the Telegram message id, so you can filter the page to Telegram. The chat ID and the message text are never in the labels.
+Every run is a zen-agent session in the vault's `.zen/sessions`, so `secondbrain usage-sync` (every five minutes on a server) puts it on the `/usage` page with the rest: tokens, cost in dollars, model, the session viewer with the full text of each message and answer. The bridge labels each run `channel=telegram` and `work_type=telegram`, names the bot (`BRIDGE_BOT_NAME`, the entry in your `secondbrain.json` `telegram.bots`), and gives it a `telegram` wake reason whose ref is the Telegram message id. On `/usage` the session carries a `telegram · <bot>` chip and the `channel` filter lists it with the Claude Code and Hermes bots' chats. The chat ID and the message text are never in the labels.
 
 ## Set it up
 

@@ -5,6 +5,8 @@
  * shows (a Hermes assistant row = thinking + response + one part per tool call).
  * Pure: no database, no IO.
  */
+import { isLocalCommandText, stripChannelTag } from './channel.js';
+
 export type Step = 'prompt' | 'response' | 'thinking' | 'tool_call' | 'tool_result' | 'system' | 'meta';
 
 export interface StepFields { step: Step; toolNames: string[]; toolCallId: string | null; isError: boolean | null }
@@ -84,6 +86,11 @@ function claudeBlocks(raw: Obj): Obj[] {
   return Array.isArray(c) ? c.filter(isObj) : [];
 }
 
+/** The text of a Claude Code user record's blocks, for classifying it. */
+function claudeUserText(blocks: Obj[]): string {
+  return blocks.map((b) => (b.type === 'text' && typeof b.text === 'string' ? b.text : '')).join('\n');
+}
+
 function resultText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) return content.map((b) => (isObj(b) && typeof b.text === 'string' ? b.text : '')).filter(Boolean).join('\n');
@@ -117,7 +124,8 @@ export function stepFields(raw: unknown): StepFields {
   if (uses.length) return { step: 'tool_call', toolNames: uses.map((b) => String(b.name ?? 'tool')), toolCallId: str(uses[0]!.id), isError: null };
   const result = blocks.find((b) => b.type === 'tool_result');
   if (result) return { step: 'tool_result', toolNames: [], toolCallId: str(result.tool_use_id), isError: result.is_error === true ? true : null };
-  if (type === 'user') return { ...none, step: 'prompt' };
+  // A slash command typed at the keyboard (`/clear`) is a record about the session, not a prompt.
+  if (type === 'user') return { ...none, step: isLocalCommandText(claudeUserText(blocks)) ? 'meta' : 'prompt' };
   const main = blocks.find((b) => b.type !== 'thinking' && b.type !== 'redacted_thinking');
   return { ...none, step: main ? 'response' : blocks.length ? 'thinking' : 'response' };
 }
@@ -166,7 +174,7 @@ export function expandSteps(row: StepRow): StepPart[] {
       else if (b.type === 'redacted_thinking') parts.push({ key, step: 'thinking', text: '(redacted thinking)', ...base });
       else if (b.type === 'tool_use') parts.push({ key, step: 'tool_call', text: JSON.stringify(b.input ?? {}), toolName: String(b.name ?? 'tool'), toolCallId: str(b.id), isError: null });
       else if (b.type === 'tool_result') parts.push({ key, step: 'tool_result', text: resultText(b.content), toolName: null, toolCallId: str(b.tool_use_id), isError: b.is_error === true ? true : null });
-      else if (b.type === 'text') parts.push({ key, step: raw.type === 'user' ? 'prompt' : 'response', text: String(b.text ?? ''), ...base });
+      else if (b.type === 'text') parts.push({ key, step: raw.type === 'user' ? stepFields(raw).step : 'response', text: raw.type === 'user' ? stripChannelTag(String(b.text ?? '')) : String(b.text ?? ''), ...base });
       else if (b.type === 'image') parts.push({ key, step: raw.type === 'user' ? 'prompt' : 'response', text: '(image)', ...base });
     });
     if (parts.length) return parts;

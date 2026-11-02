@@ -5,7 +5,7 @@ import { api, type AgentSessionFilters, type AgentSessionRow } from '../../lib/a
 import { zoned } from '../../lib/time.js';
 import { formatTokens } from './format.js';
 
-const DIMS = ['harness', 'host', 'profile', 'provider', 'tool'] as const;
+const DIMS = ['harness', 'host', 'profile', 'provider', 'channel', 'tool'] as const;
 type Dim = typeof DIMS[number];
 const PAGE = 100;
 
@@ -34,7 +34,8 @@ function Row({ s, tz }: { s: AgentSessionRow; tz: string }) {
     <tr className="border-t border-[var(--rule)] align-top">
       <td className="whitespace-nowrap">{s.started_at ? zoned(s.started_at, tz) : ''}{mins !== null ? <span className="text-xs text-[var(--ink-dim)]"> · {mins} min</span> : null}</td>
       <td>{s.host}</td>
-      <td>{s.harness}{s.profile && s.profile !== 'main' ? <span className="text-xs text-[var(--ink-dim)]"> · {s.profile}</span> : null}</td>
+      <td>{s.harness}{s.profile && s.profile !== 'main' ? <span className="text-xs text-[var(--ink-dim)]"> · {s.profile}</span> : null}
+        {s.channel ? <span className="ml-1 rounded border border-[var(--rule)] px-1 text-xs text-[var(--ink-dim)]" title={s.channel === 'telegram' ? 'a Telegram chat' : `via ${s.channel}`}>{s.channel}{s.channel_bot ? ` · ${s.channel_bot}` : ''}</span> : null}</td>
       <td className="max-w-[28rem]"><Link className="underline" to={sessionLink(s)}>{title}</Link>
         {s.parent_external_id ? <span className="text-xs text-[var(--ink-dim)]"> ({s.harness === 'claude-code' ? 'subagent' : 'continued'})</span> : null}</td>
       <td className="text-xs">{s.models.join(', ')}{s.provider ? <div className="text-[var(--ink-dim)]">{s.provider}</div> : null}</td>
@@ -74,7 +75,7 @@ export default function AgentSessions({ from, to, tz }: { from: string; to: stri
   return (
     <section>
       <h2 className="text-sm font-semibold">Sessions</h2>
-      <p className="text-xs text-[var(--ink-dim)]">Every Claude Code and Hermes session on every machine. Open one to read its prompts, thinking, tool calls and responses.</p>
+      <p className="text-xs text-[var(--ink-dim)]">Every Claude Code, Hermes and zen-agent session on every machine, Telegram chats included (filter by channel). Open one to read its prompts, thinking, tool calls and responses.</p>
       <div className="my-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
         <form onSubmit={(e) => { e.preventDefault(); update((n) => { if (q.trim()) n.set('s_q', q.trim()); else n.delete('s_q'); }); }}>
           <input aria-label="Search sessions" className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-0.5" placeholder="search text"
