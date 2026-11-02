@@ -511,7 +511,7 @@ secondbrain embed    embed new and changed notes for semantic search
 secondbrain archive  archive Claude Code + Hermes conversations to B2 and Postgres
 secondbrain ledger   this machine's agent ledger: run | status | install --server URL --token T --host SLUG
 secondbrain ingest-device  (server) device tokens for ledgers: add <host> | list | revoke <id>
-secondbrain archive-steps  fill step columns of old archive rows (--redact: remove stored keys; --dry-run)
+secondbrain archive-steps  fill step columns of old archive rows (--redact: remove stored keys; --relabel: channel labels; --dry-run)
 secondbrain summarize  summarize finished agent sessions with a local model, fallbacks in config (--digest for the stand-up)
 secondbrain summarize-eval  grade summaries against transcripts: --golden | --references | --sample N [--judge]
 secondbrain agents-sync  copy Hermes chats and cron history into Postgres

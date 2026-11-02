@@ -64,7 +64,7 @@ def test_strangers_groups_and_empty_messages_get_no_reply(tmp_path):
 
 def test_message_goes_to_stdin_not_argv_and_reply_is_sent(tmp_path):
     calls = []
-    b, tg = make(tmp_path, ok_runner(calls, text="the answer"), ZEN_PERSONA="sol", ZEN_TOOLS="fs,kanban")
+    b, tg = make(tmp_path, ok_runner(calls, text="the answer"), ZEN_PERSONA="sol", ZEN_TOOLS="fs,kanban", BRIDGE_BOT_NAME="zen")
     b.handle(update("--help --persona evil"))
     argv, kw = calls[0]
     assert kw["input"] == "--help --persona evil"
@@ -72,6 +72,7 @@ def test_message_goes_to_stdin_not_argv_and_reply_is_sent(tmp_path):
     assert argv[:4] == ["zen-agent", "run", "--json", "--quiet"]
     assert argv[argv.index("--persona") + 1] == "sol"
     assert argv[argv.index("--tools") + 1] == "fs,kanban"
+    assert "channel=telegram" in argv and "bot=zen" in argv
     assert tg.sent[-1]["text"] == "the answer" and tg.sent[-1]["chat_id"] == OWNER
 
 

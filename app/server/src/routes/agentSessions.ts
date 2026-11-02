@@ -20,7 +20,7 @@ const flag = z.enum(['0', '1']).optional().transform((v) => v === '1');
 
 const listQuery = z.object({
   from: iso.optional(), to: iso.optional(),
-  harness: csv, host: csv, profile: csv, provider: csv, tool: csv,
+  harness: csv, host: csv, profile: csv, provider: csv, tool: csv, channel: csv,
   q: z.string().trim().max(200).optional(), errors: flag, subagents: flag,
   offset: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(200).default(100),
 });
@@ -58,6 +58,7 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
   if (q.host) add(`a.host = ANY ($?::text[])`, q.host);
   if (q.profile) add(`coalesce(a.profile, 'none') = ANY ($?::text[])`, q.profile);
   if (q.provider) add(`coalesce(a.provider, 'unknown') = ANY ($?::text[])`, q.provider);
+  if (q.channel) add(`coalesce(a.channel, 'none') = ANY ($?::text[])`, q.channel);
   // Content filters look at the session and, when folded, its subagents.
   const famOf = `SELECT c.id FROM archive_sessions c WHERE c.id = a.id OR (NOT $3 AND ${CHILD_OF('c', 'a')})`;
   if (q.tool) add(`EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id IN (${famOf}) AND m.tool_names && $?::text[])`, q.tool);
@@ -85,6 +86,7 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
        FROM fam f JOIN usage_calls u ON u.host = f.host AND u.session_external_id = f.external_id AND f.source = 'claude-code'
        GROUP BY f.root)
      SELECT p.id, p.source, p.harness, p.profile, p.provider, p.host, p.external_id, p.parent_external_id, p.project, p.title,
+            p.channel, p.meta ->> 'channel_bot' AS channel_bot,
             (SELECT left(m.content_text, 160) FROM archive_messages m WHERE m.session_id = p.id AND m.step = 'prompt'
                AND m.content_text <> '' ORDER BY m.seq LIMIT 1) AS first_prompt,
             p.started_at, p.ended_at, p.total,
@@ -186,9 +188,10 @@ export function agentSessionsRouter(): Router {
        UNION ALL SELECT 'host', a.host, count(*) FROM archive_sessions a WHERE ${range} GROUP BY 2
        UNION ALL SELECT 'profile', coalesce(a.profile, 'none'), count(*) FROM archive_sessions a WHERE ${range} GROUP BY 2
        UNION ALL SELECT 'provider', coalesce(a.provider, 'unknown'), count(*) FROM archive_sessions a WHERE ${range} GROUP BY 2
+       UNION ALL SELECT 'channel', coalesce(a.channel, 'none'), count(*) FROM archive_sessions a WHERE ${range} GROUP BY 2
        UNION ALL SELECT * FROM (SELECT 'tool', t, count(*) FROM archive_sessions a JOIN archive_messages m ON m.session_id = a.id
          CROSS JOIN unnest(m.tool_names) t WHERE ${range} AND m.step = 'tool_call' GROUP BY 2 ORDER BY 3 DESC LIMIT 30) tools`, [from, to]);
-    const facets: Record<string, Array<{ value: string; n: number }>> = { harness: [], host: [], profile: [], provider: [], tool: [] };
+    const facets: Record<string, Array<{ value: string; n: number }>> = { harness: [], host: [], profile: [], provider: [], channel: [], tool: [] };
     for (const r of rows) facets[r.dimension]!.push({ value: r.value, n: Number(r.n) });
     for (const k of Object.keys(facets)) facets[k]!.sort((a, b) => b.n - a.n || a.value.localeCompare(b.value));
     res.json({ facets });
