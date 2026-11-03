@@ -5,8 +5,8 @@ import { clipOutput, text, tool, type ToolContext } from './index.js';
 /**
  * The knowledge base: the second brain's retrieval API. `/api/search` is the
  * hybrid (keyword + vector, reciprocal rank fusion) note search the app's own
- * search box uses, `/api/search/global` adds database records and agent
- * transcripts, and `/api/file/source` returns a note's markdown. The server
+ * search box uses, and `/api/file/source` returns a note's markdown. Records
+ * and shared facts are reached through `org_recall`, not a second search tool. The server
  * wants the owner's session cookie: put it in the variable `headersEnv`
  * names as a JSON object of headers; a local app with no login needs none.
  */
@@ -55,10 +55,6 @@ export class Knowledge {
     return this.get('/api/search', { q, mode: opts.mode ?? 'hybrid', limit: opts.limit ?? 8 });
   }
 
-  global(q: string, opts: { scopes?: string; limit?: number } = {}): Promise<Record<string, unknown>> {
-    return this.get('/api/search/global', { q, scopes: opts.scopes, limit: opts.limit ?? 5 });
-  }
-
   note(path: string): Promise<{ path: string; content: string }> {
     return this.get('/api/file/source', { path });
   }
@@ -83,7 +79,10 @@ export function knowledgeTools(ctx: ToolContext): AgentTool<any>[] {
   const search_notes = tool({
     name: 'search_notes',
     label: 'Search notes',
-    description: 'Search the vault with hybrid retrieval (keywords and meaning). Returns ranked passages with their note paths; read a note with read_note.',
+    description:
+      'Search the vault notes with hybrid retrieval (keywords and meaning). Returns ranked passages with their note paths; read a note with read_note. ' +
+      'For "what do we already know about X" use org_recall first: it searches these notes plus the shared facts and every bot\'s memory file in one list. ' +
+      'Use search_notes for a specific note, phrase or heading.',
     parameters: Type.Object({
       query: Type.String(),
       mode: Type.Optional(Type.Union([Type.Literal('hybrid'), Type.Literal('keyword'), Type.Literal('semantic')])),
@@ -92,32 +91,6 @@ export function knowledgeTools(ctx: ToolContext): AgentTool<any>[] {
     execute: async (a) => {
       const r = await kb.search(a.query, a);
       return text(`${r.total} matches (${r.mode})\n${formatHits(r.results)}`, { total: r.total, mode: r.mode });
-    },
-  });
-
-  const search_everything = tool({
-    name: 'search_everything',
-    label: 'Search records and transcripts',
-    description: 'One search over notes, database records (projects, org messages, facts) and past agent transcripts. Scopes: notes, records, agents.',
-    parameters: Type.Object({
-      query: Type.String(),
-      scopes: Type.Optional(Type.String({ description: 'Comma list, default all available' })),
-      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
-    }),
-    execute: async (a) => {
-      const r = await kb.global(a.query, a);
-      const sections: string[] = [];
-      for (const scope of ['notes', 'records', 'agents']) {
-        const s = r[scope] as { results?: unknown[]; total?: number; error?: string } | undefined;
-        if (!s) continue;
-        if (s.error) {
-          sections.push(`## ${scope}: unavailable (${s.error})`);
-          continue;
-        }
-        const items = (s.results ?? []).map((x) => JSON.stringify(x)).join('\n');
-        sections.push(`## ${scope} (${s.total ?? 0})\n${items || 'none'}`);
-      }
-      return text(clipOutput(sections.join('\n\n') || 'nothing', ctx.cfg.shell.maxOutput), {});
     },
   });
 
@@ -132,5 +105,5 @@ export function knowledgeTools(ctx: ToolContext): AgentTool<any>[] {
     },
   });
 
-  return [search_notes, search_everything, read_note];
+  return [search_notes, read_note];
 }

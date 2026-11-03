@@ -97,7 +97,7 @@ test('Knowledge calls the second brain\'s search API with the headers from the e
   assert.equal((await kb.note('Areas/x.md')).content, '# X\nbody');
   assert.throws(() => Knowledge.fromEnv({ url: 'u', headersEnv: 'H' }, { H: 'not json' }, f), /JSON object/);
   const tools = knowledgeTools(ctx({ cfg: { ...DEFAULTS, knowledge: { kind: 'secondbrain', url: 'http://127.0.0.1:3000', headersEnv: 'H' } }, fetch: f }));
-  assert.deepEqual(tools.map((t) => t.name), ['search_notes', 'search_everything', 'read_note']);
+  assert.deepEqual(tools.map((t) => t.name), ['search_notes', 'read_note']);
   assert.deepEqual(knowledgeTools(ctx()), []);
 });
 

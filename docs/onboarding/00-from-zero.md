@@ -105,7 +105,7 @@ Keyword search works now. Semantic search needs an embedding provider: set `TOGE
 secondbrain embed
 ```
 
-Embeddings are part of the base, not a module: scan, embed, keyword, semantic and hybrid search are always on, and the memory feature's recall (stage 11) runs on the same vectors. Agents search through the same API (`mode=keyword|semantic|hybrid`) instead of grepping, which is what the shared `vector-search` skill will teach them when it ships with core v2.
+Embeddings are part of the base, not a module: scan, embed, keyword, semantic and hybrid search are always on, and the memory feature's recall (stage 11) runs on the same vectors. Agents search through the same API (`mode=keyword|semantic|hybrid`) instead of grepping. The skill that teaches it is the existing shared `shared-memory` skill (recall through `cli-org recall`, direct search through `/api/search`); core v2 adds no second skill.
 
 **Check:** the app answers at `http://127.0.0.1:5123`; a search for a word in one of your notes finds it; after `embed`, a search in semantic mode finds a note by meaning.
 
@@ -431,7 +431,7 @@ So you know which commands exist before you type them.
 
 | Piece | Today | Core v2 |
 |---|---|---|
-| Vault, app, keyword, semantic and hybrid search, editor, guard, dev-log gate | shipped, base | unchanged; `vector-search` skill added to base |
+| Vault, app, keyword, semantic and hybrid search, editor, guard, dev-log gate | shipped, base | unchanged; the `shared-memory` skill covers search and recall, no new skill |
 | `projects`, `board`, `org`, `usage` | shipped modules | core features with a manifest each ([#103](https://github.com/kon-rad/argo/pull/103), open) |
 | `summaries` | shipped behind `SUMMARIES=on` with `usage` | its own module in #103 |
 | Memory (`remember`, `recall`, facts, episodes) | shipped inside `secondbrain org` | `secondbrain memory`, a `/memory` page (phase 6) |
