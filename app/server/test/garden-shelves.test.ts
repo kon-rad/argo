@@ -1,17 +1,6 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { defaultMeta, discoverShelves, kindForRoot, serializeShelf } from '../src/garden/shelves.js';
-
-export async function vault(files: Record<string, string>): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'sb-garden-'));
-  for (const [p, c] of Object.entries(files)) {
-    await mkdir(dirname(join(root, p)), { recursive: true });
-    await writeFile(join(root, p), c);
-  }
-  return root;
-}
+import { vault } from './helpers/garden.js';
 
 const ROOTS = ['Projects', 'Areas', 'Research'];
 const TODAY = '2026-11-03';
