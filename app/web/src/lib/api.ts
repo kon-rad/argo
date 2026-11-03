@@ -252,8 +252,17 @@ export interface RingNight {
 }
 
 /** What this install has turned on (server: GET /api/meta). */
+/** A header link a core feature's manifest declares (server/src/features/<name>/manifest.ts). */
+export interface FeatureNav {
+  section: 'Vault' | 'Work' | 'Life';
+  label: string;
+  path: string;
+}
+
 export interface AppMeta {
-  modules: ('ring' | 'agents' | 'projects' | 'org' | 'board' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat' | 'uploads')[];
+  modules: ('ring' | 'agents' | 'projects' | 'org' | 'board' | 'usage' | 'summaries' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat' | 'uploads')[];
+  /** The header links of the core features that are on. */
+  nav?: FeatureNav[];
   owner: string;
   devLogPath: string | null;
   docsPath: string | null;

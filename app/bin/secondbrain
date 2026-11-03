@@ -398,39 +398,12 @@ cmd_org_dispatch() {
   ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-dispatch.js" "$@"
 }
-cmd_usage_sync() {
-  # This machine's Claude Code transcripts, cc-runs logs and plan readings into the usage ledger.
-  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
-  node --no-warnings "$APP_ROOT/server/dist/cli-usage-sync.js"
-}
-cmd_usage_push() {
-  # Mac -> droplet: new Claude Code transcript bytes and plan readings over one SSH call.
-  ensure_node; ensure_build
-  node --no-warnings "$APP_ROOT/server/dist/cli-usage-push.js"
-}
-cmd_usage_backfill() {
-  # One-off wire lines for the Mac sessions already in the archive:
-  #   secondbrain usage-backfill | ssh <server> '/usr/local/bin/secondbrain-usage-import mac'
-  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
-  node --no-warnings "$APP_ROOT/server/dist/cli-usage-backfill.js"
-}
-cmd_credits() {
-  # Prepaid API balances (OpenRouter, fal, Gemini) in provider_credit_snapshots.
-  # No local Postgres or migrations: on the Mac SECONDBRAIN_DB_URL is the droplet.
-  ensure_deps; ensure_build
-  node --no-warnings "$APP_ROOT/server/dist/cli-credits.js" "$@"
-}
 cmd_ledger() {
   # This machine's agent ledger (local SQLite, syncs to the server). Builds the one-file bundle and
   # runs it; `secondbrain ledger install --server … --token … --host …` schedules it.
   ensure_node; ensure_deps
   "$APP_ROOT/bin/build-ledger.sh" >/dev/null || die "ledger build failed"
   node --no-warnings "$APP_ROOT/server/dist/ledger/ledger.mjs" "$@"
-}
-cmd_ingest_device() {
-  # Server side: device tokens the machines' ledgers sync with (add <host> | list | revoke <id>).
-  ensure_deps; ensure_build
-  node --no-warnings "$APP_ROOT/server/dist/cli-ingest-device.js" "$@"
 }
 cmd_archive_steps() {
   # One-off passes over archive rows stored before the agent-sessions migration:
@@ -461,16 +434,6 @@ cmd_archive() {
   # directly rather than through the server's scan queue.
   ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-archive.js" "$@"
-}
-
-cmd_board() {
-  # The kanban board (cards, board_* functions). Identity from ORG_AGENT, or BOARD_URL + BOARD_TOKEN elsewhere.
-  (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-board.js" "$@")
-}
-
-cmd_org() {
-  # The agent company's message board (org_* tables). Identity from ORG_AGENT.
-  (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-org.js" "$@")
 }
 
 cmd_classify() {
@@ -505,6 +468,23 @@ cmd_metrics() {
   node --no-warnings "$APP_ROOT/server/dist/cli-metrics.js" "$@"
 }
 
+cmd_features() {
+  # The feature manifests (server/src/features/<name>/manifest.ts): list | units | wrappers | help.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-features.js" "$@"
+}
+
+cmd_feature() {
+  # Any command a feature manifest owns (board, org, projects, usage-sync, summarize, ...) runs through
+  # cli-features, which hands the entry its own argv. Identity and the database come from the env, as
+  # before; `secondbrain start` is what applies migrations on a laptop with a local database.
+  ensure_deps; ensure_build
+  local rc=0
+  (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-features.js" run "$@") || rc=$?
+  if [[ $rc -eq 64 ]]; then warn "unknown command: $1"; cmd_help; exit 1; fi
+  exit "$rc"
+}
+
 cmd_help() {
   cat <<'USAGE'
 secondbrain          start if down, then open the browser
@@ -516,27 +496,27 @@ secondbrain scan     rescan the vault
 secondbrain embed    embed new and changed notes for semantic search
 secondbrain archive  archive Claude Code + Hermes conversations to B2 and Postgres
 secondbrain ledger   this machine's agent ledger: run | status | install --server URL --token T --host SLUG
-secondbrain ingest-device  (server) device tokens for ledgers: add <host> | list | revoke <id>
 secondbrain archive-steps  fill step columns of old archive rows (--redact: remove stored keys; --relabel: channel labels; --dry-run)
 secondbrain telegram   connect a Telegram bot to an agent: add --agent claude-code|hermes|zen-agent --name X --allow <id> | status | allow | remove
 secondbrain summarize  summarize finished agent sessions with a local model, fallbacks in config (--digest for the stand-up)
 secondbrain summarize-eval  grade summaries against transcripts: --golden | --references | --sample N [--judge]
 secondbrain agents-sync  copy Hermes chats and cron history into Postgres
-secondbrain usage-sync   this machine's Claude Code usage into the ledger
-secondbrain usage-push   send new Claude Code usage to the droplet ledger (Mac)
-secondbrain usage-backfill  wire lines for archived Mac sessions (pipe to the droplet importer)
-secondbrain credits    show | set <provider> <balance> | sync  prepaid API credit balances
 secondbrain inventory  list/show/add/update gear rows and file their photos (inventory help)
-secondbrain org        the agent company message board: whoami/read/post/dm/handoff/ask-owner/standup (org help)
 secondbrain org-dispatch  tick | routines: run zen-agent bots for their open wakeups (ORG_DISPATCH=on on a server)
 secondbrain classify   a calibrated decision about a message, card or run, logged (classify help)
-secondbrain board      the kanban board: list/show/create/comment/assign/move/claim/finish/token/import (board help)
 secondbrain backlinks  add a Related links block to each note (dry run; --write applies, --path limits)
 secondbrain map-build  rebuild the brain map's stored layout (droplet)
 secondbrain metrics    collect | set <metric> <value> | list  the brain map's numbers
 secondbrain ring-pull  copy the ring data from the droplet into local Postgres
 secondbrain auth-setup  create the password + authenticator login for the server
+secondbrain features   list | units | wrappers | help  the feature manifests and what they wire
 USAGE
+  # Feature commands come from the manifests, so the list cannot drift from the code.
+  if [[ -f "$APP_ROOT/server/dist/cli-features.js" ]]; then
+    echo
+    echo "Feature commands (secondbrain features list):"
+    node --no-warnings "$APP_ROOT/server/dist/cli-features.js" help
+  fi
 }
 
 case "${1:-start}" in
@@ -550,26 +530,21 @@ case "${1:-start}" in
   embed)         cmd_embed ;;
   archive)       cmd_archive "${@:2}" ;;
   ledger)        cmd_ledger "${@:2}" ;;
-  ingest-device) cmd_ingest_device "${@:2}" ;;
   archive-steps) cmd_archive_steps "${@:2}" ;;
   telegram)      cmd_telegram "${@:2}" ;;
   summarize)     cmd_summarize "${@:2}" ;;
   summarize-eval) cmd_summarize_eval "${@:2}" ;;
   inventory)     cmd_inventory "${@:2}" ;;
-  org)           cmd_org "${@:2}" ;;
   org-dispatch)  cmd_org_dispatch "${@:2}" ;;
   classify)      cmd_classify "${@:2}" ;;
-  board)         cmd_board "${@:2}" ;;
   backlinks)     cmd_backlinks "${@:2}" ;;
   map-build)     cmd_map_build "${@:2}" ;;
   metrics)       cmd_metrics "${@:2}" ;;
-  credits)       cmd_credits "${@:2}" ;;
   ring-pull)     cmd_ring_pull ;;
   agents-sync)   cmd_agents_sync ;;
-  usage-sync)    cmd_usage_sync ;;
-  usage-push)    cmd_usage_push ;;
-  usage-backfill) cmd_usage_backfill ;;
   auth-setup)    cmd_auth_setup ;;
+  features)      cmd_features "${@:2}" ;;
   help|-h|--help) cmd_help ;;
-  *)             warn "unknown command: $1"; cmd_help; exit 1 ;;
+  # Everything else is a feature's command (board, org, projects, usage-sync, summarize, ...): see its manifest.
+  *)             cmd_feature "$@" ;;
 esac

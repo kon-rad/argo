@@ -1,0 +1,15 @@
+import { defineFeature } from '../types.js';
+
+export default defineFeature({
+  name: 'org',
+  core: true,
+  summary: 'A company of named AI agents: teams, channels, messages, wakes, the ship gate and plan|apply from the org config',
+  nav: [{ section: 'Work', label: 'Org', path: '/org' }],
+  cli: [{ command: 'org', entry: 'cli-org.js', summary: 'the agent company: whoami/read/post/dm/handoff/ask-owner/standup/plan/apply (org help)' }],
+  // The routing report is the routing pilot's weekly page; it leaves with the routing addon (proposal phase 5).
+  timers: [{ unit: 'secondbrain-routing-report', summary: 'writes the weekly model-routing report (routing pilot)' }],
+  wrappers: ['cli-org'],
+  env: ['ORG_AGENT', 'ORG_DISPATCH', 'ORG_DB_URL'],
+  settings: 'org',
+  docs: 'docs/agent-company.md',
+});

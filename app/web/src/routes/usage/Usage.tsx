@@ -360,6 +360,9 @@ function UsageOverview() {
 /** Two views on one route: the spend overview (the default) and what is running on the server now (`?view=running`). */
 export default function Usage() {
   const liveCount = useLiveCount();
+  // The Summaries tab is the summaries module's page; without it the API is not mounted.
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
+  const hasSummaries = (meta.data?.modules ?? []).includes('summaries');
   const [sp, setSp] = useSearchParams();
   const view = sp.get('view') === 'running' ? 'running' : sp.get('view') === 'summaries' ? 'summaries' : 'usage';
   const pick = (v: 'usage' | 'running' | 'summaries') => {
@@ -375,7 +378,7 @@ export default function Usage() {
     <div className="flex h-full flex-col">
       <div role="tablist" aria-label="Usage views" className="flex shrink-0 gap-1 border-b border-[var(--rule)] px-4 pt-2">
         {tab('usage', 'Usage')}
-        {tab('summaries', 'Summaries')}
+        {hasSummaries && tab('summaries', 'Summaries')}
         {tab('running', 'Server processes')}
         <Link to="/usage/live" className="ml-auto mb-1 flex items-center gap-1.5 self-center rounded border border-[var(--rule)] px-2 py-0.5 text-sm hover:bg-[var(--paper-sunk)]">
           <span className="inline-block h-2 w-2 rounded-full bg-[#1f9d63]" />Running now{liveCount !== null ? ` · ${liveCount}` : ''}
