@@ -32,7 +32,7 @@ describe('garden shelves', () => {
     expect(out.startsWith('---\ntitle: X\ntags: [a, b]\n')).toBe(true);
     expect(out).toContain('\nstatus: active\n');
     expect(out).toContain('\nkind: project\n');
-    expect(out).toContain('\narchive_after: 90d\n');
+    expect(out).toContain('\narchive_after: default\n');
     expect(out).toContain('\npin: false\n');
     expect(out.endsWith('---\n# Hello\n\nProse here.\n')).toBe(true);
   });

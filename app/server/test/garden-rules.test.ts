@@ -50,6 +50,11 @@ describe('garden rules', () => {
     expect(out).toEqual([]);
   });
 
+  it('default archive_after follows the settings', () => {
+    const out = planShelves([shelf('Projects/p')], ctx({ lastTouched: () => daysAgo(50) }, { projectArchiveAfterDays: 45 }));
+    expect(out[0]).toMatchObject({ type: 'archive', reason: 'untouched 50d' });
+  });
+
   it('honours archive_after on the shelf', () => {
     const out = planShelves([shelf('Projects/slow', { archive_after: '400d' }), shelf('Projects/never', { archive_after: 'never' })], ctx({ lastTouched: () => daysAgo(200) }));
     expect(out).toEqual([]);

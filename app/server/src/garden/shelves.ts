@@ -50,7 +50,7 @@ export function defaultMeta(dir: string, kind: ShelfKind, today: string): ShelfM
     project: 'none',
     kind,
     last_reviewed: today,
-    archive_after: kind === 'project' ? '90d' : 'never',
+    archive_after: kind === 'project' ? 'default' : 'never',
     pin: false,
   };
 }
@@ -71,7 +71,7 @@ function parseMeta(raw: Record<string, unknown>, dir: string, kind: ShelfKind, t
       case 'project': if (typeof v === 'string' && v.trim()) meta.project = v.trim(); break;
       case 'kind': if (typeof v === 'string' && KINDS.has(v as ShelfKind)) meta.kind = v as ShelfKind; break;
       case 'last_reviewed': if (v instanceof Date) meta.last_reviewed = v.toISOString().slice(0, 10); else if (typeof v === 'string' && v) meta.last_reviewed = v; break;
-      case 'archive_after': if (typeof v === 'string' && /^(\d+d|never)$/.test(v)) meta.archive_after = v; break;
+      case 'archive_after': if (typeof v === 'string' && /^(\d+d|never|default)$/.test(v)) meta.archive_after = v; break;
       case 'pin': meta.pin = v === true; break;
       default: foreign[k] = v;
     }

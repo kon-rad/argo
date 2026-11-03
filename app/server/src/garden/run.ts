@@ -42,20 +42,27 @@ function dirtySet(git: (args: string[]) => string): Set<string> {
   } catch { return new Set(); }
 }
 
-/** `.md` files sitting directly in a root (or the vault root) instead of inside a shelf. */
+/** `.md` files sitting directly in a root folder instead of inside a shelf. The vault root itself is the owner's (guides, priorities) and is not scanned. */
 async function looseNotes(root: string, roots: string[]): Promise<string[]> {
   const out: string[] = [];
-  const reserved = new Set(['README.md', 'AGENTS.md', 'CLAUDE.md', 'AGENTS.local.md']);
-  for (const r of ['', ...roots]) {
+  for (const r of roots) {
     let entries;
     try { entries = await readdir(join(root, r), { withFileTypes: true }); } catch { continue; }
     for (const e of entries) {
-      if (!e.isFile() || !e.name.endsWith('.md') || e.name.startsWith('.')) continue;
-      if (r === '' && (reserved.has(e.name) || /guide/i.test(e.name))) continue;
-      out.push(r ? `${r}/${e.name}` : e.name);
+      if (!e.isFile() || !e.name.endsWith('.md') || e.name.startsWith('.') || e.name === 'README.md') continue;
+      out.push(`${r}/${e.name}`);
     }
   }
   return out.sort();
+}
+
+/** A shelf with no `project:` whose folder name is a tracker slug belongs to that project; written on the next write run. */
+export function inferProjects(shelves: Shelf[], ctx: RuleContext): void {
+  for (const s of shelves) {
+    if (s.meta.project !== 'none') continue;
+    const name = s.dir.split('/').pop()!;
+    if (ctx.trackerStage(name) !== null) s.meta.project = name;
+  }
 }
 
 async function writeShelfNotes(root: string, shelves: Shelf[], ctx: RuleContext, dirty: Set<string>, skipWiki: boolean): Promise<number> {
@@ -98,12 +105,14 @@ export async function runGarden(root: string, opts: RunOptions): Promise<RunResu
   };
 
   let shelves = await discoverShelves(root, settings.roots, settings.shelfFile, today);
+  inferProjects(shelves, ctx);
   const actions: Action[] = [...planShelves(shelves, ctx), ...planLoose(await looseNotes(root, settings.roots), ctx)];
 
   let applied: ApplyResult | null = null;
   if (opts.mode === 'apply') {
     applied = await applyActions(root, actions, { git, dirty, today });
     shelves = await discoverShelves(root, settings.roots, settings.shelfFile, today);
+    inferProjects(shelves, ctx);
   }
 
   let created = 0;

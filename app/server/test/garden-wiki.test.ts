@@ -25,6 +25,7 @@ describe('garden wiki', () => {
       'Projects/demo/notes/a.md': '# A\nSee [[b]] and [[b]] again.\n',
       'Projects/demo/notes/b.md': '# B\n',
       'Projects/demo/notes/c.md': '# C\n[[b]]\n',
+      'Projects/demo/CLAUDE.md': '# rules\n',
       'Projects/other/README.md': '# Other\n',
       'Projects/old/README.md': '# Old\n',
       'Areas/x/README.md': '# X\n',

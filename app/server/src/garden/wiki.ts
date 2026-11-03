@@ -19,8 +19,11 @@ export interface ShelfFacts {
   siblings: string[];
 }
 
+const BOILERPLATE = new Set(['README.md', 'CLAUDE.md', 'AGENTS.md', 'AGENTS.local.md']);
+
+/** Notes of the shelf worth listing: not its own note, not agent instruction files. */
 function inShelf(note: Note, dir: string): boolean {
-  return note.path.startsWith(`${dir}/`);
+  return note.path.startsWith(`${dir}/`) && !BOILERPLATE.has(note.path.split('/').pop()!);
 }
 
 /** Inbound wikilink counts for every note, resolved the same way the scanner does. */

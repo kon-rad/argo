@@ -27,6 +27,14 @@ describe('garden catalog', () => {
     expect(out).toContain('| Areas/x | active | none | 1 | 2026-09-01 | 2026-11-03 |  |');
   });
 
+  it('truncates a long next action', () => {
+    const ctx: RuleContext = { today: TODAY, quarter: '2026Q4', lastTouched: () => TODAY, trackerStage: () => null, settings: parseSettings({}).garden };
+    const out = renderCatalog([shelf('Projects/a', 'project')], ctx, { noteCount: () => 0, nextAction: () => 'x'.repeat(400) });
+    const row = out.split('\n').find((l) => l.startsWith('| Projects/a'))!;
+    expect(row.length).toBeLessThan(260);
+    expect(row).toContain('…');
+  });
+
   it('readNextAction reads the Resume block', async () => {
     const root = await vault({
       'Projects/a/dev-log/README.md': '# A\n\n## Resume\n- **Task:** x\n- **Next action:** Ship the thing  \n',

@@ -40,7 +40,7 @@ describe('garden run', () => {
     const r = await runGarden(root, { mode: 'write', today: TODAY, lastTouched: touched, git: gitFor(root) });
     expect(r.created).toBe(1);
     const b = await readFile(join(root, 'Projects/b/README.md'), 'utf8');
-    expect(b.startsWith('---\nshelf: Projects/b\nstatus: active\nproject: none\nkind: project\nlast_reviewed: 2026-11-03\narchive_after: 90d\npin: false\n---\n# B\n')).toBe(true);
+    expect(b.startsWith('---\nshelf: Projects/b\nstatus: active\nproject: none\nkind: project\nlast_reviewed: 2026-11-03\narchive_after: default\npin: false\n---\n# B\n')).toBe(true);
     expect(b).toContain('<!-- shelf:start -->');
     expect(b).toContain('**Newest:** [[note]]');
     const x = await readFile(join(root, 'Areas/x/README.md'), 'utf8');
@@ -66,6 +66,14 @@ describe('garden run', () => {
     expect(report).toContain('Links rewritten: 1 in 2 files.');
     const catalog = await readFile(join(root, 'CURRENT/catalog.md'), 'utf8');
     expect(catalog).not.toContain('| Projects/old |');
+  });
+
+  it('infers the project from a folder name that is a tracker slug, and archives a parked one', async () => {
+    const root = await gitVault({ ...FILES, 'Projects/lifeos/README.md': '# Lifeos\n' });
+    const r = await runGarden(root, { mode: 'write', today: TODAY, lastTouched: () => TODAY, trackerStage: (s) => (s === 'lifeos' ? 'parked' : s === 'b' ? 'building' : null), git: gitFor(root) });
+    expect(r.actions).toContainEqual({ type: 'archive', from: 'Projects/lifeos', to: 'Archives/2026Q4/projects/lifeos', reason: 'tracker: parked' });
+    expect(await readFile(join(root, 'Projects/b/README.md'), 'utf8')).toContain('\nproject: b\n');
+    expect(await readFile(join(root, 'Projects/old/README.md'), 'utf8')).toContain('\nproject: none\n');
   });
 
   it('skips dirty files', async () => {

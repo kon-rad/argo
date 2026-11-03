@@ -43,6 +43,7 @@ function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
 
+/** `90d` on the shelf wins; `never` turns ageing off; `default` (or anything else) falls back to the settings for projects, off for the rest. */
 function archiveAfterDays(shelf: Shelf, s: GardenSettings): number | null {
   const v = shelf.meta.archive_after;
   if (v === 'never') return null;

@@ -21,8 +21,12 @@ export async function readNextAction(root: string, dir: string): Promise<string 
   return m ? m[1]! : null;
 }
 
-function cell(s: string | null | undefined): string {
-  return (s ?? '').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
+const NEXT_ACTION_MAX = 160;
+
+function cell(s: string | null | undefined, max = 0): string {
+  let v = (s ?? '').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
+  if (max > 0 && v.length > max) v = `${v.slice(0, max - 1).trimEnd()}…`;
+  return v;
 }
 
 export function renderCatalog(shelves: Shelf[], ctx: RuleContext, facts: CatalogFacts): string {
@@ -40,7 +44,7 @@ export function renderCatalog(shelves: Shelf[], ctx: RuleContext, facts: Catalog
     if (rows.length === 0) continue;
     lines.push(`## ${root}`, '', `${rows.length} shelves.`, '', '| Shelf | Status | Project | Notes | Last touched | Reviewed | Next action |', '|---|---|---|---|---|---|---|');
     for (const { s, touched } of rows) {
-      lines.push(`| ${cell(s.dir)} | ${s.meta.status} | ${cell(s.meta.project)} | ${facts.noteCount(s.dir)} | ${touched || 'none'} | ${s.meta.last_reviewed} | ${cell(facts.nextAction(s.dir))} |`);
+      lines.push(`| ${cell(s.dir)} | ${s.meta.status} | ${cell(s.meta.project)} | ${facts.noteCount(s.dir)} | ${touched || 'none'} | ${s.meta.last_reviewed} | ${cell(facts.nextAction(s.dir), NEXT_ACTION_MAX)} |`);
     }
     lines.push('');
   }
