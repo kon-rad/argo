@@ -38,7 +38,7 @@ export default function Agents() {
   );
 }
 
-function OldCardLink() {
+export function OldCardLink() {
   const { taskId } = useParams();
   return <Navigate to={`/board/${taskId}`} replace />;
 }

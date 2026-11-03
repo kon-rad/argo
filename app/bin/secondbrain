@@ -320,17 +320,7 @@ cmd_scan() {
     say "watch it with: secondbrain logs"
   else
     ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
-    node -e '
-      import("./server/dist/connectors/vault/scan.js").then(async (m) => {
-        const { pool } = await import("./server/dist/db.js");
-        const { rows } = await pool.query("SELECT id, config FROM sources WHERE kind=$1", ["vault"]);
-        const stats = await m.scanVault({ root: rows[0].config.root ?? process.cwd() + "/..",
-                                          sourceId: rows[0].id,
-                                          skipDirs: rows[0].config.skip_dirs });
-        console.log(JSON.stringify({ scanned: stats.scanned, inserted: stats.inserted,
-                                     updated: stats.updated, deleted: stats.deleted }));
-        await pool.end();
-      });'
+    node --no-warnings "$APP_ROOT/server/dist/cli-scan.js"
   fi
 }
 

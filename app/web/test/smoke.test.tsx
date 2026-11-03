@@ -131,6 +131,27 @@ describe('nav follows /api/meta', () => {
     expect(screen.queryByRole('menuitem', { name: 'Docs' })).toBeNull();
   });
 
+  it('module pages are not routed when their module is off', async () => {
+    for (const path of ['/ring', '/cron', '/agents/chat']) {
+      renderAt(path);
+      expect((await screen.findByText(/No such page/)).textContent).toContain(path);
+      cleanup();
+    }
+  });
+
+  it('old /agents/board card links still reach the board with the agents module off', async () => {
+    renderAt('/agents/board/t_1');
+    // The board feature is off here too, so the redirect lands on its 404, which names the new path.
+    expect((await screen.findByText(/No such page/)).textContent).toContain('/board/t_1');
+  });
+
+  it('module pages are routed when their module is on', async () => {
+    META = { modules: ['agents'], owner: 'owner', devLogPath: null, docsPath: null, robot: false };
+    renderAt('/cron');
+    expect(await screen.findByRole('heading', { name: 'Cron jobs' })).toBeDefined();
+    expect(screen.queryByText(/No such page/)).toBeNull();
+  });
+
   it('with the chat module on, the header button and the Vault menu entry open the chat panel', async () => {
     META = { modules: ['chat'], owner: 'owner', devLogPath: null, docsPath: null, robot: false };
     renderAt('/');

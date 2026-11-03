@@ -14,7 +14,7 @@
 #   DEPLOY_PUBLIC_HOST   the domain or bare IP Caddy serves (https://<this>)
 #   DEPLOY_VAULT_DIR     the vault checkout on the server
 # Optional:
-#   DEPLOY_APP_USER      Unix user that owns the vault and runs the app (default: secondbrain)
+#   DEPLOY_APP_USER      Unix user that owns the vault and runs the app (default: secondbrain; created if missing)
 #   DEPLOY_APP_DIR       where the app is installed (default: /opt/secondbrain-app)
 #   DEPLOY_HERMES_HOME   Hermes home on the server, for the agents module (default: ~APP_USER/.hermes)
 #   EXTRA_CADDY_IMPORT   Caddyfile snippets for other sites on the same box, comma separated
@@ -109,8 +109,12 @@ echo "→ provisioning and restarting"
 ssh "$HOST" "APP_DIR=$APP_DIR VAULT=$VAULT_DIR APP_USER=$APP_USER PUBLIC_HOST=$PUBLIC_HOST HERMES_HOME_REMOTE=$HERMES_HOME_REMOTE EXTRA_IMPORT=$EXTRA_IMPORT REDIRECT_FROM=$REDIRECT_FROM PAUSE_FILE=$PAUSE_FILE MODS=$MODS WITH_EMBED=$WITH_EMBED WITH_BACKUP=$WITH_BACKUP WITH_VAULT_SYNC=$WITH_VAULT_SYNC WITH_DISPATCH=$WITH_DISPATCH ENGINE_COMMIT=$ENGINE_COMMIT NO_ROLLBACK=$NO_ROLLBACK bash -s" <<'REMOTE'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-id "$APP_USER" >/dev/null || { echo "user $APP_USER missing: create it and give it the vault checkout"; exit 1; }
-[ -d "$VAULT" ] || { echo "vault missing at $VAULT"; exit 1; }
+# A fresh server has no app user yet: create it (with a home, for ~/.hermes and ~/.claude).
+if ! id "$APP_USER" >/dev/null 2>&1; then
+  echo "  creating unix user $APP_USER"
+  useradd --system --create-home --shell /bin/bash "$APP_USER"
+fi
+[ -d "$VAULT" ] || { echo "vault missing at $VAULT: clone it there and chown -R $APP_USER: $VAULT"; exit 1; }
 APP_HOME="$(getent passwd "$APP_USER" | cut -d: -f6)"
 HERMES_HOME_REMOTE="${HERMES_HOME_REMOTE:-$APP_HOME/.hermes}"
 render() { sed -e "s#@APP_USER@#$APP_USER#g" -e "s#@APP_DIR@#$APP_DIR#g" -e "s#@VAULT_DIR@#$VAULT#g" -e "s#@HERMES_HOME@#$HERMES_HOME_REMOTE#g" -e "s#@APP_HOME@#$APP_HOME#g" "$1"; }
