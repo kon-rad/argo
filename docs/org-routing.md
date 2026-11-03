@@ -363,3 +363,25 @@ Start with `enforce_model_floors: warn`, read the warnings, move the offending b
 - **Scope:** only cards with an id are routed. Card-less wakes (DMs, routines) keep the bot's model. Scope, named path, spec clarity and risk flags come from [the classifier](#the-classifier) (`dispatch.routing.classifier`); the router's own keyword scan still reads only the title. Spend is read from the log before each decision only when [money caps](#budgets) are configured.
 - **Models:** zen-agent needs `provider/model` ids, so the catalog entries a zen-agent bot uses must be named that way. A bot whose model is not in the catalog is skipped with a log line.
 - **Claude Code bots** (atlas, sable, rune, kael, idris, vera as of 2026-10-30) are not dispatched here; routing them needs the same call in their dispatcher.
+
+## Fallback model
+
+A bot on a connected computer's model (`OLLAMA_MACHINES`, provider `ollama-<name>`) has no model when that computer is off, asleep or has unloaded the model. One setting names what runs instead:
+
+```json
+{ "dispatch": { "fallback": { "model": "together/deepseek-ai/DeepSeek-V4.1-Flash", "thinking": "off", "retryOnError": true } } }
+```
+
+| Field | Default | Says |
+|---|---|---|
+| `model` | required | A `provider/model` zen-agent can call with a key from the environment (`zen-agent models --available` lists them; a model pi-ai does not know goes in `zen.json` `providers`) |
+| `thinking` | the run's own | Thinking level for the fallback run |
+| `retryOnError` | `true` | Re-run once on the fallback when a run on the machine ends with a provider error |
+
+What the dispatcher does with it, per wake:
+
+1. **Before the run.** After the tier and the router have chosen the model, the dispatcher looks at its provider: `provider/model` ids by their prefix, a bare alias such as `qwen3.6:35b-a3b` through the routing catalog. If the provider is a connected computer, the dispatcher asks its Ollama for its models (2.5 s, cached 20 s). No answer: the run starts on the fallback model instead, logged as `fallback: <machine> did not answer`, with `--meta fallback=machine-down` on the trace.
+2. **After the run.** A run on the machine that exits non-zero (not `3`, the budget stop) with a provider error in its last words (`not in provider … catalogue`, `ECONNREFUSED`, `fetch failed`, `502`, …) is recorded as a failed run and re-run once on the fallback under run id `<run>-fb`, with `--meta fallback=run-error`. A run that failed on its task (tests red, blocked) is not retried.
+3. **What does not change.** The router's floors and parks stand: a card the router parks stays parked, only the host changes. The budget is the one the tier set. The wakeup's result is prefixed `[fallback machine-down: <model>]` or `[fallback run-error: <model>]`, so the board and `/usage` show which runs fell back.
+
+Unset, nothing falls back: the wake fails the way it did before, and the card goes back to `ready`. Hermes-runtime bots are not dispatched here and keep their own `fallback_providers`.

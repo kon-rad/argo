@@ -111,6 +111,20 @@ const Dispatch = z
           .prefault({}),
       })
       .prefault({}),
+    /**
+     * The model that stands in when the run's model is served by a connected computer (OLLAMA_MACHINES) that does not
+     * answer, or when a run on that computer ends with a provider error (docs/org-routing.md, "Fallback model").
+     * Unset: no fallback, the wake fails as before.
+     */
+    fallback: z
+      .object({
+        /** `provider/model` zen-agent can call with a key from the environment, e.g. `together/deepseek-ai/DeepSeek-V4.1-Flash`. */
+        model: z.string().min(1),
+        thinking: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
+        /** Re-run once on the fallback when a run on the machine fails with a provider error (connection, 5xx, model not in the catalogue). */
+        retryOnError: z.boolean().default(true),
+      })
+      .optional(),
   })
   .prefault({});
 

@@ -318,6 +318,7 @@ Every one has a default that works for a stranger, lands in `app/deploy/env.exam
 | `CLASSIFY_DAILY_TOKENS` | `org` | `2000000` | Jev daily cap; above it, fall through |
 | `secondbrain.json` `classify.allow` | `org` | `[]` | Vault folders and channel slugs whose text may be classified off-box |
 | `secondbrain.json` `dispatch.tiers` | `org` | all tiers = the `zen.json` model | Model and thinking per card tier |
+| `secondbrain.json` `dispatch.fallback` | `org` | unset (no fallback) | The hosted `provider/model` that runs when a connected computer's model is down ([org-routing.md](org-routing.md#fallback-model)) |
 | roster `agents.<name>.runtime` | `org` | `claude-code` | `zen-agent` flips one bot |
 | roster `agents.<name>.routines` | `org` | `[]` | Scheduled wakes with task files |
 | `zen.json` `model` | zen-agent | `anthropic/claude-sonnet-4-6` in zen-agent's own defaults; the vault template's `zen.example.json` sets `openrouter/deepseek/deepseek-v4-flash` | The install default for bots |
