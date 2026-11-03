@@ -129,6 +129,25 @@ describe('tick', () => {
     expect(flag(args, '--file')).toMatch(/task\.md$/);
   });
 
+  it('a failed spawn writes one failed usage_runs row, and a successful run writes none', async () => {
+    const h = harness();
+    await dm(await getAgent('atlas'), 'rune', 'please check the build', {});
+    h.setResult({ code: 1, stdout: '', stderr: 'zen-agent: no such persona' });
+    await h.d.tick();
+    const q = `SELECT run_id, agent_name, runtime, outcome, is_error, subtype, wakeup_ids::text[] AS wakeup_ids FROM usage_runs`;
+    const { rows } = await query<{ run_id: string; agent_name: string; runtime: string; outcome: string; is_error: boolean; subtype: string; wakeup_ids: string[] }>(q);
+    expect(rows).toEqual([{ run_id: 'rune-20261024-123000', agent_name: 'rune', runtime: 'zen-agent', outcome: 'failed', is_error: true,
+      subtype: 'zen-agent: no such persona', wakeup_ids: [expect.any(String)] }]);
+    // The before/after query in the PR body: finished-with-failure wakeups that have no usage row.
+    const orphans = await query(`SELECT w.id FROM org_wakeups w WHERE w.done_at IS NOT NULL AND w.result ~ '^(zen-agent: |exit [0-9])'
+      AND NOT EXISTS (SELECT 1 FROM usage_runs u WHERE w.id = ANY (u.wakeup_ids))`);
+    expect(orphans.rows).toEqual([]);
+    const ok = harness();
+    await dm(await getAgent('atlas'), 'bolt', 'and this', {});
+    await ok.d.tick();
+    expect((await query(`SELECT 1 FROM usage_runs WHERE agent_name = 'bolt'`)).rows).toEqual([]);
+  });
+
   it('leaves bots on other runtimes alone', async () => {
     const h = harness();
     await dm(await getAgent('owner'), 'atlas', 'hello', {});

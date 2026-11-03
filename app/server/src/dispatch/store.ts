@@ -14,6 +14,26 @@ export interface MessageRow {
   created_at: Date; author_human: boolean;
 }
 
+/**
+ * A run that failed before zen-agent wrote a trace leaves nothing for usage-sync to parse, so /usage never
+ * counted it. Insert the failed row here; a later trace sync for the same (host, run_id) overwrites it, and
+ * an existing row is left alone.
+ */
+export async function recordFailedRun(r: {
+  runId: string; agent: string; taskId: string | null; wakeupIds: number[]; reasons: unknown; team: string | null;
+  startedAt: Date; endedAt: Date; error: string;
+}): Promise<boolean> {
+  const { rowCount } = await query(
+    `INSERT INTO usage_runs (host, run_id, session_id, log_path, task_id, agent_name, team_slug, started_at, ended_at,
+       duration_ms, subtype, is_error, reasons, wakeup_ids, runtime, outcome)
+     VALUES (COALESCE((SELECT slug FROM usage_hosts WHERE kind = 'server' ORDER BY slug LIMIT 1), 'droplet'),
+       $1, $1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10::jsonb, $11::bigint[], 'zen-agent', 'failed')
+     ON CONFLICT (host, run_id) DO NOTHING`,
+    [r.runId, `dispatch:${r.runId}`, r.taskId, r.agent, r.team, r.startedAt, r.endedAt,
+      Math.max(0, r.endedAt.getTime() - r.startedAt.getTime()), r.error.slice(0, 300), JSON.stringify(r.reasons), r.wakeupIds]);
+  return (rowCount ?? 0) > 0;
+}
+
 /** Claims whose run never reported back (the process died): open them again for the next tick. */
 export async function releaseStale(olderThanMinutes: number): Promise<number> {
   const { rowCount } = await query(
