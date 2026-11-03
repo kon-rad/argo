@@ -6,6 +6,7 @@ You do not need all of it. The first three pages give you a vault, the app and o
 
 | Step | Page | You get | Time |
 |---|---|---|---|
+| all | [From zero to an agent company](00-from-zero.md) | The whole path on one page, fourteen stages with a check each, from an empty folder to a company of agents reporting to you; the pages below are the detail | 30 min to read |
 | 0 | [What you get, and what to borrow](01-what-you-get.md) | The idea in ten minutes, and the parts worth copying into your own notes, app or company even if you never install this | 10 min |
 | 1 | [Set up your vault](02-set-up-your-vault.md) | A private git repo of markdown, the web app, search | 15 to 30 min |
 | 2 | [Connect Claude Code](03-claude-code.md) | Claude Code working in the vault, with the guard and the dev-log gate | 5 min |
