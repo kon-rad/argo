@@ -1,8 +1,10 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import matter from 'gray-matter';
 import { collectNotes } from '../backlinks.js';
 import type { Action } from './rules.js';
+import { defaultMeta, SHELF_KEYS, serializeShelf, titleFor, type ShelfKind } from './shelves.js';
 
 /**
  * Applies archive and rename actions with `git mv` only, then rewrites path
@@ -20,6 +22,7 @@ export interface ApplyResult {
 export interface ApplyOptions {
   git: (args: string[]) => string;
   dirty: Set<string>;
+  today: string;
 }
 
 function escapeRe(s: string): string {
@@ -46,15 +49,21 @@ export function rewriteLinks(content: string, from: string, to: string): { conte
   return { content: out, count };
 }
 
-async function setArchived(root: string, dir: string): Promise<void> {
+async function setArchived(root: string, dir: string, kind: ShelfKind, today: string): Promise<void> {
   const readme = join(root, dir, 'README.md');
-  if (!existsSync(readme)) return;
-  const text = await readFile(readme, 'utf8');
-  if (!/^---\n[\s\S]*?\n---\n/.test(text)) return;
-  const next = /^status: .*$/m.test(text.split('\n---\n')[0]!)
-    ? text.replace(/^status: .*$/m, 'status: archived')
-    : text.replace(/^---\n/, '---\nstatus: archived\n');
-  if (next !== text) await writeFile(readme, next);
+  let text = '';
+  try { text = await readFile(readme, 'utf8'); } catch { text = `# ${titleFor(dir)}\n`; }
+  let parsed: { data: Record<string, unknown>; content: string };
+  try { parsed = matter(text); } catch { parsed = { data: {}, content: text }; }
+  const meta = defaultMeta(dir, kind, today);
+  const foreign: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(parsed.data)) {
+    if ((SHELF_KEYS as string[]).includes(k)) { if (k === 'project' && typeof v === 'string') meta.project = v; if (k === 'pin') meta.pin = v === true; }
+    else foreign[k] = v;
+  }
+  meta.status = 'archived';
+  meta.last_reviewed = today;
+  await writeFile(readme, serializeShelf({ dir, readme: `${dir}/README.md`, exists: true, meta, body: parsed.content.replace(/^\n+/, ''), foreign }));
 }
 
 export async function applyActions(root: string, actions: Action[], opts: ApplyOptions): Promise<ApplyResult> {
@@ -69,7 +78,11 @@ export async function applyActions(root: string, actions: Action[], opts: ApplyO
     if (dirtyUnder) { result.refused.push({ action, reason: `uncommitted changes: ${dirtyUnder}` }); continue; }
     await mkdir(dirname(join(root, to)), { recursive: true });
     try { opts.git(['mv', from, to]); } catch (err) { result.refused.push({ action, reason: `git mv failed: ${(err as Error).message.split('\n')[0]}` }); continue; }
-    if (action.type === 'archive') { await setArchived(root, to); touched.add(`${to}/README.md`); }
+    if (action.type === 'archive') {
+      const kind: ShelfKind = from.startsWith('Projects/') ? 'project' : from.startsWith('Areas/') ? 'area' : 'resource';
+      await setArchived(root, to, kind, opts.today);
+      touched.add(`${to}/README.md`);
+    }
     const notes = await collectNotes(root);
     for (const n of notes) {
       if (opts.dirty.has(n.path)) continue;

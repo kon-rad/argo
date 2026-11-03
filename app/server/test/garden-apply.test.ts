@@ -29,7 +29,7 @@ describe('garden apply', () => {
 
   it('moves a project to the archive, rewrites links, sets status archived', async () => {
     const root = await gitVault(FILES);
-    const r = await applyActions(root, [{ type: 'archive', from: 'Projects/foo', to: 'Archives/2026Q4/projects/foo', reason: 'test' }], { git: gitFor(root), dirty: new Set() });
+    const r = await applyActions(root, [{ type: 'archive', from: 'Projects/foo', to: 'Archives/2026Q4/projects/foo', reason: 'test' }], { git: gitFor(root), dirty: new Set(), today: '2026-11-03' });
     expect(r.done).toHaveLength(1);
     expect(r.refused).toEqual([]);
     expect(r.linksRewritten).toBe(4);
@@ -48,7 +48,7 @@ describe('garden apply', () => {
       { type: 'archive', from: 'Projects/foo', to: 'Archives/2026Q4/projects/foo', reason: 'test' },
       { type: 'archive', from: 'Projects/gone', to: 'Archives/2026Q4/projects/gone', reason: 'test' },
       { type: 'rename', from: 'Projects/keep', to: 'Projects/kept', reason: 'test' },
-    ], { git: gitFor(root), dirty: new Set() });
+    ], { git: gitFor(root), dirty: new Set(), today: '2026-11-03' });
     expect(r.refused.map((x) => x.reason)).toEqual(['target exists', 'source missing']);
     expect(r.done).toHaveLength(1);
     expect(existsSync(join(root, 'Projects/kept/README.md'))).toBe(true);
@@ -57,7 +57,7 @@ describe('garden apply', () => {
   it('refuses when a file under the source is dirty', async () => {
     const root = await gitVault(FILES);
     await writeFile(join(root, 'Projects/foo/bar.md'), '# Bar edited\n');
-    const r = await applyActions(root, [{ type: 'archive', from: 'Projects/foo', to: 'Archives/2026Q4/projects/foo', reason: 'test' }], { git: gitFor(root), dirty: new Set(['Projects/foo/bar.md']) });
+    const r = await applyActions(root, [{ type: 'archive', from: 'Projects/foo', to: 'Archives/2026Q4/projects/foo', reason: 'test' }], { git: gitFor(root), dirty: new Set(['Projects/foo/bar.md']), today: '2026-11-03' });
     expect(r.done).toEqual([]);
     expect(r.refused[0]!.reason).toBe('uncommitted changes: Projects/foo/bar.md');
     expect(existsSync(join(root, 'Projects/foo/bar.md'))).toBe(true);
