@@ -456,6 +456,13 @@ cmd_backlinks() {
   node --no-warnings "$APP_ROOT/server/dist/cli-backlinks.js" "$@"
 }
 
+cmd_garden() {
+  # The nightly vault gardener (docs/garden.md). Shadow by default; --write
+  # updates shelf notes and the catalog, --apply also moves with git mv.
+  ensure_deps; ensure_build
+  (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-garden.js" "$@")
+}
+
 cmd_map_build() {
   # Brain map layout (map_* tables). Refused in client mode, like scan.
   ensure_deps; ensure_build
@@ -506,6 +513,7 @@ secondbrain org-dispatch  tick | routines: run zen-agent bots for their open wak
 secondbrain classify   a calibrated decision about a message, card or run, logged (classify help)
 secondbrain backlinks  add a Related links block to each note (dry run; --write applies, --path limits)
 secondbrain map-build  rebuild the brain map's stored layout (droplet)
+secondbrain garden     nightly vault gardener (shadow by default; --write updates shelf notes and the catalog, --apply also moves)
 secondbrain metrics    collect | set <metric> <value> | list  the brain map's numbers
 secondbrain ring-pull  copy the ring data from the droplet into local Postgres
 secondbrain auth-setup  create the password + authenticator login for the server
@@ -539,6 +547,7 @@ case "${1:-start}" in
   classify)      cmd_classify "${@:2}" ;;
   backlinks)     cmd_backlinks "${@:2}" ;;
   map-build)     cmd_map_build "${@:2}" ;;
+  garden)        cmd_garden "${@:2}" ;;
   metrics)       cmd_metrics "${@:2}" ;;
   ring-pull)     cmd_ring_pull ;;
   agents-sync)   cmd_agents_sync ;;

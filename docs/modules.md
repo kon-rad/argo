@@ -224,3 +224,6 @@ The settings modal (the gear, or the model chip) picks the provider and model, t
 
 Semantic search is not required: without an embeddings provider the chat retrieves by keyword and says so. For better retrieval on dense notes, turn on contextual enrichment on the Embeddings source (`"contextualize": true` in its config on the Sources page): a model writes one line of context per chunk at embed time. It costs one chat-model call per changed note.
 
+## garden
+
+`MODULES=garden`. A nightly command, `secondbrain garden`, that treats every top-level folder under `Projects/`, `Areas/` and `Research/` as a shelf with a small frontmatter header, archives project shelves that are done or untouched for 90 days, proposes stale areas, normalises folder names, regenerates a wiki block in each shelf note and a catalog, and writes a report. Shadow mode by default; the timer moves nothing until `garden.apply` is true. Design, modes, caps and how to revert a night: [garden.md](garden.md).

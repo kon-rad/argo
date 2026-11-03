@@ -159,6 +159,7 @@ Everything beyond browse, search and the database page is a module. A module tha
 | `chat` | A chat panel that answers questions from retrieved passages, with citations; any provider's model; org agents as personas (see `docs/rag.md`) |
 | `uploads` | Upload files of 1 GB to 50 GB from any browser on `/uploads`: resumable chunks straight to Backblaze B2, filed into a vault folder you choose with a description, optionally pulled onto a second machine (see `docs/uploads.md`) |
 | `media` | A gallery of every image, video and audio file in the vault on `/media`, with a lightbox player; `.b2.md` stubs play from B2 where the original isn't on disk |
+| `garden` | A nightly gardener (`secondbrain garden`) that catalogues every folder as a shelf, archives stale projects, proposes stale areas, normalises names and writes a report; shadow mode by default (see `docs/garden.md`) |
 
 ### Agent ledger (every machine that runs agents)
 
@@ -194,6 +195,7 @@ Settings that don't fit one env line live in the vault, in `secondbrain.json` at
 | `livestream.youtube`, `.twitch`, `.kick` | livestream | Your channel on each platform |
 | `uploads.destinations`, `uploads.m1Dir` | uploads | Folder presets for the Uploads page (label, vault path, keywords) and where the second machine files its copy |
 | `projects.reportFile` | projects | Where `cli-projects render` writes the report (default `projects.md`) |
+| `garden.*` | garden | Shelf roots, archive folder, catalog and report paths, age thresholds, caps, pinned shelves, `apply` |
 
 Then `secondbrain scan` to build the index and `secondbrain embed` to build the vector index. Every setting: [docs/configuration.md](../docs/configuration.md).
 

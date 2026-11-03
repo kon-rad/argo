@@ -24,7 +24,7 @@ The app reads `<vault>/.env` at start (`app/server/src/config.ts`), validates ev
 | `B2STORE_CRYPT_PASSWORD`, `B2STORE_CRYPT_PASSWORD2` | unset | uploads: the rclone-crypt passwords when the vault part of the bucket is encrypted (the same ones `b2store` uses) |
 | `UPLOADS_MAX_GB` | `50` | uploads: the largest single file the page accepts |
 | `UPLOADS_PULL_TOKEN` | unset | uploads: bearer token (16+ characters) the second machine's puller sends |
-| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `summaries`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`, `uploads`. Unknown names are ignored |
+| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `summaries`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`, `uploads`, `garden`. Unknown names are ignored |
 | `OWNER_NAME` | `owner` | Your name in the authenticator app and as a comment author |
 | `DEV_LOG_PATH`, `DOCS_PATH` | unset | Vault-relative notes the nav bar links to; unset hides the link |
 | `SCAN_INTERVAL_MINUTES` | `0` | Rescan and re-embed every N minutes; `0` means only when asked |
@@ -157,6 +157,12 @@ Settings that don't fit on one env line. Every section is optional; a file that 
 | `dispatch.tiers` | `org` | `{ "flash-low" \| "flash-high" \| "mid" \| "strong": { "model", "thinking" } }`: what the card-tier decision routes to. Unset tiers use zen-agent's own model |
 | `dispatch.budgets` | `org` | Per wake reason (`dm`, `mention`, `handoff`, `task`, `routine`, `owner`): `{ "turns", "tokens", "minutes" }` |
 | `dispatch.tools` | `org` | Per wake reason: zen-agent tool sets (`fs`, `shell`, `skills`, `knowledge`, `kanban`, `org`, `subagent`) |
+| `garden.roots` | `garden` | Folders whose immediate subfolders are shelves (default `Projects`, `Areas`, `Research`) |
+| `garden.archiveDir`, `garden.catalogFile`, `garden.reportDir`, `garden.shelfFile` | `garden` | Where archived shelves go (`Archives`), the rendered catalog (`CURRENT/catalog.md`), the nightly reports (`garden/reports`) and the shelf note's file name (`README.md`) |
+| `garden.projectArchiveAfterDays`, `garden.areaProposeAfterDays` | `garden` | Days without a commit before a project shelf is archived (90) or an area shelf is proposed (180) |
+| `garden.maxMoves`, `garden.maxRenames` | `garden` | Caps per run (25 moves, 5 renames) |
+| `garden.pinned` | `garden` | Shelves the gardener never archives, proposes or renames |
+| `garden.apply` | `garden` | `true` lets the nightly timer move files; default `false` only writes READMEs, the catalog and the report. See [garden.md](garden.md) |
 
 Example:
 

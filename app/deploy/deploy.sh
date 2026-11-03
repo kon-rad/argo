@@ -38,6 +38,7 @@
 #                        org: the sb_org role, cli-org on PATH · board: board-reclaim, cli-board on PATH · map: map-build, metrics
 #                        livestream: the minute poller and Caddy's /public/ files
 #                        social: the minute post-publisher and reauth check, cli-social on PATH
+#                        garden: the nightly vault gardener timer
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -360,6 +361,7 @@ fi
 # Modules that are not core features yet keep their lines here until they move to addons/.
 has agents && unit secondbrain-agents-sync
 if has map; then unit secondbrain-map-build; unit secondbrain-metrics; fi
+if has garden; then unit secondbrain-garden; fi
 has livestream && unit secondbrain-livestream
 has social && unit secondbrain-social
 [ "$ZEN_BUILT" = 1 ] && render "$APP_DIR/deploy/zen-agent-serve.service" > /etc/systemd/system/zen-agent-serve.service

@@ -239,9 +239,37 @@ const Settings = z.object({
       reportFile: z.string().default('projects.md'),
     })
     .prefault({}),
+  /** `secondbrain garden`: the nightly vault gardener (docs/garden.md). */
+  garden: z
+    .object({
+      /** Top-level folders whose immediate subfolders are shelves. */
+      roots: z.array(z.string().min(1)).default(['Projects', 'Areas', 'Research']),
+      /** Where archived shelves go: `<archiveDir>/<quarter>/<projects|areas|research>/<name>`. */
+      archiveDir: z.string().default('Archives'),
+      /** Vault-relative file the catalog is rendered to. */
+      catalogFile: z.string().default('CURRENT/catalog.md'),
+      /** Vault-relative folder for the nightly reports (`<reportDir>/<date>.md`). */
+      reportDir: z.string().default('garden/reports'),
+      /** File name of the shelf note that carries the shelf frontmatter. */
+      shelfFile: z.string().default('README.md'),
+      /** A project shelf untouched this long is archived. */
+      projectArchiveAfterDays: z.number().int().positive().default(90),
+      /** An area shelf untouched this long is proposed for archiving (never moved on its own). */
+      areaProposeAfterDays: z.number().int().positive().default(180),
+      /** Archive moves per run; the rest wait for the next night. */
+      maxMoves: z.number().int().nonnegative().default(25),
+      /** Folder renames per run. */
+      maxRenames: z.number().int().nonnegative().default(5),
+      /** Shelves never archived, proposed or renamed (vault-relative folders). */
+      pinned: z.array(z.string().min(1)).default([]),
+      /** When true the timer run moves files (apply mode); otherwise it only writes READMEs, the catalog and the report. */
+      apply: z.boolean().default(false),
+    })
+    .prefault({}),
 });
 
 export type SecondBrainSettings = z.infer<typeof Settings>;
+export type GardenSettings = SecondBrainSettings['garden'];
 export type ChatSettingsOverrides = z.infer<typeof Chat>;
 export type ClassifySettings = z.infer<typeof Classify>;
 export type DispatchSettings = z.infer<typeof Dispatch>;
