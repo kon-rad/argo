@@ -82,6 +82,7 @@ The app refuses to start in server mode without `AUTH_PASSWORD_HASH`, `AUTH_TOTP
 | `secondbrain-embed.timer` | Daily 02:30 UTC | `DEPLOY_EMBED=1` |
 | `secondbrain-db-backup.timer` | Daily 03:30 UTC | `DEPLOY_DB_BACKUP=1` |
 | `secondbrain-vault-sync.timer` | Every 15 minutes | `DEPLOY_VAULT_SYNC=1` |
+| `claude-telegram.service` + `-clear.timer`, `telegram-bridge.service` | Always, nightly clear 19:00 UTC | `secondbrain telegram add` ([Connect Telegram](onboarding/11-telegram.md)), not `deploy.sh` |
 
 ## Which version is live
 
