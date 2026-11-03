@@ -133,9 +133,21 @@ Then:
 
 Structured settings (lists, maps, accounts) go in `secondbrain.json` through `app/server/src/settings.ts`, with an empty default and an example in `vault-template/secondbrain.example.json`.
 
-### Adding a module
+### Adding a feature
 
-A new optional feature is a new module, **off by default**.
+A feature is wired in one place: its folder `app/server/src/features/<name>/`. `manifest.ts` is data (the nav link, the `secondbrain` commands, the timers, the PATH wrappers, the env keys, the doc page); `routes.ts` mounts its API. `app.ts`, `/api/meta`, the launcher, `deploy.sh` and `test/features.test.ts` all read the manifest, so nothing else lists the feature. The core features (`projects`, `org`, `board`, `usage`, `summaries`) work this way; the other modules still use the older wiring below until they move to `addons/`.
+
+1. Add its name to `MODULE_NAMES` in `app/server/src/config.ts`.
+2. Create `features/<name>/manifest.ts` with `defineFeature({...})` and `features/<name>/routes.ts` exporting `routes: FeatureRoutes`. A route that checks its own token mounts `public`; one that parses its own body mounts `raw`; everything else sits behind the login.
+3. Register both in `features/registry.ts` (the manifest) and `features/index.ts` (manifest plus routes).
+4. Pages: add the feature's `<Route>`s to `app/web/src/features.tsx` under its name. The nav link comes from the manifest through `/api/meta`.
+5. Tables go in a new migration. They exist whether or not the feature is on.
+6. Timers: add `<unit>.service` and `<unit>.timer` to `app/deploy/` and name the unit in `timers`; `deploy.sh` installs it when the feature is on.
+7. A CLI: an entry point `app/server/src/cli-<name>.ts`, named in `cli`; `secondbrain <command>` reaches it with no launcher change.
+8. Tests: `test/features.test.ts` already checks that every file the manifest names exists; add the feature's own route tests, on and off.
+9. Docs: the page named in `docs`, its settings in [docs/configuration.md](docs/configuration.md), and a row in the module tables of `README.md` and `app/README.md`.
+
+### Adding a module (older wiring, until it moves to an addon)
 
 1. Add its name to `MODULE_NAMES` in `app/server/src/config.ts`.
 2. Mount its routes only when it is on: `if (modules.has('<name>'))` in `app/server/src/app.ts`.

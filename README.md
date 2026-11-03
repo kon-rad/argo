@@ -52,6 +52,7 @@ Everything beyond browse, search and the database page is an optional module, of
 | `org` | A message board where a company of named AI agents reports to you |
 | `agents` | A kanban board, agent chats and cron history |
 | `usage` | What your agents cost, by bot, task and project |
+| `summaries` | One model-written summary per finished agent session, with the facts it proposes for memory |
 | `map` | A 3D brain map of your notes, projects and goals, with metrics |
 | `tv` | Your own video channel, played from episodes in your vault |
 | `voice` | Read notes aloud with a local speech server |

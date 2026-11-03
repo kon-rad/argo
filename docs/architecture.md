@@ -85,7 +85,7 @@ Everything beyond browse, search, the database page and the editor is a module: 
 - shows no nav link,
 - gets no systemd timers from `deploy.sh`.
 
-Module tables are created by migrations whether or not the module is on, so turning one on later needs no migration step. Per-module detail: [modules.md](modules.md).
+Module tables are created by migrations whether or not the module is on, so turning one on later needs no migration step. Per-module detail: [modules.md](modules.md). The core features are each described by one manifest (`app/server/src/features/<name>/manifest.ts`: nav, commands, timers, wrappers, env, docs) that `app.ts`, `/api/meta`, the launcher and `deploy.sh` read, so a feature is wired in one place.
 
 ## 5. The agent harness
 

@@ -8,23 +8,18 @@ import Database from './routes/Database.js';
 import Sources from './routes/Sources.js';
 import Ring from './routes/Ring.js';
 import Agents from './routes/agents/Agents.js';
-import Usage from './routes/usage/Usage.js';
-import UsageSession from './routes/usage/UsageSession.js';
-import LiveAgents from './routes/usage/LiveAgents.js';
 import Cron from './routes/Cron.js';
 import NavMenu, { type NavItem } from './components/NavMenu.js';
+import { FEATURE_ROUTES } from './features.js';
 import MobileMenu, { MenuButton } from './components/MobileMenu.js';
-import Projects from './routes/Projects.js';
 import Tv from './routes/Tv.js';
 import Media from './routes/Media.js';
 import Uploads from './routes/Uploads.js';
 import Fund from './routes/Fund.js';
 // three.js is large: the map loads only when it's opened.
 const MapPage = lazy(() => import('./routes/Map.js'));
-import Org from './routes/org/Org.js';
-import BoardPage from './routes/board/Board.js';
 import Login from './routes/Login.js';
-import { api, AUTH_EXPIRED_EVENT, type AppMeta } from './lib/api.js';
+import { api, AUTH_EXPIRED_EVENT, type AppMeta, type FeatureNav } from './lib/api.js';
 import SearchBox from './components/SearchBox.js';
 import IndexStatus from './components/IndexStatus.js';
 import SyncChip from './components/SyncChip.js';
@@ -232,14 +227,9 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           <Route path="/agents/*" element={<Agents />} />
           <Route path="/cron" element={<Cron />} />
           <Route path="/cron/:profile/:jobId" element={<Cron />} />
-          {modules.has('usage') && <Route path="/usage" element={<Usage />} />}
-          {modules.has('usage') && <Route path="/usage/live" element={<LiveAgents />} />}
-          {modules.has('usage') && <Route path="/usage/session/:host/:externalId" element={<UsageSession />} />}
           <Route path="/ring" element={<Ring />} />
-          {modules.has('projects') && <Route path="/projects" element={<Projects />} />}
-          {modules.has('org') && <Route path="/org/*" element={<Org />} />}
-          {modules.has('board') && <Route path="/board" element={<BoardPage />} />}
-          {modules.has('board') && <Route path="/board/:cardId" element={<BoardPage />} />}
+          {/* Core features' pages, for the modules that are on (features.tsx; the nav comes from the server's manifests). */}
+          {[...modules].flatMap((m) => FEATURE_ROUTES[m] ?? [])}
           {modules.has('tv') && <Route path="/tv" element={<Tv />} />}
           {modules.has('media') && <Route path="/media" element={<Media />} />}
           {modules.has('uploads') && <Route path="/uploads" element={<Uploads />} />}
@@ -266,8 +256,12 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
 /** The header menus for this install: core pages plus whichever modules are on. */
 function menus(modules: Set<string>, meta: AppMeta | undefined, openChat: () => void): [string, NavItem[]][] {
   const on = (m: string, item: NavItem): NavItem[] => (modules.has(m) ? [item] : []);
+  // Core features declare their links in their server manifests; /api/meta lists the ones that are on.
+  const declared = (section: FeatureNav['section']): NavItem[] =>
+    (meta?.nav ?? []).filter((n) => n.section === section).map((n) => ({ to: n.path, label: n.label }));
   const vault: NavItem[] = [
     { to: '/', label: 'Browse', end: true },
+    ...declared('Vault'),
     // The chat panel opens over the current page rather than navigating; the header button does the same.
     ...on('chat', { label: 'Ask your second brain', onSelect: openChat }),
     ...on('map', { to: '/map', label: 'Brain map' }),
@@ -278,15 +272,12 @@ function menus(modules: Set<string>, meta: AppMeta | undefined, openChat: () => 
     { to: '/sources', label: 'Sources' },
   ];
   const work: NavItem[] = [
-    ...on('projects', { to: '/projects', label: 'Projects' }),
-    ...on('org', { to: '/org', label: 'Org' }),
-    ...on('board', { to: '/board', label: 'Board' }),
+    ...declared('Work'),
     ...on('fund', { to: '/fund', label: 'Fund' }),
     ...on('agents', { to: '/agents', label: 'Agents' }),
-    ...on('usage', { to: '/usage', label: 'Usage' }),
     ...on('agents', { to: '/cron', label: 'Cron' }),
   ];
-  const life: NavItem[] = on('ring', { to: '/ring', label: 'Ring' });
+  const life: NavItem[] = [...declared('Life'), ...on('ring', { to: '/ring', label: 'Ring' })];
   const docs: NavItem[] = [
     ...(meta?.devLogPath ? [{ to: `/file/${meta.devLogPath}`, label: 'Devlog' }] : []),
     ...(meta?.docsPath ? [{ to: `/file/${meta.docsPath}`, label: 'Docs' }] : []),
