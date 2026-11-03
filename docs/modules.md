@@ -8,6 +8,8 @@ MODULES=projects,org,map
 
 A module that is off mounts no API routes, shows no nav link and gets no timers from `deploy.sh`. Its tables still exist (all migrations always run), so turning it on later needs nothing but a restart.
 
+The core features (`projects`, `org`, `board`, `usage`, `summaries`) are each wired in one place, a manifest at `app/server/src/features/<name>/manifest.ts`: the nav link, the `secondbrain` commands, the timers, the PATH wrappers, the env keys and the doc page. `secondbrain features list` prints them with their state; `secondbrain <command>` runs any command a manifest names. The other modules still use the older per-file wiring until they move to `addons/`.
+
 | Module | Page | One line |
 |---|---|---|
 | [`projects`](#projects) | `/projects` | A project tracker: divisions, teams, projects, features, verifications |
@@ -15,6 +17,7 @@ A module that is off mounts no API routes, shows no nav link and gets no timers 
 | [`board`](#board) | `/board` | The kanban board: cards for people and agents, claimed and finished by lanes, with per-device tokens |
 | [`agents`](#agents) | `/agents`, `/cron` | Agent chats, Hermes history and cron history, served by an agent-hub |
 | [`usage`](#usage) | `/usage` | What your agents cost: tokens and plan usage by bot, task and project |
+| [`summaries`](summaries.md) | (the Summaries tab of `/usage`) | One model-written summary per finished agent session, with counted metrics and proposed memory facts |
 | [`map`](#map) | `/map` | A 3D map of your vault, projects and goals, with daily metrics |
 | [`tv`](#tv) | `/tv` | A player for video episodes kept in your vault |
 | [`voice`](#voice) | (a Listen button) | Read a note aloud through a local speech server |
@@ -96,8 +99,9 @@ A ledger of Claude Code, zen-agent and Hermes usage: tokens per run, which bot, 
 | | |
 |---|---|
 | Page | `/usage`, with filters in the URL |
-| CLI | `secondbrain usage-sync`, `usage-push`, `usage-backfill`, `credits`, `summarize`, `summarize-eval` |
+| CLI | `secondbrain usage-sync`, `usage-push`, `usage-backfill`, `credits`, `ingest-device`, `ledger` |
 | Timers (server) | `usage-sync`, `credits-sync`, and the usage importer |
+| Summaries | The Summaries tab, `summarize` and the summarize timer are the `summaries` module ([summaries.md](summaries.md)) |
 
 ## map
 

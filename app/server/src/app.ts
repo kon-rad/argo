@@ -5,20 +5,18 @@ import { createAuth, type AuthOptions } from './auth/router.js';
 import { config, type ModuleName } from './config.js';
 import { connectors as defaultConnectors, type ConnectorRegistry } from './connectors/index.js';
 import { defaultEmbeddingProvider } from './embeddings/factory.js';
+import { featureRoutes, mountAt, navFor } from './features/index.js';
 import { agentsRouter } from './routes/agents.js';
 import { tvRouter } from './routes/tv.js';
-import { summariesRouter } from './routes/summaries.js';
-import { usageRouter } from './routes/usage.js';
 import { b2Router, type B2Options } from './routes/b2.js';
 import { mountUploads } from './uploads/setup.js';
 import { uploadsPullRouter } from './routes/uploadsPull.js';
 import type { UploadsRouterOptions } from './routes/uploads.js';
-import { boardRouter, type BoardRouterOptions } from './routes/board.js';
+import type { BoardRouterOptions } from './routes/board.js';
 import { chatRouter, type ChatOptions } from './routes/chat.js';
 import { errorHandlerFor } from './routes/http.js';
 import { databaseRouter } from './routes/database.js';
 import { fileRouter } from './routes/file.js';
-import { ingestRouter } from './routes/ingest.js';
 import { hubRouter, type HubOptions } from './routes/hub.js';
 import { zenRouter, type ZenOptions } from './routes/zen.js';
 import { presetsRouter } from './routes/presets.js';
@@ -26,11 +24,9 @@ import { mapRouter } from './routes/map.js';
 import { mediaRouter } from './routes/media.js';
 import { fundRouter } from './routes/fund.js';
 import type { FundDeps } from './fund.js';
-import { orgRouter } from './routes/org.js';
 import { friendlyRouter, type FriendlyOptions } from './routes/friendly.js';
 import { rawRouter } from './routes/raw.js';
 import { knowledgeTokenGate } from './auth/knowledgeToken.js';
-import { projectsFeedRouter, projectsRouter } from './routes/projects.js';
 import { ringRouter, type RingRouterOptions } from './routes/ring.js';
 import { runsRouter } from './routes/runs.js';
 import { searchRouter, type ProviderFactory } from './routes/search.js';
@@ -153,9 +149,20 @@ export function createApp(opts: AppOptions = {}): express.Express {
   // Saving a note carries the whole file; everything else stays at 1 MB. The
   // second parser skips a body the first has already read.
   app.use('/api/file/source', express.json({ limit: '6mb' }));
-  // Each machine's agent ledger syncs here with a device token, no session (usage module). Mounted
-  // ahead of the global parser: the router checks the token before it reads its large body.
-  if (modules.has('usage')) app.use('/api/ingest', ingestRouter());
+  // Core features come from their manifests (features/<name>/): three mount points, raw, public and session.
+  // The login is built first so a public route that gates some of its own paths (the board) can use it.
+  const auth = remote
+    ? createAuth(
+        opts.auth ?? {
+          passwordHash: config.authPasswordHash!,
+          totpSecret: config.authTotpSecret!,
+          publicOrigin: config.publicOrigin!,
+        },
+      )
+    : undefined;
+  const features = featureRoutes(modules, { vaultRoot, remote, sessionGate: auth?.requireSession, opts });
+  // Raw: ahead of the global body parser (the usage ingest reads its own large body after checking its token).
+  mountAt(app, features, 'raw');
   // A queued social post carries its images as base64 (4 x 5 MB at most). Like the
   // note saver above, it parses before the session check, which still refuses it.
   app.use('/api/social/posts', express.json({ limit: '30mb' }));
@@ -164,11 +171,6 @@ export function createApp(opts: AppOptions = {}): express.Express {
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true });
   });
-
-  // A kiosk's read-only projects summary: a bearer token, no session.
-  if (modules.has('projects')) {
-    app.use('/api/feed', projectsFeedRouter(vaultRoot, opts.projectsFeedToken ?? config.projectsFeedToken));
-  }
 
   // The OAuth callback (the provider's redirect arrives without the session
   // cookie) and the public media a relay fetches by token.
@@ -186,20 +188,10 @@ export function createApp(opts: AppOptions = {}): express.Express {
   // The second machine's pull calls carry a bearer token, no session; they sit ahead of the session gate like the board's.
   if (modules.has('uploads')) app.use('/api/uploads/pull', uploadsPullRouter(opts.uploadsPullToken ?? config.uploadsPullToken));
 
-  if (remote) {
-    const auth = createAuth(
-      opts.auth ?? {
-        passwordHash: config.authPasswordHash!,
-        totpSecret: config.authTotpSecret!,
-        publicOrigin: config.publicOrigin!,
-      },
-    );
-    // The board takes a per-machine bearer token as well as a session, so it sits ahead of BOTH gates
-    // (checkOrigin and requireSession) and applies its own gate to requests without a token. A bearer-token
-    // client (a lane on another machine, a CLI over HTTPS) sends no Origin and no session cookie, so mounting
-    // this after checkOrigin made every non-GET board call 403 "cross-origin request refused" before the
-    // board's own token check ever ran (docs/zen-runtime.md phase 2 pilot, 2026-10-25).
-    if (modules.has('board')) app.use('/api/board', boardRouter({ sessionGate: auth.requireSession, hub: opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }, ...opts.board }));
+  // Public: a feature route with its own token check (the projects feed, the board) sits ahead of the login gates.
+  mountAt(app, features, 'public');
+
+  if (auth) {
     // A read-only token for a local agent, for three GET paths (auth/knowledgeToken.ts). It only flags the request.
     app.use('/api', knowledgeTokenGate(opts.knowledgeToken ?? config.knowledgeToken));
     app.use('/api', auth.checkOrigin);
@@ -208,7 +200,6 @@ export function createApp(opts: AppOptions = {}): express.Express {
     // below it, so a new endpoint is protected by default.
     app.use('/api', (req, res, next) => (res.locals.knowledgeToken ? next() : auth.requireSession(req, res, next)));
   } else {
-    if (modules.has('board')) app.use('/api/board', boardRouter({ hub: opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }, ...opts.board }));
     app.get('/api/auth/me', (_req, res) => {
       res.json({ required: false, authenticated: true });
     });
@@ -219,6 +210,8 @@ export function createApp(opts: AppOptions = {}): express.Express {
   app.get('/api/meta', (_req, res) => {
     res.json({
       modules: [...modules],
+      // The header links of the core features that are on, from their manifests.
+      nav: navFor(modules),
       owner: config.ownerName,
       devLogPath: config.devLogPath,
       docsPath: config.docsPath,
@@ -265,10 +258,8 @@ export function createApp(opts: AppOptions = {}): express.Express {
     app.use('/api/zen', zenRouter(opts.zen ?? { url: config.zenAgentUrl, token: config.zenAgentToken }));
     app.use('/api/presets', presetsRouter());
   }
-  if (modules.has('usage')) app.use('/api/usage', usageRouter());
-  if (modules.has('usage')) app.use('/api/summaries', summariesRouter());
-  if (modules.has('projects')) app.use('/api/projects', projectsRouter(vaultRoot));
-  if (modules.has('org')) app.use('/api/org', orgRouter(vaultRoot));
+  // Session: the rest of the core features' routes, behind the login like everything below.
+  mountAt(app, features, 'session');
   if (modules.has('map')) app.use('/api/map', mapRouter());
   if (modules.has('tv')) app.use('/api/tv', tvRouter(vaultRoot));
   if (modules.has('media')) app.use('/api/media', mediaRouter(vaultRoot));

@@ -73,6 +73,8 @@ const Schema = z.object({
   SCAN_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(0),
   // Optional features, comma separated (MODULE_NAMES below). Off unless listed.
   MODULES: z.string().default(''),
+  // Deprecated (one release): `SUMMARIES=on` used to install the summaries timer; `summaries` is a module now.
+  SUMMARIES: z.string().optional(),
   // Shown in the TOTP app and as the comment author on the Agents board.
   OWNER_NAME: z.string().trim().min(1).default('owner'),
   // org module: the name of the human agent in the org (org_agents, runtime human).
@@ -180,13 +182,23 @@ const Schema = z.object({
   SOCIAL_X_MAX_CHARS: z.coerce.number().int().positive().default(280),
 });
 
-export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'board', 'usage', 'map', 'tv', 'voice', 'livestream', 'media', 'social', 'fund', 'chat', 'uploads', 'garden'] as const;
+export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'board', 'usage', 'summaries', 'map', 'tv', 'voice', 'livestream', 'media', 'social', 'fund', 'chat', 'uploads', 'garden'] as const;
 export type ModuleName = (typeof MODULE_NAMES)[number];
 
 /** `"ring, agents"` → {'ring', 'agents'}; unknown names are ignored. */
 export function parseModules(raw: string): ReadonlySet<ModuleName> {
   const wanted = raw.split(',').map((m) => m.trim());
   return new Set(MODULE_NAMES.filter((m) => wanted.includes(m)));
+}
+
+/** The module list, plus `summaries` when the old `SUMMARIES=on` flag asks for it (deprecated, one release). */
+export function modulesFromEnv(raw: string, summariesFlag: string | undefined): ReadonlySet<ModuleName> {
+  const modules = new Set(parseModules(raw));
+  if (summariesFlag === 'on' && !modules.has('summaries')) {
+    modules.add('summaries');
+    console.warn('SUMMARIES=on is deprecated: add "summaries" to MODULES instead. It still works this release.');
+  }
+  return modules;
 }
 
 const parsed = Schema.safeParse(process.env);
@@ -273,7 +285,7 @@ export const config = {
   uploadsMaxBytes: Math.floor(parsed.data.UPLOADS_MAX_GB * 1024 ** 3),
   uploadsPullToken: parsed.data.UPLOADS_PULL_TOKEN,
   dataDir: resolve(appRoot, 'data'),
-  modules: parseModules(parsed.data.MODULES),
+  modules: modulesFromEnv(parsed.data.MODULES, parsed.data.SUMMARIES),
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,
   orgVaultAssignee: parsed.data.ORG_VAULT_ASSIGNEE,

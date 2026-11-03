@@ -56,6 +56,7 @@ nav:
   - Home: README.md
   - Onboarding:
       - Overview: onboarding/README.md
+      - From zero to an agent company: onboarding/00-from-zero.md
       - What you get, and what to borrow: onboarding/01-what-you-get.md
       - Set up your vault: onboarding/02-set-up-your-vault.md
       - Connect Claude Code: onboarding/03-claude-code.md

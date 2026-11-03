@@ -28,7 +28,9 @@
 #   ORG_DISPATCH=on      install the org-dispatch timer (zen-agent bots; docs/zen-runtime.md). Also read from
 #                        the server's /etc/secondbrain/env, so setting it there is enough
 #   DEPLOY_MODULES       the server's module list, when it differs from this machine's MODULES
-#                        (e.g. voice here, livestream there); else MODULES. Each module installs its own timers:
+#                        (e.g. voice here, livestream there); else MODULES. Core features (projects, org, board,
+#                        usage, summaries) install the timers and PATH wrappers their manifests name
+#                        (server/src/features/<name>/manifest.ts; `secondbrain features list`). The rest:
 #                        agents: agents-sync, and (if the vault's .secondbrain/zen-agent builds) zen-agent-serve,
 #                        ZEN_SERVE_TOKEN/ZEN_AGENT_URL/ZEN_AGENT_TOKEN, zen-agent on PATH (docs/zen-agent.md 3.6)
 #                        usage: usage-sync, credits-sync, the usage importer
@@ -324,10 +326,16 @@ if has agents; then
 fi
 
 # ---- CLI wrappers on the app user's PATH, so an agent's `Bash(cli-org *)` rule matches ----
+# Core features name their wrappers and timers in their manifests (server/src/features/<name>/manifest.ts);
+# cli-features reads the manifests without a config or a database.
+features() { sudo -u "$APP_USER" -H /usr/bin/node --no-warnings "$APP_DIR/server/dist/cli-features.js" "$1" --modules "$MODS"; }
+# Deprecated (one release): SUMMARIES=on in the server's env file used to install the summaries timer; it is a module now.
+if grep -qsE '^SUMMARIES=on$' /etc/secondbrain/env && ! has summaries; then
+  echo "! SUMMARIES=on is deprecated: add summaries to DEPLOY_MODULES. Treating it as on for this deploy."
+  MODS="${MODS:+$MODS,}summaries"
+fi
 WRAPPERS=()
-has org && WRAPPERS+=(cli-org)
-has board && WRAPPERS+=(cli-board)
-has projects && WRAPPERS+=(cli-projects)
+for w in $(features wrappers); do WRAPPERS+=("$w"); done
 has social && WRAPPERS+=(cli-social)
 [ "$ZEN_BUILT" = 1 ] && WRAPPERS+=(zen-agent)
 if [ "${#WRAPPERS[@]}" -gt 0 ]; then
@@ -343,16 +351,15 @@ fi
 
 # ---- services ----
 render "$APP_DIR/deploy/secondbrain.service" > /etc/systemd/system/secondbrain.service
-has agents && unit secondbrain-agents-sync
-has board && unit secondbrain-board-reclaim
+# Core features' timers, from their manifests.
+for u in $(features units); do unit "$u"; done
 if has usage; then
-  unit secondbrain-usage-sync
-  unit secondbrain-credits-sync
   # A laptop's usage-push runs this over ssh as root and pipes its wire lines in.
   render "$APP_DIR/deploy/secondbrain-usage-import" > /usr/local/bin/secondbrain-usage-import
   chmod 755 /usr/local/bin/secondbrain-usage-import
 fi
-has projects && unit secondbrain-projects-render
+# Modules that are not core features yet keep their lines here until they move to addons/.
+has agents && unit secondbrain-agents-sync
 if has map; then unit secondbrain-map-build; unit secondbrain-metrics; fi
 if has garden; then unit secondbrain-garden; fi
 has livestream && unit secondbrain-livestream
@@ -361,10 +368,6 @@ has social && unit secondbrain-social
 # org-dispatch: only with the org module and ORG_DISPATCH=on (here or in the server's env file).
 grep -qsE '^ORG_DISPATCH=on$' /etc/secondbrain/env && WITH_DISPATCH=on
 if has org && [ "$WITH_DISPATCH" = on ]; then unit secondbrain-dispatch; fi
-# The weekly routing report page: whenever the org module is on (it is empty until a dispatcher routes).
-has org && unit secondbrain-routing-report
-# summaries: only with SUMMARIES=on in the server's env file (it needs a model to call: docs/summaries.md).
-grep -qsE '^SUMMARIES=on$' /etc/secondbrain/env && has usage && unit secondbrain-summarize
 [ "$WITH_EMBED" = 1 ] && unit secondbrain-embed
 [ "$WITH_BACKUP" = 1 ] && unit secondbrain-db-backup
 [ "$WITH_VAULT_SYNC" = 1 ] && unit secondbrain-vault-sync

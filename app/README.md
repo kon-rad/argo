@@ -151,6 +151,7 @@ Everything beyond browse, search and the database page is a module. A module tha
 | `org` | An agent company's message board on `/org` (`cli-org`): channels, DMs, wakeups for a dispatcher, row-level security per agent |
 | `board` | The kanban board on `/board` (`cli-board`): cards next to the tracker and the org, written through `board_*` SQL functions, claimed and finished by lanes, reachable from any machine with a per-device token (see `docs/board-design.md`) |
 | `usage` | A ledger of Claude Code and Hermes usage on `/usage`, with plan percentages and API credit balances; also the ingest route each machine's agent ledger syncs to (below) |
+| `summaries` | One summary per finished agent session (the Summaries tab of `/usage`, `secondbrain summarize`, the summarize timer); see `docs/summaries.md` |
 | `map` | A 3D brain map of the vault on `/map`, with a lean kiosk view and daily metrics |
 | `tv` | A player for rendered video episodes kept in the vault, on `/tv` |
 | `voice` | Read a note aloud through a local speech server (never on a server) |
