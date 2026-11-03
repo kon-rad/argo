@@ -197,7 +197,8 @@ export class Dispatcher {
 
   /** One bot: claim, apply the rules, gate, then one run for whatever is left. */
   async runAgent(agent: ZenAgentRow): Promise<{ ran: boolean; acks: number; gated: number }> {
-    const runId = runIdFor(agent.name, this.now());
+    const startedAt = this.now();
+    const runId = runIdFor(agent.name, startedAt);
     const wakeups = await claimWakeups(agent.name, runId);
     const out = { ran: false, acks: 0, gated: 0 };
     if (!wakeups.length) return out;
@@ -357,6 +358,12 @@ export class Dispatcher {
         if (prev?.subtype === 'budget') result = `${result} (held: budget twice)`;
       }
       await finishWakeups(run.map((k) => k.w.id), { run: runId, exit: r.code, result });
+      if (r.code !== 0) {
+        await store.recordFailedRun({
+          runId, agent: agent.name, taskId: card, wakeupIds: run.map((k) => k.w.id), team: agent.team_slug ?? null,
+          reasons: run.map((k) => ({ reason: k.w.reason, ref: k.w.ref })), startedAt, endedAt: this.now(), error: result,
+        });
+      }
       if (routeId !== null) await recordOutcome({ decisionId: routeId, result: r.code === 0 ? 'done' : 'failed' });
       await this.deps.classify({
         decision: 'run-outcome', state: { text: parsed?.text ?? '', stopped: parsed?.stopped ?? (r.code === 0 ? 'done' : 'error'), exit: r.code },
