@@ -7,7 +7,7 @@ import VectorSearch from './routes/VectorSearch.js';
 import Database from './routes/Database.js';
 import Sources from './routes/Sources.js';
 import Ring from './routes/Ring.js';
-import Agents from './routes/agents/Agents.js';
+import Agents, { OldCardLink } from './routes/agents/Agents.js';
 import Cron from './routes/Cron.js';
 import NavMenu, { type NavItem } from './components/NavMenu.js';
 import { FEATURE_ROUTES } from './features.js';
@@ -224,10 +224,14 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           <Route path="/vector-search" element={<VectorSearch />} />
           <Route path="/database" element={<Database />} />
           <Route path="/sources" element={<Sources />} />
-          <Route path="/agents/*" element={<Agents />} />
-          <Route path="/cron" element={<Cron />} />
-          <Route path="/cron/:profile/:jobId" element={<Cron />} />
-          <Route path="/ring" element={<Ring />} />
+          {/* Module pages: off means not routed, so they fall through to "No such page" like their API 404s. */}
+          {modules.has('agents') && <Route path="/agents/*" element={<Agents />} />}
+          {modules.has('agents') && <Route path="/cron" element={<Cron />} />}
+          {modules.has('agents') && <Route path="/cron/:profile/:jobId" element={<Cron />} />}
+          {/* Old Hermes kanban links still land on the board when the agents module is off. */}
+          {!modules.has('agents') && <Route path="/agents/board/:taskId" element={<OldCardLink />} />}
+          {!modules.has('agents') && <Route path="/agents/board" element={<Navigate to="/board" replace />} />}
+          {modules.has('ring') && <Route path="/ring" element={<Ring />} />}
           {/* Core features' pages, for the modules that are on (features.tsx; the nav comes from the server's manifests). */}
           {[...modules].flatMap((m) => FEATURE_ROUTES[m] ?? [])}
           {modules.has('tv') && <Route path="/tv" element={<Tv />} />}
