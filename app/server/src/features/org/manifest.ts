@@ -9,6 +9,7 @@ export default defineFeature({
   // The routing report is the routing pilot's weekly page; it leaves with the routing addon (proposal phase 5).
   timers: [{ unit: 'secondbrain-routing-report', summary: 'writes the weekly model-routing report (routing pilot)' }],
   wrappers: ['cli-org'],
+  health: { label: 'the org tables answer', tables: ['org_agents', 'org_channels', 'org_messages', 'org_wakeups', 'org_approvals'] },
   env: ['ORG_AGENT', 'ORG_DISPATCH', 'ORG_DB_URL'],
   settings: 'org',
   docs: 'docs/agent-company.md',

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import express from 'express';
 import { createAuth, type AuthOptions } from './auth/router.js';
 import { config, type ModuleName } from './config.js';
+import { healthy, runChecks } from './doctor.js';
 import { connectors as defaultConnectors, type ConnectorRegistry } from './connectors/index.js';
 import { defaultEmbeddingProvider } from './embeddings/factory.js';
 import { featureRoutes, mountAt, navFor } from './features/index.js';
@@ -168,8 +169,12 @@ export function createApp(opts: AppOptions = {}): express.Express {
   app.use('/api/social/posts', express.json({ limit: '30mb' }));
   app.use(express.json({ limit: '1mb' }));
 
-  app.get('/api/health', (_req, res) => {
-    res.json({ ok: true });
+  // The same checks `secondbrain doctor` prints, so a monitor and a person see one
+  // answer. `?deep=1` adds the server-only checks (failed timers, last backup);
+  // the launcher polls this endpoint while it waits for a boot, so those stay opt-in.
+  app.get('/api/health', async (req, res) => {
+    const checks = await runChecks({ modules, deep: req.query.deep === '1' });
+    res.json({ ok: healthy(checks), checks });
   });
 
   // The OAuth callback (the provider's redirect arrives without the session

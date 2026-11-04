@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { MODULE_NAMES, modulesFromEnv } from '../src/config.js';
 import { FEATURES } from '../src/features/index.js';
-import { MANIFESTS, cliFor, navFor, unitsFor, wrappersFor } from '../src/features/registry.js';
+import { MANIFESTS, cliFor, navFor, unitsFor, wrapperScript, wrappersFor } from '../src/features/registry.js';
 
 const APP_ROOT = resolve(import.meta.dirname, '..', '..');
 const REPO_ROOT = resolve(APP_ROOT, '..');
@@ -25,7 +25,7 @@ describe('feature manifests', () => {
         expect(existsSync(resolve(APP_ROOT, 'deploy', `${t.unit}.service`)), `${m.name}: ${t.unit}.service`).toBe(true);
         expect(existsSync(resolve(APP_ROOT, 'deploy', `${t.unit}.timer`)), `${m.name}: ${t.unit}.timer`).toBe(true);
       }
-      for (const w of m.wrappers) expect(existsSync(resolve(APP_ROOT, 'deploy/bin', w)), `${m.name}: wrapper ${w}`).toBe(true);
+      for (const w of m.wrappers) expect(wrapperScript(w), `${m.name}: wrapper ${w}`).toContain('server/dist/');
       expect(existsSync(resolve(REPO_ROOT, m.docs.split('#')[0]!)), `${m.name}: ${m.docs}`).toBe(true);
     }
   });
@@ -44,7 +44,7 @@ describe('feature manifests', () => {
     expect(unitsFor(new Set())).toEqual([]);
     expect(wrappersFor(new Set(['org', 'usage']))).toEqual(['cli-org']);
     expect(navFor(new Set(['usage', 'summaries']))).toEqual([{ section: 'Work', label: 'Usage', path: '/usage' }]);
-    expect(cliFor('board')?.feature.name).toBe('board');
+    expect(cliFor('board')?.feature?.name).toBe('board');
     expect(cliFor('summarize')?.cli.entry).toBe('cli-summarize.js');
     expect(cliFor('bogus')).toBeUndefined();
   });

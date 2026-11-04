@@ -8,6 +8,7 @@ export default defineFeature({
   cli: [{ command: 'board', entry: 'cli-board.js', summary: 'the kanban board: list/show/create/comment/assign/move/claim/finish/token/import (board help)' }],
   timers: [{ unit: 'secondbrain-board-reclaim', summary: 'returns cards whose lane lease expired, every 5 minutes' }],
   wrappers: ['cli-board'],
+  health: { label: 'the board tables answer', tables: ['boards', 'cards', 'card_comments', 'card_events', 'card_deps', 'card_runs'] },
   env: ['BOARD_URL', 'BOARD_TOKEN', 'ORG_AGENT', 'AGENT_HUB_URL', 'AGENT_HUB_TOKEN'],
   docs: 'docs/kanban-board.md',
 });

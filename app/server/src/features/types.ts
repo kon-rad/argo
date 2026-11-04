@@ -37,6 +37,18 @@ export interface FeatureTimer {
   summary: string;
 }
 
+/**
+ * What `secondbrain doctor` and /api/health check for one feature, as pure data.
+ * The doctor verifies every table exists, so a feature whose migration never ran
+ * fails loudly instead of 500ing on its first request.
+ */
+export interface FeatureHealth {
+  /** One line for the doctor output, e.g. `the board's tables answer`. */
+  label: string;
+  /** Tables the feature needs; the doctor checks each exists (to_regclass). */
+  tables: string[];
+}
+
 /** The data half of a feature: what every reader needs without loading its code. */
 export interface FeatureManifest {
   name: ModuleName;
@@ -48,6 +60,8 @@ export interface FeatureManifest {
   timers: FeatureTimer[];
   /** PATH wrappers deploy.sh installs for the app user, so an agent's `Bash(cli-x *)` rule matches. */
   wrappers: string[];
+  /** The doctor's check for this feature, when it has one. */
+  health?: FeatureHealth;
   /** Env keys the feature reads. Each has a row in docs/configuration.md. */
   env: string[];
   /** Its block in secondbrain.json, when it has one. */
