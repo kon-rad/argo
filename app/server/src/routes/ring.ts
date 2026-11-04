@@ -4,9 +4,9 @@ import { pullRing, ringNight, ringOverview, type RingDump } from '../ring.js';
 import { HttpError, parseOr400, wrap } from './http.js';
 
 export interface RingRouterOptions {
-  /** The Mac pulls from the droplet; the server receives pushes and has no pull. */
+  /** A client pulls from the server; the server receives pushes and has no pull. */
   allowPull: boolean;
-  /** ssh alias of the droplet. */
+  /** ssh alias of the server. */
   host: string;
   db: string;
   /** Overridden in tests so no ssh happens. */

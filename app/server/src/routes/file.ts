@@ -128,7 +128,7 @@ export function fileRouter(vaultRoot: string): Router {
       const next = Buffer.from(body.content, 'utf8');
       if (next.length > MAX_EDIT_BYTES) throw new HttpError(413, 'too large to save from the browser');
 
-      // Optimistic lock. The vault has other writers — Obsidian on the Mac, the
+      // Optimistic lock. The vault has other writers - Obsidian on a laptop, the
       // Hermes agent and the git auto-sync on the server — and silently
       // overwriting one of their changes is the worst thing an editor can do.
       const current = await readFile(abs).catch(() => null);

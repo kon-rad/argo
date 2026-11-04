@@ -4,7 +4,7 @@ import { api, type RingDay, type RingNight } from '../lib/api.js';
 
 /**
  * Ring data (sleep, heart rate) as a ring-ingest client pushes it to the server.
- * On the server this reads the pushed tables directly; on the Mac it reads a
+ * On the server this reads the pushed tables directly; on a client it reads a
  * mirror that "Pull from server" (or `secondbrain ring-pull`) refreshes.
  */
 

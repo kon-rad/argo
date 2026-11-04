@@ -24,7 +24,7 @@ const SESSION_COLUMNS = `s.id, s.source, s.host, s.external_id, s.parent_externa
   s.meta->>'display_name' AS display_name, s.meta->>'chat_type' AS chat_type, s.meta->>'chat_id' AS chat_id,
   s.meta->>'user_id' AS user_id, s.meta->>'timezone' AS timezone`;
 
-/** systemd's timers, live. Absent on the Mac (no systemctl) and harmless if it fails. */
+/** systemd's timers, live. Absent on a local install (no systemctl) and harmless if it fails. */
 export function listSystemdTimers(): Promise<{ available: boolean; timers: unknown[] }> {
   return new Promise((resolve) => {
     execFile('systemctl', ['list-timers', '--all', '--output=json', '--no-pager'], { timeout: 5000 }, (err, stdout) => {

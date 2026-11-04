@@ -2,10 +2,10 @@
 
 ### The headless runtime for bot wakes: one loop, hooks on the loop, everything else a file
 
-**Status:** built and merged: `zen-agent/` on `main` since [kon-rad/argo#38](https://github.com/kon-rad/argo/pull/38). Fresh-context wakes, the `thread` part and the context fetchers are in; the roster switch and the dispatcher hand-off described in [Integration](#7-integration-with-the-second-brain) are the vault's side and still to do.
+Status: **pilot** - built and merged in `zen-agent/` on `main` since [kon-rad/argo#38](https://github.com/kon-rad/argo/pull/38) and runnable today, but the roster's `runtime: zen-agent` switch and the dispatcher hand-off (section 7) were still to do at the last update.
 **Written:** 2026-10-24
 **Goal:** Run one agent of the org, as a named persona, on one task, under a budget, with every input measured and every step traced, on whichever model the policy names.
-**Companion pages:** [Self-improving orchestration](self-improvement.md) (section 10 asked for this runtime), [Agent harness](agent-harness.md) (the guard and the gate it shares), [Retrieval](rag.md) (the search it calls).
+**Companion pages:** [Agent harness](agent-harness.md) (the guard and the gate it shares), [Retrieval](rag.md) (the search it calls).
 
 ---
 
@@ -21,7 +21,7 @@
 
 ## 1. Why another runtime
 
-Agents run here in three ways ([self-improvement.md, section 10](self-improvement.md#10-a-harness-of-our-own)): the owner in Claude Code, bot wakes under `claude -p`, and cron and chat under Hermes. The headless mode is where the loop's levers are weakest and the bill is highest: every turn re-sends a conversation whose system prompt and tool list are Claude Code's, compaction is opaque, a complete trace needs a capture proxy, and the wake prompt and the budget live in a dispatcher script outside the engine.
+Agents run here in three ways today: the owner in Claude Code, bot wakes under `claude -p`, and cron and chat under Hermes. The headless mode is where the loop's levers are weakest and the bill is highest: every turn re-sends a conversation whose system prompt and tool list are Claude Code's, compaction is opaque, a complete trace needs a capture proxy, and the wake prompt and the budget live in a dispatcher script outside the engine.
 
 zen-agent is the pilot that section recommends: a thin runtime for bot wakes, built on a minimal, maintained agent core rather than written from scratch, judged by the same metrics as any other proposal (tokens per finished card, first-wake finish rate, trace completeness). It replaces nothing for the owner's interactive work or for Hermes's cron jobs.
 
@@ -272,7 +272,7 @@ And the engine's own rule holds: nothing personal. Defaults work for a stranger;
 
 ## 6. How it compares
 
-The comparison uses what the research in [self-improvement.md, section 14](self-improvement.md#14-related-work-and-candidate-runtimes) could verify, plus what zen-agent does today. Where a cell says "no", that is a design choice or a current limit, not a verdict on the other tool.
+The comparison uses what the earlier research could verify, plus what zen-agent does today. Where a cell says "no", that is a design choice or a current limit, not a verdict on the other tool.
 
 | | **zen-agent** | **Claude Code headless** (`claude -p`) | **Hermes** | **pi coding agent** (`pi`) | **Claude Agent SDK** |
 |---|---|---|---|---|---|
@@ -330,4 +330,4 @@ The pilot is judged on the proposal's metrics: tokens per finished card, first-w
 - Agent Skills: [specification](https://agentskills.io/specification)
 - Claude Code: [hooks](https://code.claude.com/docs/en/hooks) · [subagents](https://code.claude.com/docs/en/sub-agents)
 - Anthropic: [effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
-- This repo: [self-improvement.md](self-improvement.md) · [agent-harness.md](agent-harness.md) · [rag.md](rag.md) · [`zen-agent/README.md`](https://github.com/kon-rad/argo/blob/main/zen-agent/README.md)
+- This repo: [agent-harness.md](agent-harness.md) · [rag.md](rag.md) · [`zen-agent/README.md`](https://github.com/kon-rad/argo/blob/main/zen-agent/README.md)

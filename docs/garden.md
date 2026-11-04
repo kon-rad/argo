@@ -1,5 +1,7 @@
 # The vault gardener
 
+Status: **works** - the vault gardener ships (PR #104); the timer runs in shadow mode until `garden.apply` is true.
+
 `secondbrain garden` is a nightly command that keeps a PARA vault organised without anyone filing by hand. It treats every top-level folder under `Projects/`, `Areas/` and `Research/` as a **shelf**, gives each shelf note a small header, renders a catalog of every shelf, archives project shelves that are finished or stale, proposes stale areas, normalises folder names, and writes a report. Module `garden`; settings under `garden` in `secondbrain.json` ([configuration.md](configuration.md)).
 
 ## Why shelves
@@ -41,7 +43,7 @@ The **Next action** line comes from `<shelf>/dev-log/README.md` when it has a Re
 | Plan: archive, propose, rename, loose notes | yes | yes | yes |
 | Move and rename with `git mv`, rewrite path links | | | yes |
 | Write shelf notes (create missing ones) and the generated block | | yes | yes |
-| Write the catalog (`garden.catalogFile`, default `CURRENT/catalog.md`) | | yes | yes |
+| Write the catalog (`garden.catalogFile`, default `garden/catalog.md`) | | yes | yes |
 | Write the report (`garden.reportDir/<date>.md`) | yes | yes | yes |
 
 Rules, in order, one action per shelf:

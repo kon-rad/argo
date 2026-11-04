@@ -1046,18 +1046,18 @@ const BOARD_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
 
 /**
  * Vault code is worked by a Claude Code session on the owner's machine, never by a bot: the vault holds private notes
- * and isn't a bot repo (decided 2026-10-21). The vault assignee (ORG_VAULT_ASSIGNEE, default `vault-session`) is a
- * roster row with runtime `session` that no lane claims; its cards wait in ready for a session there. Boards that
- * predate the setting still use `m4`, which stays recognised.
+ * and isn't a bot repo. The vault assignee (ORG_VAULT_ASSIGNEE, default `vault-session`) is a
+ * roster row with runtime `session` that no lane claims; its cards wait in ready for a session there. A board that
+ * predates the setting still uses the legacy slug, which stays recognised.
  */
 export const VAULT_ASSIGNEE = config.orgVaultAssignee;
 const LEGACY_VAULT_ASSIGNEE = 'm4';
 export const VAULT_REPO = 'vault';
-/** Lanes outside the roster that still act on the board: the Telegram bridge, the dispatcher and the M4's vault-code lane. */
+/** Lanes outside the roster that still act on the board: the Telegram bridge, the dispatcher and the legacy vault-code lane. */
 const SYSTEM_SESSIONS: [string, string][] = [
   ['claude-telegram', 'Telegram bridge: files and answers cards for the owner'],
   ['cc-dispatcher', 'Dispatcher: wakes bots and runs their cards'],
-  ['m4', "Claude Code on the owner's M4: vault code cards"],
+  ['m4', 'Claude Code session: vault code cards'],
 ];
 const VAULT_ROLE = "Claude Code session on the owner's machine (vault work)";
 

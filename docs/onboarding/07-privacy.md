@@ -1,5 +1,7 @@
 # Privacy: what stays, what leaves, and how to keep it that way
 
+Status: **works** - the shipped privacy model: what stays local, what leaves when you turn it on, and the habits that keep a vault private.
+
 This page is for the person running a vault. It lists every place your data can go, which of them are on by default, and the habits that keep a private vault private. The maintainers' side, how the public engine stays free of personal data, is [privacy.md](../privacy.md).
 
 ## The default: everything stays on your machine

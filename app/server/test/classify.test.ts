@@ -137,6 +137,12 @@ describe('classify()', () => {
     expect(f.calls).toHaveLength(0);
     expect((await query(`SELECT count(*)::int AS n FROM classify_decisions WHERE action = 'fallthrough' AND error = 'no-key'`)).rows[0]!.n).toBe(2);
   });
+  it('falls through when neither the schema nor the settings name a model (the default is unset)', async () => {
+    const f = fakeFetch([]);
+    const r = await classify({ decision: 'wake-gate', state: wake, source: 'platform' }, deps({ fetch: f.fetch, settings: { ...SETTINGS, model: undefined } }));
+    expect(r).toMatchObject({ action: 'fallthrough', error: 'no-model', model: null });
+    expect(f.calls).toHaveLength(0);
+  });
   it('stops at the daily token cap', async () => {
     const f = fakeFetch([choice('act', { act: 0.9, answer: 0.1, fyi: 0, ack: 0 }, 0.9, 1500), choice('act', { act: 0.9, answer: 0.1, fyi: 0, ack: 0 }, 0.9)]);
     expect((await classify({ decision: 'wake-gate', state: wake, source: 'platform' }, deps({ fetch: f.fetch, dailyTokens: 1000 }))).action).toBe('act');

@@ -6,10 +6,10 @@ import { settings } from '../settings.js';
 
 /**
  * Where summaries are written and by whom. The engine ships `app/config/summaries.json`
- * (a home server's local model first, then two paid fallbacks); a vault overrides any
- * field under `summaries` in `secondbrain.json`. Keys and addresses are never here: a
- * provider's key is its preset's environment variable, a home server's address is read from
- * the variable `baseUrlEnv` names.
+ * (paid fallbacks, first key wins); a vault overrides any field under `summaries` in
+ * `secondbrain.json`, e.g. to put a home server's local model first. Keys and addresses
+ * are never here: a provider's key is its preset's environment variable, a home server's
+ * address is read from the variable `baseUrlEnv` names.
  */
 const Entry = z.object({
   provider: z.string().min(1),

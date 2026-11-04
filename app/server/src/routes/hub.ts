@@ -6,7 +6,7 @@ import { allowlistProxy, type ProxyOptions } from './proxy.js';
  * the engine's own, /api/board). This server is sandboxed (read-only home, no new privileges), so it can't start
  * Claude or touch systemd. agent-hub (argo-exo/agents/agent-hub, 127.0.0.1 only) does those, and this
  * router forwards an allowlist of its routes with the hub's bearer token, which never reaches the browser.
- * On the Mac there is no hub: every route answers 503.
+ * On a local install there is no hub: every route answers 503.
  */
 export type HubOptions = ProxyOptions;
 
@@ -27,6 +27,6 @@ export function hubRouter(opts: HubOptions): Router {
     name: 'agent-hub',
     allowed: ALLOWED,
     queryKeys: QUERY_KEYS,
-    unconfigured: 'Agents run on the droplet: agent-hub is not configured on this machine',
+    unconfigured: 'Agents run on the server: agent-hub is not configured on this machine',
   });
 }

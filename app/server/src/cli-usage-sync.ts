@@ -7,7 +7,7 @@ import { pool } from './db.js';
 import { syncUsage } from './usage/sync.js';
 
 // `secondbrain usage-sync`: this machine's Claude Code transcripts, cc-runs logs, plan readings and zen-agent traces -> the ledger.
-// On the droplet a systemd timer runs it as hermes (deploy/secondbrain-usage-sync.*).
+// On the server a systemd timer runs it as the service user (deploy/secondbrain-usage-sync.*).
 const home = homedir();
 const host = (process.env.USAGE_SYNC_HOST ?? (process.env.DEPLOYMENT === 'server' ? 'droplet' : 'mac')) as Host;
 const paths = {

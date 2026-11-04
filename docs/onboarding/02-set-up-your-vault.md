@@ -1,5 +1,7 @@
 # Set up your vault
 
+Status: **works** - the six-step setup that takes an empty folder to a private vault, the app and search, shipped today.
+
 From nothing to a private vault you can browse and search, in six steps. Each step ends with a check, so you know it worked before moving on. The reference for every detail is [getting-started.md](../getting-started.md).
 
 ## Step 1. Install the prerequisites

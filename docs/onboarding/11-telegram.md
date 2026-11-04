@@ -1,5 +1,7 @@
 # Connect Telegram
 
+Status: **works** - the shipped `secondbrain telegram` command, the three agent integrations, and the by-hand setup.
+
 Talk to your agents from your phone. A Telegram bot is a chat that one of your agents answers: you send "research X" or "what is on the board?", the agent works in your vault under the same rules and guard as at your desk, and replies in the chat. This page creates a bot, connects it to Claude Code, Hermes or zen-agent with one command, and checks it end to end, including where the chats show up afterwards.
 
 You need a vault with an agent already connected ([Claude Code](03-claude-code.md) or [Hermes](04-hermes.md)), and a machine that stays on, usually the server from [Connect servers and computers](06-connect-machines.md). A laptop works for a trial, but the bot goes quiet when the laptop sleeps.
@@ -77,7 +79,7 @@ Each one carries a **channel** label, `telegram`, and the name of the bot. Filte
     "bots": [
       { "name": "claude", "agent": "claude-code", "username": "yourbot" },
       { "name": "hermes", "agent": "hermes" },
-      { "name": "zen", "agent": "zen-agent", "persona": "sol" }
+      { "name": "zen", "agent": "zen-agent", "persona": "assistant" }
     ]
   }
 }

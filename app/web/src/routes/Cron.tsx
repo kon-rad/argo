@@ -8,7 +8,7 @@ import { ago, zoned } from '../lib/time.js';
 /**
  * Hermes cron jobs from every profile (active, paused, finished, removed),
  * each with its full run history and every output it produced, plus the
- * droplet's systemd timers. Data comes from `secondbrain agents-sync`.
+ * server's systemd timers. Data comes from `secondbrain agents-sync`.
  */
 
 function stateLabel(j: CronJob): string {
@@ -69,7 +69,7 @@ export default function Cron() {
         <div className="border-t border-[var(--rule)] px-3 py-2">
           <h2 className="text-sm font-medium">systemd timers on this server</h2>
           {timers.data && !timers.data.available && (
-            <p className="text-xs text-[var(--ink-dim)]">Not available here (the Mac has no systemd).</p>
+            <p className="text-xs text-[var(--ink-dim)]">Not available here (a local install has no systemd).</p>
           )}
           <ul className="mt-1 space-y-1 text-xs">
             {timers.data?.timers.map((t) => (

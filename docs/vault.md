@@ -1,5 +1,7 @@
 # Your vault
 
+Status: **works** - the vault template, the `secondbrain-vault` CLI and the engine update flow ship as described.
+
 The vault is yours: a private git repo of markdown, organised with PARA. This page covers what the template gives you, the `secondbrain-vault` CLI, how agent rules and skills are layered, and how to take engine updates.
 
 ## The template

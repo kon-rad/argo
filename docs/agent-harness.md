@@ -1,5 +1,7 @@
 # The agent harness
 
+Status: **works** - the guard (`harness/hooks/guard.py`) and dev-log gate (`harness/hooks/devlog_gate.py`) ship in the engine and run under Claude Code, Hermes and zen-agent.
+
 AI agents work in your vault the way you do: they read and write markdown, run commands, and edit skills and scripts. The harness gives every agent the same rules and the same two hooks, whichever agent it is.
 
 | Piece | File | Runs |
@@ -109,7 +111,7 @@ Hermes asks for consent to each exact hook command once per machine and records 
 
 ### zen-agent
 
-[zen-agent](https://github.com/kon-rad/argo/blob/main/zen-agent/README.md) runs the guard in process (the same built-in rules and the same `guard.local.json`, ported to TypeScript) and runs `guard.py` and `devlog_gate.py` as hook commands when `zen.json` lists them under `guard.hooks.preToolUse` and `guard.hooks.stop`. Its skills come from the same `.agents/skills`. Every block is appended to the same `~/.cache/agent-guard.log`. Running the bots on it is described in [zen-runtime.md](zen-runtime.md).
+[zen-agent](https://github.com/kon-rad/argo/blob/main/zen-agent/README.md) runs the guard in process (the same built-in rules and the same `guard.local.json`, ported to TypeScript) and runs `guard.py` and `devlog_gate.py` as hook commands when `zen.json` lists them under `guard.hooks.preToolUse` and `guard.hooks.stop`. Its skills come from the same `.agents/skills`. Every block is appended to the same `~/.cache/agent-guard.log`. Running the bots on it is described in [zen-agent.md](zen-agent.md).
 
 ### Other agents
 

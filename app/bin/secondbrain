@@ -23,10 +23,10 @@ PORT="${PORT:-5123}"
 URL="http://127.0.0.1:$PORT"
 PG_FORMULA="${PG_FORMULA:-postgresql@15}"
 DB_NAME="${DB_NAME:-secondbrain}"
-# After the 2026-10-14 cutover the master database is the droplet's, reached
-# over Tailscale. SECONDBRAIN_DB_URL (vault-root .env, role sb_app) switches
-# this launcher into client mode: no local Postgres, no migrations (the droplet
-# app owns the schema), and no scan/embed/ring-pull/agents-sync from the Mac.
+# When SECONDBRAIN_DB_URL is set (vault-root .env, role sb_app) the master
+# database lives on another machine. This launcher then runs in client mode: no
+# local Postgres, no migrations (the server app owns the schema), and no
+# scan/embed/ring-pull/agents-sync from a local install.
 # SECONDBRAIN_DB=local forces the old local database (e.g. offline, read-only use).
 # The vault holds the engine at <vault>/.secondbrain/app (VAULT_ROOT overrides),
 # the same rule config.ts and deploy.sh use. Getting this wrong silently falls
@@ -155,7 +155,7 @@ ensure_deps() {
 }
 
 apply_migrations() {
-  # The droplet app (role hermes, the schema owner) runs migrations on deploy.
+  # The server app (the schema owner) runs migrations on deploy.
   [[ "$REMOTE_DB" == 1 ]] && return
   npx --yes node-pg-migrate -m db/migrations -j sql up >/dev/null || die "migrations failed"
 }
@@ -215,11 +215,11 @@ start_detached() {
 
 # ------------------------------------------------------------------- commands
 
-# Scans, embeds, the Ring pull and agents-sync write tables only the droplet
+# Scans, embeds, the Ring pull and agents-sync write tables only the server
 # writes now (see the client-mode note at the top).
 refuse_if_remote() {
   [[ "$REMOTE_DB" == 1 ]] || return 0
-  die "$1 runs on the droplet now (single-database cutover 2026-10-14). Use SECONDBRAIN_DB=local to run it against the old local database."
+  die "$1 runs on the server now. Use SECONDBRAIN_DB=local to run it against the old local database."
 }
 
 cmd_start() {
@@ -366,14 +366,14 @@ cmd_embed() {
 
 cmd_auth_setup() {
   # Needs only node and the built server — no Postgres, no running server — so
-  # it can be run on the Mac and the output pasted into the server's env file.
+  # it can be run on a local install and the output pasted into the server's env file.
   ensure_node; ensure_deps; ensure_build
   node "$APP_ROOT/server/dist/cli-auth.js"
 }
 
 cmd_ring_pull() {
   refuse_if_remote ring-pull
-  # Mirrors the droplet's ring_* tables (filled by the Pi's hourly push) into local Postgres.
+  # Mirrors the server's ring_* tables (filled by a Pi's hourly push) into local Postgres.
   ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-ring.js"
 }
@@ -398,7 +398,7 @@ cmd_ledger() {
 cmd_archive_steps() {
   # One-off passes over archive rows stored before the agent-sessions migration:
   # fill step columns; with --redact, rewrite stored rows that hold keys this machine knows.
-  # No local Postgres: on the Mac SECONDBRAIN_DB_URL is the server.
+  # No local Postgres: SECONDBRAIN_DB_URL points at the server.
   ensure_deps; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-archive-steps.js" "$@"
 }
@@ -409,7 +409,7 @@ cmd_telegram() {
   node --no-warnings "$APP_ROOT/server/dist/cli-telegram.js" "$@"
 }
 cmd_summarize() {
-  # One summary per finished agent session (agent_summaries). Droplet only: it reads the archive.
+  # One summary per finished agent session (agent_summaries). Server only: it reads the archive.
   # --digest [HOURS] prints the stand-up's markdown instead. Providers and fallbacks: docs/summaries.md.
   ensure_deps; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-summarize.js" "$@"
@@ -434,8 +434,8 @@ cmd_classify() {
 
 cmd_inventory() {
   # Gear rows in inventory_items (agent write helper). No Postgres start or
-  # migrations here: after the cutover SECONDBRAIN_DB_URL points at the
-  # droplet, where this connects as sb_agent and can't migrate anything.
+  # migrations here: SECONDBRAIN_DB_URL points at the
+  # server, where this connects as sb_agent and can't migrate anything.
   ensure_deps; ensure_build
   (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-inventory.js" "$@")
 }
@@ -460,7 +460,7 @@ cmd_map_build() {
 }
 
 cmd_metrics() {
-  # Brain map numbers: collect (daily timer on the droplet), set, list.
+  # Brain map numbers: collect (daily timer on the server), set, list.
   ensure_deps; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-metrics.js" "$@"
 }
@@ -502,10 +502,10 @@ secondbrain inventory  list/show/add/update gear rows and file their photos (inv
 secondbrain org-dispatch  tick | routines: run zen-agent bots for their open wakeups (ORG_DISPATCH=on on a server)
 secondbrain classify   a calibrated decision about a message, card or run, logged (classify help)
 secondbrain backlinks  add a Related links block to each note (dry run; --write applies, --path limits)
-secondbrain map-build  rebuild the brain map's stored layout (droplet)
+secondbrain map-build  rebuild the brain map's stored layout (server)
 secondbrain garden     nightly vault gardener (shadow by default; --write updates shelf notes and the catalog, --apply also moves)
 secondbrain metrics    collect | set <metric> <value> | list  the brain map's numbers
-secondbrain ring-pull  copy the ring data from the droplet into local Postgres
+secondbrain ring-pull  copy the ring data from the server into local Postgres
 secondbrain auth-setup  create the password + authenticator login for the server
 secondbrain features   list | units | wrappers | help  the feature manifests and what they wire
 USAGE

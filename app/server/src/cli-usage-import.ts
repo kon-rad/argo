@@ -4,7 +4,7 @@ import type { Host } from './archive/types.js';
 import { pool } from './db.js';
 import { importLines } from './usage/importer.js';
 
-// Reads wire lines on stdin (from the Mac's usage-push over SSH) into this machine's ledger.
+// Reads wire lines on stdin (from a laptop's usage-push over SSH) into this machine's ledger.
 const host = (process.argv[2] ?? 'mac') as Host;
 if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(host)) { console.error(`usage-import: bad host ${host}`); process.exit(1); }
 let code = 1;

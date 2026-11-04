@@ -1,5 +1,7 @@
 # Onboarding: your own second brain
 
+Status: **works** - the guided overview of the shipped onboarding path, from a private vault to a connected agent.
+
 A guided path from "I have notes somewhere" to a private knowledge base with agents working in it under your rules. Each page is short, builds on the one before, and links to the reference docs for every detail.
 
 You do not need all of it. The first three pages give you a vault, the app and one agent. The rest you add when you want it.

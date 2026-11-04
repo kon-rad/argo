@@ -1,5 +1,7 @@
 # Privacy: keeping the engine clean
 
+Status: **works** - the leak checks run in CI on every pull request and every push to `main`.
+
 This repo is public. The vaults that use it are private and full of someone's life. This page is how the two stay apart, for the people who maintain the engine and for anyone keeping a fork.
 
 ## The contract
@@ -33,7 +35,7 @@ The generic patterns can't know your name, your hosts or your folder names. Put 
 # names
 Jane Example
 # hosts and paths
-my-droplet
+my-server
 /Users/jane
 ```
 

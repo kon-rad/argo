@@ -72,7 +72,7 @@ export function mapGoals(goals: Goal[]): Goal[] {
 /**
  * The folders a project owns: its `paths` (folders, or a file's folder) and
  * the folder of its design doc. A dev log living in another project's folder
- * (claude-code-droplet's points into argo-exo) is not ownership, so it's left out.
+ * (a dispatcher bot's points into a project) is not ownership, so it's left out.
  */
 export function projectFolders(p: ProjectRow): string[] {
   const out = new Set<string>();

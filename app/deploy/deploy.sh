@@ -48,7 +48,7 @@ if [[ "$(basename "$ENGINE_ROOT")" == ".secondbrain" ]]; then VAULT_ROOT_LOCAL="
 VAULT_ROOT_LOCAL="${VAULT_ROOT:-$VAULT_ROOT_LOCAL}"
 # The commit this deploy is shipping, written into the app's build-info file so
 # the running app can say which version is live. A caller that already knows which
-# commit it shipped wins (the droplet's deploy watcher does); otherwise this asks
+# commit it shipped wins (the server's deploy watcher does); otherwise this asks
 # the checkout, with safe.directory set for the case where the deploy runs as root
 # over a checkout another user owns. Empty when this is not a checkout at all.
 ENGINE_COMMIT="${ENGINE_COMMIT:-$(git -c safe.directory="$ENGINE_ROOT" -C "$APP_ROOT" rev-parse HEAD 2>/dev/null || true)}"
@@ -419,13 +419,13 @@ systemctl enable caddy secondbrain >/dev/null
 # drop-in for this one unit, never in /etc/secondbrain/env: BOARD_URL+BOARD_TOKEN in the shared env would switch
 # every process's cli-board to the HTTPS door. Minted once, as the owner; revoke with `cli-board token revoke`.
 if [ "$ZEN_BUILT" = 1 ] && has board && [ ! -s /etc/secondbrain/zen-serve.env ]; then
-  ZEN_BOARD_OUT=$(sudo -u "$APP_USER" -H "$APP_HOME/.local/bin/cli-board" token create "${ZEN_BOARD_AGENT:-sol}" --label "zen chat serve" 2>&1) || true
+  ZEN_BOARD_OUT=$(sudo -u "$APP_USER" -H "$APP_HOME/.local/bin/cli-board" token create "${ZEN_BOARD_AGENT:-owner}" --label "zen chat serve" 2>&1) || true
   ZEN_BOARD_TOKEN=$(printf '%s' "$ZEN_BOARD_OUT" | grep -o 'sbb_[A-Za-z0-9_-]*' | head -1)
   if [ -n "$ZEN_BOARD_TOKEN" ]; then
     install -m 0600 -o "$APP_USER" -g "$APP_USER" /dev/null /etc/secondbrain/zen-serve.env
     printf 'BOARD_TOKEN=%s\n' "$ZEN_BOARD_TOKEN" > /etc/secondbrain/zen-serve.env
   else
-    echo "! no board token minted for zen-agent serve (ZEN_BOARD_AGENT, default sol, must be a roster member); its kanban tools stay off"
+    echo "! no board token minted for zen-agent serve (ZEN_BOARD_AGENT, default owner, must be a roster member); its kanban tools stay off"
   fi
 fi
 if [ "$ZEN_BUILT" = 1 ] && [ -s /etc/secondbrain/zen-serve.env ]; then

@@ -1,5 +1,7 @@
 # Orchestrate agents
 
+Status: **works** - the shipped orchestration model: rules, skills, dev logs, the `projects` tracker, the `org` board and the `usage` ledger.
+
 How work gets done by agents in a vault, from one Claude Code session to a company of named bots with a tracker, a board and a bill. The pieces are independent: take the first three for any vault, add the modules when you want a paper trail.
 
 ## The model in one picture

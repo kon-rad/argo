@@ -5,8 +5,13 @@ import { runSummaries } from '../src/summaries/run.js';
 import { truncateAll } from './helpers.js';
 import { sse } from './summaries-helpers.js';
 
-const cfg = summaryConfig();
-const ENV = { SUMMARIES_M1_URL: 'http://m1.invalid:11434', TOGETHER_API_KEY: 'tg-fake-key-for-tests-0001', OPENROUTER_API_KEY: 'or-fake-key-for-tests-0002' };
+// A fixture chain, independent of the shipped default: a local model first, then two paid fallbacks.
+const cfg = { ...summaryConfig({}), chain: [
+  { provider: 'ollama', model: 'local-model', baseUrlEnv: 'SUMMARIES_LOCAL_URL', timeoutMs: 240000, body: { reasoning_effort: 'none' } },
+  { provider: 'together', model: 'deepseek-ai/DeepSeek-V4.1-Flash', timeoutMs: 120000 },
+  { provider: 'openrouter', model: 'google/gemini-2.5-flash', timeoutMs: 120000 },
+] };
+const ENV = { SUMMARIES_LOCAL_URL: 'http://local.invalid:11434', TOGETHER_API_KEY: 'tg-fake-key-for-tests-0001', OPENROUTER_API_KEY: 'or-fake-key-for-tests-0002' };
 
 const ANSWER = JSON.stringify({
   request: 'Fix the discount bug on card t_ab12cd34.',
@@ -57,7 +62,7 @@ describe('runSummaries', () => {
     const calls: string[] = [];
     const r = await runSummaries({ cfg, deps: { environment: ENV, fetchFn: fetchOk(calls) } });
     expect(r).toMatchObject({ considered: 1, written: 1, failed: 0, tokens: { input: 120, output: 40 } });
-    expect(calls).toEqual(['http://m1.invalid:11434/v1/chat/completions']);
+    expect(calls).toEqual(['http://local.invalid:11434/v1/chat/completions']);
 
     const { rows: [s] } = await query(`SELECT * FROM agent_summaries WHERE session_id = $1`, [id]);
     expect(s).toMatchObject({ status: 'ok', outcome: 'finished', harness: 'claude-code', host: 'droplet', writer_provider: 'ollama', writer_model: cfg.chain[0]!.model, writer_input_tokens: 120 });

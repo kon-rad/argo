@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# app/bin/install-usage-push-mac.sh - run from the Mac after every change to the push code.
+# app/bin/install-usage-push-mac.sh - run from a laptop after every change to the push code.
 # launchd can't read ~/Documents (TCC), so the compiled push and the status-line wrapper are
 # copied to ~/.local/share/secondbrain, the same way agent_activity.py is.
 set -euo pipefail

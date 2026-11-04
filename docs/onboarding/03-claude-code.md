@@ -1,5 +1,7 @@
 # Connect Claude Code
 
+Status: **works** - the Claude Code wiring `init` ships, its guard and dev-log gate, and how to check and extend it.
+
 `secondbrain-vault init` already wired Claude Code. This page is what that wiring does, how to check it, and how to make it yours. Reference: [agent-harness.md](../agent-harness.md).
 
 ## Start it

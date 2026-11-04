@@ -1,5 +1,7 @@
 # Getting started
 
+Status: **works** - the shipped 15-minute path from an empty folder to a vault you can browse and search on your own machine.
+
 From nothing to a vault you can browse and search on your own machine. About 15 minutes, most of it installing Postgres.
 
 ## 1. Install the prerequisites
