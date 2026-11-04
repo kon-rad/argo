@@ -6,7 +6,7 @@ import { HttpError, wrap } from './http.js';
  * sandboxed (read-only home, no new privileges), so anything that runs a shell, starts an agent or touches systemd
  * lives in another process (agent-hub, `zen-agent serve`) that listens on 127.0.0.1 with a bearer token. A proxy
  * forwards only the routes it names, only the query keys it names, and adds the token, which never reaches the
- * browser. Where the upstream is not configured (the Mac), every route answers 503 with a plain explanation.
+ * browser. Where the upstream is not configured (a local install), every route answers 503 with a plain explanation.
  */
 export interface ProxyOptions {
   url?: string;

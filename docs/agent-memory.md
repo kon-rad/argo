@@ -1,5 +1,7 @@
 # Agent persona memory
 
+Status: **works** - three memory tiers (`org_agent_episodes`, `org_agent_memory`, a generated `core.md`) written by `cli-org wake-done` and `reflect`, plus self-improvement proposals that only a person applies.
+
 Each bot of the `org` module gets a memory of its own: written after every finished wake from the bot's point of view, bounded, inspectable on `/org/agents/<name>`, and the one path by which a bot may ask for a change to itself. Nothing here lets a bot widen what it is: a self-change is a card a person applies, or closes.
 
 This page is the engine side. The vault side (the `memory:` block in `org.yaml`, the compiler that writes it into `org-agents.json`, the dispatcher that passes a run's turns and cost to `wake-done`, and the ledger that measures a shipped proposal) lives with the vault and the dispatcher, not here.
@@ -55,7 +57,7 @@ The engine enforces what no block may set: `core_budget_tokens` above 4000 is re
 
 When a row of kind `friction` or `anti_pattern` has been seen `repeat_threshold` times, the reflect step (or `cli-org propose-improvement <agent> --memory-id <id>`) asks the cheap model for the smallest change to one of the bot's own files that would stop it, against the exact current text of that file, and validates the answer:
 
-- the target is the agent's own block in `.agents/org/org.yaml` or a markdown file under its `knowledge` paths; the harness and the owner's files (`AGENTS.md`, `CLAUDE.md`, `.claude/`, the guard, hooks, `CURRENT/`, `.env`) are refused whatever the config says;
+- the target is the agent's own block in `.agents/org/org.yaml` or a markdown file under its `knowledge` paths; the harness and the owner's files (`AGENTS.md`, `CLAUDE.md`, `.claude/`, the guard, hooks, a private folder, `.env`) are refused whatever the config says;
 - in the org.yaml block only prose may change (`personality`, `goal`, `perspective`, `style`, `voice`, `principles`, `description`); a diff that touches `tools`, `permission_mode`, `model`, `wakes_per_day`, `capabilities` or any other key is refused and the refusal names the key;
 - at most 40 changed lines: a rewrite is refused.
 
@@ -63,7 +65,7 @@ What passes becomes one card of kind `improve` on the owner's backlog, authored 
 
 ## Measuring it
 
-`cli-org memory stats <agent> [--days N]` prints the two numbers a shipped proposal is judged by, computed from the episodes: corrections per completed card (episodes marked corrected over episodes that finished `done`; `cli-org task redo` marks the builder's latest episode on the reviewed card) and cost per completed card. The ledger and the two-week revert check that use them follow the ratchet pattern in [self-improvement.md](self-improvement.md) and live with the vault.
+`cli-org memory stats <agent> [--days N]` prints the two numbers a shipped proposal is judged by, computed from the episodes: corrections per completed card (episodes marked corrected over episodes that finished `done`; `cli-org task redo` marks the builder's latest episode on the reviewed card) and cost per completed card. The ledger and the two-week revert check that use them follow the ratchet pattern and live with the vault.
 
 ## Commands
 
@@ -80,7 +82,7 @@ What passes becomes one card of kind `improve` on the owner's backlog, authored 
 ## Security
 
 - `org_agent_episodes` and `org_agent_memory` have row-level security: the `sb_org` role reads only rows where `agent_name` is the connection's agent and cannot insert or update either table. Writes come from the owner's connection: the dispatcher's `wake-done`, the app, the owner's CLI.
-- The reflect prompt is scoped to one agent's episode; `CURRENT/`, `Areas/Finance/` and `.env` stay outside everything here as they are outside `recall`.
+- The reflect prompt is scoped to one agent's episode; private folders and `.env` stay outside everything here as they are outside `recall`.
 - A generated `core.md` is bounded by `core_budget_tokens`; a superseded line stays in the table for audit but leaves the block.
 - No proposal is applied by code. The validator is in `app/server/src/org-memory.ts` (`validateProposal`), not in configuration.
 

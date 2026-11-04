@@ -1,5 +1,7 @@
 # What you get, and what to borrow
 
+Status: **works** - a tour of what the shipped engine gives you (knowledge base, agent orchestrator, infrastructure) and the patterns worth borrowing.
+
 secondbrain is two things in one repo: a **knowledge base** you own outright, and an **agent orchestrator** that works inside it under rules you write. This page is for someone deciding whether it fits, and for someone who wants to steal the good parts for their own notes, app or company without installing any of it.
 
 ## The knowledge base

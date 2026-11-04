@@ -1,5 +1,7 @@
 # Using the kanban board
 
+Status: **works** - the Postgres-backed board ships in the engine: the `/board` page, `cli-board` and `cli-org task` share one function-per-rule write path, with nine statuses, lanes and revocable tokens.
+
 The board is where work lives: a card is a commitment, a message is a conversation. It holds the cards you and your agents put on it, who each one belongs to, what state it is in, and what happened to it. This page is the practical guide: what the board is, the three ways in, every command, tokens, how an agent is told to use it, and the traps that have already cost us a day.
 
 The architecture (why the record moved into Postgres, the table definitions, the status machine, the staged rollout) is [board-design.md](board-design.md). Read that one before changing board code; read this one before using the board.
@@ -66,7 +68,7 @@ One identity model, three ways to reach it. `cli-board` picks its door from the 
 Which to use from where:
 
 - **On your laptop, browsing:** door 1. Nothing to configure.
-- **On a Mac or another machine running agents or scripts:** door 2. This is the door that saves you SSH, and the one worth fixing first when it breaks (section 6).
+- **On your laptop or another machine running agents or scripts:** door 2. This is the door that saves you SSH, and the one worth fixing first when it breaks (section 6).
 - **On the server, as a bot or a timer:** door 3, which is what the users' wrappers do already. `cli-org` and `cli-board` on the server source the env file themselves, so it just works.
 
 A write is attributed to the identity the door supplies. There is no `--author`: a comment is always the caller's. That is deliberate, and it is why door 2 asks the token to name a real roster member.
@@ -149,7 +151,7 @@ Add `--verify "<check>" --evidence "<numbers>"` to record the tracker's verifica
 
 ```bash
 cli-board finish t_abc123 --done "assign --repo vault works" \
-  --verify "cli-org task assign t_x m4 --repo vault" --evidence "assignee m4, repo vault"
+  --verify "cli-org task assign t_x <host> --repo vault" --evidence "assignee <host>, repo vault"
 ```
 
 `--fail` before the evidence records a failing verification instead, which is how a feature stays out of `live`.

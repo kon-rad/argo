@@ -1,10 +1,10 @@
 // usage-backfill: two one-off jobs for the ledger.
-//   (default)   token calls for every Mac Claude Code session the archive already holds (older than Claude Code's
+//   (default)   token calls for every local Claude Code session the archive already holds (older than Claude Code's
 //               30-day transcript cleanup), as wire lines on stdout:
 //               secondbrain usage-backfill | ssh <server> '/usr/local/bin/secondbrain-usage-import mac'
 //   --actions   label existing calls with the tool they invoked and its action class, from the archive's raw
 //               records (only calls whose transcript text is in this database get a label), then attach every
-//               call to its run. Run on the droplet after migration 12900.
+//               call to its run. Run on the server after migration 12900.
 import { pool, query, withTransaction } from './db.js';
 import { classifyAction } from './usage/actions.js';
 import { callsFromRecords } from './usage/claudeCalls.js';

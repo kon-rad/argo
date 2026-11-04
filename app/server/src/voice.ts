@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { z } from 'zod';
 
 /**
- * Local text-to-speech on the Mac: settings and the markdown → speech-text rules.
+ * Local text-to-speech on a local machine: settings and the markdown → speech-text rules.
  *
  * The voice itself is Kokoro-82M served by mlx-audio on 127.0.0.1:8880
  * (launchd `com.argo.tts`). The settings file is also read by the Claude Code
@@ -12,7 +12,7 @@ import { z } from 'zod';
  */
 
 export const VoiceSettingsSchema = z.object({
-  /** Claude Code on this Mac says a one-line summary when a long task finishes. */
+  /** Claude Code on this machine says a one-line summary when a long task finishes. */
   autoSpeak: z.boolean().default(false),
   /** A Kokoro voice id. af_heart is the Friendly robot's voice. */
   voice: z.string().regex(/^[a-z]{2}_[a-z]+$/).default('af_heart'),

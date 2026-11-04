@@ -3,8 +3,8 @@ import type { LoadedSchema } from './schema.js';
 /**
  * TypeSafe's System One protocol, as pi-ai 1.4.0 speaks it (api/system-one-shared.js): one POST to
  * `<base>/systemone` with the state and the questions, bearer auth, calibrated answers back. OpenRouter
- * serves the same protocol under its own base URL and model ids (`typesafe/jev-1.14`), so the owner's
- * one OpenRouter key is enough; a direct TypeSafe key is the other option.
+ * serves the same protocol under its own base URL and model ids, so a single
+ * OpenRouter key is enough; a direct TypeSafe key is the other option.
  */
 export type ClassifyProvider = 'openrouter' | 'typesafe';
 
@@ -13,7 +13,7 @@ export const BASE_URLS: Record<ClassifyProvider, string> = {
   typesafe: 'https://api.typesafe.ai/v1',
 };
 
-/** `openrouter/typesafe/jev-1.14` → `typesafe/jev-1.14` on OpenRouter, `jev-1.14` on TypeSafe directly. */
+/** `openrouter/vendor/model` → `vendor/model` on OpenRouter, `model` on TypeSafe directly. */
 export function modelIdFor(provider: ClassifyProvider, spec: string): string {
   const parts = spec.split('/').filter(Boolean);
   if (provider === 'typesafe') return parts[parts.length - 1]!;

@@ -1,5 +1,7 @@
 # Agent summaries
 
+Status: **works** - the `summaries` module ships; the items under "Not built" below are proposals, not shipped.
+
 One short, structured record for every finished agent session, on any harness and any machine, with the metrics counted from the transcript and the facts it learned held back until you approve them. It feeds three things: a daily digest for a stand-up, candidate facts for shared memory, and numbers you can compare before and after a change to your agents.
 
 Module: `summaries` (its own since the feature manifests; it reads the `usage` ledger but mounts without it). `MODULES=usage,summaries` on the server installs the timer. `SUMMARIES=on` still works for one release and prints a notice.
@@ -45,7 +47,7 @@ Default (`app/config/summaries.json`):
 
 | Order | Provider | Model | Notes |
 |---|---|---|---|
-| 1 | `ollama` (a home server) | `qwen3.6:35b-a3b` | Address from the variable `SUMMARIES_M1_URL`. Sends `reasoning_effort: "none"`, because a thinking model otherwise spends the whole token budget reasoning and returns an empty answer (measured: 218 tokens against 5 for the same prompt) |
+| 1 | `ollama` (a home server) | a local model | Address from the variable `SUMMARIES_M1_URL`. Sends `reasoning_effort: "none"`, because a thinking model otherwise spends the whole token budget reasoning and returns an empty answer (measured: 218 tokens against 5 for the same prompt) |
 | 2 | `together` | `deepseek-ai/DeepSeek-V4.1-Flash` | Needs `TOGETHER_API_KEY` |
 | 3 | `openrouter` | `google/gemini-2.5-flash` | Needs `OPENROUTER_API_KEY`. Check the model id still exists before relying on it |
 
@@ -55,7 +57,7 @@ Change any of it in the vault's `secondbrain.json`:
 {
   "summaries": {
     "chain": [
-      { "provider": "ollama", "model": "qwen3.6:27b", "baseUrlEnv": "SUMMARIES_M1_URL", "body": { "reasoning_effort": "none" } },
+      { "provider": "ollama", "model": "a local model", "baseUrlEnv": "SUMMARIES_M1_URL", "body": { "reasoning_effort": "none" } },
       { "provider": "together", "model": "deepseek-ai/DeepSeek-V4.1-Flash" }
     ],
     "minSteps": 4,
@@ -107,4 +109,4 @@ Compacted transcripts leave the machine only for the providers in your chain, in
 
 ## Not built
 
-Summaries of cron outputs and chat messages, a model-written narrative per day, reading the harness version stamp from `docs/self-improvement.md` (the column exists and stays empty until that stamp does), and persona memory reading summaries (it can query `agent_summaries` today).
+Summaries of cron outputs and chat messages, a model-written narrative per day, reading the harness version stamp (the column exists and stays empty until that stamp does), and persona memory reading summaries (it can query `agent_summaries` today).

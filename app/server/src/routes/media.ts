@@ -11,7 +11,7 @@ import { resolveDir } from './vaultPath.js';
  * index, for the /media page. A file on disk plays through /api/raw. A
  * `.b2.md` stub stands for the file it names (kind and name come from its
  * `b2_path`) and plays through /api/b2, unless the original is indexed next
- * to it, in which case only the original is listed. So the Mac, which still
+ * to it, in which case only the original is listed. So a local install, which still
  * has the originals, and a server, which has only the stubs, show the same
  * library. The index can describe another machine's disk (a client reading a
  * server's index), so each listed local file is checked: `available: false`

@@ -25,7 +25,7 @@ describe('garden run', () => {
     expect(r.shelves).toBe(3);
     expect(r.created).toBe(0);
     expect(existsSync(join(root, 'Projects/b/README.md'))).toBe(false);
-    expect(existsSync(join(root, 'CURRENT/catalog.md'))).toBe(false);
+    expect(existsSync(join(root, 'garden/catalog.md'))).toBe(false);
     const report = await readFile(join(root, r.reportPath), 'utf8');
     expect(r.reportPath).toBe(`garden/reports/${TODAY}.md`);
     expect(report).toContain('**Mode:** shadow');
@@ -49,7 +49,7 @@ describe('garden run', () => {
     expect(x).not.toContain('**Siblings:**');
     expect(b).toContain('**Siblings:** `Projects/old`');
     expect(existsSync(join(root, 'Projects/old/plan.md'))).toBe(true);
-    const catalog = await readFile(join(root, 'CURRENT/catalog.md'), 'utf8');
+    const catalog = await readFile(join(root, 'garden/catalog.md'), 'utf8');
     expect(catalog.split('\n').filter((l) => /^\| (Projects|Areas|Research)\//.test(l))).toHaveLength(3);
   });
 
@@ -64,7 +64,7 @@ describe('garden run', () => {
     expect(report).toContain('## Archived');
     expect(report).toContain('| moved |');
     expect(report).toContain('Links rewritten: 1 in 2 files.');
-    const catalog = await readFile(join(root, 'CURRENT/catalog.md'), 'utf8');
+    const catalog = await readFile(join(root, 'garden/catalog.md'), 'utf8');
     expect(catalog).not.toContain('| Projects/old |');
   });
 

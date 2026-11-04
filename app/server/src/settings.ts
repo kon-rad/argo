@@ -73,8 +73,8 @@ const Classify = z
   .object({
     /** Channel slugs and vault folders (prefixes) whose text may be sent to the classifier. Empty: every call falls through. */
     allow: z.array(z.string().min(1)).default([]),
-    /** `provider/model` for the classifier when a schema does not pin one. */
-    model: z.string().min(1).default('openrouter/typesafe/jev-1.14'),
+    /** `provider/model` for the classifier when a schema does not pin one. Unset: every call falls through (`no-model`). */
+    model: z.string().min(1).optional(),
     /** Vault-relative folder of decision schemas (`<decision>.yaml`); the engine's defaults fill in what is missing. */
     schemasDir: z.string().default('.agents/classify'),
   })
@@ -247,7 +247,7 @@ const Settings = z.object({
       /** Where archived shelves go: `<archiveDir>/<quarter>/<projects|areas|research>/<name>`. */
       archiveDir: z.string().default('Archives'),
       /** Vault-relative file the catalog is rendered to. */
-      catalogFile: z.string().default('CURRENT/catalog.md'),
+      catalogFile: z.string().default('garden/catalog.md'),
       /** Vault-relative folder for the nightly reports (`<reportDir>/<date>.md`). */
       reportDir: z.string().default('garden/reports'),
       /** File name of the shelf note that carries the shelf frontmatter. */

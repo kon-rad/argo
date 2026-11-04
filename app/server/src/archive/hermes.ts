@@ -8,7 +8,7 @@ const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? 
 const epoch = (v: unknown): Date | null => { const n = num(v); return n === null ? null : new Date(n * 1000); };
 
 // Columns lifted into typed fields; everything else goes to meta. SELECT * so a
-// Hermes version with more or fewer columns (Mac vs droplet) still reads.
+// Hermes version with more or fewer columns still reads.
 const SESSION_FIELDS = new Set(['id', 'parent_session_id', 'cwd', 'title', 'model', 'started_at', 'ended_at',
   'message_count', 'input_tokens', 'output_tokens', 'estimated_cost_usd', 'actual_cost_usd']);
 

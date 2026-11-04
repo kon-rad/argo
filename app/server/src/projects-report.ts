@@ -39,7 +39,7 @@ export function renderMarkdown(r: Report): string {
     g.goals_uncovered.length + g.unverified_shipped.length + g.failing.length + g.testing_unverified.length + g.stale.length + g.overdue.length;
   const out: string[] = [
     '# Company Report - Projects, Features, Goals',
-    '### Generated from the project tracker (Postgres on the droplet). Do not edit by hand: change status with `cli-projects set`, the `/projects` page, or Telegram',
+    '### Generated from the project tracker (Postgres on the server). Do not edit by hand: change status with `cli-projects set`, the `/projects` page, or Telegram',
     '',
     `**Data as of:** ${r.as_of ?? 'no data'}${boardUrl() ? ` · **Live board:** ${boardUrl()}` : ''}`,
     '',

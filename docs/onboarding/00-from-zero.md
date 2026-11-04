@@ -1,5 +1,7 @@
 # From zero to an agent company
 
+Status: **works** - the full path from an empty folder to an agent company runs on `main` today, except the org compiler and the one-command `init|start|doctor`, which are still to come.
+
 The whole path on one page: an empty folder becomes a private vault, the vault gets an app with search, one agent starts working in it under your rules, and then a named company of agents takes the repeatable work and reports to you every morning. Every stage ends with a check. Stop at any stage and what you have still works on its own.
 
 **Status (2026-11-03):** every command on this page runs on `main` today, except where a stage says so. Two things are not in the engine yet: the org compiler (you write the org document by hand, stage 7) and a one-command `init|start|doctor` path (stage 1 to 3 are four commands instead of one). Both are in the core v2 plan: `secondbrain org compile` and a starter org on `init` are phase 7, `start` and `doctor` are phase 3. When they land this page gets shorter, not different.
@@ -242,7 +244,7 @@ ORG_AGENT=owner secondbrain org dm atlas "ping"
 secondbrain org wakeups --all                                # one open wakeup for atlas
 ```
 
-Deeper: [The agent company](../agent-company.md), [org.yaml and wake rules](../org-yaml.md), [Org config and model routing](../org-routing.md).
+Deeper: [The agent company](../agent-company.md), [org.yaml and wake rules](../org-yaml.md).
 
 ## Stage 8. Each agent's identity and the protocol
 
@@ -257,7 +259,7 @@ description: Platform engineer on Platform. TypeScript, migrations, the test sui
 tools: Read, Grep, Glob, Edit, Write, Bash(secondbrain org *), Bash(secondbrain board *), Bash(npm test *)
 ---
 You are bolt, Platform engineer, reporting to atlas. Follow the org-member skill on every wake.
-Read only: Projects/**, .secondbrain/docs/**. Never read CURRENT/** or anything under Areas/personal/.
+Read only: Projects/**, .secondbrain/docs/**. Never read a private folder or anything under a personal area.
 ```
 
 The compiler writes these from the YAML when it ships; today, one per bot by hand, and keep them next to the org document in the same commit.
@@ -298,7 +300,7 @@ Twenty lines of shell under a systemd timer is a working dispatcher. The referen
 
 **Check:** DM a bot from `/org`. Within one tick it runs, one `status` appears in its channel, the wakeup is closed, and `/usage` shows the run with its tokens. If the run posts nothing, `wake-done` posts a fallback status saying so, so silence is visible.
 
-Deeper: [Orchestrate agents](09-orchestrate-agents.md) layer 3, [Bots on zen-agent](../zen-runtime.md), [zen-agent](../zen-agent.md).
+Deeper: [Orchestrate agents](09-orchestrate-agents.md) layer 3, [zen-agent](../zen-agent.md).
 
 ## Stage 10. Work: cards, the tracker, shipping
 
@@ -351,7 +353,7 @@ ORG_AGENT=atlas secondbrain org recall "health route"
 
 **Check:** `secondbrain org recall "<a word from a note you wrote>"` returns a vault hit; after one bot run, the Summaries tab on `/usage` shows its row.
 
-Deeper: [Memory, and how to check it works](../memory.md), [Summaries](../summaries.md), [The golden set](../memory-golden-set.md).
+Deeper: [Memory, and how to check it works](../memory.md), [Summaries](../summaries.md).
 
 ## Stage 12. Your loop: stand-up, Telegram, the bill
 
@@ -421,7 +423,7 @@ Deeper: [Connect servers and computers](06-connect-machines.md), [Deployment](..
 | Quiet a bot | `secondbrain org pause <bot> --reason "..."`; `resume` later. No file edit, no redeploy |
 | Change a bot's model or runtime for a day | `secondbrain org set <bot> --model ... --runtime ...`; `set <bot> --clear` returns it to the file |
 | See what it all costs | `/usage`, by bot and by day. Caps are counts (`wakes_per_day`, `cooldown_minutes`, `bot_wakes_per_target_per_day`) because a subscription cannot be metered per agent |
-| Back it up | `DEPLOY_DB_BACKUP=1` installs a nightly `pg_dump` timer on the server (03:30 UTC, to a B2 bucket through `b2store`). The vault is git: push it. Nothing in the database is prose; every note is a file |
+| Back it up | `DEPLOY_DB_BACKUP=1` installs a nightly `pg_dump` timer on the server (03:30 UTC; if you configure object storage, to a B2 bucket through `b2store`). The vault is git: push it. Nothing in the database is prose; every note is a file |
 | Keep it private | Bots read only their `knowledge` paths; deny personal folders in every identity file; channels for personal matters have no bots in them; `.env` never leaves the machine ([Privacy](07-privacy.md)) |
 | Know what is wrong | Today: `secondbrain status`, `secondbrain logs`, `systemctl --failed`, the checks at the end of each stage. Core v2 phase 3 adds `secondbrain doctor`, one command that runs all of them |
 

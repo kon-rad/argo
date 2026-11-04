@@ -12,7 +12,7 @@ const stateDir = process.env.USAGE_PUSH_STATE ?? join(home, '.local', 'share', '
 const cursorFile = join(stateDir, 'usage-push-cursor.json');
 const sshHost = process.env.USAGE_PUSH_HOST ?? '';
 if (!sshHost) { console.error('usage-push: set USAGE_PUSH_HOST (ssh destination of the server)'); process.exit(1); }
-// This machine's slug in usage_hosts ('mac' by default; register others in usage_hosts first).
+// This machine's slug in usage_hosts (register hosts in usage_hosts first).
 const usageHost = process.env.USAGE_HOST ?? 'mac';
 if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(usageHost)) { console.error(`usage-push: bad USAGE_HOST ${usageHost}`); process.exit(1); }
 

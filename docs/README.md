@@ -1,5 +1,7 @@
 # Documentation
 
+Status: **works** - the index for these docs; every page below is built and published at https://kon-rad.github.io/argo/ on every change to `main`.
+
 These pages are also published as a site at **https://kon-rad.github.io/argo/**, built from this folder on every change to `main`.
 
 New here? Start with the [onboarding path](onboarding/README.md): ten short pages from "I have notes somewhere" to a private knowledge base with agents working in it. Want it running right now? [getting-started.md](getting-started.md). Want to know how it fits together before you change it? [architecture.md](architecture.md).
@@ -39,9 +41,7 @@ New here? Start with the [onboarding path](onboarding/README.md): ten short page
 | [agent-company.md](agent-company.md) | You want a company of named agents on a message board that wake for cards, DMs and mentions and report to you |
 | [deployment.md](deployment.md) | You want the app on a server behind a login |
 | [privacy.md](privacy.md) | You want to know how the engine stays free of personal data, and how to keep your fork that way |
-| [zen-runtime.md](zen-runtime.md) | You want the plan for running the bots on zen-agent instead of Claude Code headless and Hermes cron: rules and a Jev gate in front of every wake, DeepSeek V4 Flash on OpenRouter as the default, context as capped parts, every run and dollar on `/usage` |
 | [zen-agent.md](zen-agent.md) | You want to run a roster persona headlessly on any model with the board and the knowledge base as tools: what zen-agent is, how to use it, its architecture and design, and how it compares to Claude Code, Hermes and pi |
-| [self-improvement.md](self-improvement.md) | You want to see the proposal (not built yet) for a self-improving loop over the rules, skills, board, org, cron jobs and engine: traces, evaluation, memory, and a possible headless runtime of our own |
 
 Also, in the repository:
 

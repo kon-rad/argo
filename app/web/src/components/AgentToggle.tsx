@@ -4,7 +4,7 @@ import { api, ApiError, type TelegramStatus } from '../lib/api.js';
 /**
  * Top-nav switch: the default agent (Claude Code or Hermes) for new chats and tasks, and a dot per Telegram bot.
  * Claude Code answers on its own Telegram bot and Hermes on another, so this
- * never moves Telegram traffic or restarts Hermes. Hidden where there is no agent-hub (the Mac).
+ * never moves Telegram traffic or restarts Hermes. Hidden where there is no agent-hub (a local install).
  */
 export default function AgentToggle() {
   const queryClient = useQueryClient();

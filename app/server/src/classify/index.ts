@@ -114,7 +114,7 @@ export async function classify(input: ClassifyInput, deps: ClassifyDeps = {}): P
   const modelSpec = schema.model ?? cs.model;
   const hash = stateHash(input.state);
   const base: Omit<Row, 'action' | 'error' | 'inputLevel'> = {
-    decision: schema.decision, schemaVersion: schema.version, inputHash: hash, model: modelSpec, answer: null, probabilities: null,
+    decision: schema.decision, schemaVersion: schema.version, inputHash: hash, model: modelSpec ?? null, answer: null, probabilities: null,
     confidence: null, latencyMs: null, inputTokens: null, costUsd: null, runId: input.runId ?? null, agentName: input.agentName ?? null,
     ref: input.ref ?? null, createdAt: now(),
   };
@@ -131,6 +131,7 @@ export async function classify(input: ClassifyInput, deps: ClassifyDeps = {}): P
   // 1. Privacy: nothing leaves the machine unless the owner named where it may come from.
   if (!sourceAllowed(input.source, cs.allow)) return fallthrough('privacy', 'refused');
   const level = schema.privacy;
+  if (!modelSpec) return fallthrough('no-model', level);
 
   // 2. Cache: the same question about the same facts, answered this week.
   const hit = await query<{ id: number; answer: string; probabilities: Record<string, number> | null; confidence: number | null; model: string; action: Action }>(

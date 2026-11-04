@@ -65,7 +65,7 @@ async function sessionFor(token: string | null): Promise<boolean> {
 
 /**
  * Serialises scrypt: each check allocates 128 MiB, so twenty concurrent login
- * attempts would be a memory-exhaustion attack on a small droplet.
+ * attempts would be a memory-exhaustion attack on a small server.
  */
 class Mutex {
   private tail: Promise<unknown> = Promise.resolve();

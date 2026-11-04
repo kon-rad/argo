@@ -1,5 +1,7 @@
 # Retrieval and the chat module
 
+Status: **works** - the chunk, embed and hybrid retrieval pipeline and the `chat` module ship; reranking and contextual enrichment are off by default.
+
 How the app turns a vault of markdown into something you can ask questions of: the ingestion pipeline (chunk, enrich, embed), the retrieval pipeline (hybrid search, fusion, reranking, context assembly), and the `chat` module that sits on top. This page is the design record: what was there, what the field says works, what was chosen and why.
 
 ## 1. Where it started

@@ -363,7 +363,7 @@ export interface SystemdTimer {
   last: string | null;
 }
 
-/** agent-hub (droplet only): Telegram + default agent. */
+/** agent-hub (server only): Telegram + default agent. */
 export interface TelegramStatus {
   default: 'claude' | 'hermes';
   claude_running: boolean;
@@ -930,7 +930,7 @@ export async function request<T>(path: string, params?: Params, init?: RequestIn
 }
 
 export interface AuthState {
-  /** False on the Mac, where localhost is the boundary and there is no login. */
+  /** False on a local install, where localhost is the boundary and there is no login. */
   required: boolean;
   authenticated: boolean;
 }
@@ -954,7 +954,7 @@ export interface FriendlyStatus {
 }
 
 export interface VoiceSettings {
-  /** Claude Code on this Mac speaks a one-line summary when a long task finishes. */
+  /** Claude Code on this machine speaks a one-line summary when a long task finishes. */
   autoSpeak: boolean;
   voice: string;
   minTaskSeconds: number;
@@ -965,7 +965,7 @@ export interface VoiceStatus {
   server: { url: string; model: string; up: boolean };
 }
 
-/** A note read aloud by the Kokoro server on this Mac, as an MP3 blob. */
+/** A note read aloud by the Kokoro server on this machine, as an MP3 blob. */
 async function speakNote(path: string): Promise<{ audio: Blob; truncated: boolean }> {
   const res = await fetch(url('/voice/speak'), {
     credentials: 'same-origin',
@@ -1368,7 +1368,7 @@ export const api = {
 
 export const rawUrl = (path: string): string => url('/raw', { path });
 export const downloadUrl = (path: string): string => url('/raw', { path, download: 1 });
-/** The file a `.b2.md` stub stands in for: local original on the Mac, streamed from B2 on the server. */
+/** The file a `.b2.md` stub stands in for: local original on a local install, streamed from B2 on the server. */
 export const b2Url = (stubPath: string, download = false): string =>
   url('/b2', download ? { path: stubPath, download: 1 } : { path: stubPath });
 

@@ -1,4 +1,4 @@
-/** A slug in usage_hosts: 'mac' (the owner's laptop), 'droplet', 'mac-m1', 'exo-pi', ... */
+/** A slug in usage_hosts (a vault registers its own hosts): 'laptop', 'server', 'pi', ... */
 export type Host = string;
 
 export interface ParsedMessage {

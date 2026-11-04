@@ -42,9 +42,9 @@ const Schema = z.object({
   // key above. Checked by a real request on 2026-09-28; Together's catalogue
   // shifts, so swap it here rather than in code when this one goes away.
   SQL_MODEL: z.string().default('deepseek-ai/DeepSeek-V4.1-Flash'),
-  // `local` is the Mac: loopback is the security boundary and there is no
+  // `local` is a local install: loopback is the security boundary and there is no
   // login. `server` is the internet-facing box behind Caddy: every /api route
-  // needs a session, and the Mac-only routes (robot launcher, HTTP shutdown)
+  // needs a session, and the local-only routes (robot launcher, HTTP shutdown)
   // are not mounted at all.
   DEPLOYMENT: z.enum(['local', 'server']).default('local'),
   // The browser-visible origin, e.g. https://brain.example.com. Mutating requests
@@ -55,7 +55,7 @@ const Schema = z.object({
   AUTH_PASSWORD_HASH: z.string().optional(),
   AUTH_TOTP_SECRET: z.string().optional(),
   // `b2store serve` on loopback, for streaming the big files that live only in
-  // B2 (see .hermes/scripts/b2-offload.sh). Unset on the Mac: originals are local.
+  // B2 (see .hermes/scripts/b2-offload.sh). Unset on a local install: originals are local.
   B2_SERVE_URL: z.string().url().optional(),
   // uploads module: browser uploads go straight to this bucket with presigned S3 multipart URLs (Backblaze B2's
   // S3-compatible API), then the server streams each file into its encrypted vault path. The same names `b2store` reads.
@@ -69,7 +69,7 @@ const Schema = z.object({
   UPLOADS_MAX_GB: z.coerce.number().positive().default(50),
   // uploads module: bearer token for the second machine that pulls working copies (unset: that route answers 401).
   UPLOADS_PULL_TOKEN: z.string().min(16).optional(),
-  // 0 = never (the Mac, where rescans are a button). The server sets 30.
+  // 0 = never (a local install, where rescans are a button). The server sets 30.
   SCAN_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(0),
   // Optional features, comma separated (MODULE_NAMES below). Off unless listed.
   MODULES: z.string().default(''),
@@ -80,7 +80,7 @@ const Schema = z.object({
   // org module: the name of the human agent in the org (org_agents, runtime human).
   ORG_OWNER: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default('owner'),
   // org module: the kanban assignee for vault work, a Claude Code session on the owner's machine that no dispatcher
-  // spawns. Boards that still use the old slug `m4` keep working.
+  // spawns. Boards that predate the setting keep working.
   ORG_VAULT_ASSIGNEE: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default('vault-session'),
   // org module: runs one remembered agent session may carry before the next wake starts fresh (1: never resume).
   ORG_SESSION_MAX_RUNS: z.coerce.number().int().min(1).default(3),
@@ -115,7 +115,7 @@ const Schema = z.object({
   // Vault-relative notes the nav links to; unset hides the link.
   DEV_LOG_PATH: z.string().optional(),
   DOCS_PATH: z.string().optional(),
-  // Mac only: a script the "start robot" button runs. Unset: the route is not mounted.
+  // Local install only: a script the "start robot" button runs. Unset: the route is not mounted.
   ROBOT_LAUNCH_SCRIPT: z.string().optional(),
   // Where `secondbrain-vault sync` writes sync.json on this machine (docs/sync.md); the header chip reads it.
   SYNC_STATE_DIR: z.string().optional(),
@@ -133,8 +133,8 @@ const Schema = z.object({
   // and a Ring pull would replace the master's rows.
   INDEXER: z.enum(['on', 'off']).default('on'),
   RING_PULL_DB: z.string().regex(/^[a-z_][a-z0-9_]*$/).default('secondbrain'),
-  // agent-hub (argo-exo/agents/agent-hub) on the droplet: the kanban board, Claude chats and the Telegram toggle.
-  // Unset on the Mac, where the Agents page's live tabs say so.
+  // agent-hub on the server: the kanban board, Claude chats and the Telegram toggle.
+  // Unset on a local install, where the Agents page's live tabs say so.
   AGENT_HUB_URL: z.string().url().optional(),
   AGENT_HUB_TOKEN: z.string().min(32).optional(),
   // agents module: `zen-agent serve` (the zen-agent chat host, loopback, bearer token) behind /api/zen. Unset: the

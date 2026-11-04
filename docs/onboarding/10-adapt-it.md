@@ -1,5 +1,7 @@
 # Adapt it to your notes, app, business or startup
 
+Status: **works** - four recipes for adapting the shipped engine, each with what to take, leave and do first.
+
 Four recipes. Each says what to take, what to leave, and the first concrete step. None of them needs the whole thing.
 
 ## Your notes

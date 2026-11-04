@@ -18,7 +18,7 @@ import { recordHermesCounters, upsertCalls } from '../usage/store.js';
 /**
  * Copies what Hermes knows about its conversations and cron jobs into
  * Postgres, for the Agents and Cron pages. Runs where Hermes runs (a systemd
- * timer on the droplet, as the hermes user) because Hermes holds its SQLite
+ * timer on the server, as the service user) because Hermes holds its SQLite
  * files open: each one is snapshotted with SQLite's backup API first, never
  * read in place. Every write is an idempotent upsert, so a run with nothing
  * new changes nothing and a failed run is safe to repeat.

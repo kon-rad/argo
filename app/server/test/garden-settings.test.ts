@@ -6,7 +6,7 @@ describe('garden settings', () => {
     const s = parseSettings({});
     expect(s.garden.roots).toEqual(['Projects', 'Areas', 'Research']);
     expect(s.garden.archiveDir).toBe('Archives');
-    expect(s.garden.catalogFile).toBe('CURRENT/catalog.md');
+    expect(s.garden.catalogFile).toBe('garden/catalog.md');
     expect(s.garden.reportDir).toBe('garden/reports');
     expect(s.garden.shelfFile).toBe('README.md');
     expect(s.garden.projectArchiveAfterDays).toBe(90);

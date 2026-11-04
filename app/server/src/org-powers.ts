@@ -198,7 +198,7 @@ export async function remember(caller: Agent, opts: RememberOpts): Promise<Fact>
   if (!subject || subject.length > 200) throw new OrgError('a subject is 1 to 200 characters (the thing the fact is about)');
   if (!claim || claim.length > 1000) throw new OrgError('a claim is 1 to 1000 characters; put longer prose in a vault note and cite it');
   if (!source || source.length > 500) throw new OrgError('every fact needs --source: a vault path, a message #id, a card t_… or a URL');
-  if (opts.via !== undefined && !VIA.test(opts.via)) throw new OrgError(`bad --via "${opts.via}" (e.g. claude-code@mac)`);
+  if (opts.via !== undefined && !VIA.test(opts.via)) throw new OrgError(`bad --via "${opts.via}" (e.g. claude-code@laptop)`);
   if (opts.project) {
     const { rowCount } = await query(`SELECT 1 FROM projects WHERE slug = $1`, [opts.project]);
     if (!rowCount) throw new OrgError(`no project "${opts.project}" in the tracker`);
@@ -385,8 +385,8 @@ export function dedupeVaultHits(hits: RecallHit[]): RecallHit[] {
   });
 }
 
-/** Vault paths recall never returns, whatever the search finds: the owner's working files and finances. */
-export const RECALL_EXCLUDE = ['CURRENT/', 'Areas/Finance/', '.env'];
+/** Vault paths recall never returns, whatever the search finds. A vault adds its private folders with ORG_RECALL_EXCLUDE. */
+export const RECALL_EXCLUDE = ['.env'];
 
 export function recallExcluded(path: string, extra: string[] = []): boolean {
   return [...RECALL_EXCLUDE, ...extra].some((p) => p && (path.startsWith(p) || path.includes(`/${p}`)));

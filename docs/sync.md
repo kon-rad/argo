@@ -1,5 +1,7 @@
 # Vault sync
 
+Status: **works** - `secondbrain-vault sync` ships and keeps every checkout committed, pulled and pushed on a timer.
+
 The vault is a git repo, and every machine that works in it (your laptop, a second computer, a server running agents) has its own checkout. `secondbrain-vault sync` keeps those checkouts in step without anyone pushing by hand: on a timer, each machine commits its own changes, scans them for secrets, pulls everyone else's and pushes. It is built to lose no work, leak no key, and give way to the agent sessions editing the same files.
 
 ```
