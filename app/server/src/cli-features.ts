@@ -12,7 +12,7 @@
  * from the CLI's own failure.
  */
 import { join } from 'node:path';
-import { MANIFESTS, cliFor, unitsFor, wrappersFor } from './features/registry.js';
+import { MANIFESTS, cliFor, commandsFor, unitsFor, wrapperScript, wrappersFor } from './features/registry.js';
 
 const EX_USAGE = 64;
 
@@ -40,9 +40,7 @@ function list(argv: string[]): void {
 }
 
 function help(): void {
-  for (const m of MANIFESTS) {
-    for (const c of m.cli) console.log(`secondbrain ${c.command.padEnd(14)} ${c.summary}`);
-  }
+  for (const c of commandsFor()) console.log(`secondbrain ${c.command.padEnd(14)} ${c.summary}`);
 }
 
 async function run(argv: string[]): Promise<void> {
@@ -70,6 +68,17 @@ switch (sub) {
   case 'wrappers':
     for (const w of wrappersFor(modulesArg(argv))) console.log(w);
     break;
+  case 'wrapper': {
+    // The script deploy.sh writes to the app user's PATH, generated from the table.
+    const name = argv.find((a) => !a.startsWith('--'));
+    const script = name ? wrapperScript(name) : undefined;
+    if (!script) {
+      console.error(`secondbrain features wrapper <name>: no command owns the wrapper "${name ?? ''}"`);
+      process.exit(EX_USAGE);
+    }
+    process.stdout.write(script);
+    break;
+  }
   case 'help':
     help();
     break;

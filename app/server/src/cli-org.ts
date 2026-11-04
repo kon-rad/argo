@@ -652,43 +652,41 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       return 0;
     }
     case 'task': {
+      // Deprecated (one release): the board owns these verbs now. Forward to cli-board with
+      // the same flags, so `cli-org task create|assign|redo|list` keeps working until it goes.
       const [sub] = pos;
+      console.error('cli-org task is deprecated: use `cli-board create|assign|redo|list` (the board owns these verbs). Forwarding this release.');
+      const { main: boardMain } = await import('./cli-board.js');
+      const bmain = (a: string[]): Promise<number> => boardMain(a, out);
+      const fwd = (keys: string[]): string[] => {
+        const fa: string[] = [];
+        for (const k of keys) {
+          const v = opts[k];
+          if (v === undefined) continue;
+          if (v === true) fa.push(`--${k}`);
+          else fa.push(`--${k}`, v);
+        }
+        return fa;
+      };
       if (sub === 'create') {
         const [, assignee, title] = pos;
-        const project = str(opts.project);
         if (!assignee || !title) throw new OrgError('task create <bot|none> "<title>" [--project <slug>] [--feature f] [--body "..."]');
-        const r = await createTask(await me(), {
-          assignee: assignee === 'none' ? null : assignee, title, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, repo: str(opts.repo),
-          body: str(opts.body), board: str(opts.board), priority: num(opts.priority, 'priority'), deps: str(opts.after)?.split(',').map((x) => x.trim()).filter(Boolean), run,
-        });
-        if (json) out(JSON.stringify(r));
-        else out(`card ${r.task_id} ${r.link.assignee ? `for ${r.link.assignee}` : 'unassigned'}: ${r.link.title}${r.link.project_slug ? ` (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})` : ''} [${r.card.status}]${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
-        return 0;
+        // `none` and a bot both mean "no --to": cli-board's create leaves an absent --to unassigned.
+        return bmain(['create', title, ...(assignee === 'none' ? [] : ['--to', assignee]), ...fwd(['project', 'feature', 'type', 'needs', 'repo', 'priority', 'after', 'body', 'ship-now', 'board', 'kind', 'json'])]);
       }
       if (sub === 'assign') {
         const [, card, assignee] = pos;
-        const project = str(opts.project);
         if (!card || !assignee) throw new OrgError('task assign <card> <bot> [--project <slug>] [--feature f]');
-        const r = await assignTask(await me(), {
-          taskId: card, assignee, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, repo: str(opts.repo), board: str(opts.board), run,
-        });
-        if (json) out(JSON.stringify(r));
-        else out(`card ${r.task_id} now ${r.link.assignee}'s: ${r.link.title}${r.link.project_slug ? ` (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})` : ''}${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
-        return 0;
+        return bmain(['assign', card, assignee, ...fwd(['project', 'feature', 'type', 'needs', 'repo', 'ship-now', 'json'])]);
       }
       if (sub === 'redo') {
         const [, card, changes] = pos;
         if (!card || !changes) throw new OrgError('task redo <review card> "<what to change>"');
-        const r = await redoTask(await me(), card, changes, run);
-        if (json) out(JSON.stringify(r));
-        else out(r.escalated ? `round ${r.rounds} refused: escalated to the lead${r.message ? ` (message ${r.message.id})` : ''}` : `round ${r.rounds}: card ${r.task_id} for the builder; ${card} waits for it${r.message ? `; mention ${r.message.id}` : ''}`);
-        return 0;
+        return bmain(['redo', card, changes, ...fwd(['run', 'json'])]);
       }
       if (sub === 'list') {
-        const ts = await listTasks({ project: str(opts.project), feature: str(opts.feature), agent: str(opts.agent), limit: num(opts.limit, 'limit') });
-        if (json) out(JSON.stringify(ts, null, 2));
-        else out(ts.length ? ts.map(formatTask).join('\n') : 'no cards');
-        return 0;
+        const agent = str(opts.agent);
+        return bmain(['list', ...fwd(['project', 'feature', 'limit', 'json']), ...(agent ? ['--assignee', agent] : [])]);
       }
       throw new OrgError('task create|assign|list|redo');
     }

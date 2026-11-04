@@ -266,25 +266,8 @@ cmd_status() {
     return
   fi
 
-  local system runs
-  system="$(curl -sf --max-time 2 "$URL/api/system" || true)"
-  runs="$(curl -sf --max-time 2 "$URL/api/runs?limit=1" || true)"
-  [[ -n "$system" ]] && say "index     $(printf '%s' "$system" | node -e '
-    let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-      const j=JSON.parse(s);
-      console.log(`${j.counts.files} files, ${j.counts.markdown} notes, ${j.counts.links} links`);
-    });')"
-  [[ -n "$system" ]] && say "vectors   $(printf '%s' "$system" | node -e '
-    let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-      const e=JSON.parse(s).embeddings;
-      if(!e||!e.chunks){console.log("none — run: secondbrain embed");return;}
-      console.log(`${e.chunks} chunks over ${e.files_embedded}/${e.files_embeddable} notes (${e.model})`);
-    });')"
-  [[ -n "$runs" ]] && say "last scan $(printf '%s' "$runs" | node -e '
-    let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-      const r=JSON.parse(s).runs[0];
-      console.log(r ? `${r.status} at ${new Date(r.started_at).toLocaleString()}` : "never");
-    });')"
+  # The index numbers come from their own entry: this script holds no JSON parsing.
+  node --no-warnings "$APP_ROOT/server/dist/cli-status.js" --url "$URL" || true
 }
 
 cmd_logs() {
@@ -303,64 +286,29 @@ cmd_dev() {
 
 cmd_scan() {
   refuse_if_remote scan
+  ensure_deps; ensure_build
   if healthy; then
     # Through the API so the running server's queue enforces one scan at a
     # time; a second scanner writing the same tables is the one thing the
     # 409 rule exists to prevent.
-    local id
-    id="$(curl -sf "$URL/api/sources" | node -e '
-      let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-        const v=JSON.parse(s).sources.find(x=>x.kind==="vault");
-        if(!v){process.exit(1);} console.log(v.id);
-      });')"
-    curl -sf -X POST "$URL/api/sources/$id/sync" | node -e '
-      let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-        const j=JSON.parse(s); console.log(`run ${j.run_id}: ${j.status}`);
-      });'
+    node --no-warnings "$APP_ROOT/server/dist/cli-scan.js" --api "$URL" || die "scan failed"
     say "watch it with: secondbrain logs"
   else
-    ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
+    ensure_postgres; ensure_database; apply_migrations
     node --no-warnings "$APP_ROOT/server/dist/cli-scan.js"
   fi
 }
 
 cmd_embed() {
   refuse_if_remote embed
+  ensure_deps; ensure_build
   if healthy; then
     # Same reasoning as cmd_scan: through the API so the serial queue owns it.
-    local id
-    id="$(curl -sf "$URL/api/sources" | node -e '
-      let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-        const v=JSON.parse(s).sources.find(x=>x.kind==="embeddings");
-        if(!v){process.exit(1);} console.log(v.id);
-      });')" || die "no embeddings source — apply migrations first"
-    curl -sf -X POST "$URL/api/sources/$id/sync" | node -e '
-      let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-        const j=JSON.parse(s); console.log(`run ${j.run_id}: ${j.status}`);
-      });'
+    node --no-warnings "$APP_ROOT/server/dist/cli-embed.js" --api "$URL" || die "embed failed"
     say "watch it with: secondbrain logs"
   else
-    ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
-    node -e '
-      Promise.all([
-        import("./server/dist/embeddings/embed.js"),
-        import("./server/dist/db.js"),
-      ]).then(async ([m, db]) => {
-        const { rows } = await db.pool.query("SELECT config FROM sources WHERE kind=$1", ["embeddings"]);
-        if (!rows[0]) { console.error("no embeddings source"); process.exit(1); }
-        const c = rows[0].config;
-        const stats = await m.embedVault({
-          provider: m.providerFromConfig(c),
-          maxChunkTokens: c.max_chunk_tokens ?? 450,
-          overlapTokens: c.overlap_tokens ?? 60,
-          batchSize: c.batch_size ?? 32,
-          contextualizer: m.contextualizerFromConfig(c),
-          onProgress: (p) => process.stderr.write(`\r  ${p.filesDone}/${p.filesTotal} ${p.currentPath.slice(0, 60)}          `),
-        });
-        process.stderr.write("\n");
-        console.log(JSON.stringify(stats, null, 2));
-        await db.pool.end();
-      }).catch((e) => { console.error(e.message); process.exit(1); });'
+    ensure_postgres; ensure_database; apply_migrations
+    node --no-warnings "$APP_ROOT/server/dist/cli-embed.js"
   fi
 }
 
@@ -471,6 +419,14 @@ cmd_features() {
   node --no-warnings "$APP_ROOT/server/dist/cli-features.js" "$@"
 }
 
+cmd_doctor() {
+  # Health checks (docs/configuration.md): Node, Postgres, pgvector, migrations, modules,
+  # the vault files, the settings file, the sync state, each core feature's tables.
+  # --deep adds the server-only checks (failed timers, last backup); --json prints them.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-doctor.js" "$@"
+}
+
 cmd_feature() {
   # Any command a feature manifest owns (board, org, projects, usage-sync, summarize, ...) runs through
   # cli-features, which hands the entry its own argv. Identity and the database come from the env, as
@@ -508,6 +464,7 @@ secondbrain metrics    collect | set <metric> <value> | list  the brain map's nu
 secondbrain ring-pull  copy the ring data from the server into local Postgres
 secondbrain auth-setup  create the password + authenticator login for the server
 secondbrain features   list | units | wrappers | help  the feature manifests and what they wire
+secondbrain doctor     health checks: Node, Postgres, pgvector, migrations, modules, each feature's tables (--deep adds server checks)
 USAGE
   # Feature commands come from the manifests, so the list cannot drift from the code.
   if [[ -f "$APP_ROOT/server/dist/cli-features.js" ]]; then
@@ -543,6 +500,7 @@ case "${1:-start}" in
   agents-sync)   cmd_agents_sync ;;
   auth-setup)    cmd_auth_setup ;;
   features)      cmd_features "${@:2}" ;;
+  doctor)        cmd_doctor "${@:2}" ;;
   help|-h|--help) cmd_help ;;
   # Everything else is a feature's command (board, org, projects, usage-sync, summarize, ...): see its manifest.
   *)             cmd_feature "$@" ;;

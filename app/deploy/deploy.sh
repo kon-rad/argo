@@ -118,6 +118,8 @@ fi
 APP_HOME="$(getent passwd "$APP_USER" | cut -d: -f6)"
 HERMES_HOME_REMOTE="${HERMES_HOME_REMOTE:-$APP_HOME/.hermes}"
 render() { sed -e "s#@APP_USER@#$APP_USER#g" -e "s#@APP_DIR@#$APP_DIR#g" -e "s#@VAULT_DIR@#$VAULT#g" -e "s#@HERMES_HOME@#$HERMES_HOME_REMOTE#g" -e "s#@APP_HOME@#$APP_HOME#g" "$1"; }
+# The same substitutions, on stdin: a wrapper generated from the feature table has no file to pass to render().
+render_stream() { sed -e "s#@APP_USER@#$APP_USER#g" -e "s#@APP_DIR@#$APP_DIR#g" -e "s#@VAULT_DIR@#$VAULT#g" -e "s#@HERMES_HOME@#$HERMES_HOME_REMOTE#g" -e "s#@APP_HOME@#$APP_HOME#g"; }
 has() { [[ ",$MODS," == *",$1,"* ]]; }
 # A unit pair: the .service rendered, the .timer copied as is.
 unit() {
@@ -332,25 +334,26 @@ fi
 # ---- CLI wrappers on the app user's PATH, so an agent's `Bash(cli-org *)` rule matches ----
 # Core features name their wrappers and timers in their manifests (server/src/features/<name>/manifest.ts);
 # cli-features reads the manifests without a config or a database.
-features() { sudo -u "$APP_USER" -H /usr/bin/node --no-warnings "$APP_DIR/server/dist/cli-features.js" "$1" --modules "$MODS"; }
+features() { sudo -u "$APP_USER" -H /usr/bin/node --no-warnings "$APP_DIR/server/dist/cli-features.js" "$@" --modules "$MODS"; }
 # Deprecated (one release): SUMMARIES=on in the server's env file used to install the summaries timer; it is a module now.
 if grep -qsE '^SUMMARIES=on$' /etc/secondbrain/env && ! has summaries; then
   echo "! SUMMARIES=on is deprecated: add summaries to DEPLOY_MODULES. Treating it as on for this deploy."
   MODS="${MODS:+$MODS,}summaries"
 fi
-WRAPPERS=()
-for w in $(features wrappers); do WRAPPERS+=("$w"); done
-has social && WRAPPERS+=(cli-social)
-[ "$ZEN_BUILT" = 1 ] && WRAPPERS+=(zen-agent)
-if [ "${#WRAPPERS[@]}" -gt 0 ]; then
-  install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.local/bin"
-  for w in "${WRAPPERS[@]}"; do
-    # rm first: a symlink here (zen-agent -> dist/src/cli.js from an earlier `npm link`) would make the redirect
-    # overwrite its target, and the chat host would crash-loop on a shell script where its compiled cli.js was.
-    rm -f "$APP_HOME/.local/bin/$w"
-    render "$APP_DIR/deploy/bin/$w" > "$APP_HOME/.local/bin/$w"
-    chown "$APP_USER:$APP_USER" "$APP_HOME/.local/bin/$w"; chmod 755 "$APP_HOME/.local/bin/$w"
-  done
+install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.local/bin"
+for w in $(features wrappers); do
+  # The script comes from the feature table (server/src/features/registry.ts), not a file, so a command and the
+  # wrapper an agent's `Bash(cli-x *)` rule matches cannot drift. rm first: a symlink here (zen-agent -> dist/src/cli.js
+  # from an earlier `npm link`) would make the redirect overwrite its target.
+  rm -f "$APP_HOME/.local/bin/$w"
+  features wrapper "$w" | render_stream > "$APP_HOME/.local/bin/$w"
+  chown "$APP_USER:$APP_USER" "$APP_HOME/.local/bin/$w"; chmod 755 "$APP_HOME/.local/bin/$w"
+done
+# zen-agent ships as a file: it is the chat host's own entry, not a feature CLI.
+if [ "$ZEN_BUILT" = 1 ]; then
+  rm -f "$APP_HOME/.local/bin/zen-agent"
+  render "$APP_DIR/deploy/bin/zen-agent" > "$APP_HOME/.local/bin/zen-agent"
+  chown "$APP_USER:$APP_USER" "$APP_HOME/.local/bin/zen-agent"; chmod 755 "$APP_HOME/.local/bin/zen-agent"
 fi
 
 # ---- services ----

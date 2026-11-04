@@ -136,7 +136,8 @@ describe('cards for bots', () => {
     const lines: string[] = [];
     try {
       expect(await main(['task', 'create', 'lena', 'Draft the launch post', '--project', 'secondbrain-app', '--priority', '3'], (s) => lines.push(s))).toBe(0);
-      expect(lines[0]).toMatch(/^card t_[0-9a-f]{8} for lena: Draft the launch post \(secondbrain-app\) \[ready\]; mention \d+ in #media$/);
+      // The alias forwards to cli-board, so the line is cli-board create's output.
+      expect(lines[0]).toMatch(/^card t_[0-9a-f]{8} for lena \[ready\]: Draft the launch post; noted as \d+ in #media$/);
       expect((await query<{ priority: number }>(`SELECT priority FROM cards WHERE title = 'Draft the launch post'`)).rows[0]!.priority).toBe(3);
       lines.length = 0;
       expect(await main(['task', 'list', '--agent', 'lena'], (s) => lines.push(s))).toBe(0);
@@ -152,8 +153,8 @@ describe('cards for bots', () => {
     const lines: string[] = [];
     try {
       expect(await main(['task', 'create', 'rune', 'Wire it', '--project', 'secondbrain-app', '--feature', 'org-page', '--json'], (s) => lines.push(s))).toBe(0);
-      const r = JSON.parse(lines[0]!) as { link: { assignee: string; created_by: string } };
-      expect(r.link).toMatchObject({ assignee: 'rune', created_by: 'atlas' });
+      const r = JSON.parse(lines[0]!) as { card: { assignee: string; created_by: string } };
+      expect(r.card).toMatchObject({ assignee: 'rune', created_by: 'atlas' });
       // A lead outside its team is refused by the rule, and the definer refuses a forged caller.
       await expect(main(['task', 'create', 'lena', 'x', '--project', 'secondbrain-app'])).rejects.toThrow(/inside its team/);
     } finally {
@@ -178,8 +179,8 @@ describe('cards for bots', () => {
     try {
       expect((await query<{ repo: string | null }>(`SELECT repo FROM cards WHERE id = 't_01d000aa'`)).rows[0]!.repo).toBeNull();
       expect(await main(['task', 'assign', 't_01d000aa', 'm4', '--project', 'secondbrain-app', '--type', 'ops', '--repo', 'vault', '--json'], (s) => lines.push(s))).toBe(0);
-      const r = JSON.parse(lines[0]!) as { link: { task_id: string; assignee: string } };
-      expect(r.link).toMatchObject({ task_id: 't_01d000aa', assignee: 'm4' });
+      const r = JSON.parse(lines[0]!) as { id: string; assignee: string };
+      expect(r).toMatchObject({ id: 't_01d000aa', assignee: 'm4' });
       // The repo is a column the link does not carry; the write is what this card fixes, so assert the row.
       const after = await query<{ assignee: string; repo: string | null }>(`SELECT assignee, repo FROM cards WHERE id = 't_01d000aa'`);
       expect(after.rows[0]).toMatchObject({ assignee: 'm4', repo: 'vault' });
