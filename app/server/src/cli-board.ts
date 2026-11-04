@@ -8,7 +8,7 @@ import {
 import { config } from './config.js';
 import { pool, setDatabaseUrl } from './db.js';
 import { agentDatabaseUrl, parseArgs } from './cli-org.js';
-import { assignTask, createTask, getAgent, OrgError } from './org.js';
+import { assignTask, createTask, getAgent, OrgError, redoTask } from './org.js';
 
 /**
  * cli-board (also `secondbrain board`): the board from a terminal, for people and agents. Design: docs/board-design.md
@@ -25,7 +25,8 @@ const USAGE = `cli-board <command>
   create "<title>" [--to <agent>] [--project p] [--feature f] [--kind k] [--type work] [--needs cap] [--repo r] [--priority N]
          [--after t_..,t_..] [--body "..."] [--contract file.json] [--ship-now] [--board b] [--json]
   comment <card> "<body>"                     as yourself
-  assign <card> <agent|none> [--project p] [--feature f] [--type work] [--needs cap]
+  assign <card> <agent|none> [--project p] [--feature f] [--type work] [--needs cap] [--repo r] [--ship-now]   an existing card becomes the agent's
+  redo <card> "<what to change>"               changes requested: a new round for the builder, the review card parked until it is done
   move <card> <status> ["<note>"]             triage todo scheduled ready running review blocked done archived (bots: own card, not done)
   link <card> --after <card>                  card waits for the other
   claim --runtime <r> | --agent <a> [--board b] [--lease N] [--task t_..] [--json]      the next ready card, or that exact one, now running with a lease
@@ -48,6 +49,39 @@ const num = (v: string | true | undefined, flag: string): number | undefined => 
   return Number(v);
 };
 const when = (d: Date | string | null): string => (d ? new Date(d).toISOString().slice(0, 16).replace('T', ' ') : '');
+
+/** Flags each verb accepts; any other flag is a hard error, not a silent drop. `--json` is accepted
+ * everywhere. A verb absent from this map keeps the old permissive parse (used by `token`/`import`). */
+const KNOWN_FLAGS: Record<string, readonly string[]> = {
+  boards: [],
+  list: ['board', 'status', 'assignee', 'project', 'feature', 'kind', 'q', 'all', 'done-days', 'limit'],
+  show: [],
+  create: ['to', 'project', 'feature', 'board', 'priority', 'type', 'needs', 'repo', 'ship-now', 'kind', 'after', 'body', 'contract'],
+  comment: [],
+  assign: ['project', 'feature', 'type', 'needs', 'repo', 'ship-now'],
+  redo: ['run'],
+  move: [],
+  link: ['after'],
+  claim: ['runtime', 'agent', 'board', 'lease', 'task'],
+  heartbeat: ['tokens', 'turns', 'lease'],
+  finish: ['done', 'blocked', 'partial', 'budget', 'verify', 'fail', 'evidence', 'verify-kind', 'tokens', 'turns', 'run'],
+  flags: ['ship-now', 'needs'],
+  watch: ['board'],
+  reclaim: [],
+};
+
+/** Reject a flag the verb does not know, rather than letting parseArgs set an option the case ignores.
+ * A silent drop is a behaviour change: `assign <card> m4 --repo vault` used to file the card with no repo. */
+export function rejectUnknownFlags(cmd: string | undefined, opts: Opts): void {
+  const allowed = cmd ? KNOWN_FLAGS[cmd] : undefined;
+  if (!allowed) return;
+  for (const k of Object.keys(opts)) {
+    if (k !== 'json' && !allowed.includes(k)) {
+      const known = allowed.length ? allowed.map((f) => `--${f}`).join(', ') : '(no flags)';
+      throw new OrgError(`unknown flag --${k} for "${cmd}"; it takes ${known} (plus --json)`);
+    }
+  }
+}
 
 export function formatCard(c: Card): string {
   const ref = c.project_slug ? `${c.project_slug}${c.feature_slug ? `/${c.feature_slug}` : ''}` : '-';
@@ -79,7 +113,8 @@ export interface BoardClient {
   show(id: string): Promise<CardDetail>;
   create(c: Record<string, unknown>): Promise<{ card: Card; message: { id: number; channel_slug: string } | null }>;
   comment(id: string, body: string): Promise<void>;
-  assign(id: string, assignee: string | null, o: { project?: string; feature?: string; work?: string; needs?: string }): Promise<Card>;
+  assign(id: string, assignee: string | null, o: { project?: string; feature?: string; work?: string; needs?: string; repo?: string; shipNow?: boolean }): Promise<Card>;
+  redo(id: string, changes: string, runId?: string): Promise<{ escalated: boolean; task_id: string | null; rounds: number }>;
   move(id: string, status: string, note?: string): Promise<Card>;
   link(id: string, dependsOn: string): Promise<void>;
   claim(o: ClaimOpts): Promise<Card | null>;
@@ -109,7 +144,8 @@ export class HttpBoard implements BoardClient {
   show(id: string) { return this.call<CardDetail>('GET', `/cards/${id}`); }
   create(c: Record<string, unknown>) { return this.call<{ card: Card; message: { id: number; channel_slug: string } | null }>('POST', '/cards', undefined, c); }
   async comment(id: string, body: string) { await this.call('POST', `/cards/${id}/comment`, undefined, { body }); }
-  async assign(id: string, assignee: string | null, o: { project?: string; feature?: string; work?: string; needs?: string }) { return (await this.call<{ card: Card }>('POST', `/cards/${id}/assign`, undefined, { assignee, ...o })).card; }
+  async assign(id: string, assignee: string | null, o: { project?: string; feature?: string; work?: string; needs?: string; repo?: string; shipNow?: boolean }) { return (await this.call<{ card: Card }>('POST', `/cards/${id}/assign`, undefined, { assignee, project: o.project, feature: o.feature, work: o.work, needs: o.needs, repo: o.repo, ship_now: o.shipNow })).card; }
+  async redo(id: string, changes: string, runId?: string) { return this.call<{ escalated: boolean; task_id: string | null; rounds: number }>('POST', `/cards/${id}/redo`, undefined, { changes, run_id: runId }); }
   async move(id: string, status: string, note?: string) { return (await this.call<{ card: Card }>('POST', `/cards/${id}/move`, undefined, { status, note })).card; }
   async link(id: string, dependsOn: string) { await this.call('POST', `/cards/${id}/link`, undefined, { depends_on: dependsOn }); }
   async claim(o: ClaimOpts) { return (await this.call<{ card: Card } | null>('POST', '/claim', undefined, { runtime: o.runtime, agent: o.agent, board: o.board, lease_minutes: o.leaseMinutes, task_id: o.taskId }))?.card ?? null; }
@@ -162,9 +198,13 @@ export class DbBoard implements BoardClient {
     return { card: r.card, message: r.message };
   }
   async comment(id: string, body: string) { await commentCard(this.me, id, body); }
-  async assign(id: string, assignee: string | null, o: { project?: string; feature?: string; work?: string; needs?: string }) {
+  async assign(id: string, assignee: string | null, o: { project?: string; feature?: string; work?: string; needs?: string; repo?: string; shipNow?: boolean }) {
     if (assignee === null) return assignCard(this.me, id, null);
-    return (await assignTask(await getAgent(this.me), { taskId: id, assignee, project: o.project, feature: o.feature, type: o.work, needs: o.needs, run: process.env.ORG_RUN })).card;
+    return (await assignTask(await getAgent(this.me), { taskId: id, assignee, project: o.project, feature: o.feature, type: o.work, needs: o.needs, repo: o.repo, shipNow: o.shipNow, run: process.env.ORG_RUN })).card;
+  }
+  async redo(id: string, changes: string, runId?: string) {
+    const r = await redoTask(await getAgent(this.me), id, changes, runId);
+    return { escalated: r.escalated, task_id: r.task_id, rounds: r.rounds };
   }
   move(id: string, status: string, note?: string) { return moveCard(this.me, id, status, note); }
   link(id: string, dependsOn: string) { return linkCards(this.me, id, dependsOn); }
@@ -207,6 +247,7 @@ export async function main(argv: string[], out: (s: string) => void = console.lo
   const [cmd, ...rest] = argv;
   const { pos, opts } = parseArgs(rest) as { pos: string[]; opts: Opts };
   const json = opts.json === true;
+  rejectUnknownFlags(cmd, opts);
   const kb = cmd && !['token', 'import', 'help', '--help', undefined].includes(cmd) ? boardClient(env, fetchFn) : null;
   const need = (ok: unknown, usage: string): void => { if (!ok) throw new OrgError(usage); };
 
@@ -244,9 +285,15 @@ export async function main(argv: string[], out: (s: string) => void = console.lo
       return 0;
     }
     case 'assign': {
-      need(pos[0] && pos[1], 'assign <card> <agent|none> [--project p] [--feature f]');
-      const c = await kb!.assign(pos[0]!, pos[1] === 'none' ? null : pos[1]!, { project: str(opts.project), feature: str(opts.feature), work: str(opts.type), needs: str(opts.needs) });
+      need(pos[0] && pos[1], 'assign <card> <agent|none> [--project p] [--feature f] [--repo r] [--ship-now]');
+      const c = await kb!.assign(pos[0]!, pos[1] === 'none' ? null : pos[1]!, { project: str(opts.project), feature: str(opts.feature), work: str(opts.type), needs: str(opts.needs), repo: str(opts.repo), shipNow: opts['ship-now'] === true });
       out(json ? JSON.stringify(c) : `${c.id} is now ${c.assignee ?? 'unassigned'} [${c.status}]`);
+      return 0;
+    }
+    case 'redo': {
+      need(pos[0] && pos[1], 'redo <review card> "<what to change>"');
+      const r = await kb!.redo(pos[0]!, pos[1]!, str(opts.run));
+      out(json ? JSON.stringify(r) : r.escalated ? `${pos[0]}: review failed ${r.rounds - 1} times, escalated (${r.rounds} rounds)` : `round ${r.rounds} requested on ${r.task_id} from ${pos[0]}`);
       return 0;
     }
     case 'move': {

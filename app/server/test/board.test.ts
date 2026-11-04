@@ -446,4 +446,69 @@ describe('the CLI', () => {
   });
 });
 
+describe('cli-board parity: --repo/--ship-now on assign, redo, unknown flags', () => {
+  const run = async (argv: string[], env: NodeJS.ProcessEnv = {}): Promise<{ code: number; lines: string[] }> => {
+    const lines: string[] = [];
+    const code = await main(argv, (s) => lines.push(s), { ...process.env, BOARD_URL: undefined, BOARD_TOKEN: undefined, ...env });
+    return { code, lines };
+  };
+
+  it('assign forwards --repo and --ship-now instead of dropping them', async () => {
+    const made = await run(['create', 'Parity card', '--to', 'lena']);
+    const id = /card (t_[0-9a-f]+)/.exec(made.lines[0]!)![1]!;
+    const r = await run(['assign', id, 'lena', '--repo', 'reports', '--ship-now']);
+    expect(r.code).toBe(0);
+    expect(r.lines[0]).toBe(`${id} is now lena [ready]`);
+    const card = JSON.parse((await run(['show', id, '--json'])).lines[0]!).card;
+    expect(card.repo).toBe('reports');
+    expect(card.ship_now).toBe(true);
+    // ship-now stays the owner's: a bot caller is refused, not silently allowed.
+    const botEnv = { ORG_AGENT: 'sol', SB_ORG_DB_URL: `postgres://sb_org@${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${TEST_DB}` };
+    try {
+      await expect(run(['assign', id, 'lena', '--ship-now'], botEnv)).rejects.toThrow(/only the owner can mark a card ship-now/);
+    } finally {
+      setDatabaseUrl(ownerUrl);
+    }
+  });
+
+  it('an unknown flag is a hard error, not a silent drop', async () => {
+    const made = await run(['create', 'Flag card', '--to', 'rune']);
+    const id = /card (t_[0-9a-f]+)/.exec(made.lines[0]!)![1]!;
+    await expect(run(['list', '--repo', 'x'])).rejects.toThrow(/unknown flag --repo for "list"/);
+    await expect(run(['assign', id, 'rune', '--nope', 'x'])).rejects.toThrow(/unknown flag --nope/);
+    // A flag the verb does know still passes, and --json is always accepted.
+    expect((await run(['list', '--assignee', 'rune'])).code).toBe(0);
+    expect((await run(['list', '--json'])).code).toBe(0);
+  });
+
+  it('redo asks for a new round on the reviewed card', async () => {
+    const spec = await run(['create', 'Spec', '--to', 'atlas', '--kind', 'spec']);
+    const specId = /card (t_[0-9a-f]+)/.exec(spec.lines[0]!)![1]!;
+    const build = await run(['create', 'Build', '--to', 'rune', '--kind', 'build', '--after', specId]);
+    const buildId = /card (t_[0-9a-f]+)/.exec(build.lines[0]!)![1]!;
+    const review = await run(['create', 'Review', '--to', 'vera', '--kind', 'review', '--after', buildId]);
+    const reviewId = /card (t_[0-9a-f]+)/.exec(review.lines[0]!)![1]!;
+    const r = await run(['redo', reviewId, 'tighten the error handling']);
+    expect(r.code).toBe(0);
+    expect(r.lines[0]).toMatch(/^round 1 requested on t_[0-9a-f]+ from t_/);
+    const mine = JSON.parse((await run(['list', '--assignee', 'rune', '--json'])).lines[0]!) as { title: string; rounds: number }[];
+    expect(mine.some((c) => c.rounds === 1 && /\(round 1\)/.test(c.title))).toBe(true);
+  });
+
+  it('the API takes repo/ship_now on assign and exposes a redo route', async () => {
+    const a = createApp({ modules: ALL_MODULES, board: { owner: 'owner' } });
+    const made = await request(a).post('/api/board/cards').send({ title: 'API parity', assignee: 'lena', project: 'secondbrain-app' }).expect(201);
+    const id = made.body.card.id as string;
+    const assigned = await request(a).post(`/api/board/cards/${id}/assign`).send({ assignee: 'lena', repo: 'reports', ship_now: true }).expect(200);
+    expect(assigned.body.card).toMatchObject({ repo: 'reports', ship_now: true });
+    // redo needs a review card waiting on a built card.
+    const build = await request(a).post('/api/board/cards').send({ title: 'Build', assignee: 'rune', kind: 'build' }).expect(201);
+    const review = await request(a).post('/api/board/cards').send({ title: 'Review', assignee: 'vera', kind: 'review', deps: [build.body.card.id] }).expect(201);
+    const redo = await request(a).post(`/api/board/cards/${review.body.card.id}/redo`).send({ changes: 'fix the retry' }).expect(200);
+    expect(redo.body).toMatchObject({ escalated: false, rounds: 1 });
+    expect(redo.body.task_id).toBeTruthy();
+    await request(a).post(`/api/board/cards/${review.body.card.id}/redo`).send({}).expect(400);
+  });
+});
+
 afterAll(() => setDatabaseUrl(ownerUrl));

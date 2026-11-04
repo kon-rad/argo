@@ -120,13 +120,15 @@ cli-org task create sable "Fix the token check" --project secondbrain-app --feat
 ```bash
 cli-board comment t_abc123 "Reproduced on the third try; logs in /tmp/run.log."
 cli-board assign t_abc123 sable --project secondbrain-app --feature board
+cli-board assign t_abc123 m4 --repo vault          # a coding card names its repo (the vault session takes vault work)
 cli-board assign t_abc123 none                     # unassign, back into the pool
+cli-board redo t_review123 "tighten the error handling"   # changes requested: a new round for the builder
 cli-board move t_abc123 ready
 cli-board move t_abc123 scheduled "after the release"
 cli-board link t_abc123 --after t_def456           # a dependency
 ```
 
-A comment is always authored by the caller. `assign` re-points a card that already exists, which is how a card you find unassigned becomes someone's.
+A comment is always authored by the caller. `assign` re-points a card that already exists, which is how a card you find unassigned becomes someone's; it takes the same `--repo` and `--ship-now` as `create` (`--ship-now` is the owner's alone), and a coding card must name the repo the bots reach. `redo` takes a review card and asks its builder for another round: a new card with the next `rounds` count is created for the builder and the review card is parked until it is done. An unknown flag on any verb is a hard error, never a silent drop.
 
 `move` is for the transitions a person makes by hand: `triage → todo`, `blocked → ready` once the reason is gone, `done → archived`. It is deliberately *not* how a bot finishes its own card (section 3.4).
 
