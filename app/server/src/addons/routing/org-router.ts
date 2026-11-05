@@ -1,4 +1,4 @@
-import { query } from './db.js';
+import { query } from '../../db.js';
 
 /**
  * Model routing for agent runs (design: Areas/argo/second-brain/agent-company/org-config-and-model-routing-design.md).

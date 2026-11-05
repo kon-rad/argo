@@ -1,13 +1,13 @@
 # `routing` addon
 
-Status: **pilot** - The model-routing pilot: `org-router.ts`, the `route_decisions` / `route_outcomes` tables and the weekly routing report. One model in use, so nothing to choose between yet. Its code leaves the core tree in this addon's next slice.
+Status: **pilot** - The model-routing pilot: `org-router.ts`, the `route_decisions` / `route_outcomes` tables and the weekly routing report. One model in use, so nothing to choose between yet. Its code (`org-router.ts`) lives in this folder; the routing subcommands stay on the core `org` command.
 
 List it in the vault's `secondbrain.json` `addons` (or `MODULES` in `.env`) to turn it on. It is off in a fresh vault.
 
 | | |
 |---|---|
 | Module | `routing` |
-| CLI | none (the routing subcommands live in `cli-org`) |
+| CLI | none (the routing subcommands live on the core `org` command, which imports `org-router.ts`) |
 | Timers (server) | `secondbrain-routing-report` |
 | Env | none |
 | Docs | `docs/addons.md` |

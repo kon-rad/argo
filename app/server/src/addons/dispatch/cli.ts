@@ -1,20 +1,20 @@
-import { exitFlushed } from './cli-exit.js';
+import { exitFlushed } from '../../cli-exit.js';
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { breakerLimitsFromEnv, runBreaker } from './breaker.js';
-import { classify } from './classify/index.js';
-import { config } from './config.js';
-import { pool } from './db.js';
-import { Dispatcher, type Deps, type Runner } from './dispatch/index.js';
-import { OrgError } from './org.js';
-import type { RoutingConfig } from './org-router.js';
-import { settings } from './settings.js';
+import { breakerLimitsFromEnv, runBreaker } from '../../breaker.js';
+import { classify } from '../classify/index.js';
+import { config } from '../../config.js';
+import { pool } from '../../db.js';
+import { Dispatcher, type Deps, type Runner } from './index.js';
+import { OrgError } from '../../org.js';
+import type { RoutingConfig } from '../routing/org-router.js';
+import { settings } from '../../settings.js';
 
-// `secondbrain org-dispatch tick | routines`: the engine's dispatcher for bots on the zen-agent runtime
+// `secondbrain dispatch tick | routines`: the engine's dispatcher for bots on the zen-agent runtime
 // (docs/zen-runtime.md, section 8). A systemd timer runs `tick` every ORG_DISPATCH_TICK_SECONDS as the app
 // user; a oneshot service that is still running is not started again, so a long run never overlaps a tick.
-const USAGE = `secondbrain org-dispatch: run zen-agent bots for their open wakeups
+const USAGE = `secondbrain dispatch: run zen-agent bots for their open wakeups
 
   tick       materialise due routines, release stale claims, then one zen-agent run per bot with open wakeups
   routines   only add the roster's due routine wakeups (once per local day in ORG_TZ)
@@ -82,7 +82,7 @@ export async function main(argv: string[]): Promise<number> {
   return 1;
 }
 
-if (process.argv[1]?.endsWith('cli-dispatch.js') || process.argv[1]?.endsWith('cli-dispatch.ts')) {
+if (process.argv[1]?.endsWith('addons/dispatch/cli.js') || process.argv[1]?.endsWith('addons/dispatch/cli.ts')) {
   let code = 1;
   try {
     code = await main(process.argv.slice(2));

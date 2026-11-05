@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
-import { config } from '../config.js';
-import { query } from '../db.js';
-import { settings, type ClassifySettings } from '../settings.js';
+import { config } from '../../config.js';
+import { query } from '../../db.js';
+import { settings, type ClassifySettings } from '../../settings.js';
 import { askJev, type ClassifyProvider, type WireAnswer } from './jev.js';
 import { defaultSchemasDir, loadSchema, type LoadedSchema } from './schema.js';
 import type { Action, ClassifyInput, ClassifyResult } from './types.js';

@@ -96,7 +96,7 @@ const Schema = z.object({
   ORG_REFLECT_MAX_PER_DAY: z.coerce.number().int().min(0).default(200),
   // org module: the local day for "one routine per day" and the dispatcher's quiet hours (an IANA zone name).
   ORG_TZ: z.string().min(1).default('UTC'),
-  // org module: the engine's dispatcher (secondbrain org-dispatch; docs/zen-runtime.md). `on` installs its timer and
+  // org module: the engine's dispatcher (secondbrain dispatch; docs/zen-runtime.md). `on` installs its timer and
   // runs bots whose roster runtime is zen-agent; `off` leaves wakeups to whatever dispatcher the install has.
   ORG_DISPATCH: z.enum(['on', 'off']).default('off'),
   ORG_DISPATCH_TICK_SECONDS: z.coerce.number().int().min(10).default(120),

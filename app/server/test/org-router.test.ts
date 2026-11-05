@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkFixed, decide, escalations, type RoutingConfig } from '../src/org-router.js';
+import { checkFixed, decide, escalations, type RoutingConfig } from '../src/addons/routing/org-router.js';
 
 /** The router is pure: floors beat cost, a permission block never escalates, nothing runs below its floor. */
 

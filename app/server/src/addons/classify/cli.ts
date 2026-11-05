@@ -1,9 +1,9 @@
-import { exitFlushed } from './cli-exit.js';
+import { exitFlushed } from '../../cli-exit.js';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
-import { classify, ClassifyError, labelDecision, recentDecisions } from './classify/index.js';
-import { config } from './config.js';
-import { pool } from './db.js';
+import { classify, ClassifyError, labelDecision, recentDecisions } from './index.js';
+import { config } from '../../config.js';
+import { pool } from '../../db.js';
 
 /**
  * `secondbrain classify`: the classify step from a shell (docs/zen-runtime.md, section 4.2). The
@@ -91,7 +91,7 @@ export async function main(argv: string[], out: (s: string) => void = console.lo
   }
 }
 
-if (process.argv[1]?.endsWith('cli-classify.js') || process.argv[1]?.endsWith('cli-classify.ts')) {
+if (process.argv[1]?.endsWith('addons/classify/cli.js') || process.argv[1]?.endsWith('addons/classify/cli.ts')) {
   let code = 1;
   try {
     code = await main(process.argv.slice(2));
