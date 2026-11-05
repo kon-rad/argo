@@ -72,6 +72,18 @@ Required when `DEPLOYMENT=server`; the app refuses to start without them.
 
 Deploy settings (`DEPLOY_*`) are read by `deploy.sh` only: see [deployment.md](deployment.md#settings).
 
+## Generated config: `plan`, `apply`, `upgrade`
+
+A server's `/etc/secondbrain/env` and its systemd units are generated from `secondbrain.json`'s `server` block plus the enabled feature manifests, instead of being hand-edited and drifting.
+
+| Command | Does |
+|---|---|
+| `secondbrain plan` | Prints the env file and units this server should have and how they differ from what is on disk. **Writes nothing** |
+| `secondbrain apply` | Writes that plan. Refused unless `server.generate` is `true` |
+| `secondbrain upgrade` | The same plan as a dry run; `--yes` writes it. Re-fetching and moving the engine pin are not wired yet |
+
+Generation is **off by default** (`server.generate: false`), so a merge never changes a running server's units by itself; turning it on and running `apply` is the owner's step. `SB_UNIT_DIR` and `SB_ENV_FILE` override where the units and the env file are written (a dry run or a test). `test/env-schema.test.ts` fails the build when the code reads a `process.env` key that is neither in the schema nor on its documented worklist, so a setting cannot appear without a default and a line in this page.
+
 ## Using another machine's database
 
 | Variable | Where | Purpose |
@@ -142,6 +154,7 @@ Settings that don't fit on one env line. Every section is optional; a file that 
 
 | Key | Module | Holds |
 |---|---|---|
+| `server.*` | server | The `server` block: `generate` (default `false`), `host`, `publicOrigin`, `user`, `dir`, `vaultDir`, `hermesHome`, and `backup` (`schedule`, `keepDaily`, `keepWeekly`). Source for `secondbrain plan\|apply`; see "Generated config" above |
 | `goalsFile` | `projects`, `map` | Your goals note: markdown tables of `\| W1 \| Goal \| Measure \| Due \| Status \|` |
 | `missionFile` | `map` | Your mission note |
 | `map.divisionFolders` | `map` | `{ "division": ["folder", ...] }`: which folders belong to which division when no project claims them |
