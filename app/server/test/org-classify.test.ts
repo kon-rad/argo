@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { classifyCard, classifyRules, type ClassifierSettings } from '../src/org-classify.js';
+import { classifyCard, classifyRules, type ClassifierSettings } from '../src/addons/classify/org-classify.js';
 
 /** The classifier: rules read scope, paths, repos, spec clarity and risk; the model may only make spec clarity stricter. */
 

@@ -25,7 +25,7 @@
 #   DEPLOY_DB_BACKUP=1   install the nightly pg_dump-to-B2 timer (needs b2store for the app user)
 #   DEPLOY_VAULT_SYNC=1  install the vault sync timer (tools/sbsync.py as the app user, role agent, every 15 min;
 #                        the app user needs push access to the vault repo; docs/sync.md)
-#   ORG_DISPATCH=on      install the org-dispatch timer (zen-agent bots; docs/zen-runtime.md). Also read from
+#   ORG_DISPATCH=on      install the dispatch timer (zen-agent bots; docs/zen-runtime.md). Also read from
 #                        the server's /etc/secondbrain/env, so setting it there is enough
 #   DEPLOY_MODULES       the server's module list, when it differs from this machine's MODULES
 #                        (e.g. voice here, livestream there); else MODULES. Core features (projects, org, board,
@@ -368,7 +368,7 @@ fi
 # Non-core modules name their timers in their addon manifest (server/src/addons/<name>/manifest.ts),
 # so `features units` above installed them; nothing is hardcoded here any more.
 [ "$ZEN_BUILT" = 1 ] && render "$APP_DIR/deploy/zen-agent-serve.service" > /etc/systemd/system/zen-agent-serve.service
-# org-dispatch: only with the org module and ORG_DISPATCH=on (here or in the server's env file).
+# dispatch: only with the org module and ORG_DISPATCH=on (here or in the server's env file).
 grep -qsE '^ORG_DISPATCH=on$' /etc/secondbrain/env && WITH_DISPATCH=on
 if has org && [ "$WITH_DISPATCH" = on ]; then unit secondbrain-dispatch; fi
 [ "$WITH_EMBED" = 1 ] && unit secondbrain-embed

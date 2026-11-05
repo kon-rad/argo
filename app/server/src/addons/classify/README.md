@@ -1,6 +1,6 @@
 # `classify` addon
 
-Status: **pilot** - The wake gate (`classify/`): one calibrated decision about a state, logged to `classify_decisions`. One provider, so the pilot has not run. Its code leaves the core tree in this addon's next slice.
+Status: **pilot** - The wake gate (`classify/`, `org-classify.ts`): one calibrated decision about a state, logged to `classify_decisions`. One provider, so the pilot has not run. Its code (`org-classify.ts`, the `classify/` module, `cli.ts`) lives in this folder.
 
 List it in the vault's `secondbrain.json` `addons` (or `MODULES` in `.env`) to turn it on. It is off in a fresh vault.
 

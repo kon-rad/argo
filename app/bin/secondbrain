@@ -331,11 +331,6 @@ cmd_agents_sync() {
   ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-agents-sync.js"
 }
-cmd_org_dispatch() {
-  # The engine's dispatcher: one zen-agent run per bot with open wakeups (tick), or only the due routines.
-  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
-  node --no-warnings "$APP_ROOT/server/dist/cli-dispatch.js" "$@"
-}
 cmd_ledger() {
   # This machine's agent ledger (local SQLite, syncs to the server). Builds the one-file bundle and
   # runs it; `secondbrain ledger install --server … --token … --host …` schedules it.
@@ -372,12 +367,6 @@ cmd_archive() {
   # directly rather than through the server's scan queue.
   ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-archive.js" "$@"
-}
-
-cmd_classify() {
-  # The classify step (docs/zen-runtime.md): one decision about one state, logged to classify_decisions.
-  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
-  (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-classify.js" "$@")
 }
 
 cmd_inventory() {
@@ -463,8 +452,6 @@ secondbrain summarize  summarize finished agent sessions with a local model, fal
 secondbrain summarize-eval  grade summaries against transcripts: --golden | --references | --sample N [--judge]
 secondbrain agents-sync  copy Hermes chats and cron history into Postgres
 secondbrain inventory  list/show/add/update gear rows and file their photos (inventory help)
-secondbrain org-dispatch  tick | routines: run zen-agent bots for their open wakeups (ORG_DISPATCH=on on a server)
-secondbrain classify   a calibrated decision about a message, card or run, logged (classify help)
 secondbrain backlinks  add a Related links block to each note (dry run; --write applies, --path limits)
 secondbrain map-build  rebuild the brain map's stored layout (server)
 secondbrain garden     nightly vault gardener (shadow by default; --write updates shelf notes and the catalog, --apply also moves)
@@ -501,8 +488,6 @@ case "${1:-start}" in
   summarize)     cmd_summarize "${@:2}" ;;
   summarize-eval) cmd_summarize_eval "${@:2}" ;;
   inventory)     cmd_inventory "${@:2}" ;;
-  org-dispatch)  cmd_org_dispatch "${@:2}" ;;
-  classify)      cmd_classify "${@:2}" ;;
   backlinks)     cmd_backlinks "${@:2}" ;;
   map-build)     cmd_map_build "${@:2}" ;;
   garden)        cmd_garden "${@:2}" ;;

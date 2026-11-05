@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { config } from './config.js';
 import { pool, setDatabaseUrl } from './db.js';
-import { cardFailures } from './dispatch/store.js';
-import { classifyCard, loadCard } from './org-classify.js';
-import { decide, recordDecision, recordOutcome, routeReport, routeReportMarkdown, routeSpend, routeWeekly, TIERS, type Failure, type Result, type RoutingConfig, type Tier } from './org-router.js';
+import { cardFailures } from './addons/dispatch/store.js';
+import { classifyCard, loadCard } from './addons/classify/org-classify.js';
+import { decide, recordDecision, recordOutcome, routeReport, routeReportMarkdown, routeSpend, routeWeekly, TIERS, type Failure, type Result, type RoutingConfig, type Tier } from './addons/routing/org-router.js';
 import {
   addWakeup,
   applyGraph,

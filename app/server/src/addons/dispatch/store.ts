@@ -1,4 +1,4 @@
-import { query } from '../db.js';
+import { query } from '../../db.js';
 
 /**
  * The dispatcher's reads and the two writes org.ts does not already offer. Plain queries on the owner's

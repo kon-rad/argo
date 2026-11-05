@@ -2,8 +2,8 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { classify, decide, defaultSchemasDir, loadSchema, modelIdFor, parseSchema, sourceAllowed, stateHash, wireQuestion, type ClassifyDeps } from '../src/classify/index.js';
-import { main } from '../src/cli-classify.js';
+import { classify, decide, defaultSchemasDir, loadSchema, modelIdFor, parseSchema, sourceAllowed, stateHash, wireQuestion, type ClassifyDeps } from '../src/addons/classify/index.js';
+import { main } from '../src/addons/classify/cli.js';
 import { query } from '../src/db.js';
 import { truncateAll } from './helpers.js';
 

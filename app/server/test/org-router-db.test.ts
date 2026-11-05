@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pool, query } from '../src/db.js';
 import { main } from '../src/cli-org.js';
-import { decide, recordDecision, recordOutcome, routeReport, routeReportMarkdown, routeSpend, routeWeekly, type RoutingConfig } from '../src/org-router.js';
+import { decide, recordDecision, recordOutcome, routeReport, routeReportMarkdown, routeSpend, routeWeekly, type RoutingConfig } from '../src/addons/routing/org-router.js';
 
 /** route_decisions and route_outcomes: a decision is logged, its outcome joins it, the report gives cost per merged PR by tier. */
 

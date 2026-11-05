@@ -1,9 +1,9 @@
 import { defineFeature } from '../../features/types.js';
 
 /**
- * The model-routing pilot. Its code (org-router.ts, the route_decisions / route_outcomes tables and
- * the routing subcommands inside `cli-org`) still lives in the core tree; only its weekly report timer
- * is wired here, moved off the org manifest. Off unless the vault lists `routing`.
+ * The model-routing pilot. Its code (org-router.ts) now lives under `addons/routing/`; the routing
+ * subcommands stay on the core `org` command (cli-org.ts imports the router from this folder), and
+ * the weekly report timer is wired here. Off unless the vault lists `routing`.
  */
 export default defineFeature({
   name: 'routing',

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { config } from '../config.js';
+import { config } from '../../config.js';
 import type { DecisionSchema } from './types.js';
 
 /**

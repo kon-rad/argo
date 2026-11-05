@@ -2,10 +2,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { ClassifyInput, ClassifyResult } from '../classify/types.js';
-import { addWakeup, claimWakeups, finishWakeups, type Wakeup } from '../org.js';
-import type { DispatchSettings } from '../settings.js';
-import { classifyCard, loadCard } from '../org-classify.js';
-import { decide, recordDecision, recordOutcome, routeSpend, TIERS, type RoutingConfig, type Tier } from '../org-router.js';
+import { addWakeup, claimWakeups, finishWakeups, type Wakeup } from '../../org.js';
+import type { DispatchSettings } from '../../settings.js';
+import { classifyCard, loadCard } from '../classify/org-classify.js';
+import { decide, recordDecision, recordOutcome, routeSpend, TIERS, type RoutingConfig, type Tier } from '../routing/org-router.js';
 import * as store from './store.js';
 import type { MessageRow, Routine, ZenAgentRow } from './store.js';
 

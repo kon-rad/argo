@@ -1,4 +1,4 @@
-import { query } from './db.js';
+import { query } from '../../db.js';
 
 /**
  * Card signals for the model router (docs/org-routing.md, "The classifier"). Rules first: scope, named paths, repos,
