@@ -1,5 +1,7 @@
 # Configuration and secrets
 
+Status: **works** - where settings and secrets live on the shipped engine, and the safe way agents read them.
+
 Three places hold settings, each for one kind of value, and nothing personal is ever compiled into the engine. This page is where each thing goes on each machine, and how agents and scripts read it without ever printing it. The full list of variables and keys is [configuration.md](../configuration.md).
 
 ## The three places

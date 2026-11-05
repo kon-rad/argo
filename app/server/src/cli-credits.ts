@@ -3,7 +3,7 @@ import { pool } from './db.js';
 import { collect, latestCredits, PROVIDERS, readKeys, saveReading, type Provider } from './credits.js';
 
 // `secondbrain credits sync|set|show`: prepaid API balances into provider_credit_snapshots.
-//   sync                       OpenRouter + fal from their APIs (the droplet's credits-sync timer runs this)
+//   sync                       OpenRouter + fal from their APIs (the server's credits-sync timer runs this)
 //   set <provider> <balance>   a reading typed in by hand; Gemini has no balance API
 //        [--currency USD] [--note "..."]
 //   show                       the latest reading per provider

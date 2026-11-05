@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { query, withTransaction } from './db.js';
 import { getAgent, OrgError, type Agent, type Message } from './org.js';
@@ -169,6 +169,8 @@ export interface Fact {
   author: string;
   via: string | null;
   project_slug: string | null;
+  /** The one agent this claim is about, or null for a company-wide fact anybody may recall (phase 6). */
+  agent: string | null;
   confidence: 'confirmed' | 'inferred';
   supersedes: number | null;
   valid_from: Date;
@@ -177,8 +179,9 @@ export interface Fact {
   retired_why: string | null;
 }
 
-const FACT_COLS = 'id, subject, claim, source, author, via, project_slug, confidence, supersedes, valid_from, valid_to, retired_by, retired_why';
+const FACT_COLS = 'id, subject, claim, source, author, via, project_slug, agent, confidence, supersedes, valid_from, valid_to, retired_by, retired_why';
 const VIA = /^[a-z0-9][a-z0-9.@_-]{0,60}$/;
+const AGENT_NAME = /^[a-z0-9][a-z0-9-]*$/;
 
 export interface RememberOpts {
   subject: string;
@@ -188,26 +191,33 @@ export interface RememberOpts {
   inferred?: boolean;
   supersedes?: number;
   via?: string;
+  /** Tag the claim as one agent's (its own memory) rather than the company's. Must name a roster agent. */
+  agent?: string;
 }
 
 /** One sourced claim, authored by the caller. Superseding closes the old fact in the same transaction. */
-export async function remember(caller: Agent, opts: RememberOpts): Promise<Fact> {
+export async function remember(caller: Pick<Agent, 'name'>, opts: RememberOpts): Promise<Fact> {
   const subject = opts.subject.trim();
   const claim = opts.claim.trim().replace(/\s+/g, ' ');
   const source = opts.source.trim();
   if (!subject || subject.length > 200) throw new OrgError('a subject is 1 to 200 characters (the thing the fact is about)');
   if (!claim || claim.length > 1000) throw new OrgError('a claim is 1 to 1000 characters; put longer prose in a vault note and cite it');
   if (!source || source.length > 500) throw new OrgError('every fact needs --source: a vault path, a message #id, a card t_… or a URL');
-  if (opts.via !== undefined && !VIA.test(opts.via)) throw new OrgError(`bad --via "${opts.via}" (e.g. claude-code@mac)`);
+  if (opts.via !== undefined && !VIA.test(opts.via)) throw new OrgError(`bad --via "${opts.via}" (e.g. claude-code@laptop)`);
+  if (opts.agent !== undefined && !AGENT_NAME.test(opts.agent)) throw new OrgError(`bad --agent "${opts.agent}" (a roster agent name)`);
   if (opts.project) {
     const { rowCount } = await query(`SELECT 1 FROM projects WHERE slug = $1`, [opts.project]);
     if (!rowCount) throw new OrgError(`no project "${opts.project}" in the tracker`);
   }
+  if (opts.agent) {
+    const { rowCount } = await query(`SELECT 1 FROM org_agents WHERE name = $1 AND retired_at IS NULL`, [opts.agent]);
+    if (!rowCount) throw new OrgError(`no active agent "${opts.agent}" in the roster`);
+  }
   return withTransaction(async (tx) => {
     const { rows } = await tx.query<Fact>(
-      `INSERT INTO memory_facts (subject, claim, source, author, via, project_slug, confidence, supersedes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${FACT_COLS}`,
-      [subject, claim, source, caller.name, opts.via ?? null, opts.project ?? null, opts.inferred ? 'inferred' : 'confirmed', opts.supersedes ?? null],
+      `INSERT INTO memory_facts (subject, claim, source, author, via, project_slug, agent, confidence, supersedes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${FACT_COLS}`,
+      [subject, claim, source, caller.name, opts.via ?? null, opts.project ?? null, opts.agent ?? null, opts.inferred ? 'inferred' : 'confirmed', opts.supersedes ?? null],
     );
     const fact = rows[0]!;
     if (opts.supersedes !== undefined) await tx.query(`SELECT memory_fact_retire($1, $2, $3)`, [opts.supersedes, caller.name, `superseded by #${fact.id}`]);
@@ -215,23 +225,135 @@ export async function remember(caller: Agent, opts: RememberOpts): Promise<Fact>
   });
 }
 
-export async function forget(caller: Agent, id: number, why: string): Promise<void> {
+export async function forget(caller: Pick<Agent, 'name'>, id: number, why: string): Promise<void> {
   if (!why.trim()) throw new OrgError('forget <id> "<why>": say why the fact is no longer true');
   await query(`SELECT memory_fact_retire($1, $2, $3)`, [id, caller.name, why.trim().slice(0, 500)]);
 }
 
-export async function listFacts(opts: { subject?: string; project?: string; author?: string; all?: boolean; limit?: number } = {}): Promise<Fact[]> {
+export async function listFacts(opts: { subject?: string; project?: string; author?: string; agent?: string; all?: boolean; limit?: number } = {}): Promise<Fact[]> {
   const where: string[] = [];
   const params: unknown[] = [];
   if (!opts.all) where.push('valid_to IS NULL');
   if (opts.subject) where.push(`subject ILIKE $${params.push(`%${opts.subject}%`)}`);
   if (opts.project) where.push(`project_slug = $${params.push(opts.project)}`);
   if (opts.author) where.push(`author = $${params.push(opts.author)}`);
+  if (opts.agent) where.push(`agent = $${params.push(opts.agent)}`);
   const { rows } = await query<Fact>(
     `SELECT ${FACT_COLS} FROM memory_facts ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC LIMIT $${params.push(Math.min(opts.limit ?? 50, 500))}`,
     params,
   );
   return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Facts the summaries feature proposed: what /memory shows before a person promotes one
+// ---------------------------------------------------------------------------
+
+export interface Candidate {
+  id: number;
+  summary_id: number;
+  subject: string;
+  claim: string;
+  status: 'proposed' | 'promoted' | 'rejected';
+  fact_id: number | null;
+  agent: string | null;
+  decided_by: string | null;
+  decided_at: Date | null;
+  created_at: Date;
+  project_slug: string | null;
+  harness: string;
+  host: string;
+  session_id: string;
+  external_id: string | null;
+  source: string | null;
+  request: string | null;
+}
+
+const CANDIDATE_COLS = `f.id, f.summary_id, f.subject, f.claim, f.status, f.fact_id, f.agent, f.decided_by, f.decided_at, f.created_at,
+  s.project AS project_slug, s.harness, s.host, s.session_id, a.external_id, a.source, s.request`;
+const CANDIDATE_JOIN = `FROM agent_summary_facts f JOIN agent_summaries s ON s.id = f.summary_id JOIN archive_sessions a ON a.id = s.session_id`;
+
+/**
+ * Candidates proposed by finished sessions. `/memory` reads `proposed` ones to approve, and the summaries page reads
+ * the same rows; `agent` names the bot the session belonged to, when the summary knew one.
+ */
+export async function listCandidates(opts: { status?: Candidate['status']; limit?: number } = {}): Promise<Candidate[]> {
+  const status = opts.status ?? 'proposed';
+  const { rows } = await query<Candidate>(
+    `SELECT ${CANDIDATE_COLS} ${CANDIDATE_JOIN} WHERE f.status = $1 ORDER BY f.id DESC LIMIT $2`,
+    [status, Math.min(Math.max(opts.limit ?? 50, 1), 200)],
+  );
+  return rows;
+}
+
+export interface CandidateDecision {
+  id: number;
+  status: 'promoted' | 'rejected';
+  /** The `memory_facts` row a promotion wrote. */
+  fact_id?: number;
+}
+
+/**
+ * Approve or reject one proposed candidate. A promotion writes the fact itself (authored by the summarizer, source
+ * the session it came from, `agent` when the session belonged to one bot) and links the candidate to it; a rejection
+ * closes the candidate and writes nothing. In one transaction, so a candidate can never be decided twice.
+ */
+export async function decideCandidate(
+  by: string,
+  id: number,
+  decision: { approve: boolean; subject?: string; claim?: string; project?: string },
+): Promise<CandidateDecision> {
+  return withTransaction(async (tx) => {
+    const { rows } = await tx.query<{ id: number; subject: string; claim: string; status: string; summary_id: number; agent: string | null; project: string | null; host: string; external_id: string | null }>(
+      `SELECT f.id, f.subject, f.claim, f.status, f.summary_id, f.agent, s.project, s.host, a.external_id
+         ${CANDIDATE_JOIN} WHERE f.id = $1 FOR UPDATE OF f`,
+      [id],
+    );
+    const f = rows[0];
+    if (!f) throw new OrgError(`no candidate #${id}`);
+    if (f.status !== 'proposed') throw new OrgError(`candidate #${id} is already ${f.status}`);
+    if (!decision.approve) {
+      await tx.query(`UPDATE agent_summary_facts SET status='rejected', decided_by=$2, decided_at=now() WHERE id=$1`, [id, by]);
+      return { id, status: 'rejected' as const };
+    }
+    const slug = decision.project ?? f.project;
+    const known = slug ? (await tx.query(`SELECT 1 FROM projects WHERE slug = $1`, [slug])).rowCount : 0;
+    const source = `agent-summary:${f.summary_id} (session ${f.host}/${f.external_id})`.slice(0, 500);
+    const fact = await tx.query<{ id: number }>(
+      `INSERT INTO memory_facts (subject, claim, source, author, via, project_slug, agent, confidence)
+       VALUES ($1,$2,$3,'summarizer','agent-summaries',$4,$5,'inferred') RETURNING id`,
+      [decision.subject ?? f.subject, (decision.claim ?? f.claim).replace(/\s+/g, ' '), source, known ? slug : null, f.agent],
+    );
+    await tx.query(`UPDATE agent_summary_facts SET status='promoted', fact_id=$2, decided_by=$3, decided_at=now() WHERE id=$1`, [id, fact.rows[0]!.id, by]);
+    return { id, status: 'promoted' as const, fact_id: fact.rows[0]!.id };
+  });
+}
+
+export async function factById(id: number): Promise<Fact | null> {
+  const { rows } = await query<Fact>(`SELECT ${FACT_COLS} FROM memory_facts WHERE id = $1`, [id]);
+  return rows[0] ?? null;
+}
+
+export interface FactStats {
+  current: number;
+  retired: number;
+  /** Current facts per agent; `agent: null` is the company-wide count. */
+  by_agent: { agent: string | null; n: number }[];
+  /** Facts finished sessions proposed and nobody has decided on. */
+  candidates_open: number;
+  by_author: { author: string; n: number }[];
+}
+
+export async function factStats(): Promise<FactStats> {
+  const [totals, byAgent, byAuthor, open] = await Promise.all([
+    query<{ current: number; retired: number }>(
+      `SELECT count(*) FILTER (WHERE valid_to IS NULL)::int AS current, count(*) FILTER (WHERE valid_to IS NOT NULL)::int AS retired FROM memory_facts`,
+    ),
+    query<{ agent: string | null; n: number }>(`SELECT agent, count(*)::int AS n FROM memory_facts WHERE valid_to IS NULL GROUP BY agent ORDER BY n DESC, agent NULLS FIRST`),
+    query<{ author: string; n: number }>(`SELECT author, count(*)::int AS n FROM memory_facts WHERE valid_to IS NULL GROUP BY author ORDER BY n DESC, author`),
+    query<{ n: number }>(`SELECT count(*)::int AS n FROM agent_summary_facts WHERE status = 'proposed'`),
+  ]);
+  return { ...totals.rows[0]!, by_agent: byAgent.rows, by_author: byAuthor.rows, candidates_open: open.rows[0]!.n };
 }
 
 export interface RecallHit {
@@ -304,19 +426,19 @@ function wordStart(w: string): RegExp {
 }
 
 /**
- * Lines of the bots' memory files that share words with the query, best first: the hand-written
- * `.agents/org/memory/<bot>.md` and the generated core block `.agents/org/memory/<bot>/core.md` (org-memory.ts).
- * Plain scoring: the share of the query's words a line contains. These files are small (tens of KB in all).
+ * Lines of the bots' hand-written memory files that share words with the query, best first: `.agents/org/memory/<bot>.md`.
+ * Plain scoring: the share of the query's words a line contains. These files are small (tens of KB in all). The
+ * generated core block (`<bot>/core.md`) was retired with the persona store (engine core v2 phase 6); a bot's own
+ * claims are `memory_facts` tagged with its name now, and `recallFacts` returns those.
  */
 export function recallMemoryFiles(vaultRoot: string, q: string, limit = 5): RecallHit[] {
   const words = terms(q);
   if (!words.length) return [];
   const dir = join(vaultRoot, '.agents', 'org', 'memory');
-  let files: { rel: string; title: string }[] = [];
+  const files: { rel: string; title: string }[] = [];
   try {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       if (e.isFile() && e.name.endsWith('.md')) files.push({ rel: e.name, title: e.name.replace(/\.md$/, '') });
-      else if (e.isDirectory() && existsSync(join(dir, e.name, 'core.md'))) files.push({ rel: `${e.name}/core.md`, title: e.name });
     }
   } catch {
     return [];
@@ -385,8 +507,8 @@ export function dedupeVaultHits(hits: RecallHit[]): RecallHit[] {
   });
 }
 
-/** Vault paths recall never returns, whatever the search finds: the owner's working files and finances. */
-export const RECALL_EXCLUDE = ['CURRENT/', 'Areas/Finance/', '.env'];
+/** Vault paths recall never returns, whatever the search finds. A vault adds its private folders with ORG_RECALL_EXCLUDE. */
+export const RECALL_EXCLUDE = ['.env'];
 
 export function recallExcluded(path: string, extra: string[] = []): boolean {
   return [...RECALL_EXCLUDE, ...extra].some((p) => p && (path.startsWith(p) || path.includes(`/${p}`)));

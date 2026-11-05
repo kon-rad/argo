@@ -240,9 +240,12 @@ describe('shared memory', () => {
     writeFileSync(join(vault, '.agents', 'org', 'memory', 'atlas.md'), '# atlas memory\n\n- deploy.sh runs npm ci in place\n- unrelated line\n');
     const hits = recallMemoryFiles(vault, 'npm ci deploy');
     expect(hits[0]).toMatchObject({ source: 'memory', ref: '.agents/org/memory/atlas.md:3', title: 'atlas' });
-    expect(recallExcluded('CURRENT/todo-master.md')).toBe(true);
-    expect(recallExcluded('Areas/Finance/exports/x.md')).toBe(true);
-    expect(recallExcluded('Areas/zion/tenancy.md', ['Areas/zion/'])).toBe(true);
+    // Only secrets are excluded by default; a vault names its private folders in ORG_RECALL_EXCLUDE.
+    expect(recallExcluded('.env')).toBe(true);
+    expect(recallExcluded('apps/site/.env')).toBe(true);
+    expect(recallExcluded('Areas/private/exports/x.md')).toBe(false);
+    expect(recallExcluded('Areas/private/exports/x.md', ['Areas/private/'])).toBe(true);
+    expect(recallExcluded('Areas/other/tenancy.md', ['Areas/other/'])).toBe(true);
     expect(recallExcluded('Projects/kanban/kanban-design.md')).toBe(false);
   });
 

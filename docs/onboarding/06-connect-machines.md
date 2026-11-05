@@ -1,5 +1,7 @@
 # Connect servers and computers
 
+Status: **works** - the shipped machine topologies: a laptop alone, a laptop and a server, several agent machines, and a kiosk.
+
 One vault, several machines. This page is the map of which machine does what, and the order to add them in. The detailed server procedure is [deployment.md](../deployment.md).
 
 ## The shapes it takes
@@ -105,7 +107,7 @@ A page behind the login needs a session. The projects feed is the exception: `GE
 | Ring data from the server to a laptop | `RING_PULL_SSH_HOST`, `RING_PULL_DB` on the laptop | Server to laptop, over ssh, `secondbrain ring-pull` |
 | Hermes history from the server | `ARCHIVE_SSH_HOST`, `REMOTE_HERMES_HOME`, `REMOTE_HERMES_USER` on the laptop | Server to laptop, over ssh |
 | Kanban, chats and cron pages | `AGENT_HUB_URL`, `AGENT_HUB_TOKEN` | The app to an agent-hub service you run separately (module `agents`) |
-| Big media kept in object storage | `B2_SERVE_URL` | The app to a local `b2store serve` |
+| Big media kept in object storage | `B2_SERVE_URL` | The app to your object storage, if you configure one |
 
 Every one of these is off until its setting exists. Use ssh aliases, not hostnames or IPs, in the env files; aliases are what the docs and the examples assume.
 

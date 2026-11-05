@@ -14,7 +14,7 @@ export function untilText(iso: string | null, now = Date.now()): string {
 }
 
 export function planText(p: PlanCurrent | null): { main: string; sub: string } {
-  if (!p) return { main: 'No reading yet', sub: 'Readings come from the Mac status line and headless runs.' };
+  if (!p) return { main: 'No reading yet', sub: 'Readings come from the local status line and headless runs.' };
   const asOf = `as of ${new Date(p.observed_at).toLocaleString()} (${p.host}, ${p.origin === 'statusline' ? 'status line' : 'headless run'})`;
   const lapsed = p.resets_at !== null && Date.parse(p.resets_at) < Date.now();
   if (p.reset_since_reading || p.left_pct === null || lapsed) {

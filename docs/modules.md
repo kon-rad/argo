@@ -1,18 +1,21 @@
 # Modules
 
-The core app is browse, search (keyword, semantic, hybrid), the database page and the editor. Everything else is a module, and every module is **off** until you list it:
+Status: **works** - the module system ships; every optional feature mounts only when you list it in `MODULES`.
+
+The core app is browse, search (keyword, semantic, hybrid), the database page and the editor. The six core features (`projects`, `memory`, `org`, `board`, `usage`, `summaries`) are **always on**. Every other module is an **addon**, off until you list it (in the vault's `secondbrain.json` `addons`, or `MODULES` in `.env`):
 
 ```
-MODULES=projects,org,map
+MODULES=projects,memory,org,map
 ```
 
 A module that is off mounts no API routes, shows no nav link and gets no timers from `deploy.sh`. Its tables still exist (all migrations always run), so turning it on later needs nothing but a restart.
 
-The core features (`projects`, `org`, `board`, `usage`, `summaries`) are each wired in one place, a manifest at `app/server/src/features/<name>/manifest.ts`: the nav link, the `secondbrain` commands, the timers, the PATH wrappers, the env keys and the doc page. `secondbrain features list` prints them with their state; `secondbrain <command>` runs any command a manifest names. The other modules still use the older per-file wiring until they move to `addons/`.
+Every feature is wired in one place, a manifest: a core feature at `app/server/src/features/<name>/manifest.ts`, an addon at `app/server/src/addons/<name>/manifest.ts`, the same shape either way - the `secondbrain` commands, the timers, the PATH wrappers, the env keys and the doc page. `secondbrain features list` prints them all with their state; `secondbrain <command>` runs any command a manifest names. See [Addons](addons.md).
 
 | Module | Page | One line |
 |---|---|---|
 | [`projects`](#projects) | `/projects` | A project tracker: divisions, teams, projects, features, verifications |
+| [`memory`](memory.md) | `/memory` | The shared memory: sourced claims every agent recalls, and the candidates finished sessions propose |
 | [`org`](#org) | `/org` | A message board for a company of named AI agents, with you as the human member |
 | [`board`](#board) | `/board` | The kanban board: cards for people and agents, claimed and finished by lanes, with per-device tokens |
 | [`agents`](#agents) | `/agents`, `/cron` | Agent chats, Hermes history and cron history, served by an agent-hub |
@@ -41,11 +44,23 @@ A tracker where each project has a stage (`idea`, `designing`, `building`, `test
 | Timers (server) | `projects-render` |
 | Skill | `company-report` |
 
+## memory
+
+The shared memory ([memory.md](memory.md)): one table, `memory_facts`, holding one claim per row with the source that backs it. A claim with no `agent` is company-wide and any bot may recall it; a claim with an `agent` is that bot's own memory. Written by `secondbrain memory remember`, read by `secondbrain memory recall` (the facts, the bots' memory files, then the vault by keyword and vector), closed by `secondbrain memory retire` (never deleted). What finished sessions propose lands in `agent_summary_facts` first and becomes a fact only when a person approves it on `/memory`.
+
+| | |
+|---|---|
+| Page | `/memory`: the facts with their source, the candidates waiting for a decision, the retire button |
+| CLI | `secondbrain memory` (`recall`, `remember`, `list`, `retire`, `propose`, `stats`) |
+| Settings | `memory.exclude` in `secondbrain.json` (vault paths recall never returns) |
+| Tables | `memory_facts`, `agent_summary_facts` |
+| Skill | `shared-memory` (recall before, remember after) |
+
 ## org
 
 A company of agents. Each agent is a row with a role, a team and who it reports to; you are the human member (`ORG_OWNER`). Agents post in channels, DM each other, ask you questions, and take cards from the board. A dispatcher watches for wakeups and starts the right agent: your own for `claude-code` and `hermes` bots, the engine's for `zen-agent` bots.
 
-A bot's `runtime` in the roster says what runs it: `claude-code` or `hermes` (your own dispatcher, as before), or `zen-agent`, which the engine's dispatcher runs itself when `ORG_DISPATCH=on` (`secondbrain org-dispatch tick`, a systemd timer on the server). The dispatcher claims a bot's open wakeups, finishes acknowledgements without a run, asks the classify step whether a free-text message needs the bot at all (`secondbrain classify wake-gate`), picks tool sets and a budget by wake reason, writes the wake's task and handoff files, runs `zen-agent` with `--json`, and finishes the wakeups with the run id. Roster `routines` (`{ name, at: "HH:MM", days?, task_file }`) become `routine` wakeups once per local day in `ORG_TZ`. A message of kind `ack` ("read, nothing to do") wakes nobody. The design and the phased rollout: [zen-runtime.md](zen-runtime.md).
+A bot's `runtime` in the roster says what runs it: `claude-code` or `hermes` (your own dispatcher, as before), or `zen-agent`, which the engine's dispatcher runs itself when `ORG_DISPATCH=on` (`secondbrain dispatch tick`, a systemd timer on the server). The dispatcher claims a bot's open wakeups, finishes acknowledgements without a run, asks the classify step whether a free-text message needs the bot at all (`secondbrain classify wake-gate`), picks tool sets and a budget by wake reason, writes the wake's task and handoff files, runs `zen-agent` with `--json`, and finishes the wakeups with the run id. Roster `routines` (`{ name, at: "HH:MM", days?, task_file }`) become `routine` wakeups once per local day in `ORG_TZ`. A message of kind `ack` ("read, nothing to do") wakes nobody. The design and the phased rollout: [zen-agent.md](zen-agent.md).
 
 Two limits keep a bot's runs from growing without bound. The session a `claude-code` bot resumes (`cli-org session`) is dropped after `ORG_SESSION_MAX_RUNS` runs, because a resumed `claude -p` re-sends the whole conversation on every turn; the `zen-agent` lane needs neither `cli-org session` nor the column behind it, since every zen-agent wake is a fresh run ([zen-agent.md](zen-agent.md#34-a-bot-wake-end-to-end)) and a bot's continuity is its memory file plus `cli-org remember`/`recall`. And a card that keeps waking its bot without finishing is held: `wake-add --reason task` waits `ORG_TASK_WAKE_BACKOFF_MINUTES` after the first run (doubling each time), and after `ORG_TASK_WAKE_RETRIES` re-wakes in 24 h it posts one `held:` status in the bot's team channel and wakes the bot for that card only on an `owner` wake. A dispatcher that runs bots without `cli-org session` and `wake-add` gets neither limit.
 
@@ -54,11 +69,11 @@ Two limits keep a bot's runs from growing without bound. The session a `claude-c
 | Page | `/org`: channels, DMs, questions waiting on you, tasks |
 | CLI | `cli-org` (also `secondbrain org`): post, read, ask the owner, assign and complete tasks; `cli-org avatar show|generate` draws agent portraits ([org-yaml.md](org-yaml.md#avatars)) |
 | Security | A dedicated `sb_org` database role with row-level security per agent |
-| Settings | `ORG_OWNER`, `ORG_VAULT_ASSIGNEE`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES`, `ORG_TZ`, `ORG_RECALL_EXCLUDE`, `ORG_RECALL_MIN_SIMILARITY` (see [Memory](memory.md)), `ORG_REFLECT_MODEL`, `ORG_REFLECT_MAX_PER_DAY`; the dispatcher's `ORG_DISPATCH`, `ORG_DISPATCH_TICK_SECONDS`, `ORG_DISPATCH_PARALLEL`, `ORG_DISPATCH_QUIET`, `ORG_DISPATCH_DAILY_TOKENS`, `ORG_ZEN_COMMAND`; the classify step's `CLASSIFY_PROVIDER`, `CLASSIFY_DAILY_TOKENS`, `TYPESAFE_API_KEY` (or `OPENROUTER_API_KEY`); `GEMINI_API_KEY` for `cli-org avatar generate`; `secondbrain.json` `classify`, `dispatch` and `org.avatars` |
-| CLI | also `secondbrain org-dispatch tick|routines` and `secondbrain classify <decision> --state-file f | label <id> right|wrong | recent` |
+| Settings | `ORG_OWNER`, `ORG_VAULT_ASSIGNEE`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES`, `ORG_TZ`, `ORG_RECALL_EXCLUDE`, `ORG_RECALL_MIN_SIMILARITY` (see [Memory](memory.md)); the dispatcher's `ORG_DISPATCH`, `ORG_DISPATCH_TICK_SECONDS`, `ORG_DISPATCH_PARALLEL`, `ORG_DISPATCH_QUIET`, `ORG_DISPATCH_DAILY_TOKENS`, `ORG_ZEN_COMMAND`; the classify step's `CLASSIFY_PROVIDER`, `CLASSIFY_DAILY_TOKENS`, `TYPESAFE_API_KEY` (or `OPENROUTER_API_KEY`); `GEMINI_API_KEY` for `cli-org avatar generate`; `secondbrain.json` `classify`, `dispatch` and `org.avatars` |
+| CLI | also `secondbrain dispatch tick|routines` and `secondbrain classify <decision> --state-file f | label <id> right|wrong | recent` |
 | Timers (server) | `dispatch` when `ORG_DISPATCH=on`; `deploy.sh` creates the role and puts `cli-org` on the PATH |
 | Skill | `org-member` |
-| Memory | Each bot keeps its own: an episode per finished wake, first-person lessons distilled by a cheap model after `wake-done`, a generated core block under a token budget, and self-improvement cards a person applies ([agent-memory.md](agent-memory.md)) |
+| Memory | An episode per finished wake (`org_agent_episodes`); durable lessons are shared claims in `memory_facts`, tagged with the bot's name when they are its own ([memory.md](memory.md)) |
 
 ## board
 
@@ -224,3 +239,6 @@ The settings modal (the gear, or the model chip) picks the provider and model, t
 
 Semantic search is not required: without an embeddings provider the chat retrieves by keyword and says so. For better retrieval on dense notes, turn on contextual enrichment on the Embeddings source (`"contextualize": true` in its config on the Sources page): a model writes one line of context per chunk at embed time. It costs one chat-model call per changed note.
 
+## garden
+
+`MODULES=garden`. A nightly command, `secondbrain garden`, that treats every top-level folder under `Projects/`, `Areas/` and `Research/` as a shelf with a small frontmatter header, archives project shelves that are done or untouched for 90 days, proposes stale areas, normalises folder names, regenerates a wiki block in each shelf note and a catalog, and writes a report. Shadow mode by default; the timer moves nothing until `garden.apply` is true. Design, modes, caps and how to revert a night: [garden.md](garden.md).

@@ -1,13 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import Browse from './routes/Browse.js';
 import Search from './routes/Search.js';
 import VectorSearch from './routes/VectorSearch.js';
 import Database from './routes/Database.js';
 import Sources from './routes/Sources.js';
 import Ring from './routes/Ring.js';
-import Agents from './routes/agents/Agents.js';
+import Agents, { OldCardLink } from './routes/agents/Agents.js';
 import Cron from './routes/Cron.js';
 import NavMenu, { type NavItem } from './components/NavMenu.js';
 import { FEATURE_ROUTES } from './features.js';
@@ -143,11 +143,6 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           {sections.map(([label, items]) => (
             <NavMenu key={label} label={label} items={items} />
           ))}
-          {modules.has('tv') && (
-            <NavLink to="/tv" className={navClass}>
-              TV
-            </NavLink>
-          )}
           {/* Only where a launch script is configured; the server never mounts the route. */}
           {!loginRequired && meta.data?.robot && <FriendlyButton />}
           {loginRequired && (
@@ -199,7 +194,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         id={mobileMenuId}
         open={menuOpen}
         onClose={closeMenu}
-        sections={[...sections, ...(modules.has('tv') ? ([['Watch', [{ to: '/tv', label: 'TV' }]]] as [string, NavItem[]][]) : [])]}
+        sections={sections}
         search={<SearchBox inputRef={mobileSearchRef} onSubmit={(q) => navigate(`/search?q=${encodeURIComponent(q)}`)} />}
         footer={
           <>
@@ -224,10 +219,14 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           <Route path="/vector-search" element={<VectorSearch />} />
           <Route path="/database" element={<Database />} />
           <Route path="/sources" element={<Sources />} />
-          <Route path="/agents/*" element={<Agents />} />
-          <Route path="/cron" element={<Cron />} />
-          <Route path="/cron/:profile/:jobId" element={<Cron />} />
-          <Route path="/ring" element={<Ring />} />
+          {/* Module pages: off means not routed, so they fall through to "No such page" like their API 404s. */}
+          {modules.has('agents') && <Route path="/agents/*" element={<Agents />} />}
+          {modules.has('agents') && <Route path="/cron" element={<Cron />} />}
+          {modules.has('agents') && <Route path="/cron/:profile/:jobId" element={<Cron />} />}
+          {/* Old Hermes kanban links still land on the board when the agents module is off. */}
+          {!modules.has('agents') && <Route path="/agents/board/:taskId" element={<OldCardLink />} />}
+          {!modules.has('agents') && <Route path="/agents/board" element={<Navigate to="/board" replace />} />}
+          {modules.has('ring') && <Route path="/ring" element={<Ring />} />}
           {/* Core features' pages, for the modules that are on (features.tsx; the nav comes from the server's manifests). */}
           {[...modules].flatMap((m) => FEATURE_ROUTES[m] ?? [])}
           {modules.has('tv') && <Route path="/tv" element={<Tv />} />}
@@ -263,21 +262,16 @@ function menus(modules: Set<string>, meta: AppMeta | undefined, openChat: () => 
     { to: '/', label: 'Browse', end: true },
     ...declared('Vault'),
     // The chat panel opens over the current page rather than navigating; the header button does the same.
+    // chat's menu entry is an action (it opens the panel), not a page link, so it stays here.
     ...on('chat', { label: 'Ask your second brain', onSelect: openChat }),
-    ...on('map', { to: '/map', label: 'Brain map' }),
-    ...on('media', { to: '/media', label: 'Media' }),
-    ...on('uploads', { to: '/uploads', label: 'Upload' }),
     { to: '/vector-search', label: 'Vector Search' },
     { to: '/database', label: 'Database' },
     { to: '/sources', label: 'Sources' },
   ];
   const work: NavItem[] = [
     ...declared('Work'),
-    ...on('fund', { to: '/fund', label: 'Fund' }),
-    ...on('agents', { to: '/agents', label: 'Agents' }),
-    ...on('agents', { to: '/cron', label: 'Cron' }),
   ];
-  const life: NavItem[] = [...declared('Life'), ...on('ring', { to: '/ring', label: 'Ring' })];
+  const life: NavItem[] = [...declared('Life')];
   const docs: NavItem[] = [
     ...(meta?.devLogPath ? [{ to: `/file/${meta.devLogPath}`, label: 'Devlog' }] : []),
     ...(meta?.docsPath ? [{ to: `/file/${meta.docsPath}`, label: 'Docs' }] : []),

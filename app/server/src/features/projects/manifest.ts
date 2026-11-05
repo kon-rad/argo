@@ -8,6 +8,7 @@ export default defineFeature({
   cli: [{ command: 'projects', entry: 'cli-projects.js', summary: 'the tracker: report | list | add | set | verify | render | import (projects help)' }],
   timers: [{ unit: 'secondbrain-projects-render', summary: 'renders the markdown report every hour' }],
   wrappers: ['cli-projects'],
+  health: { label: 'the tracker tables answer', tables: ['teams', 'projects', 'features', 'stage_changes', 'verifications'] },
   env: ['PROJECTS_FEED_TOKEN'],
   settings: 'projects',
   docs: 'docs/modules.md#projects',

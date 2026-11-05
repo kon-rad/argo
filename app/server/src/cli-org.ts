@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { config } from './config.js';
 import { pool, setDatabaseUrl } from './db.js';
-import { cardFailures } from './dispatch/store.js';
-import { classifyCard, loadCard } from './org-classify.js';
-import { decide, recordDecision, recordOutcome, routeReport, routeReportMarkdown, routeSpend, routeWeekly, TIERS, type Failure, type Result, type RoutingConfig, type Tier } from './org-router.js';
+import { cardFailures } from './addons/dispatch/store.js';
+import { classifyCard, loadCard } from './addons/classify/org-classify.js';
+import { decide, recordDecision, recordOutcome, routeReport, routeReportMarkdown, routeSpend, routeWeekly, TIERS, type Failure, type Result, type RoutingConfig, type Tier } from './addons/routing/org-router.js';
 import {
   addWakeup,
   applyGraph,
@@ -46,16 +46,13 @@ import {
 } from './org.js';
 import { generateAvatar, setAvatar, subjectsFromDb, subjectsFromOrgFile } from './org-avatars.js';
 import { applyOrg, formatApply, formatPlan, planOrgFile } from './org-apply.js';
+import { main as compileMain } from './cli-org-compile.js';
 import { clearOverride, dispatchState, listOverrides, pauseAgents, pauseLane, resumeAgents, setDispatch, setOverride } from './board.js';
 import { breakerLimitsFromEnv, runBreaker } from './breaker.js';
 import {
   forget,
   listApprovals,
   listFacts,
-  dedupeVaultHits,
-  DEFAULT_RECALL_MIN_SIMILARITY,
-  shapeVaultHits,
-  recallExcluded,
   recallFacts,
   recallMemoryFiles,
   remember,
@@ -66,28 +63,15 @@ import {
   type Approval,
   type Fact,
   type RecallHit,
-  type VaultSearchHit,
 } from './org-powers.js';
 import {
-  EPISODE_REASONS,
-  OUTCOMES,
-  editMemory,
   listEpisodes,
-  listMemory,
-  memorySettingsFor,
   memoryStats,
-  proposeImprovement,
-  reflect,
-  retireMemory,
-  writeCore,
-  type MemoryRow,
-  type Outcome,
-  type ReflectResult,
+  recordEpisode,
+  type Episode,
 } from './org-memory.js';
 import { search } from './search.js';
 import { settings } from './settings.js';
-import { hybridSearch } from './semantic.js';
-import { defaultEmbeddingProvider, loadEmbeddingConfig } from './embeddings/factory.js';
 
 const USAGE = `cli-org: the agent company's message board (Postgres). Identity comes from ORG_AGENT, never from an argument.
 
@@ -154,16 +138,9 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   facts [--subject s] [--project p] [--author a] [--all] [--json]
   forget <id> "<why>"                                    close a fact (its author, the author's lead or the owner)
 
-  persona memory (docs/agent-memory.md; each bot's own, written by the reflect step after its wakes, read on /org/agents/<name>):
-  memory <agent> [--all] [--json]          the bot's active lessons (its core block's rows); --all includes closed ones
+  persona memory (a bot's own claims are memory_facts tagged with its name; use secondbrain memory for those):
   memory episodes <agent> [--limit N]      its finished wakes: outcome, corrected, turns, cost
-  memory stats <agent> [--days N]          corrections and cost per completed card (the ledger's metric), memory counts
-  memory edit <id> "<new text>"            the owner or the bot's lead corrects a line (the old row is closed, never deleted)
-  memory retire <id> "<why>"               close a line that no longer holds
-  reflect <agent> --run R [--wakeups 1,2] [--task t_..] [--reason task|chat|..] [--outcome done|blocked|..] [--exit N]
-          [--result "..."] [--turns N] [--cost USD] [--duration S] [--log path] [--transcript path] [--dry-run]
-                                           record the episode and, when configured, the cheap-model reflection (wake-done does this)
-  propose-improvement <agent> --memory-id <id> [--dry-run]   one self-improvement card from a recurring friction; a human applies it
+  memory stats <agent> [--days N]          corrections and cost per completed card (the ledger's metric)
 
   avatars (docs/org-yaml.md "Avatars"; the image model needs GEMINI_API_KEY):
   avatar show [<name>] [--json]            the portrait path and prompt of one bot, or of every bot
@@ -174,7 +151,7 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   dispatcher only (cc-dispatcher runs these as hermes):
   wake-claim <agent> --by <run id> --json  claim every open wakeup of the agent; prints them
   wake-done <id,id> [--run R] [--exit N] [--result "..."] [--turns N] [--cost USD] [--duration S] [--log path] [--transcript path]
-                                           mark done; posts a fallback status if the run left none; records the episode and reflects
+                                           mark done; posts a fallback status if the run left none; records the episode
   wake-add <agent> --reason routine|owner|task --ref X      a wakeup the trigger doesn't make (no-op if one is open,
                                            or if the card is held: it keeps waking the bot without finishing)
   session <agent> [--set <id> | --clear]   the claude session id the agent resumes (dropped after ORG_SESSION_MAX_RUNS runs)
@@ -261,37 +238,6 @@ function here(): string {
   return resolve(fileURLToPath(import.meta.url), '..');
 }
 
-function formatMemory(m: MemoryRow): string {
-  return `#${m.id} [${m.kind}, ×${m.occurrences}, ${when(new Date(m.updated_at))}${m.active ? '' : `, closed: ${m.retired_why ?? ''}`}${m.proposal_task_id ? `, proposed ${m.proposal_task_id}` : ''}] ${m.content}`;
-}
-
-/** What wake-done and reflect print: the episode, then what the reflection did, or why it did nothing. */
-export function formatReflect(r: ReflectResult): string {
-  const lines = [`episode #${r.episode.id} ${r.created ? 'recorded' : 'already recorded'} (${r.episode.outcome}${r.episode.turn_count !== null ? `, ${r.episode.turn_count} turns` : ''})`];
-  if (r.skipped) lines.push(`reflect: skipped (${r.skipped})`);
-  else if (r.applied) {
-    const a = r.applied;
-    lines.push(`reflect: ${a.added.length} added, ${a.bumped.length} bumped, ${a.superseded.length} reworded, ${a.retired.length} closed${a.dropped.length ? `; dropped: ${a.dropped.join('; ')}` : ''}`);
-    for (const m of [...a.added, ...a.bumped, ...a.superseded]) lines.push(`  ${formatMemory(m)}`);
-  } else lines.push(`reflect (dry run): ${JSON.stringify(r.ops)}`);
-  if (r.core) lines.push(`core: ${r.core.path} (${r.core.kept.length} lines${r.core.dropped.length ? `, ${r.core.dropped.length} over budget` : ''})`);
-  for (const p of r.proposals) lines.push(p.card ? `proposal: card ${p.card.id} (memory #${p.memory_id})` : `proposal for memory #${p.memory_id}: ${p.refused}`);
-  return lines.join('\n');
-}
-
-export function reflectSummary(r: ReflectResult): Record<string, unknown> {
-  return {
-    episode_id: r.episode.id, created: r.created, outcome: r.episode.outcome, reflected: r.reflected, skipped: r.skipped, ops: r.ops,
-    added: r.applied?.added.map((m) => m.id) ?? [], bumped: r.applied?.bumped.map((m) => m.id) ?? [], superseded: r.applied?.superseded.map((m) => m.id) ?? [],
-    retired: r.applied?.retired ?? [], dropped: r.applied?.dropped ?? [], core: r.core, proposals: r.proposals.map((p) => ({ memory_id: p.memory_id, card: p.card?.id ?? null, refused: p.refused })),
-  };
-}
-
-/** After an edit the generated core block is stale; re-render it from the rows (a no-op without the vault here). */
-async function rerenderCore(agent: string): Promise<void> {
-  await writeCore(config.vaultRoot, agent, memorySettingsFor(config.vaultRoot, agent).memory.core_budget_tokens).catch(() => null);
-}
-
 function formatTask(t: TaskLink): string {
   return `${t.task_id}  ${t.assignee.padEnd(8)} ${(t.project_slug ?? '-') + (t.feature_slug ? `/${t.feature_slug}` : '')}${t.work_type ? `  [${t.work_type}]` : ''}  ${t.title}  (by ${t.created_by}, ${when(new Date(t.created_at))})`;
 }
@@ -316,37 +262,10 @@ function formatFact(f: Fact): string {
   return `#${f.id} ${f.subject}: ${f.claim}  [${f.confidence}, ${f.source}, ${f.author}${f.via ? ` via ${f.via}` : ''}, ${when(new Date(f.valid_from))}${f.valid_to ? `, closed ${when(new Date(f.valid_to))}${f.retired_why ? `: ${f.retired_why}` : ''}` : ''}]`;
 }
 
-/** A search snippet as plain text for a model: no highlight tags, entities decoded (they cost tokens and mean nothing). */
-export function plainSnippet(html: string): string {
-  return html
-    .replace(/<\/?(?:b|mark|em|strong)>/g, '')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-}
+// The vault arm of recall (hybrid search, the exclusion list) lives in ./recall.ts, shared with `secondbrain memory`.
+import { plainSnippet, recallVault } from './recall.js';
 
-/**
- * The vault side of recall: hybrid (keyword + vector) when embeddings are configured, else keyword, over-fetched and
- * filtered so the owner's working files and finances never come back. Runs on the app's connection: the index
- * isn't the board, so the sb_org role has no grant on it.
- */
-export async function recallVault(q: string, limit: number, env: NodeJS.ProcessEnv = process.env): Promise<RecallHit[]> {
-  const extra = (env.ORG_RECALL_EXCLUDE ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  const floor = Number(env.ORG_RECALL_MIN_SIMILARITY);
-  const minSimilarity = Number.isFinite(floor) && floor > 0 ? floor : DEFAULT_RECALL_MIN_SIMILARITY;
-  let hits: VaultSearchHit[] = [];
-  try {
-    await loadEmbeddingConfig();
-    hits = (await hybridSearch(q, { source: 'vault', limit: limit * 3, offset: 0, provider: defaultEmbeddingProvider(), minSimilarity })).results;
-  } catch {
-    try {
-      hits = (await search(q, { source: 'vault', limit: limit * 3, offset: 0 })).results;
-    } catch {
-      return [];
-    }
-  }
-  const kept = shapeVaultHits(hits.filter((h) => !recallExcluded(h.ref_path, extra)), limit, minSimilarity)
-    .map((h) => ({ source: 'vault' as const, ref: h.ref_path, title: h.title ?? '', text: plainSnippet(h.snippet), score: Number(h.rank) }));
-  return dedupeVaultHits(kept).slice(0, limit);
-}
+export { plainSnippet, recallVault };
 
 async function main(argv: string[], out: (s: string) => void = console.log): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -533,63 +452,33 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       const ids = (pos[0] ?? '').split(',').map((x) => x.trim()).filter(Boolean);
       if (!ids.length || ids.some((x) => !/^\d+$/.test(x))) throw new OrgError('wake-done <id,id> [--run R] [--exit N] [--result "..."]');
       const r = await finishWakeups(ids.map(Number), { run: str(opts.run), exit: num(opts.exit, 'exit'), result: str(opts.result) });
-      // The memory write pipeline, after the wake is closed: never before it, never fatal to it.
-      let reflected: ReflectResult | null = null;
-      let reflectErr: string | null = null;
+      // The episode log, after the wake is closed: never before it, never fatal to it. One row per finished wake.
+      let recorded: { episode: Episode; created: boolean } | null = null;
+      let episodeErr: string | null = null;
       if (r.agent && str(opts.run)) {
         try {
           const task = r.wakeups.find((w) => w.reason === 'task' && w.ref)?.ref ?? str(opts.task);
-          reflected = await reflect(await getAgent(r.agent), {
+          recorded = await recordEpisode(await getAgent(r.agent), {
             run: str(opts.run)!, wakeupIds: r.wakeups.map((w) => w.id), task: task ?? undefined, reason: r.wakeups[0]?.reason ?? (task ? 'task' : 'owner'),
             exit: num(opts.exit, 'exit'), result: str(opts.result), noReport: r.fallback_posted, turns: num(opts.turns, 'turns'), cost: dec(opts.cost, 'cost'),
-            duration: num(opts.duration, 'duration'), log: str(opts.log), transcript: str(opts.transcript),
+            duration: num(opts.duration, 'duration'), log: str(opts.log),
           });
         } catch (err) {
-          reflectErr = err instanceof Error ? err.message : String(err);
+          episodeErr = err instanceof Error ? err.message : String(err);
         }
       }
-      if (json) out(JSON.stringify({ ...r, reflect: reflected ? reflectSummary(reflected) : null, reflect_error: reflectErr }));
+      if (json) out(JSON.stringify({ ...r, episode: recorded?.episode ?? null, episode_created: recorded?.created ?? null, episode_error: episodeErr }));
       else {
         out(`done ${r.done} wakeup(s)${r.fallback_posted ? '; posted a fallback status' : ''}`);
-        if (reflected) out(formatReflect(reflected));
-        if (reflectErr) out(`reflect: skipped (${reflectErr})`);
+        if (recorded) out(`episode #${recorded.episode.id} ${recorded.created ? 'recorded' : 'already recorded'} (${recorded.episode.outcome}${recorded.episode.turn_count !== null ? `, ${recorded.episode.turn_count} turns` : ''})`);
+        if (episodeErr) out(`episode: skipped (${episodeErr})`);
       }
-      return 0;
-    }
-    case 'reflect': {
-      const [agent] = pos;
-      const runId = str(opts.run);
-      if (!agent || !runId) throw new OrgError('reflect <agent> --run <run id> [--task t_..] [--reason r] [--outcome o] [--exit N] [--result "..."] [--turns N] [--cost USD] [--duration S] [--log path] [--transcript path] [--dry-run]');
-      const reason = str(opts.reason);
-      if (reason && !(EPISODE_REASONS as readonly string[]).includes(reason)) throw new OrgError(`--reason is one of ${EPISODE_REASONS.join(', ')}`);
-      const outcome = str(opts.outcome);
-      if (outcome && !(OUTCOMES as readonly string[]).includes(outcome)) throw new OrgError(`--outcome is one of ${OUTCOMES.join(', ')}`);
-      const r = await reflect(await getAgent(agent), {
-        run: runId, wakeupIds: str(opts.wakeups)?.split(',').map((x) => x.trim()).filter((x) => /^\d+$/.test(x)).map(Number), task: str(opts.task), reason,
-        outcome: outcome as Outcome | undefined, exit: num(opts.exit, 'exit'), result: str(opts.result), turns: num(opts.turns, 'turns'), cost: dec(opts.cost, 'cost'),
-        duration: num(opts.duration, 'duration'), log: str(opts.log), transcript: str(opts.transcript), dryRun: opts['dry-run'] === true,
-      });
-      out(json ? JSON.stringify(reflectSummary(r)) : formatReflect(r));
       return 0;
     }
     case 'memory': {
       const [sub] = pos;
-      if (sub === 'edit' || sub === 'retire') {
-        const id = num(pos[1], 'id');
-        if (id === undefined || !pos[2]) throw new OrgError(`memory ${sub} <id> "<${sub === 'edit' ? 'new text' : 'why'}>"`);
-        if (sub === 'edit') {
-          const row = await editMemory(await me(), id, pos[2]);
-          await rerenderCore(row.agent_name);
-          out(json ? JSON.stringify(row) : `memory #${id} closed; #${row.id} replaces it`);
-        } else {
-          const agentName = await retireMemory(await me(), id, pos[2]);
-          await rerenderCore(agentName);
-          out(`memory #${id} closed`);
-        }
-        return 0;
-      }
       const agent = sub === 'episodes' || sub === 'stats' ? pos[1] : sub;
-      if (!agent) throw new OrgError('memory <agent> [--all] | memory episodes <agent> | memory stats <agent> [--days N] | memory edit <id> "<text>" | memory retire <id> "<why>"');
+      if (!agent) throw new OrgError('memory episodes <agent> [--limit N] | memory stats <agent> [--days N]');
       await getAgent(agent);
       if (sub === 'episodes') {
         const es = await listEpisodes(agent, num(opts.limit, 'limit') ?? 20);
@@ -600,28 +489,10 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       if (sub === 'stats') {
         const st = await memoryStats(agent, num(opts.days, 'days') ?? 14);
         if (json) return (out(JSON.stringify(st, null, 2)), 0);
-        out(`${agent}, last ${st.days} days: ${st.episodes} episodes, ${st.done} done, ${st.corrected} corrected (${st.corrections_per_done ?? '-'} per done), cost per done ${st.cost_per_done ?? '-'}, avg turns ${st.avg_turns ?? '-'}, ${st.reflected} reflected`);
-        out(`memory: ${st.memory.active} active (${Object.entries(st.memory.by_kind).map(([k, n]) => `${k} ${n}`).join(', ') || 'none'}); proposals filed: ${st.proposals}`);
+        out(`${agent}, last ${st.days} days: ${st.episodes} episodes, ${st.done} done, ${st.corrected} corrected (${st.corrections_per_done ?? '-'} per done), cost per done ${st.cost_per_done ?? '-'}, avg turns ${st.avg_turns ?? '-'}`);
         return 0;
       }
-      const rows = await listMemory(agent, { all: opts.all === true, limit: num(opts.limit, 'limit') });
-      if (json) return (out(JSON.stringify(rows, null, 2)), 0);
-      out(rows.length ? rows.map(formatMemory).join('\n') : `no memory for ${agent} yet (it is written by cli-org reflect after its wakes)`);
-      return 0;
-    }
-    case 'propose-improvement': {
-      const [agent] = pos;
-      const id = num(opts['memory-id'], 'memory-id');
-      if (!agent || id === undefined) throw new OrgError('propose-improvement <agent> --memory-id <id> [--dry-run]');
-      const r = await proposeImprovement(await getAgent(agent), id, { dryRun: opts['dry-run'] === true });
-      if (json) return (out(JSON.stringify(r)), r.refused ? 3 : 0);
-      if (r.refused) out(`not proposed: ${r.refused}`);
-      else {
-        out(r.card ? `card ${r.card.id} for the owner: ${r.card.title}` : `would propose against ${r.target?.path} (dry run)`);
-        if (r.rationale) out(`rationale: ${r.rationale}`);
-        if (r.diff) out(r.diff);
-      }
-      return r.refused ? 3 : 0;
+      throw new OrgError(`memory: no "${sub ?? ''}" verb; try memory episodes|stats <agent>`);
     }
     case 'wake-add': {
       const [agent] = pos;
@@ -652,43 +523,41 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       return 0;
     }
     case 'task': {
+      // Deprecated (one release): the board owns these verbs now. Forward to cli-board with
+      // the same flags, so `cli-org task create|assign|redo|list` keeps working until it goes.
       const [sub] = pos;
+      console.error('cli-org task is deprecated: use `cli-board create|assign|redo|list` (the board owns these verbs). Forwarding this release.');
+      const { main: boardMain } = await import('./cli-board.js');
+      const bmain = (a: string[]): Promise<number> => boardMain(a, out);
+      const fwd = (keys: string[]): string[] => {
+        const fa: string[] = [];
+        for (const k of keys) {
+          const v = opts[k];
+          if (v === undefined) continue;
+          if (v === true) fa.push(`--${k}`);
+          else fa.push(`--${k}`, v);
+        }
+        return fa;
+      };
       if (sub === 'create') {
         const [, assignee, title] = pos;
-        const project = str(opts.project);
         if (!assignee || !title) throw new OrgError('task create <bot|none> "<title>" [--project <slug>] [--feature f] [--body "..."]');
-        const r = await createTask(await me(), {
-          assignee: assignee === 'none' ? null : assignee, title, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, repo: str(opts.repo),
-          body: str(opts.body), board: str(opts.board), priority: num(opts.priority, 'priority'), deps: str(opts.after)?.split(',').map((x) => x.trim()).filter(Boolean), run,
-        });
-        if (json) out(JSON.stringify(r));
-        else out(`card ${r.task_id} ${r.link.assignee ? `for ${r.link.assignee}` : 'unassigned'}: ${r.link.title}${r.link.project_slug ? ` (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})` : ''} [${r.card.status}]${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
-        return 0;
+        // `none` and a bot both mean "no --to": cli-board's create leaves an absent --to unassigned.
+        return bmain(['create', title, ...(assignee === 'none' ? [] : ['--to', assignee]), ...fwd(['project', 'feature', 'type', 'needs', 'repo', 'priority', 'after', 'body', 'ship-now', 'board', 'kind', 'json'])]);
       }
       if (sub === 'assign') {
         const [, card, assignee] = pos;
-        const project = str(opts.project);
         if (!card || !assignee) throw new OrgError('task assign <card> <bot> [--project <slug>] [--feature f]');
-        const r = await assignTask(await me(), {
-          taskId: card, assignee, project, feature: str(opts.feature), type: str(opts.type), needs: str(opts.needs), shipNow: opts['ship-now'] === true, repo: str(opts.repo), board: str(opts.board), run,
-        });
-        if (json) out(JSON.stringify(r));
-        else out(`card ${r.task_id} now ${r.link.assignee}'s: ${r.link.title}${r.link.project_slug ? ` (${r.link.project_slug}${r.link.feature_slug ? `/${r.link.feature_slug}` : ''})` : ''}${r.message ? `; mention ${r.message.id} in #${r.message.channel_slug}` : ''}`);
-        return 0;
+        return bmain(['assign', card, assignee, ...fwd(['project', 'feature', 'type', 'needs', 'repo', 'ship-now', 'json'])]);
       }
       if (sub === 'redo') {
         const [, card, changes] = pos;
         if (!card || !changes) throw new OrgError('task redo <review card> "<what to change>"');
-        const r = await redoTask(await me(), card, changes, run);
-        if (json) out(JSON.stringify(r));
-        else out(r.escalated ? `round ${r.rounds} refused: escalated to the lead${r.message ? ` (message ${r.message.id})` : ''}` : `round ${r.rounds}: card ${r.task_id} for the builder; ${card} waits for it${r.message ? `; mention ${r.message.id}` : ''}`);
-        return 0;
+        return bmain(['redo', card, changes, ...fwd(['run', 'json'])]);
       }
       if (sub === 'list') {
-        const ts = await listTasks({ project: str(opts.project), feature: str(opts.feature), agent: str(opts.agent), limit: num(opts.limit, 'limit') });
-        if (json) out(JSON.stringify(ts, null, 2));
-        else out(ts.length ? ts.map(formatTask).join('\n') : 'no cards');
-        return 0;
+        const agent = str(opts.agent);
+        return bmain(['list', ...fwd(['project', 'feature', 'limit', 'json']), ...(agent ? ['--assignee', agent] : [])]);
       }
       throw new OrgError('task create|assign|list|redo');
     }
@@ -755,6 +624,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
     }
     case 'recall': {
       const [q] = pos;
+      console.error('deprecated: use `secondbrain memory recall`; this alias goes in one release.');
       if (!q) throw new OrgError('recall "<query>" [--project p] [--limit N]');
       const limit = num(opts.limit, 'limit') ?? 8;
       const hits: RecallHit[] = [
@@ -769,6 +639,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
     }
     case 'remember': {
       const [subject, claim] = pos;
+      console.error('deprecated: use `secondbrain memory remember`; this alias goes in one release.');
       const source = str(opts.source);
       if (!subject || !claim || !source) throw new OrgError('remember "<subject>" "<claim>" --source <path|#msg|t_card|url> [--project p] [--inferred] [--supersedes id]');
       const f = await remember(await me(), {
@@ -779,6 +650,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       return 0;
     }
     case 'facts': {
+      console.error('deprecated: use `secondbrain memory list`; this alias goes in one release.');
       const fs = await listFacts({ subject: str(opts.subject), project: str(opts.project), author: str(opts.author), all: opts.all === true, limit: num(opts.limit, 'limit') });
       if (json) return (out(JSON.stringify(fs, null, 2)), 0);
       out(fs.length ? fs.map(formatFact).join('\n') : 'no facts');
@@ -786,6 +658,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
     }
     case 'forget': {
       const id = num(pos[0], 'id');
+      console.error('deprecated: use `secondbrain memory retire`; this alias goes in one release.');
       if (id === undefined || !pos[1]) throw new OrgError('forget <id> "<why>"');
       await forget(await me(), id, pos[1]);
       out(`fact #${id} closed`);
@@ -885,6 +758,10 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       out(json ? JSON.stringify(r, null, 2) : formatApply(r));
       return 0;
     }
+    case 'compile':
+      // The org compiler lives in the engine (engine-core-v2 proposal, decision 3); `secondbrain org compile`
+      // and `secondbrain org-compile` both land here. No database is touched.
+      return compileMain(rest);
     case 'avatar': {
       const sub = pos[0];
       const names = pos.slice(1);

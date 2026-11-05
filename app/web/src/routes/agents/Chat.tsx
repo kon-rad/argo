@@ -11,7 +11,7 @@ import HarnessSwitch from './HarnessSwitch.js';
 import PresetLauncher from './PresetLauncher.js';
 
 /**
- * Chat with Claude Code on the droplet, in the vault, on the subscription: a terminal-style conversation that shows
+ * Chat with Claude Code on the server, in the vault, on the subscription: a terminal-style conversation that shows
  * each tool call as it happens. agent-hub keeps one `claude -p` per open chat and resumes it after it idles out,
  * so a chat started on the laptop continues on the Pi. Actions are reviewed by auto mode; anything that would need
  * a person to approve is denied (there's no approval UI yet).
@@ -70,7 +70,7 @@ export default function Chat() {
       </aside>
       <section className={`flex min-w-0 flex-1 flex-col ${chatId ? '' : 'max-md:hidden'}`}>
         {chatId ? <Conversation id={chatId} onBack={() => navigate('/agents/chat')} />
-          : <p className="p-6 text-sm text-[var(--ink-dim)]">Start a new chat or pick one on the left. Claude works in the vault on the droplet.</p>}
+          : <p className="p-6 text-sm text-[var(--ink-dim)]">Start a new chat or pick one on the left. Claude works in the vault on the server.</p>}
       </section>
     </div>
   );

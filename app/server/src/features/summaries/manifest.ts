@@ -12,7 +12,9 @@ export default defineFeature({
   ],
   timers: [{ unit: 'secondbrain-summarize', summary: 'summarizes up to 50 finished sessions every 30 minutes' }],
   wrappers: [],
-  env: ['SUMMARIES_M1_URL'],
+  health: { label: 'the summaries tables answer', tables: ['agent_summaries', 'agent_summary_facts'] },
+  // Optional: a home server's local model address when a vault puts one first in the chain.
+  env: ['SUMMARIES_LOCAL_URL'],
   settings: 'summaries',
   docs: 'docs/summaries.md',
 });

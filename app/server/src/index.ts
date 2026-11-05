@@ -15,7 +15,7 @@ const app = createApp({
   },
 });
 
-// 127.0.0.1 only, in both deployments. On the Mac localhost IS the security
+// 127.0.0.1 only, in both deployments. On a local install localhost IS the security
 // boundary. On the server Caddy terminates TLS on the same box and proxies in,
 // so the app itself is never reachable from the network without passing
 // through HTTPS and the login.

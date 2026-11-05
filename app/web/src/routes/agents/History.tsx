@@ -7,7 +7,7 @@ import { ago, zoned } from '../../lib/time.js';
 
 /**
  * The Agents page's History tab. Every Hermes conversation: Telegram chats with each bot, cron runs,
- * subagent delegations and API calls. Copied from Hermes on the droplet by
+ * subagent delegations and API calls. Copied from Hermes on the server by
  * `secondbrain agents-sync` (every 10 minutes), kept even after Hermes prunes
  * its own copy. Times show in the zone Hermes was set to, with the zone named.
  */

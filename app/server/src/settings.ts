@@ -73,8 +73,8 @@ const Classify = z
   .object({
     /** Channel slugs and vault folders (prefixes) whose text may be sent to the classifier. Empty: every call falls through. */
     allow: z.array(z.string().min(1)).default([]),
-    /** `provider/model` for the classifier when a schema does not pin one. */
-    model: z.string().min(1).default('openrouter/typesafe/jev-1.14'),
+    /** `provider/model` for the classifier when a schema does not pin one. Unset: every call falls through (`no-model`). */
+    model: z.string().min(1).optional(),
     /** Vault-relative folder of decision schemas (`<decision>.yaml`); the engine's defaults fill in what is missing. */
     schemasDir: z.string().default('.agents/classify'),
   })
@@ -154,6 +154,17 @@ const Summaries = z
   })
   .prefault({});
 
+/** The memory feature (docs/memory.md): the one store of sourced claims, `memory_facts`. */
+const Memory = z
+  .object({
+    /**
+     * Vault paths a `memory recall` never returns, on top of the engine's own list (`.env`), matched as path
+     * prefixes. Lets a vault keep its working files out of an agent's recall without an env var. Empty: nothing extra.
+     */
+    exclude: z.array(z.string().min(1)).default([]),
+  })
+  .prefault({});
+
 /** One Telegram bot: which agent answers it, so a session's channel label can name the bot (channel.ts). */
 const TelegramBot = z.object({
   /** Short name shown on /usage, e.g. "claude" */
@@ -186,10 +197,56 @@ const OrgSettings = z
   })
   .prefault({});
 
+/**
+ * The `server` block (proposal section 4): what `secondbrain plan|apply` generates the
+ * env file, the systemd units and the Caddyfile from, plus the enabled feature
+ * manifests. Non-secret by design - the login hash, the database URL and the API keys
+ * stay in the machine's env file.
+ */
+const Server = z
+  .object({
+    /**
+     * Generate `/etc/secondbrain/env`, the unit files and the Caddyfile from this block and
+     * the enabled manifests. Off by default: a merge never changes a running server's units
+     * on its own; the owner turns it on, then runs `secondbrain apply`.
+     */
+    generate: z.boolean().default(false),
+    /** The domain Caddy serves, e.g. `sb.example.com`. Unset: no Caddyfile is generated. */
+    host: z.string().min(1).optional(),
+    /** The browser origin mutating requests must carry (PUBLIC_ORIGIN). Defaults to `https://<host>`. */
+    publicOrigin: z.string().url().optional(),
+    /** The Unix user that owns the vault and runs the app. */
+    user: z.string().regex(/^[a-z_][a-z0-9_-]*$/).default('secondbrain'),
+    /** Where the app is installed on the server (@APP_DIR@ in the unit templates). */
+    dir: z.string().min(1).default('/opt/secondbrain-app'),
+    /** The vault checkout on the server (VAULT_ROOT in the generated env). */
+    vaultDir: z.string().min(1).default('/srv/vault'),
+    /** Hermes's home for the app user, for the agents module. Default: `<user>`'s home. */
+    hermesHome: z.string().min(1).optional(),
+    backup: z
+      .object({
+        /** Local time the nightly pg_dump runs, `HH:MM`. */
+        schedule: z.string().regex(/^\d{2}:\d{2}$/).default('03:30'),
+        keepDaily: z.number().int().positive().default(14),
+        keepWeekly: z.number().int().positive().default(8),
+      })
+      .prefault({}),
+  })
+  .prefault({});
+
 const Settings = z.object({
+  server: Server,
+  /**
+   * The addons this vault turns on, e.g. `["map", "voice"]`. The core features are
+   * always on and are never listed here. Read at runtime by `config.readAddonList` (which
+   * parses the same key directly, because config.ts cannot import this file back);
+   * declared here so the settings reference and validation see it.
+   */
+  addons: z.array(z.string()).default([]),
   chat: Chat,
   telegram: Telegram,
   org: OrgSettings,
+  memory: Memory,
   summaries: Summaries,
   classify: Classify,
   dispatch: Dispatch,
@@ -253,9 +310,38 @@ const Settings = z.object({
       reportFile: z.string().default('projects.md'),
     })
     .prefault({}),
+  /** `secondbrain garden`: the nightly vault gardener (docs/garden.md). */
+  garden: z
+    .object({
+      /** Top-level folders whose immediate subfolders are shelves. */
+      roots: z.array(z.string().min(1)).default(['Projects', 'Areas', 'Research']),
+      /** Where archived shelves go: `<archiveDir>/<quarter>/<projects|areas|research>/<name>`. */
+      archiveDir: z.string().default('Archives'),
+      /** Vault-relative file the catalog is rendered to. */
+      catalogFile: z.string().default('garden/catalog.md'),
+      /** Vault-relative folder for the nightly reports (`<reportDir>/<date>.md`). */
+      reportDir: z.string().default('garden/reports'),
+      /** File name of the shelf note that carries the shelf frontmatter. */
+      shelfFile: z.string().default('README.md'),
+      /** A project shelf untouched this long is archived. */
+      projectArchiveAfterDays: z.number().int().positive().default(90),
+      /** An area shelf untouched this long is proposed for archiving (never moved on its own). */
+      areaProposeAfterDays: z.number().int().positive().default(180),
+      /** Archive moves per run; the rest wait for the next night. */
+      maxMoves: z.number().int().nonnegative().default(25),
+      /** Folder renames per run. */
+      maxRenames: z.number().int().nonnegative().default(5),
+      /** Shelves never archived, proposed or renamed (vault-relative folders). */
+      pinned: z.array(z.string().min(1)).default([]),
+      /** When true the timer run moves files (apply mode); otherwise it only writes READMEs, the catalog and the report. */
+      apply: z.boolean().default(false),
+    })
+    .prefault({}),
 });
 
 export type SecondBrainSettings = z.infer<typeof Settings>;
+export type ServerSettings = SecondBrainSettings['server'];
+export type GardenSettings = SecondBrainSettings['garden'];
 export type ChatSettingsOverrides = z.infer<typeof Chat>;
 export type ClassifySettings = z.infer<typeof Classify>;
 export type DispatchSettings = z.infer<typeof Dispatch>;

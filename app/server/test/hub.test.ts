@@ -79,7 +79,7 @@ describe('/api/hub', () => {
   it('answers 503 where no hub is configured (the Mac)', async () => {
     const app = createApp({ deployment: 'local', hub: {} });
     const res = await request(app).get('/api/hub/chats').expect(503);
-    expect(res.body.error.message).toMatch(/droplet/);
+    expect(res.body.error.message).toMatch(/server/);
   });
 
   it('answers 502 when the hub is down', async () => {

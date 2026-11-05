@@ -5,7 +5,7 @@ import {
   listCards, listTokens, moveCard, OUTCOMES, reclaim, revokeToken, STATUSES, findToken, type BoardNotice,
 } from '../board.js';
 import { config } from '../config.js';
-import { assignTask, createTask, getAgent, OrgError, type Agent } from '../org.js';
+import { assignTask, createTask, getAgent, OrgError, redoTask, type Agent } from '../org.js';
 import { HttpError, intParam, parseOr400, wrap } from './http.js';
 import type { HubOptions } from './hub.js';
 
@@ -48,7 +48,8 @@ const NewCardBody = z.object({
   work: z.enum(['research', 'coding', 'design', 'media', 'writing', 'sales', 'education', 'ops']).optional(), needs: z.enum(['code', 'review', 'merge', 'deploy', 'm1', 'web']).optional(),
   repo: z.string().regex(/^[A-Za-z0-9._-]{1,80}$/).optional(), priority: z.number().int().min(1).max(5).optional(), deps: z.array(Id).max(50).optional(), ship_now: z.boolean().optional(),
 });
-const AssignBody = z.object({ assignee: Name.nullable(), project: Slug.optional(), feature: Slug.optional(), work: z.string().optional(), needs: z.string().optional() });
+const AssignBody = z.object({ assignee: Name.nullable(), project: Slug.optional(), feature: Slug.optional(), work: z.string().optional(), needs: z.string().optional(), repo: z.string().regex(/^[A-Za-z0-9._-]{1,80}$/).optional(), ship_now: z.boolean().optional() });
+const RedoBody = z.object({ changes: z.string().trim().min(1).max(8000), run_id: z.string().max(200).optional() });
 const CommentBody = z.object({ body: z.string().trim().min(1).max(8000) });
 const MoveBody = z.object({ status: z.enum(STATUSES), note: z.string().trim().max(2000).optional() });
 const LinkBody = z.object({ depends_on: Id });
@@ -149,8 +150,17 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
       res.json({ card: await boardErrors(() => assignCard(me.name, id, null)) });
       return;
     }
-    const r = await boardErrors(() => assignTask(me, { taskId: id, assignee: b.assignee!, project: b.project, feature: b.feature, type: b.work, needs: b.needs, run: 'app' }));
+    const r = await boardErrors(() => assignTask(me, { taskId: id, assignee: b.assignee!, project: b.project, feature: b.feature, type: b.work, needs: b.needs, repo: b.repo, shipNow: b.ship_now, run: 'app' }));
     res.json({ card: r.card, message: r.message });
+  }));
+
+  // Changes requested on a review card: a new round for the builder, the review card parked until it is done.
+  router.post('/cards/:id/redo', wrap(async (req, res) => {
+    const id = parseOr400(Id, req.params['id']);
+    const b = parseOr400(RedoBody, req.body);
+    const me = await agentOf(caller(res));
+    const r = await boardErrors(() => redoTask(me, id, b.changes, b.run_id));
+    res.json({ escalated: r.escalated, task_id: r.task_id, rounds: r.rounds });
   }));
 
   router.post('/cards/:id/comment', wrap(async (req, res) => {

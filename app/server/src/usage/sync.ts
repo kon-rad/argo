@@ -16,7 +16,7 @@ import { parseStatuslineLog } from './statusline.js';
 import * as store from './store.js';
 
 /**
- * The droplet's collector: Claude Code transcripts (Telegram bot, Remote Control,
+ * The server's collector: Claude Code transcripts (Telegram bot, Remote Control,
  * cc-* lanes), cc-runs logs and the status-line plan log, into the ledger. Runs as
  * hermes from secondbrain-usage-sync.timer. Every write is idempotent.
  */

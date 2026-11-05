@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# uploads-pull: runs on the second machine (the video-editing Mac). Asks the Second Brain app which uploaded
+# uploads-pull: runs on a second machine (the video-editing box). Asks the Second Brain app which uploaded
 # files want a working copy here, downloads each from the bucket with `b2store`, files it under
 # ~/<m1Dir>/<vault folder>/ and reports back. Run it from launchd every couple of minutes (docs/uploads.md).
 #

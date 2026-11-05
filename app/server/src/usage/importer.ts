@@ -20,7 +20,7 @@ export async function importLines(input: AsyncIterable<string> | Iterable<string
       continue;
     }
     // Only malformed input is a skippable bad line. A database failure below propagates so the
-    // CLI exits 1 and the Mac keeps its cursor and resends.
+    // CLI exits 1 and the client keeps its cursor and resends.
     if (w?.t === 'transcript' && typeof w.path === 'string' && typeof w.text === 'string') {
       await withTransaction(async (tx) => {
         const r = await ingestTranscript(tx, host, w.path, Buffer.from(w.text, 'utf8'), Number(w.startLine) || 0);

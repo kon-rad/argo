@@ -2,9 +2,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { ClassifyInput, ClassifyResult } from '../src/classify/types.js';
+import type { ClassifyInput, ClassifyResult } from '../src/addons/classify/types.js';
 import { query } from '../src/db.js';
-import { Dispatcher, inQuietHours, isProviderError, localTime, machineOf, parseRunResult, primaryReason, providerOf, routineDue, type Deps, type RunnerResult } from '../src/dispatch/index.js';
+import { Dispatcher, inQuietHours, isProviderError, localTime, machineOf, parseRunResult, primaryReason, providerOf, routineDue, type Deps, type RunnerResult } from '../src/addons/dispatch/index.js';
 import { addWakeup, dm, getAgent, importOrg, openWakeups, post, unreadCounts } from '../src/org.js';
 import { parseSettings } from '../src/settings.js';
 import { truncateAll } from './helpers.js';
@@ -398,13 +398,13 @@ describe('model routing (docs/org-routing.md)', () => {
 });
 
 describe('fallback model (docs/org-routing.md, "Fallback model")', () => {
-  const m1 = { name: 'm1max', url: 'http://m1max:11434' };
+  const m1 = { name: 'box1', url: 'http://box1:11434' };
   const cfg = {
     tiers: { t0: { turns: 8 }, t1: { turns: 20 }, t2: { turns: 30 }, t3: { turns: 40 } },
     floors: { coding_single_file_named_path: 't1', coding_default: 't2', high_risk: 't3', merge: 't3', deploy: 't3' },
     escalation: { turn_cap_no_commit: 1, tests_failed_twice: 1, review_changes_twice: 1 },
     risk_keywords: [],
-    models: [{ id: 'ollama-m1max/qwen', aliases: ['qwen'], provider: 'ollama-m1max', tier: 't1', can_code: false, local: true }],
+    models: [{ id: 'ollama-box1/qwen', aliases: ['qwen'], provider: 'ollama-box1', tier: 't1', can_code: false, local: true }],
   } as const;
   const onModel = (model: string) => ({ ...ORG, agents: { ...ORG.agents, rune: { ...ORG.agents.rune, model } } });
   const settings = { fallback: { model: 'together/deepseek-ai/DeepSeek-V4.1-Flash' } };
@@ -423,26 +423,26 @@ describe('fallback model (docs/org-routing.md, "Fallback model")', () => {
 
   it('pure helpers: provider by prefix or catalog alias, machine by provider, provider errors by their words', () => {
     expect(providerOf('together/deepseek-ai/x')).toBe('together');
-    expect(providerOf('qwen', cfg as never)).toBe('ollama-m1max');
+    expect(providerOf('qwen', cfg as never)).toBe('ollama-box1');
     expect(providerOf('qwen')).toBeNull();
     expect(providerOf(null)).toBeNull();
-    expect(machineOf('ollama-m1max', [m1])).toEqual(m1);
+    expect(machineOf('ollama-box1', [m1])).toEqual(m1);
     expect(machineOf('ollama-other', [m1])).toBeNull();
     expect(machineOf('together', [m1])).toBeNull();
-    expect(isProviderError("model qwen is not in provider ollama-m1max's catalogue")).toBe(true);
-    expect(isProviderError('fetch failed: connect ECONNREFUSED 100.64.0.2:11434')).toBe(true);
+    expect(isProviderError("model qwen is not in provider ollama-box1's catalogue")).toBe(true);
+    expect(isProviderError('fetch failed: connect ECONNREFUSED 192.0.2.2:11434')).toBe(true);
     expect(isProviderError('502 Bad Gateway')).toBe(true);
     expect(isProviderError('tests failed: 2 of 14')).toBe(false);
     expect(isProviderError('BLOCKED: the card names no file')).toBe(false);
   });
 
   it('machine down: the fallback model runs instead, the trace and the wakeup say so', async () => {
-    await importOrg(onModel('ollama-m1max/qwen'));
+    await importOrg(onModel('ollama-box1/qwen'));
     const h = harness({ machines: [m1] }, settings);
     withProbe(h, false);
     await card();
     await h.d.tick();
-    expect(probed).toEqual(['m1max']);
+    expect(probed).toEqual(['box1']);
     expect(h.calls).toHaveLength(1);
     expect(flag(h.calls[0]!.args, '--model')).toBe('together/deepseek-ai/DeepSeek-V4.1-Flash');
     expect(meta(h.calls[0]!.args, 'fallback')).toBe('machine-down');
@@ -450,14 +450,14 @@ describe('fallback model (docs/org-routing.md, "Fallback model")', () => {
   });
 
   it('machine up: the bot runs on its own model and nothing is retried', async () => {
-    await importOrg(onModel('ollama-m1max/qwen'));
+    await importOrg(onModel('ollama-box1/qwen'));
     const h = harness({ machines: [m1] }, settings);
     withProbe(h, true);
     await card();
     await h.d.tick();
-    expect(probed).toEqual(['m1max']);
+    expect(probed).toEqual(['box1']);
     expect(h.calls).toHaveLength(1);
-    expect(flag(h.calls[0]!.args, '--model')).toBe('ollama-m1max/qwen');
+    expect(flag(h.calls[0]!.args, '--model')).toBe('ollama-box1/qwen');
     expect(meta(h.calls[0]!.args, 'fallback')).toBeUndefined();
   });
 
@@ -471,17 +471,17 @@ describe('fallback model (docs/org-routing.md, "Fallback model")', () => {
     expect(flag(h.calls[0]!.args, '--model')).toBe('openrouter/deepseek/deepseek-v4.1-flash');
 
     await truncateAll();
-    await importOrg(onModel('ollama-m1max/qwen'));
+    await importOrg(onModel('ollama-box1/qwen'));
     const h2 = harness({ machines: [m1] });
     withProbe(h2, false);
     await card();
     await h2.d.tick();
     expect(probed).toEqual([]);
-    expect(flag(h2.calls[0]!.args, '--model')).toBe('ollama-m1max/qwen');
+    expect(flag(h2.calls[0]!.args, '--model')).toBe('ollama-box1/qwen');
   });
 
   it('run died on the machine: one re-run on the fallback under <run>-fb, the first run recorded as failed', async () => {
-    await importOrg(onModel('ollama-m1max/qwen'));
+    await importOrg(onModel('ollama-box1/qwen'));
     const h = harness({ machines: [m1] }, settings);
     withProbe(h, true);
     await card();
@@ -489,12 +489,12 @@ describe('fallback model (docs/org-routing.md, "Fallback model")', () => {
     const ok = { code: 0, stdout: JSON.stringify({ text: 'done on the fallback', stopped: 'done', turns: 2 }) + '\n', stderr: '' };
     (h.d as unknown as { deps: Deps }).deps.runner = async (cmd, args, env, cwd, timeoutMs) => {
       h.calls.push({ cmd, args, env, cwd, timeoutMs });
-      if (first) { first = false; return { code: 1, stdout: '', stderr: "zen-agent: model qwen is not in provider ollama-m1max's catalogue\n" }; }
+      if (first) { first = false; return { code: 1, stdout: '', stderr: "zen-agent: model qwen is not in provider ollama-box1's catalogue\n" }; }
       return ok;
     };
     await h.d.tick();
     expect(h.calls).toHaveLength(2);
-    expect(flag(h.calls[0]!.args, '--model')).toBe('ollama-m1max/qwen');
+    expect(flag(h.calls[0]!.args, '--model')).toBe('ollama-box1/qwen');
     expect(flag(h.calls[1]!.args, '--model')).toBe('together/deepseek-ai/DeepSeek-V4.1-Flash');
     expect(meta(h.calls[1]!.args, 'fallback')).toBe('run-error');
     expect(meta(h.calls[1]!.args, 'run_id')).toBe(`${meta(h.calls[0]!.args, 'run_id')}-fb`);
@@ -503,11 +503,11 @@ describe('fallback model (docs/org-routing.md, "Fallback model")', () => {
     const { rows } = await query<{ subtype: string | null; is_error: boolean }>(`SELECT subtype, is_error FROM usage_runs WHERE run_id = $1`, [meta(h.calls[0]!.args, 'run_id')]);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.is_error).toBe(true);
-    expect(rows[0]!.subtype).toMatch(/^provider error on m1max: /);
+    expect(rows[0]!.subtype).toMatch(/^provider error on box1: /);
   });
 
   it('a task failure or a budget stop on the machine is not retried', async () => {
-    await importOrg(onModel('ollama-m1max/qwen'));
+    await importOrg(onModel('ollama-box1/qwen'));
     const h = harness({ machines: [m1] }, settings);
     withProbe(h, true);
     await card();
@@ -517,7 +517,7 @@ describe('fallback model (docs/org-routing.md, "Fallback model")', () => {
     expect(await wakeResult()).toBe('BLOCKED: tests failed twice');
 
     await truncateAll();
-    await importOrg(onModel('ollama-m1max/qwen'));
+    await importOrg(onModel('ollama-box1/qwen'));
     const h2 = harness({ machines: [m1] }, settings);
     withProbe(h2, true);
     await card();
@@ -527,7 +527,7 @@ describe('fallback model (docs/org-routing.md, "Fallback model")', () => {
   });
 
   it('with the router on, the routed machine model falls back and keeps the tier budget', async () => {
-    await importOrg(onModel('ollama-m1max/qwen'));
+    await importOrg(onModel('ollama-box1/qwen'));
     const h = harness({ machines: [m1] }, settings);
     (h.d as unknown as { deps: Deps }).deps.router = { mode: 'on', cfg: cfg as never };
     withProbe(h, false);

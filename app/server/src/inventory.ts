@@ -8,7 +8,7 @@ import type { TxClient } from './db.js';
  * The agent write path for inventory_items (single-database plan, Phase 6).
  * Rows are master data: there is no delete here on purpose (sb_agent has no
  * DELETE grant), and every write goes through these functions so the Telegram
- * bot, the cc-* lanes and Mac sessions all write the same shape.
+ * bot, the cc-* lanes and laptop sessions all write the same shape.
  */
 
 export class InventoryError extends Error {}
@@ -43,7 +43,7 @@ export const B2_PHOTO_ROOT = 'inventory/photos';
 /** Plan section 4: files over 50 MB go to B2 only, with a .b2.md stub, never into the vault. */
 export const MAX_PHOTO_BYTES = 50 * 1024 * 1024;
 
-/** The Mac today, the droplet after Phase 5: SECONDBRAIN_DB_URL wins over the app's DATABASE_URL. */
+/** When set, SECONDBRAIN_DB_URL wins over the app's DATABASE_URL. */
 export function resolveDbUrl(env: NodeJS.ProcessEnv, fallback: string): string {
   const override = env.SECONDBRAIN_DB_URL?.trim();
   return override ? override : fallback;
@@ -218,7 +218,7 @@ export function slugify(s: string, fallback = 'item'): string {
   return slug || fallback;
 }
 
-/** The machine's local calendar date, YYYY-MM-DD (TZ=Asia/Tokyo on the droplet's agents). */
+/** The machine's local calendar date, YYYY-MM-DD (TZ=the server's zone, e.g. UTC, on its agents). */
 export function localDate(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
@@ -241,7 +241,7 @@ function vaultRelative(vaultRoot: string, abs: string): string | null {
 /**
  * Which folder an item's photos go in. In order: the folder its earlier photos
  * already use; the folder the given files already sit in (photos an agent
- * dropped into the vault before a Mac session added the row); else a new
+ * dropped into the vault before a laptop session added the row); else a new
  * <date>_<slug-of-name>.
  */
 export function choosePhotoFolder(item: Pick<InventoryItem, 'name' | 'specs'>, sourcesVaultRel: (string | null)[], now: Date): string {

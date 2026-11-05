@@ -12,23 +12,25 @@
  * from the CLI's own failure.
  */
 import { join } from 'node:path';
-import { MANIFESTS, cliFor, unitsFor, wrappersFor } from './features/registry.js';
+import { ALL_MANIFESTS, cliFor, commandsFor, unitsFor, wrapperScript, wrappersFor } from './features/registry.js';
+import { moduleSet } from './modules.js';
 
 const EX_USAGE = 64;
 
+/** The module set for a deploy: the core five plus whatever `--modules` (or MODULES) lists. */
 function modulesArg(argv: string[]): ReadonlySet<string> {
   const i = argv.indexOf('--modules');
   const raw = i >= 0 ? (argv[i + 1] ?? '') : (process.env.MODULES ?? '');
-  return new Set(raw.split(',').map((m) => m.trim()).filter(Boolean));
+  return moduleSet(raw);
 }
 
 function list(argv: string[]): void {
   const modules = modulesArg(argv);
   if (argv.includes('--json')) {
-    console.log(JSON.stringify(MANIFESTS.map((m) => ({ ...m, on: modules.has(m.name) })), null, 2));
+    console.log(JSON.stringify(ALL_MANIFESTS.map((m) => ({ ...m, on: modules.has(m.name) })), null, 2));
     return;
   }
-  for (const m of MANIFESTS) {
+  for (const m of ALL_MANIFESTS) {
     const state = modules.has(m.name) ? 'on ' : 'off';
     const parts = [
       m.nav.length ? `page ${m.nav.map((n) => n.path).join(', ')}` : 'no page',
@@ -40,9 +42,7 @@ function list(argv: string[]): void {
 }
 
 function help(): void {
-  for (const m of MANIFESTS) {
-    for (const c of m.cli) console.log(`secondbrain ${c.command.padEnd(14)} ${c.summary}`);
-  }
+  for (const c of commandsFor()) console.log(`secondbrain ${c.command.padEnd(14)} ${c.summary}`);
 }
 
 async function run(argv: string[]): Promise<void> {
@@ -70,6 +70,17 @@ switch (sub) {
   case 'wrappers':
     for (const w of wrappersFor(modulesArg(argv))) console.log(w);
     break;
+  case 'wrapper': {
+    // The script deploy.sh writes to the app user's PATH, generated from the table.
+    const name = argv.find((a) => !a.startsWith('--'));
+    const script = name ? wrapperScript(name) : undefined;
+    if (!script) {
+      console.error(`secondbrain features wrapper <name>: no command owns the wrapper "${name ?? ''}"`);
+      process.exit(EX_USAGE);
+    }
+    process.stdout.write(script);
+    break;
+  }
   case 'help':
     help();
     break;

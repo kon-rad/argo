@@ -363,7 +363,7 @@ export interface SystemdTimer {
   last: string | null;
 }
 
-/** agent-hub (droplet only): Telegram + default agent. */
+/** agent-hub (server only): Telegram + default agent. */
 export interface TelegramStatus {
   default: 'claude' | 'hermes';
   claude_running: boolean;
@@ -930,7 +930,7 @@ export async function request<T>(path: string, params?: Params, init?: RequestIn
 }
 
 export interface AuthState {
-  /** False on the Mac, where localhost is the boundary and there is no login. */
+  /** False on a local install, where localhost is the boundary and there is no login. */
   required: boolean;
   authenticated: boolean;
 }
@@ -954,7 +954,7 @@ export interface FriendlyStatus {
 }
 
 export interface VoiceSettings {
-  /** Claude Code on this Mac speaks a one-line summary when a long task finishes. */
+  /** Claude Code on this machine speaks a one-line summary when a long task finishes. */
   autoSpeak: boolean;
   voice: string;
   minTaskSeconds: number;
@@ -965,7 +965,7 @@ export interface VoiceStatus {
   server: { url: string; model: string; up: boolean };
 }
 
-/** A note read aloud by the Kokoro server on this Mac, as an MP3 blob. */
+/** A note read aloud by the Kokoro server on this machine, as an MP3 blob. */
 async function speakNote(path: string): Promise<{ audio: Blob; truncated: boolean }> {
   const res = await fetch(url('/voice/speak'), {
     credentials: 'same-origin',
@@ -1131,30 +1131,7 @@ export interface OrgAgentPage {
   prompt: string | null;
   memory: string | null;
   memory_path: string;
-  core: string | null;
-  core_path: string;
-  memory_rows: OrgMemoryRow[];
   episodes: OrgEpisode[];
-  proposals: (OrgMemoryRow & { card_status: string | null; card_title: string | null })[];
-  memory_stats: OrgMemoryStats;
-  memory_config: { core_budget_tokens: number; reflect: { enabled: boolean; min_turns: number }; self_improvement: { enabled: boolean; repeat_threshold: number; max_proposals_per_week: number } } | null;
-}
-
-export interface OrgMemoryRow {
-  id: number;
-  agent_name: string;
-  kind: 'lesson' | 'anti_pattern' | 'preference' | 'friction';
-  content: string;
-  evidence_episode_ids: number[];
-  occurrences: number;
-  active: boolean;
-  retired_why: string | null;
-  supersedes: number | null;
-  promoted_to_proposal: boolean;
-  proposal_task_id: string | null;
-  proposed_at: string | null;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface OrgEpisode {
@@ -1173,20 +1150,49 @@ export interface OrgEpisode {
   created_at: string;
 }
 
-export interface OrgMemoryStats {
-  days: number;
-  episodes: number;
-  done: number;
-  corrected: number;
-  corrections_per_done: number | null;
-  cost_per_done: number | null;
-  avg_turns: number | null;
-  reflected: number;
-  memory: { active: number; by_kind: Record<string, number> };
-  proposals: number;
+export interface MemoryFact {
+  id: number;
+  subject: string;
+  claim: string;
+  source: string;
+  author: string;
+  via: string | null;
+  project_slug: string | null;
+  agent: string | null;
+  confidence: 'confirmed' | 'inferred';
+  supersedes: number | null;
+  valid_from: string;
+  valid_to: string | null;
+  retired_by: string | null;
+  retired_why: string | null;
+}
+
+export interface MemoryCandidate {
+  id: number;
+  summary_id: number;
+  subject: string;
+  claim: string;
+  status: 'proposed' | 'promoted' | 'rejected';
+  fact_id: number | null;
+  agent: string | null;
+  project_slug: string | null;
+  harness: string;
+  host: string;
+  external_id: string | null;
+  source: string | null;
+  request: string | null;
+  created_at: string;
 }
 
 export const api = {
+  memoryFacts: (params: { agent?: string; project?: string; subject?: string; author?: string; all?: boolean; limit?: number } = {}) =>
+    request<{ facts: MemoryFact[] }>('/memory', params),
+  memoryCandidates: (status: MemoryCandidate['status'] = 'proposed') => request<{ candidates: MemoryCandidate[] }>('/memory/candidates', { status }),
+  promoteMemoryCandidate: (id: number, patch: { subject?: string; claim?: string; project?: string } = {}) =>
+    request<{ id: number; status: 'promoted'; fact_id: number }>(`/memory/candidates/${id}/promote`, undefined, json('POST', patch)),
+  rejectMemoryCandidate: (id: number) => request<{ id: number; status: 'rejected' }>(`/memory/candidates/${id}/reject`, undefined, json('POST', {})),
+  retireMemoryFact: (id: number, why: string) => request<{ id: number; status: 'retired' }>(`/memory/${id}/retire`, undefined, json('POST', { why })),
+
   chatOptions: () => request<ChatOptions>('/chat/options'),
   chatSettings: () => request<{ settings: ChatSettings }>('/chat/settings'),
   putChatSettings: (patch: ChatSettingsPatch) => request<{ settings: ChatSettings }>('/chat/settings', undefined, json('PUT', patch)),
@@ -1368,7 +1374,7 @@ export const api = {
 
 export const rawUrl = (path: string): string => url('/raw', { path });
 export const downloadUrl = (path: string): string => url('/raw', { path, download: 1 });
-/** The file a `.b2.md` stub stands in for: local original on the Mac, streamed from B2 on the server. */
+/** The file a `.b2.md` stub stands in for: local original on a local install, streamed from B2 on the server. */
 export const b2Url = (stubPath: string, download = false): string =>
   url('/b2', download ? { path: stubPath, download: 1 } : { path: stubPath });
 

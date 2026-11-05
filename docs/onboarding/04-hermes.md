@@ -1,5 +1,7 @@
 # Connect Hermes
 
+Status: **works** - the Hermes hook, skills and usage-ledger wiring that ships today, on a laptop or a server.
+
 Hermes works in the same vault, under the same rules, with the same two hooks. The wiring is a block in its `config.yaml`. Reference: [agent-harness.md](../agent-harness.md#hermes).
 
 ## 1. Add the hooks and the skills folder

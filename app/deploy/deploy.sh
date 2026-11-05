@@ -14,7 +14,7 @@
 #   DEPLOY_PUBLIC_HOST   the domain or bare IP Caddy serves (https://<this>)
 #   DEPLOY_VAULT_DIR     the vault checkout on the server
 # Optional:
-#   DEPLOY_APP_USER      Unix user that owns the vault and runs the app (default: secondbrain)
+#   DEPLOY_APP_USER      Unix user that owns the vault and runs the app (default: secondbrain; created if missing)
 #   DEPLOY_APP_DIR       where the app is installed (default: /opt/secondbrain-app)
 #   DEPLOY_HERMES_HOME   Hermes home on the server, for the agents module (default: ~APP_USER/.hermes)
 #   EXTRA_CADDY_IMPORT   Caddyfile snippets for other sites on the same box, comma separated
@@ -25,7 +25,7 @@
 #   DEPLOY_DB_BACKUP=1   install the nightly pg_dump-to-B2 timer (needs b2store for the app user)
 #   DEPLOY_VAULT_SYNC=1  install the vault sync timer (tools/sbsync.py as the app user, role agent, every 15 min;
 #                        the app user needs push access to the vault repo; docs/sync.md)
-#   ORG_DISPATCH=on      install the org-dispatch timer (zen-agent bots; docs/zen-runtime.md). Also read from
+#   ORG_DISPATCH=on      install the dispatch timer (zen-agent bots; docs/zen-runtime.md). Also read from
 #                        the server's /etc/secondbrain/env, so setting it there is enough
 #   DEPLOY_MODULES       the server's module list, when it differs from this machine's MODULES
 #                        (e.g. voice here, livestream there); else MODULES. Core features (projects, org, board,
@@ -38,6 +38,7 @@
 #                        org: the sb_org role, cli-org on PATH · board: board-reclaim, cli-board on PATH · map: map-build, metrics
 #                        livestream: the minute poller and Caddy's /public/ files
 #                        social: the minute post-publisher and reauth check, cli-social on PATH
+#                        garden: the nightly vault gardener timer
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,7 +48,7 @@ if [[ "$(basename "$ENGINE_ROOT")" == ".secondbrain" ]]; then VAULT_ROOT_LOCAL="
 VAULT_ROOT_LOCAL="${VAULT_ROOT:-$VAULT_ROOT_LOCAL}"
 # The commit this deploy is shipping, written into the app's build-info file so
 # the running app can say which version is live. A caller that already knows which
-# commit it shipped wins (the droplet's deploy watcher does); otherwise this asks
+# commit it shipped wins (the server's deploy watcher does); otherwise this asks
 # the checkout, with safe.directory set for the case where the deploy runs as root
 # over a checkout another user owns. Empty when this is not a checkout at all.
 ENGINE_COMMIT="${ENGINE_COMMIT:-$(git -c safe.directory="$ENGINE_ROOT" -C "$APP_ROOT" rev-parse HEAD 2>/dev/null || true)}"
@@ -108,11 +109,17 @@ echo "→ provisioning and restarting"
 ssh "$HOST" "APP_DIR=$APP_DIR VAULT=$VAULT_DIR APP_USER=$APP_USER PUBLIC_HOST=$PUBLIC_HOST HERMES_HOME_REMOTE=$HERMES_HOME_REMOTE EXTRA_IMPORT=$EXTRA_IMPORT REDIRECT_FROM=$REDIRECT_FROM PAUSE_FILE=$PAUSE_FILE MODS=$MODS WITH_EMBED=$WITH_EMBED WITH_BACKUP=$WITH_BACKUP WITH_VAULT_SYNC=$WITH_VAULT_SYNC WITH_DISPATCH=$WITH_DISPATCH ENGINE_COMMIT=$ENGINE_COMMIT NO_ROLLBACK=$NO_ROLLBACK bash -s" <<'REMOTE'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-id "$APP_USER" >/dev/null || { echo "user $APP_USER missing: create it and give it the vault checkout"; exit 1; }
-[ -d "$VAULT" ] || { echo "vault missing at $VAULT"; exit 1; }
+# A fresh server has no app user yet: create it (with a home, for ~/.hermes and ~/.claude).
+if ! id "$APP_USER" >/dev/null 2>&1; then
+  echo "  creating unix user $APP_USER"
+  useradd --system --create-home --shell /bin/bash "$APP_USER"
+fi
+[ -d "$VAULT" ] || { echo "vault missing at $VAULT: clone it there and chown -R $APP_USER: $VAULT"; exit 1; }
 APP_HOME="$(getent passwd "$APP_USER" | cut -d: -f6)"
 HERMES_HOME_REMOTE="${HERMES_HOME_REMOTE:-$APP_HOME/.hermes}"
 render() { sed -e "s#@APP_USER@#$APP_USER#g" -e "s#@APP_DIR@#$APP_DIR#g" -e "s#@VAULT_DIR@#$VAULT#g" -e "s#@HERMES_HOME@#$HERMES_HOME_REMOTE#g" -e "s#@APP_HOME@#$APP_HOME#g" "$1"; }
+# The same substitutions, on stdin: a wrapper generated from the feature table has no file to pass to render().
+render_stream() { sed -e "s#@APP_USER@#$APP_USER#g" -e "s#@APP_DIR@#$APP_DIR#g" -e "s#@VAULT_DIR@#$VAULT#g" -e "s#@HERMES_HOME@#$HERMES_HOME_REMOTE#g" -e "s#@APP_HOME@#$APP_HOME#g"; }
 has() { [[ ",$MODS," == *",$1,"* ]]; }
 # A unit pair: the .service rendered, the .timer copied as is.
 unit() {
@@ -327,25 +334,26 @@ fi
 # ---- CLI wrappers on the app user's PATH, so an agent's `Bash(cli-org *)` rule matches ----
 # Core features name their wrappers and timers in their manifests (server/src/features/<name>/manifest.ts);
 # cli-features reads the manifests without a config or a database.
-features() { sudo -u "$APP_USER" -H /usr/bin/node --no-warnings "$APP_DIR/server/dist/cli-features.js" "$1" --modules "$MODS"; }
+features() { sudo -u "$APP_USER" -H /usr/bin/node --no-warnings "$APP_DIR/server/dist/cli-features.js" "$@" --modules "$MODS"; }
 # Deprecated (one release): SUMMARIES=on in the server's env file used to install the summaries timer; it is a module now.
 if grep -qsE '^SUMMARIES=on$' /etc/secondbrain/env && ! has summaries; then
   echo "! SUMMARIES=on is deprecated: add summaries to DEPLOY_MODULES. Treating it as on for this deploy."
   MODS="${MODS:+$MODS,}summaries"
 fi
-WRAPPERS=()
-for w in $(features wrappers); do WRAPPERS+=("$w"); done
-has social && WRAPPERS+=(cli-social)
-[ "$ZEN_BUILT" = 1 ] && WRAPPERS+=(zen-agent)
-if [ "${#WRAPPERS[@]}" -gt 0 ]; then
-  install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.local/bin"
-  for w in "${WRAPPERS[@]}"; do
-    # rm first: a symlink here (zen-agent -> dist/src/cli.js from an earlier `npm link`) would make the redirect
-    # overwrite its target, and the chat host would crash-loop on a shell script where its compiled cli.js was.
-    rm -f "$APP_HOME/.local/bin/$w"
-    render "$APP_DIR/deploy/bin/$w" > "$APP_HOME/.local/bin/$w"
-    chown "$APP_USER:$APP_USER" "$APP_HOME/.local/bin/$w"; chmod 755 "$APP_HOME/.local/bin/$w"
-  done
+install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.local/bin"
+for w in $(features wrappers); do
+  # The script comes from the feature table (server/src/features/registry.ts), not a file, so a command and the
+  # wrapper an agent's `Bash(cli-x *)` rule matches cannot drift. rm first: a symlink here (zen-agent -> dist/src/cli.js
+  # from an earlier `npm link`) would make the redirect overwrite its target.
+  rm -f "$APP_HOME/.local/bin/$w"
+  features wrapper "$w" | render_stream > "$APP_HOME/.local/bin/$w"
+  chown "$APP_USER:$APP_USER" "$APP_HOME/.local/bin/$w"; chmod 755 "$APP_HOME/.local/bin/$w"
+done
+# zen-agent ships as a file: it is the chat host's own entry, not a feature CLI.
+if [ "$ZEN_BUILT" = 1 ]; then
+  rm -f "$APP_HOME/.local/bin/zen-agent"
+  render "$APP_DIR/deploy/bin/zen-agent" > "$APP_HOME/.local/bin/zen-agent"
+  chown "$APP_USER:$APP_USER" "$APP_HOME/.local/bin/zen-agent"; chmod 755 "$APP_HOME/.local/bin/zen-agent"
 fi
 
 # ---- services ----
@@ -357,13 +365,10 @@ if has usage; then
   render "$APP_DIR/deploy/secondbrain-usage-import" > /usr/local/bin/secondbrain-usage-import
   chmod 755 /usr/local/bin/secondbrain-usage-import
 fi
-# Modules that are not core features yet keep their lines here until they move to addons/.
-has agents && unit secondbrain-agents-sync
-if has map; then unit secondbrain-map-build; unit secondbrain-metrics; fi
-has livestream && unit secondbrain-livestream
-has social && unit secondbrain-social
+# Non-core modules name their timers in their addon manifest (server/src/addons/<name>/manifest.ts),
+# so `features units` above installed them; nothing is hardcoded here any more.
 [ "$ZEN_BUILT" = 1 ] && render "$APP_DIR/deploy/zen-agent-serve.service" > /etc/systemd/system/zen-agent-serve.service
-# org-dispatch: only with the org module and ORG_DISPATCH=on (here or in the server's env file).
+# dispatch: only with the org module and ORG_DISPATCH=on (here or in the server's env file).
 grep -qsE '^ORG_DISPATCH=on$' /etc/secondbrain/env && WITH_DISPATCH=on
 if has org && [ "$WITH_DISPATCH" = on ]; then unit secondbrain-dispatch; fi
 [ "$WITH_EMBED" = 1 ] && unit secondbrain-embed
@@ -413,13 +418,13 @@ systemctl enable caddy secondbrain >/dev/null
 # drop-in for this one unit, never in /etc/secondbrain/env: BOARD_URL+BOARD_TOKEN in the shared env would switch
 # every process's cli-board to the HTTPS door. Minted once, as the owner; revoke with `cli-board token revoke`.
 if [ "$ZEN_BUILT" = 1 ] && has board && [ ! -s /etc/secondbrain/zen-serve.env ]; then
-  ZEN_BOARD_OUT=$(sudo -u "$APP_USER" -H "$APP_HOME/.local/bin/cli-board" token create "${ZEN_BOARD_AGENT:-sol}" --label "zen chat serve" 2>&1) || true
+  ZEN_BOARD_OUT=$(sudo -u "$APP_USER" -H "$APP_HOME/.local/bin/cli-board" token create "${ZEN_BOARD_AGENT:-owner}" --label "zen chat serve" 2>&1) || true
   ZEN_BOARD_TOKEN=$(printf '%s' "$ZEN_BOARD_OUT" | grep -o 'sbb_[A-Za-z0-9_-]*' | head -1)
   if [ -n "$ZEN_BOARD_TOKEN" ]; then
     install -m 0600 -o "$APP_USER" -g "$APP_USER" /dev/null /etc/secondbrain/zen-serve.env
     printf 'BOARD_TOKEN=%s\n' "$ZEN_BOARD_TOKEN" > /etc/secondbrain/zen-serve.env
   else
-    echo "! no board token minted for zen-agent serve (ZEN_BOARD_AGENT, default sol, must be a roster member); its kanban tools stay off"
+    echo "! no board token minted for zen-agent serve (ZEN_BOARD_AGENT, default owner, must be a roster member); its kanban tools stay off"
   fi
 fi
 if [ "$ZEN_BUILT" = 1 ] && [ -s /etc/secondbrain/zen-serve.env ]; then

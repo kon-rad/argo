@@ -104,7 +104,7 @@ function markSubstring(window: string, literal: string): string {
  * The query runs with `enable_seqscan` off for its own transaction. The
  * planner costs a scan of `vault_files` by its heap pages, which are few
  * because every note body lives in TOAST, and never counts detoasting 50 MB
- * of text to run ILIKE over it. Measured on the droplet on 2026-10-16: the
+ * of text to run ILIKE over it. Measured on a server on 2026-10-16: the
  * scan it picks takes 1.1 s, the bitmap path over the GIN indexes 17 ms.
  */
 export async function search(

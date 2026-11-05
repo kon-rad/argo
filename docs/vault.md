@@ -1,10 +1,12 @@
 # Your vault
 
+Status: **works** - the vault template, the `secondbrain-vault` CLI and the engine update flow ship as described.
+
 The vault is yours: a private git repo of markdown, organised with PARA. This page covers what the template gives you, the `secondbrain-vault` CLI, how agent rules and skills are layered, and how to take engine updates.
 
 ## The template
 
-`secondbrain-vault init <dir>` copies `vault-template/` into an empty folder and wires it up. What you get is listed in [getting-started.md](getting-started.md#2-make-a-vault). The parts that matter later:
+`secondbrain-vault init <dir>` copies `vault-template/` into an empty folder and wires it up. What you get is listed in [Set up your vault](onboarding/02-set-up-your-vault.md#step-2-create-the-vault). The parts that matter later:
 
 | File | You edit it? | Notes |
 |---|---|---|

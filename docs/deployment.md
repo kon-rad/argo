@@ -1,5 +1,7 @@
 # Deploying to a server
 
+Status: **works** - `deploy.sh` puts the app on a server behind HTTPS and a login, with rollback and the systemd timers below.
+
 The same app can run on a server, over a checkout of your vault that a git sync keeps current, behind HTTPS and a login. You run `deploy.sh` from your own machine; the server needs no GitHub credentials for the app, because the script ships source with rsync.
 
 ## What you need
@@ -65,7 +67,7 @@ The app refuses to start in server mode without `AUTH_PASSWORD_HASH`, `AUTH_TOTP
 | `DEPLOY_PAUSE_FILE` | | | A file that holds an agent dispatcher off while the build runs |
 | `DEPLOY_NO_ROLLBACK=1` | | off | Leave a deploy in place when it does not come up. By default the previous build goes back |
 | `DEPLOY_EMBED=1` | | off | Install the nightly embed timer (needs a local Ollama on the server) |
-| `DEPLOY_DB_BACKUP=1` | | off | Install the nightly `pg_dump` backup timer (needs `b2store` for the app user) |
+| `DEPLOY_DB_BACKUP=1` | | off | Install the nightly `pg_dump` backup timer (needs an object-storage client for the app user) |
 | `DEPLOY_VAULT_SYNC=1` | | off | Install the vault sync timer: the server commits what its agents write, pulls and pushes every 15 minutes as `SYNC_ROLE=agent` ([sync.md](sync.md)). The app user needs push access to the vault repo |
 
 ## What runs on the server

@@ -4,12 +4,12 @@ import { pool } from './db.js';
 import { buildMap } from './map/build.js';
 
 // `secondbrain map-build`: rebuild the brain map's stored layout (map_* tables)
-// from vault_files, vault_links, the tracker and goals-master.md. Droplet only,
-// like scan and embed: the Mac is a client of the master database.
+// from vault_files, vault_links, the tracker and goals-master.md. Server only,
+// like scan and embed: a client of the master database.
 let code = 1;
 try {
   if (!config.indexer && !process.argv.includes('--force')) {
-    console.error('map-build runs where the indexer runs (the droplet); this process is a client. --force to override.');
+    console.error('map-build runs where the indexer runs (the server); this process is a client. --force to override.');
     code = 3;
   } else {
     const r = await buildMap(config.vaultRoot);

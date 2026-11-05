@@ -1,5 +1,7 @@
 # Configuration
 
+Status: **works** - every env variable and `secondbrain.json` key the app reads, as shipped.
+
 Three places, each for one kind of value. Nothing personal is ever compiled into the engine.
 
 | File | Holds | Committed? |
@@ -21,10 +23,10 @@ The app reads `<vault>/.env` at start (`app/server/src/config.ts`), validates ev
 | `DEPLOYMENT` | `local` | `local` (no login, loopback) or `server` (login required). See [deployment.md](deployment.md) |
 | `SUMMARIES`, `SUMMARIES_M1_URL` | unset | `SUMMARIES=on` is deprecated (one release): put `summaries` in `MODULES` instead. `SUMMARIES_M1_URL` is the home server's Ollama address that the default chain tries first. See [summaries.md](summaries.md) |
 | `B2_KEY_ID`, `B2_APP_KEY`, `B2_BUCKET`, `B2_S3_ENDPOINT` | unset | uploads: the bucket and its S3 endpoint. Presigned URLs are signed with this key; it never reaches the browser |
-| `B2STORE_CRYPT_PASSWORD`, `B2STORE_CRYPT_PASSWORD2` | unset | uploads: the rclone-crypt passwords when the vault part of the bucket is encrypted (the same ones `b2store` uses) |
+| `B2STORE_CRYPT_PASSWORD`, `B2STORE_CRYPT_PASSWORD2` | unset | uploads: the rclone-crypt passwords when the vault part of the bucket is encrypted (the same rclone-crypt passwords the object-storage tooling uses) |
 | `UPLOADS_MAX_GB` | `50` | uploads: the largest single file the page accepts |
 | `UPLOADS_PULL_TOKEN` | unset | uploads: bearer token (16+ characters) the second machine's puller sends |
-| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `summaries`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`, `uploads`. Unknown names are ignored |
+| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `summaries`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`, `uploads`, `garden`. Unknown names are ignored |
 | `OWNER_NAME` | `owner` | Your name in the authenticator app and as a comment author |
 | `DEV_LOG_PATH`, `DOCS_PATH` | unset | Vault-relative notes the nav bar links to; unset hides the link |
 | `SCAN_INTERVAL_MINUTES` | `0` | Rescan and re-embed every N minutes; `0` means only when asked |
@@ -66,9 +68,21 @@ Required when `DEPLOYMENT=server`; the app refuses to start without them.
 |---|---|
 | `PUBLIC_ORIGIN` | The browser-visible origin, for example `https://brain.example.com`. Every mutating request must carry it as `Origin` |
 | `AUTH_PASSWORD_HASH`, `AUTH_TOTP_SECRET` | Printed by `secondbrain auth-setup`, which you run on your own machine |
-| `B2_SERVE_URL` | Optional: a local `b2store serve` for big files kept only in object storage |
+| `B2_SERVE_URL` | Optional: a local object-storage file server for big files kept only in object storage |
 
 Deploy settings (`DEPLOY_*`) are read by `deploy.sh` only: see [deployment.md](deployment.md#settings).
+
+## Generated config: `plan`, `apply`, `upgrade`
+
+A server's `/etc/secondbrain/env` and its systemd units are generated from `secondbrain.json`'s `server` block plus the enabled feature manifests, instead of being hand-edited and drifting.
+
+| Command | Does |
+|---|---|
+| `secondbrain plan` | Prints the env file and units this server should have and how they differ from what is on disk. **Writes nothing** |
+| `secondbrain apply` | Writes that plan. Refused unless `server.generate` is `true` |
+| `secondbrain upgrade` | The same plan as a dry run; `--yes` writes it. Re-fetching and moving the engine pin are not wired yet |
+
+Generation is **off by default** (`server.generate: false`), so a merge never changes a running server's units by itself; turning it on and running `apply` is the owner's step. `SB_UNIT_DIR` and `SB_ENV_FILE` override where the units and the env file are written (a dry run or a test). `test/env-schema.test.ts` fails the build when the code reads a `process.env` key that is neither in the schema nor on its documented worklist, so a setting cannot appear without a default and a line in this page.
 
 ## Using another machine's database
 
@@ -89,24 +103,30 @@ Deploy settings (`DEPLOY_*`) are read by `deploy.sh` only: see [deployment.md](d
 | `PROJECTS_FEED_TOKEN` | `projects` | unset | Read-only bearer token for `GET /api/feed/projects` (a kiosk panel). Unset: the route doesn't exist. `deploy.sh` generates one |
 | `KNOWLEDGE_TOKEN` | any | unset | Read-only bearer token for an agent on the same machine (zen-agent's `search_notes` and `read_note`). Opens `GET /api/search`, `/api/search/global` and `/api/file/source` and nothing else, only from loopback and never through a proxy (a request with a forwarding header, or a Host that is not `127.0.0.1`, `localhost` or `[::1]`, is refused). At least 32 characters; `openssl rand -hex 24`. Unset: the token does nothing |
 | `ORG_OWNER` | `org` | `owner` | Your handle on the agent board (lowercase, `a-z0-9-`) |
-| `ORG_VAULT_ASSIGNEE` | `org` | `vault-session` | The kanban assignee for vault work: a Claude Code session on your machine that no dispatcher spawns (lowercase, `a-z0-9-`). Cards on boards that still use the old slug `m4` keep working |
+| `ORG_VAULT_ASSIGNEE` | `org` | `vault-session` | The kanban assignee for vault work: a Claude Code session on your machine that no dispatcher spawns (lowercase, `a-z0-9-`). Cards on boards that still use the older assignee slug keep working |
 | `ORG_SESSION_MAX_RUNS` | `org` | `3` | Runs one remembered `claude-code` agent session carries before the next wake starts fresh. `1` never resumes. Not used by the `zen-agent` lane, whose wakes are always fresh |
 | `BOARD_LEASE_MINUTES` | `board` | `60` | How long a claimed card stays a lane's without a heartbeat before the `board-reclaim` sweep puts it back to ready |
 | `BOARD_URL`, `BOARD_TOKEN` | `board` | unset | On a machine that is not the server: `cli-board` and agents reach the board over HTTPS as the roster member the token names (`cli-board token create <agent>`). Unset: the database connection is used |
 | `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES` | `org` | `2`, `15` | A card that keeps waking its bot waits 15, then 30 minutes between wakes, and after 2 re-wakes in 24 h is held until a person wakes it (`wake-add --reason owner`) |
 | `ORG_TZ` | `org` | `UTC` | The local day for "one routine wakeup per day" and the dispatcher's quiet hours (an IANA zone name) |
-| `ORG_DISPATCH` | `org` | `off` | `on`: the engine's dispatcher runs bots whose roster `runtime` is `zen-agent` (`secondbrain org-dispatch`; a timer on the server). `off`: wakeups are left to your own dispatcher |
+| `ORG_DISPATCH` | `org` | `off` | `on`: the engine's dispatcher runs bots whose roster `runtime` is `zen-agent` (`secondbrain dispatch`; a timer on the server). `off`: wakeups are left to your own dispatcher |
 | `ORG_DISPATCH_TICK_SECONDS`, `ORG_DISPATCH_PARALLEL` | `org` | `120`, `2` | How often the dispatcher looks, and how many bots run at once |
 | `ORG_DISPATCH_QUIET` | `org` | unset | Local hours with no wakes, `HH-HH` (e.g. `01-07`) |
 | `ORG_DISPATCH_DAILY_TOKENS` | `org` | `0` (off) | Tokens all bots together may spend in one local day before the rest of the day's wakes are held |
 | `ORG_ZEN_COMMAND` | `org` | `zen-agent` | The zen-agent command the dispatcher runs (on the PATH, or absolute) |
 | `ZEN_SESSIONS_DIR` | `usage` | `<vault>/.zen/sessions` | Where zen-agent writes its traces; `usage-sync` reads them into the ledger |
-| `CLASSIFY_PROVIDER` | `org` | `none` | The classify step's provider: `openrouter` (Jev through OpenRouter with `OPENROUTER_API_KEY`) or `typesafe` (with `TYPESAFE_API_KEY`). `none`: every decision falls through to the old path |
+| `CLASSIFY_PROVIDER` | `org` | `none` | The classify step's provider: `openrouter` (through OpenRouter with `OPENROUTER_API_KEY`) or `typesafe` (with `TYPESAFE_API_KEY`). `none`: every decision falls through to the old path |
 | `CLASSIFY_DAILY_TOKENS` | `org` | `2000000` | Classifier input tokens per day; above it, decisions fall through |
-| `TYPESAFE_API_KEY` | `org` | unset | A direct TypeSafe key, when `CLASSIFY_PROVIDER=typesafe` |
+| `TYPESAFE_API_KEY` | `org` | unset | A direct provider key, when `CLASSIFY_PROVIDER=typesafe` |
 | `RING_PULL_SSH_HOST`, `RING_PULL_DB` | `ring` | unset, `secondbrain` | Mirror a server's ring tables over ssh |
 | `TTS_URL`, `TTS_MODEL` | `voice` | `http://127.0.0.1:8880`, a Kokoro model | A local OpenAI-compatible speech server. Never used on a server |
 | `ROBOT_LAUNCH_SCRIPT` | none (local only) | unset | A script the "start robot" button runs. Unset: the route isn't mounted |
+
+## Doctor
+
+`secondbrain doctor` checks the whole install and exits non-zero when a critical check fails. The same checks answer at `GET /api/health` (`{"ok": true, "checks": [...]}`), so a monitor and a person read one answer. It checks Node's major version, Postgres, the `vector` extension, pending migrations, unknown names in `MODULES`, a stale `AGENTS.md`, an unparsable `secondbrain.json`, the sync state, and each core feature's tables (the feature's manifest names them).
+
+`--deep` adds the checks that only make sense on the deployed server (failed `secondbrain-*` units, the last backup); `?deep=1` does the same over HTTP. `--json` prints the checks as JSON. The doctor is additive: a failed non-critical check (a stale doc, a missing backup) is a warning, not an error.
 
 ## Vault sync
 
@@ -134,6 +154,7 @@ Settings that don't fit on one env line. Every section is optional; a file that 
 
 | Key | Module | Holds |
 |---|---|---|
+| `server.*` | server | The `server` block: `generate` (default `false`), `host`, `publicOrigin`, `user`, `dir`, `vaultDir`, `hermesHome`, and `backup` (`schedule`, `keepDaily`, `keepWeekly`). Source for `secondbrain plan\|apply`; see "Generated config" above |
 | `goalsFile` | `projects`, `map` | Your goals note: markdown tables of `\| W1 \| Goal \| Measure \| Due \| Status \|` |
 | `missionFile` | `map` | Your mission note |
 | `map.divisionFolders` | `map` | `{ "division": ["folder", ...] }`: which folders belong to which division when no project claims them |
@@ -152,11 +173,18 @@ Settings that don't fit on one env line. Every section is optional; a file that 
 | `sync.agentOwned` | vault sync | Files only `agent`-role machines commit, e.g. a rendered report |
 | `sync.embeddedRepos`, `sync.maxFileMB`, `sync.settleSeconds`, `sync.heartbeat` | vault sync | `ignore` or `record` nested repos' pointers; largest file to commit (20); recent-write wait (90); write `.sync/<machine>.json` with each commit (off). See [sync.md](sync.md#settings) |
 | `classify.allow` | `org` | Channel slugs and vault folder prefixes whose text may be sent to the classifier. Empty (the default): every decision falls through and nothing leaves the machine |
-| `classify.model` | `org` | `provider/model` for decisions whose schema pins none (default `openrouter/typesafe/jev-1.14`) |
+| `classify.model` | `org` | `provider/model` for decisions whose schema pins none (default: a hosted model over OpenRouter) |
 | `classify.schemasDir` | `org` | Vault folder of decision schemas, `<decision>.json` (default `.agents/classify`); the engine's defaults fill in what is missing |
 | `dispatch.tiers` | `org` | `{ "flash-low" \| "flash-high" \| "mid" \| "strong": { "model", "thinking" } }`: what the card-tier decision routes to. Unset tiers use zen-agent's own model |
 | `dispatch.budgets` | `org` | Per wake reason (`dm`, `mention`, `handoff`, `task`, `routine`, `owner`): `{ "turns", "tokens", "minutes" }` |
 | `dispatch.tools` | `org` | Per wake reason: zen-agent tool sets (`fs`, `shell`, `skills`, `knowledge`, `kanban`, `org`, `subagent`) |
+| `dispatch.fallback` | `org` | What runs when a connected computer's model is down: `{ "model", "thinking"?, "retryOnError"? }`. Unset: no fallback. See "Model fallback" below |
+| `garden.roots` | `garden` | Folders whose immediate subfolders are shelves (default `Projects`, `Areas`, `Research`) |
+| `garden.archiveDir`, `garden.catalogFile`, `garden.reportDir`, `garden.shelfFile` | `garden` | Where archived shelves go (`Archives`), the rendered catalog (`garden/catalog.md`), the nightly reports (`garden/reports`) and the shelf note's file name (`README.md`) |
+| `garden.projectArchiveAfterDays`, `garden.areaProposeAfterDays` | `garden` | Days without a commit before a project shelf is archived (90) or an area shelf is proposed (180) |
+| `garden.maxMoves`, `garden.maxRenames` | `garden` | Caps per run (25 moves, 5 renames) |
+| `garden.pinned` | `garden` | Shelves the gardener never archives, proposes or renames |
+| `garden.apply` | `garden` | `true` lets the nightly timer move files; default `false` only writes READMEs, the catalog and the report. See [garden.md](garden.md) |
 
 Example:
 
@@ -168,3 +196,25 @@ Example:
   "livestream": { "youtube": "example" }
 }
 ```
+
+## Model fallback
+
+A bot on a connected computer's model (`OLLAMA_MACHINES`, provider `ollama-<name>`) has no model when that computer is off, asleep or has unloaded the model. One setting names what runs instead:
+
+```json
+{ "dispatch": { "fallback": { "model": "together/deepseek-ai/DeepSeek-V4.1-Flash", "thinking": "off", "retryOnError": true } } }
+```
+
+| Field | Default | Says |
+|---|---|---|
+| `model` | required | A `provider/model` zen-agent can call with a key from the environment (`zen-agent models --available` lists them; a model pi-ai does not know goes in `zen.json` `providers`) |
+| `thinking` | the run's own | Thinking level for the fallback run |
+| `retryOnError` | `true` | Re-run once on the fallback when a run on the machine ends with a provider error |
+
+What the dispatcher does with it, per wake:
+
+1. **Before the run.** After the tier and the router have chosen the model, the dispatcher looks at its provider: `provider/model` ids by their prefix, a bare alias such as `qwen3.6:35b-a3b` through the routing catalog. If the provider is a connected computer, the dispatcher asks its Ollama for its models (2.5 s, cached 20 s). No answer: the run starts on the fallback model instead, logged as `fallback: <machine> did not answer`, with `--meta fallback=machine-down` on the trace.
+2. **After the run.** A run on the machine that exits non-zero (not `3`, the budget stop) with a provider error in its last words (`not in provider … catalogue`, `ECONNREFUSED`, `fetch failed`, `502`, …) is recorded as a failed run and re-run once on the fallback under run id `<run>-fb`, with `--meta fallback=run-error`. A run that failed on its task (tests red, blocked) is not retried.
+3. **What does not change.** The router's floors and parks stand: a card the router parks stays parked, only the host changes. The budget is the one the tier set. The wakeup's result is prefixed `[fallback machine-down: <model>]` or `[fallback run-error: <model>]`, so the board and `/usage` show which runs fell back.
+
+Unset, nothing falls back: the wake fails the way it did before, and the card goes back to `ready`. Hermes-runtime bots are not dispatched here and keep their own `fallback_providers`.

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { MODULE_NAMES, modulesFromEnv } from '../src/config.js';
 import { FEATURES } from '../src/features/index.js';
-import { MANIFESTS, cliFor, navFor, unitsFor, wrappersFor } from '../src/features/registry.js';
+import { ALL_MANIFESTS, MANIFESTS, cliFor, navFor, unitsFor, wrapperScript, wrappersFor } from '../src/features/registry.js';
 
 const APP_ROOT = resolve(import.meta.dirname, '..', '..');
 const REPO_ROOT = resolve(APP_ROOT, '..');
@@ -19,23 +19,23 @@ describe('feature manifests', () => {
   });
 
   it('every file a manifest names exists: CLI entries, unit pairs, wrappers and docs', () => {
-    for (const m of MANIFESTS) {
+    for (const m of ALL_MANIFESTS) {
       for (const c of m.cli) expect(existsSync(resolve(APP_ROOT, 'server/src', c.entry.replace(/\.js$/, '.ts'))), `${m.name}: ${c.entry}`).toBe(true);
       for (const t of m.timers) {
         expect(existsSync(resolve(APP_ROOT, 'deploy', `${t.unit}.service`)), `${m.name}: ${t.unit}.service`).toBe(true);
         expect(existsSync(resolve(APP_ROOT, 'deploy', `${t.unit}.timer`)), `${m.name}: ${t.unit}.timer`).toBe(true);
       }
-      for (const w of m.wrappers) expect(existsSync(resolve(APP_ROOT, 'deploy/bin', w)), `${m.name}: wrapper ${w}`).toBe(true);
+      for (const w of m.wrappers) expect(wrapperScript(w), `${m.name}: wrapper ${w}`).toContain('server/dist/');
       expect(existsSync(resolve(REPO_ROOT, m.docs.split('#')[0]!)), `${m.name}: ${m.docs}`).toBe(true);
     }
   });
 
-  it('commands, nav paths and units are unique across features', () => {
-    const commands = MANIFESTS.flatMap((m) => m.cli.map((c) => c.command));
+  it('commands, nav paths and units are unique across features and addons', () => {
+    const commands = ALL_MANIFESTS.flatMap((m) => m.cli.map((c) => c.command));
     expect(new Set(commands).size).toBe(commands.length);
-    const paths = MANIFESTS.flatMap((m) => m.nav.map((n) => n.path));
+    const paths = ALL_MANIFESTS.flatMap((m) => m.nav.map((n) => n.path));
     expect(new Set(paths).size).toBe(paths.length);
-    const units = MANIFESTS.flatMap((m) => m.timers.map((t) => t.unit));
+    const units = ALL_MANIFESTS.flatMap((m) => m.timers.map((t) => t.unit));
     expect(new Set(units).size).toBe(units.length);
   });
 
@@ -44,15 +44,20 @@ describe('feature manifests', () => {
     expect(unitsFor(new Set())).toEqual([]);
     expect(wrappersFor(new Set(['org', 'usage']))).toEqual(['cli-org']);
     expect(navFor(new Set(['usage', 'summaries']))).toEqual([{ section: 'Work', label: 'Usage', path: '/usage' }]);
-    expect(cliFor('board')?.feature.name).toBe('board');
+    expect(cliFor('board')?.feature?.name).toBe('board');
     expect(cliFor('summarize')?.cli.entry).toBe('cli-summarize.js');
     expect(cliFor('bogus')).toBeUndefined();
   });
 
+  it('the core six are always on and the list adds to them', () => {
+    expect([...modulesFromEnv('', undefined)]).toEqual(['projects', 'memory', 'org', 'board', 'usage', 'summaries']);
+    expect([...modulesFromEnv('map,voice', undefined)]).toEqual(['projects', 'memory', 'org', 'board', 'usage', 'summaries', 'map', 'voice']);
+    // A vault's secondbrain.json addons list adds the same way a MODULES name does.
+    expect([...modulesFromEnv('', undefined, ['map'])]).toEqual(['projects', 'memory', 'org', 'board', 'usage', 'summaries', 'map']);
+  });
+
   it('SUMMARIES=on still turns the summaries module on, for one release', () => {
-    expect([...modulesFromEnv('usage', 'on')]).toEqual(['usage', 'summaries']);
-    expect([...modulesFromEnv('usage,summaries', 'on')]).toEqual(['usage', 'summaries']);
-    expect([...modulesFromEnv('usage', undefined)]).toEqual(['usage']);
+    expect([...modulesFromEnv('', 'on')]).toContain('summaries');
   });
 });
 
@@ -75,13 +80,15 @@ describe('features mounted from their manifests', () => {
     expect(res.status).toBe(401);
   });
 
-  it('/api/meta lists the nav links of the features that are on', async () => {
+  it('/api/meta lists the nav links of the features that are on, core and addon alike', async () => {
     const res = await request(createApp({ modules: new Set(['board', 'org', 'ring']) })).get('/api/meta');
+    // Core first (their manifests' order), then the addons; each link comes from a manifest.
     expect(res.body.nav).toEqual([
       { section: 'Work', label: 'Org', path: '/org' },
       { section: 'Work', label: 'Board', path: '/board' },
+      { section: 'Life', label: 'Ring', path: '/ring' },
     ]);
-    const none = await request(createApp({ modules: new Set(['ring']) })).get('/api/meta');
+    const none = await request(createApp({ modules: new Set(['garden']) })).get('/api/meta');
     expect(none.body.nav).toEqual([]);
   });
 });

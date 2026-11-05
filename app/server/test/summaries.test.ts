@@ -12,11 +12,16 @@ import { parseModelSummary } from '../src/summaries/schema.js';
 import { sse } from './summaries-helpers.js';
 
 const GOLDEN = resolve(import.meta.dirname, 'fixtures', 'summaries');
-const cfg = summaryConfig();
+// A fixture chain, independent of the shipped default: a local model first, then two paid fallbacks.
+const cfg = { ...summaryConfig({}), chain: [
+  { provider: 'ollama', model: 'local-model', baseUrlEnv: 'SUMMARIES_LOCAL_URL', timeoutMs: 240000, body: { reasoning_effort: 'none' } },
+  { provider: 'together', model: 'deepseek-ai/DeepSeek-V4.1-Flash', timeoutMs: 120000 },
+  { provider: 'openrouter', model: 'google/gemini-2.5-flash', timeoutMs: 120000 },
+] };
 
 
 const GOOD = JSON.stringify({ request: 'Fix the bug.', done: 'Fixed it.', learned: '', open_items: '', outcome: 'finished', facts: [] });
-const ENV = { SUMMARIES_M1_URL: 'http://m1.invalid:11434', TOGETHER_API_KEY: 'tg-fake-key-for-tests-0001', OPENROUTER_API_KEY: 'or-fake-key-for-tests-0002' };
+const ENV = { SUMMARIES_LOCAL_URL: 'http://local.invalid:11434', TOGETHER_API_KEY: 'tg-fake-key-for-tests-0001', OPENROUTER_API_KEY: 'or-fake-key-for-tests-0002' };
 
 describe('parseModelSummary', () => {
   it('reads plain, fenced and think-wrapped JSON', () => {
@@ -42,13 +47,13 @@ describe('provider chain', () => {
     const fetchFn = (async (url: string) => { urls.push(url); return sse(GOOD); }) as unknown as typeof fetch;
     const r = await completeWithFallback(cfg.chain, { messages: [{ role: 'user', content: 'x' }] }, { environment: ENV, fetchFn });
     expect(r.provider).toBe('ollama');
-    expect(urls).toEqual(['http://m1.invalid:11434/v1/chat/completions']);
+    expect(urls).toEqual(['http://local.invalid:11434/v1/chat/completions']);
     expect(r.attempts).toHaveLength(1);
   });
 
   it('falls through a dead server and a bad answer to the third provider', async () => {
     const fetchFn = (async (url: string) => {
-      if (url.includes('m1.invalid')) throw new Error('connect ECONNREFUSED');
+      if (url.includes('local.invalid')) throw new Error('connect ECONNREFUSED');
       if (url.includes('together')) return sse('sorry, no JSON here');
       return sse(GOOD);
     }) as unknown as typeof fetch;
@@ -76,6 +81,12 @@ describe('provider chain', () => {
     expect(providerFor(entry, { environment: ENV }).model).toBe(entry.model);
     expect(providerFor({ ...entry, baseUrl: 'http://other.invalid' }, { environment: {} }).id).toBe('ollama');
     expect(() => providerFor({ provider: 'nope', model: 'x' })).toThrow(/unknown provider/);
+  });
+
+  it('ships a default chain that needs no home server, only a named key', () => {
+    const shipped = summaryConfig({}).chain;
+    expect(shipped.length).toBeGreaterThan(0);
+    expect(shipped.filter((e) => e.baseUrlEnv || e.baseUrl || e.provider === 'ollama')).toEqual([]);
   });
 });
 

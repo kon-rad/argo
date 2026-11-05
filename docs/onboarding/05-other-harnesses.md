@@ -1,5 +1,7 @@
 # Connect another harness
 
+Status: **works** - the rules, skills and hook contracts that ship today, which any harness can adopt.
+
 Claude Code and Hermes ship wired. Any other agent can work in the vault on the same rules, because the rules are a plain file and the hooks are plain scripts with a small JSON contract. This page covers three layers, from the one every harness gets for free to the one that needs a few lines of glue.
 
 ## Layer 1: the rules (every harness)

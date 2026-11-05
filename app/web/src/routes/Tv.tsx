@@ -158,7 +158,7 @@ export default function Tv() {
           <span className="text-[var(--ink-dim)]">
             generated {episode.generated_at ? zoned(episode.generated_at, 'Asia/Tokyo') : 'unknown'}
             {episode.duration_s !== null && ` · ${formatDuration(episode.duration_s)}`}
-            {episode.source && ` · ${episode.source === 'local' ? 'this Mac' : 'B2'}`}
+            {episode.source && ` · ${episode.source === 'local' ? 'this machine' : 'B2'}`}
           </span>
           <Link to={`/file/${episode.note}`} className="underline">episode note</Link>
           <button type="button" onClick={() => setCurrent(nextId(playable, current))} className="ml-auto underline">

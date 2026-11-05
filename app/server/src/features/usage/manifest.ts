@@ -17,6 +17,7 @@ export default defineFeature({
     { unit: 'secondbrain-credits-sync', summary: 'provider credit balances, every 15 minutes' },
   ],
   wrappers: [],
+  health: { label: 'the usage tables answer', tables: ['usage_runs', 'usage_calls', 'usage_hosts', 'usage_files'] },
   env: ['ZEN_SESSIONS_DIR', 'USAGE_SYNC_SERVER', 'USAGE_SYNC_TOKEN'],
   docs: 'docs/modules.md#usage',
 });

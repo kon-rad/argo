@@ -1,8 +1,10 @@
 # From zero to an agent company
 
+Status: **works** - the full path from an empty folder to an agent company runs on `main` today, except the one-command `secondbrain init`, which is still to come.
+
 The whole path on one page: an empty folder becomes a private vault, the vault gets an app with search, one agent starts working in it under your rules, and then a named company of agents takes the repeatable work and reports to you every morning. Every stage ends with a check. Stop at any stage and what you have still works on its own.
 
-**Status (2026-11-03):** every command on this page runs on `main` today, except where a stage says so. Two things are not in the engine yet: the org compiler (you write the org document by hand, stage 7) and a one-command `init|start|doctor` path (stage 1 to 3 are four commands instead of one). Both are in the core v2 plan: `secondbrain org compile` and a starter org on `init` are phase 7, `start` and `doctor` are phase 3. When they land this page gets shorter, not different.
+**Status (2026-11-05):** every command on this page runs on `main` today, except where a stage says so. The org compiler is in the engine: `secondbrain org compile` (phase 7, `app/server/src/org-compile.ts`) ported the vault's `compile.py`, so stage 7's by-hand JSON is the fallback rather than the only path (it does not write `routing.json` or the card graphs, and it does not yet check the routing pilot's model floors). Memory moved out of `secondbrain org` into `secondbrain memory` with a `/memory` page (phase 6), `init` writes the starter org, and `doctor`, `plan` and `apply` ship. Still to come: one command that creates the vault and starts the app, so stages 1 to 3 are one step instead of four. When it lands this page gets shorter, not different.
 
 The pages after this one go deeper on each stage; this page is the spine.
 
@@ -50,6 +52,14 @@ Three facts hold it together. Your notes are plain markdown in a git repo you ow
 | PostgreSQL | 15+ | The index and every company table |
 | pgvector | 0.8+ | Semantic search and memory recall. Build it against the Postgres you run |
 
+The one-command path installs all five on macOS or Debian/Ubuntu and touches nothing else outside the package manager's own directories:
+
+```bash
+curl -fsSL https://kon-rad.github.io/argo/install.sh | sh
+```
+
+Or install them yourself.
+
 macOS:
 
 ```bash
@@ -82,7 +92,7 @@ cp .env.example .env
 git add -A && git commit -m "new vault"
 ```
 
-`init` writes the PARA folders (`Projects/`, `Areas/`, `Research/`, `Archives/`, each with a README and a `PARA Guide.md`), `AGENTS.local.md` for your rules, the generated `AGENTS.md`, a one-line `CLAUDE.md` that imports it, `.claude/settings.json` wired to the hooks, `.claude/agents/fact-checker.md`, `.agents/skills/` with links to the engine's shared skills, `.agents/guard.local.json`, `secondbrain.example.json`, and a `.gitignore` that already excludes `.env`.
+`init` writes the PARA folders (`Projects/`, `Areas/`, `Research/`, `Archives/`, each with a README and a `PARA Guide.md`), `AGENTS.local.md` for your rules, the generated `AGENTS.md`, a one-line `CLAUDE.md` that imports it, `.claude/settings.json` wired to the hooks, `.claude/agents/fact-checker.md`, `.agents/skills/` with links to the engine's shared skills, `.agents/guard.local.json`, `.agents/org.json` (a starter company: owner, one lead, one coder, one reviewer, two teams), `secondbrain.example.json`, and a `.gitignore` that already excludes `.env`.
 
 Make the repo private before you push it anywhere. The vault will hold your notes, your agents' memory and the board.
 
@@ -105,11 +115,11 @@ Keyword search works now. Semantic search needs an embedding provider: set `TOGE
 secondbrain embed
 ```
 
-Embeddings are part of the base, not a module: scan, embed, keyword, semantic and hybrid search are always on, and the memory feature's recall (stage 11) runs on the same vectors. Agents search through the same API (`mode=keyword|semantic|hybrid`) instead of grepping. The skill that teaches it is the existing shared `shared-memory` skill (recall through `cli-org recall`, direct search through `/api/search`); core v2 adds no second skill.
+Embeddings are part of the base, not a module: scan, embed, keyword, semantic and hybrid search are always on, and the memory feature's recall (stage 11) runs on the same vectors. Agents search through the same API (`mode=keyword|semantic|hybrid`) instead of grepping. The skill that teaches it is the existing shared `shared-memory` skill (recall through `secondbrain memory recall`, direct search through `/api/search`); core v2 adds no second skill.
 
 **Check:** the app answers at `http://127.0.0.1:5123`; a search for a word in one of your notes finds it; after `embed`, a search in semantic mode finds a note by meaning.
 
-Deeper: [Getting started](../getting-started.md), [Retrieval and the chat module](../rag.md), [Configuration](../configuration.md).
+Deeper: [Set up your vault](02-set-up-your-vault.md), [Retrieval and the chat module](../rag.md), [Configuration](../configuration.md).
 
 ## Stage 4. Your rules, your first skill, your guard
 
@@ -164,7 +174,7 @@ then `secondbrain restart`. The next start runs their migrations and adds their 
 | `usage` | Every run's tokens by bot, reason, card, project and host; live agents; every session as steps | `/usage` |
 | `summaries` | One row per finished session: what was asked, done, learned, left open | the Summaries tab on `/usage`, `secondbrain summarize --digest` |
 
-`summaries` as its own module name is on the `feat/feature-manifest` branch ([#103](https://github.com/kon-rad/argo/pull/103)); on `main` before it merges, set `SUMMARIES=on` next to `MODULES=usage` instead. After the merge `SUMMARIES=on` keeps working for one release and prints a notice.
+`summaries` is a module name on `main` now ([#103](https://github.com/kon-rad/argo/pull/103) merged); `SUMMARIES=on` next to `MODULES=usage` still works for one release and prints a notice.
 
 Name yourself for the org module, in `.env`:
 
@@ -180,7 +190,7 @@ Deeper: [Modules](../modules.md), [Kanban board](../kanban-board.md), [The agent
 
 The company is one document: who the agents are, which team each is on, who it reports to, what it may do, and which messages wake it. The database rows are a copy of the document; `plan` shows the diff and `apply` makes the rows match.
 
-Start with the smallest company that has a hierarchy: you, one lead, one coder, one reviewer, two teams. This is the starter org that core v2 will write on `init` (decision 5); today you write it by hand.
+Start with the smallest company that has a hierarchy: you, one lead, one coder, one reviewer, two teams. `init` already wrote this starter org to `.agents/org.json` when you made the vault; read it, edit it, or use it as-is. If you would rather keep it in the same shape by hand, it looks like this:
 
 `.agents/org.json`:
 
@@ -231,7 +241,7 @@ secondbrain org agents                     # the org chart
 
 Commit `.agents/org.json`. An agent you later remove from the file is retired, never deleted, so its messages keep their author.
 
-**Prefer YAML with prose personalities?** The reference vault keeps a config directory (`.agents/org/config/`: `org.yaml`, `teams/<team>.yaml`, `agents/<bot>.yaml`) and a compiler that validates it and writes this JSON plus one identity file per agent. That compiler is a 770-line Python script in that vault, not in the engine; `secondbrain org compile` is core v2 phase 7. Until then the JSON above is the contract, and it is small enough to keep by hand.
+**Prefer YAML with prose personalities?** The reference vault keeps a config directory (`.agents/org/config/`: `org.yaml`, `teams/<team>.yaml`, `agents/<bot>.yaml`), and the engine compiles it now: `secondbrain org compile` validates the tree and writes this JSON plus one identity file per agent. Stage 7 below is still the by-hand path, and it stays the contract the compiler has to produce.
 
 **Check:**
 
@@ -242,7 +252,7 @@ ORG_AGENT=owner secondbrain org dm atlas "ping"
 secondbrain org wakeups --all                                # one open wakeup for atlas
 ```
 
-Deeper: [The agent company](../agent-company.md), [org.yaml and wake rules](../org-yaml.md), [Org config and model routing](../org-routing.md).
+Deeper: [The agent company](../agent-company.md), [org.yaml and wake rules](../org-yaml.md).
 
 ## Stage 8. Each agent's identity and the protocol
 
@@ -257,7 +267,7 @@ description: Platform engineer on Platform. TypeScript, migrations, the test sui
 tools: Read, Grep, Glob, Edit, Write, Bash(secondbrain org *), Bash(secondbrain board *), Bash(npm test *)
 ---
 You are bolt, Platform engineer, reporting to atlas. Follow the org-member skill on every wake.
-Read only: Projects/**, .secondbrain/docs/**. Never read CURRENT/** or anything under Areas/personal/.
+Read only: Projects/**, .secondbrain/docs/**. Never read a private folder or anything under a personal area.
 ```
 
 The compiler writes these from the YAML when it ships; today, one per bot by hand, and keep them next to the org document in the same commit.
@@ -285,7 +295,7 @@ secondbrain org wake-done <wakeup id> --run manual-1 --exit 0
 ORG_AGENT=owner secondbrain org read leads                           # atlas's status post
 ```
 
-**The engine's dispatcher, for `zen-agent` bots.** The engine ships a dispatcher that handles bots whose `runtime` is `zen-agent`: it claims, coalesces one bot's wakeups into one run, applies the caps (wakes per day, cooldown, parallelism, quiet hours, a daily token budget), materialises `routines` once per local day, runs `zen-agent wake` or `run`, and closes the wakeups with the run id. Set `ORG_DISPATCH=on`; on a server `deploy.sh` installs it as a timer, on a laptop `secondbrain org-dispatch tick` runs one pass. `zen-agent` needs API keys in the environment (any provider pi-ai knows, or an OpenAI-compatible endpoint from `zen.json`, including a local Ollama); it does not run on a chat subscription. For the starter org, switch `bolt` to `"runtime": "zen-agent", "model": "openrouter/anthropic/claude-sonnet-4-6"` (or any `provider/model` your keys cover) and `apply`.
+**The engine's dispatcher, for `zen-agent` bots.** The engine ships a dispatcher that handles bots whose `runtime` is `zen-agent`: it claims, coalesces one bot's wakeups into one run, applies the caps (wakes per day, cooldown, parallelism, quiet hours, a daily token budget), materialises `routines` once per local day, runs `zen-agent wake` or `run`, and closes the wakeups with the run id. Set `ORG_DISPATCH=on`; on a server `deploy.sh` installs it as a timer, on a laptop `secondbrain dispatch tick` runs one pass. `zen-agent` needs API keys in the environment (any provider pi-ai knows, or an OpenAI-compatible endpoint from `zen.json`, including a local Ollama); it does not run on a chat subscription. For the starter org, switch `bolt` to `"runtime": "zen-agent", "model": "openrouter/anthropic/claude-sonnet-4-6"` (or any `provider/model` your keys cover) and `apply`.
 
 **Your own loop, for `claude-code` and `hermes` bots.** Not in the engine, because it is the part that depends most on your machines, but it is four commands:
 
@@ -298,7 +308,7 @@ Twenty lines of shell under a systemd timer is a working dispatcher. The referen
 
 **Check:** DM a bot from `/org`. Within one tick it runs, one `status` appears in its channel, the wakeup is closed, and `/usage` shows the run with its tokens. If the run posts nothing, `wake-done` posts a fallback status saying so, so silence is visible.
 
-Deeper: [Orchestrate agents](09-orchestrate-agents.md) layer 3, [Bots on zen-agent](../zen-runtime.md), [zen-agent](../zen-agent.md).
+Deeper: [Orchestrate agents](09-orchestrate-agents.md) layer 3, [zen-agent](../zen-agent.md).
 
 ## Stage 10. Work: cards, the tracker, shipping
 
@@ -338,20 +348,22 @@ Deeper: [Kanban board](../kanban-board.md), [Modules](../modules.md) (projects),
 
 Two things outlive a run.
 
-**Shared facts.** One sourced claim per row, written by any bot as itself, readable by all.
+**Shared facts.** One sourced claim per row, written by any bot as itself, readable by all. A row carries an `agent` tag when the claim is one bot's own.
 
 ```bash
-ORG_AGENT=bolt  secondbrain org remember "health route" "GET /api/health returns {ok:true}; added in PR 12" --source https://github.com/you/my-app/pull/12
-ORG_AGENT=atlas secondbrain org recall "health route"
+ORG_AGENT=bolt  secondbrain memory remember "health route" "GET /api/health returns {ok:true}; added in PR 12" --source https://github.com/you/my-app/pull/12
+ORG_AGENT=atlas secondbrain memory recall "health route"
 ```
 
-`recall` merges three arms into one list, each hit labelled: facts, the vault (hybrid search over your notes), and the bots' memory files. A fact is retired with `forget <id> "<why>"`, never deleted. The `org-member` skill tells a bot to `recall` what a card is about before it starts and to `remember` what the next bot will need when it finishes. Core v2 phase 6 lifts this out of `secondbrain org` into `secondbrain memory recall|remember|list|retire|stats` and adds a `/memory` page; the rows and the commands' arguments stay.
+`recall` merges three arms into one list, each hit labelled: facts, the vault (hybrid search over your notes), and the bots' memory files. A fact is retired with `secondbrain memory retire <id> "<why>"`, never deleted. The `org-member` skill tells a bot to `recall` what a card is about before it starts and to `remember` what the next bot will need when it finishes. This is `secondbrain memory recall|remember|list|retire|propose|stats` with a `/memory` page (phase 6, shipped); `secondbrain org recall|remember` still work as deprecated aliases for one release.
+
+A finished wake also records one episode (`secondbrain org memory episodes <bot>`: outcome, turns, cost), and a lesson that keeps recurring can become a proposal card for you to apply with `secondbrain memory propose <fact-id>`.
 
 **Summaries.** With the module on, every finished session on any harness (a Claude Code session on your laptop, a bot wake, a Telegram chat) gets one row: what was asked, what was done, what was learned, what is left open, counted metrics. `secondbrain summarize --digest 24` prints the last day's worth; the stand-up (stage 12) reads it.
 
-**Check:** `secondbrain org recall "<a word from a note you wrote>"` returns a vault hit; after one bot run, the Summaries tab on `/usage` shows its row.
+**Check:** `secondbrain memory recall "<a word from a note you wrote>"` returns a vault hit; after one bot run, the Summaries tab on `/usage` shows its row.
 
-Deeper: [Memory, and how to check it works](../memory.md), [Summaries](../summaries.md), [The golden set](../memory-golden-set.md).
+Deeper: [Memory, and how to check it works](../memory.md), [Summaries](../summaries.md).
 
 ## Stage 12. Your loop: stand-up, Telegram, the bill
 
@@ -421,25 +433,25 @@ Deeper: [Connect servers and computers](06-connect-machines.md), [Deployment](..
 | Quiet a bot | `secondbrain org pause <bot> --reason "..."`; `resume` later. No file edit, no redeploy |
 | Change a bot's model or runtime for a day | `secondbrain org set <bot> --model ... --runtime ...`; `set <bot> --clear` returns it to the file |
 | See what it all costs | `/usage`, by bot and by day. Caps are counts (`wakes_per_day`, `cooldown_minutes`, `bot_wakes_per_target_per_day`) because a subscription cannot be metered per agent |
-| Back it up | `DEPLOY_DB_BACKUP=1` installs a nightly `pg_dump` timer on the server (03:30 UTC, to a B2 bucket through `b2store`). The vault is git: push it. Nothing in the database is prose; every note is a file |
+| Back it up | `DEPLOY_DB_BACKUP=1` installs a nightly `pg_dump` timer on the server (03:30 UTC; if you configure object storage, to a B2 bucket through `b2store`). The vault is git: push it. Nothing in the database is prose; every note is a file |
 | Keep it private | Bots read only their `knowledge` paths; deny personal folders in every identity file; channels for personal matters have no bots in them; `.env` never leaves the machine ([Privacy](07-privacy.md)) |
-| Know what is wrong | Today: `secondbrain status`, `secondbrain logs`, `systemctl --failed`, the checks at the end of each stage. Core v2 phase 3 adds `secondbrain doctor`, one command that runs all of them |
+| Know what is wrong | `secondbrain doctor` runs the health checks (Node, Postgres, pgvector, migrations, modules, each feature's tables; `--deep` adds server checks), plus `secondbrain status`, `secondbrain logs`, `systemctl --failed`, and the checks at the end of each stage |
 
 ## What is shipped and what is coming
 
 So you know which commands exist before you type them.
 
-| Piece | Today | Core v2 |
+| Piece | Ships today | Still to come |
 |---|---|---|
-| Vault, app, keyword, semantic and hybrid search, editor, guard, dev-log gate | shipped, base | unchanged; the `shared-memory` skill covers search and recall, no new skill |
-| `projects`, `board`, `org`, `usage` | shipped modules | core features with a manifest each ([#103](https://github.com/kon-rad/argo/pull/103), open) |
-| `summaries` | shipped behind `SUMMARIES=on` with `usage` | its own module in #103 |
-| Memory (`remember`, `recall`, facts, episodes) | shipped inside `secondbrain org` | `secondbrain memory`, a `/memory` page (phase 6) |
-| The org document | `org.json` by hand, `plan` and `apply` | `secondbrain org compile` from YAML, starter org on `init` (phase 7) |
-| Dispatcher | engine's for `zen-agent` bots; your loop for Claude Code and Hermes | unchanged; the `dispatch` tiers and budgets stay a pilot addon |
-| `init`, `start`, `doctor`, one config file | four commands, `.env` plus `secondbrain.json` | one command each, `secondbrain.json` owns every non-secret setting (phases 3 and 4) |
-| Telegram | `secondbrain telegram add|status|allow|remove`, shipped 2026-11-03 | unchanged |
-| Map, TV, voice, livestream, ring, social, uploads, agents hub | modules, off by default | addons under `addons/`, same manifest, not in onboarding (phase 5) |
+| Vault, app, keyword, semantic and hybrid search, editor, guard, dev-log gate | base | unchanged; the `shared-memory` skill covers search and recall, no new skill |
+| `projects`, `board`, `org`, `usage` | core features with a manifest each ([#103](https://github.com/kon-rad/argo/pull/103) merged) | - |
+| `summaries` | its own module ([#103](https://github.com/kon-rad/argo/pull/103) merged); `SUMMARIES=on` still works for one release | - |
+| Memory (`recall`, `remember`, `list`, `retire`, `propose`, `stats`) | `secondbrain memory` and a `/memory` page (phase 6) | - |
+| The org document | `org.json` - a starter org written by `init` - plus `plan` and `apply`, and `secondbrain org compile` from YAML (phase 7) | the compiler's `routing.json` and card graphs |
+| Dispatcher | the engine's for `zen-agent` bots; your loop for Claude Code and Hermes | the `dispatch` tiers and budgets stay a pilot addon |
+| `init`, `start`, `doctor`, one config file | four commands, `.env` plus `secondbrain.json`, with `doctor` running the checks | one command to create the vault and start the app (phases 3 and 4) |
+| Telegram | `secondbrain telegram add&#124;status&#124;allow&#124;remove`, shipped 2026-11-03 | - |
+| Map, TV, voice, livestream, ring, social, uploads, agents hub | addons under `addons/`, off by default, same manifest | keep them out of onboarding (phase 5) |
 
 The plan and the decisions behind it are in the engine's design notes; the phases land as tagged releases from `v2.0`.
 

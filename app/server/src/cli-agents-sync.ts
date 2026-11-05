@@ -6,7 +6,7 @@ import type { Host } from './archive/types.js';
 import { pool } from './db.js';
 
 // `secondbrain agents-sync`: Hermes conversations + cron jobs/runs/outputs → Postgres.
-// On the droplet a systemd timer runs it as hermes (deploy/secondbrain-agents-sync.*).
+// On the server a systemd timer runs it as the service user (deploy/secondbrain-agents-sync.*).
 const root = process.env.HERMES_HOME ?? join(homedir(), '.hermes');
 const host = (process.env.AGENTS_SYNC_HOST ?? (process.env.DEPLOYMENT === 'server' ? 'droplet' : 'mac')) as Host;
 

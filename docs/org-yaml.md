@@ -1,8 +1,10 @@
 # org.yaml: the one file that describes your company of agents
 
+Status: **works** - the reference for `org.yaml`, the roster file your vault compiles into the `org` module's agents, teams, channels and wake rules.
+
 `org.yaml` lives in your vault (by convention `.agents/org.yaml`). It is the single place that says who the agents are, which team and channels they belong to, what each one is allowed to do, how often one may be woken, and **which messages wake which bot**. Everything the running system knows about the org comes from this file; the database rows are a copy of it.
 
-This page is the reference. The agent-side behaviour (what a bot does once it is awake) is in the `org-member` skill; the runtime and model switch is in the `org-runtime` skill; model choice per run is in [Org config and model routing](org-routing.md); the dispatchers that turn a wakeup into a run are in [zen-runtime](zen-runtime.md) and the Claude Code dispatcher in [agent-harness](agent-harness.md).
+This page is the reference. The agent-side behaviour (what a bot does once it is awake) is in the `org-member` skill; the runtime and model switch is in the `org-runtime` skill; the dispatchers that turn a wakeup into a run are in [zen-agent](zen-agent.md) and the Claude Code dispatcher in [agent-harness](agent-harness.md).
 
 ## How a change reaches the running system
 
@@ -15,7 +17,7 @@ org.yaml  --(compile)-->  org-agents.json   (per-bot limits, tools, prompts)   r
 
 1. Edit `org.yaml` and commit it.
 2. Compile it. The compiler is part of your vault, not the engine; it refuses a file with errors and prints each one.
-3. Run `cli-org import <import document>` as the owner database role. It is idempotent: the file replaces the rows, and an agent dropped from the file is retired (never deleted, so its messages keep an author). To review a change before it lands, run `cli-org plan <import document>`, then `cli-org apply` instead: it retires a dropped agent only with `--prune` and drains it first (see [org-routing.md](org-routing.md#cli-org-plan-and-apply)).
+3. Run `cli-org import <import document>` as the owner database role. It is idempotent: the file replaces the rows, and an agent dropped from the file is retired (never deleted, so its messages keep an author). To review a change before it lands, run `cli-org plan <import document>`, then `cli-org apply` instead: it retires a dropped agent only with `--prune` and drains it first.
 4. Dispatchers pick up the new roster on their own; do not restart a dispatcher, its startup releases every claimed wakeup and strands runs in flight.
 
 A vault that ships the `org-runtime` skill does steps 2 and 3 on the server with its `refresh` command.
@@ -52,7 +54,7 @@ Both reach the `org_agents` row through `cli-org import` (columns `avatar`, `ava
 "org": {
   "avatars": {
     "dir": "Areas/team/avatars",
-    "reference": "Areas/team/avatars/sol.jpg",
+    "reference": "Areas/team/avatars/atlas.jpg",
     "style": "Square portrait of one character for a team roster: a low-poly bust in gold on a plain dark background, no text.",
     "model": "gemini-3-pro-image-preview"
   }
@@ -110,7 +112,7 @@ The import fails, with a message, on an unknown key, a bad `owner_channel_post` 
 | Pause, resume or override one bot's runtime or model without a file edit | The owner through `cli-org pause`, `resume`, `set` | Stored as overrides; `set <bot> --clear` returns the bot to the file |
 | Change the trigger itself (a new kind of wake) | A pull request to this repository with a migration and a test | `main` is protected and an agent never merges its own PR |
 
-Keep the human the only author of `wake_rules`. A bot proposing a change should do it through the self-improvement flow ([self-improvement](self-improvement.md)), which turns a diff into a card the owner reads.
+Keep the human the only author of `wake_rules`. A bot proposing a change should raise it as a card on the board, so the diff reaches the owner as something to read.
 
 ## Common edits
 

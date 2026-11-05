@@ -1,5 +1,7 @@
 # Large uploads
 
+Status: **works** - the `uploads` module ships; big files go straight from the browser to object storage.
+
 The `uploads` module lets you send a file of 1 GB to 50 GB (`UPLOADS_MAX_GB`) from any browser, phone included, into your vault's Backblaze B2 bucket, filed under a vault folder you choose. Nothing big passes through the app server on the way in.
 
 ## How it works
@@ -8,7 +10,7 @@ The `uploads` module lets you send a file of 1 GB to 50 GB (`UPLOADS_MAX_GB`) fr
 2. **Send.** The browser asks for presigned part URLs (`POST /api/uploads/:id/parts`) and `PUT`s the parts straight to B2, four at a time. A part that fails is retried with a fresh URL. After a reload or a dropped connection, choosing the same file again asks B2 which parts it already holds (`GET /api/uploads/:id`) and sends only the rest.
 3. **Finish.** `POST /api/uploads/:id/complete` makes the server list the parts itself, check each size against the announced file size, and complete the multipart upload. It never trusts ETags from the browser.
 4. **File it.** A worker on the server streams `inbox/...` into `vault/<folder>/<name>` with rclone, remote to remote, so no local disk is used. When the bucket's vault part is encrypted (`B2STORE_CRYPT_PASSWORD`), this is the step that encrypts it. The worker then checks the stored size, deletes the inbox copy, and writes `<name>.b2.md` next to where the file belongs in the vault, in the same format as `b2-offload`. The existing media gallery and `/api/b2` streaming play it from B2. A name already in that folder gets `-2`, `-3`.
-5. **Copy to the editing machine (optional).** Tick "Also copy to my editing machine" (or press "Copy to the editing machine" later). A small script on that machine, `app/deploy/uploads-pull.sh`, polls `/api/uploads/pull/pending` with `UPLOADS_PULL_TOKEN`, downloads each file with `b2store fetch`, moves it to `~/<uploads.m1Dir>/<vault folder>/` and reports back. A machine that is off simply picks the files up when it is next on.
+5. **Copy to the editing machine (optional).** Tick "Also copy to my editing machine" (or press "Copy to the editing machine" later). A small script on that machine, `app/deploy/uploads-pull.sh`, polls `/api/uploads/pull/pending` with `UPLOADS_PULL_TOKEN`, downloads each file from the bucket, moves it to `~/<uploads.m1Dir>/<vault folder>/` and reports back. A machine that is off simply picks the files up when it is next on.
 
 The folder must start with `Projects`, `Areas`, `Research` or `Archives`. `uploads.destinations` in `secondbrain.json` adds one-tap presets with keywords; the page pre-selects a preset when the file name or description contains one of its keywords.
 

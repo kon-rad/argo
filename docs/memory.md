@@ -1,5 +1,10 @@
 # Memory: what agents remember, where it is read, and how to check it works
 
+Status: **works** - maps the stores the engine reads today (the vault index and vectors, shared facts, bot memory, harness memory) and the `secondbrain memory recall` arms, with measured checks from one vault on 2026-10-26.
+
+The shared memory is a **core feature** (`app/server/src/features/memory/`): `memory_facts` is the one store, a claim with a source and an optional `agent` tag for a bot's own memory, reached through `secondbrain memory recall|remember|list|retire|propose|stats` and shown on `/memory` with the candidates finished sessions proposed. One row, one layer: the vault holds prose, `memory_facts` holds claims that cite it.
+
+
 A second brain has no single "memory". It has several stores that were added for different jobs, written by different parties and loaded at different moments. This page maps them: what each holds, who writes it, **where it is invoked** (the exact call sites), how to look at what is recorded, and how to tell whether it helps or just fills the context window.
 
 It describes what the engine and a vault do today. Numbers in the "Measured" sections come from one vault on 2026-10-26 and are there to show the method; run the same checks on yours.
@@ -47,7 +52,7 @@ No automatic call to `recall` was found for an interactive Claude Code or Hermes
 |---|---|---|
 | Shared facts | `[fact]` | Postgres full text (`websearch_to_tsquery('english', q)`, which ANDs every word), or the query as a substring of the subject or claim. When that finds nothing, a looser pass: a fact qualifies when it matches at least half of the query's terms, each as a word prefix ("401" finds "401s"). Current facts only (`valid_to IS NULL`). With `--project`, facts of that project and facts with no project |
 | Bot memory files | `[memory]` | The query is cut into terms of three letters or more, minus question words ("how", "what", "does" and similar). Each line of the files under `.agents/org/memory/` is scored by how many terms start a word in it ("render" matches "renders", "how" never matches inside "show"). A line needs at least half of the terms. Best first; at most half of `--limit` lines are kept |
-| Vault | `[vault]` | The app's hybrid search (keyword plus vector) when embeddings are configured, else keyword. `CURRENT/`, `Areas/Finance/` and `.env` never appear, plus any path prefix in `ORG_RECALL_EXCLUDE` (comma-separated). Hits are then trimmed: a hit the keyword branch found stays; a hit only the vector branch found never stands alone (if no hit has any keyword support, the arm returns nothing), fills at most half of `--limit`, and must clear `ORG_RECALL_MIN_SIMILARITY` (default 0.25, which cuts nothing; see below). Hits with the same title and snippet under two paths (a skill copied into a profile) take one slot |
+| Vault | `[vault]` | The app's hybrid search (keyword plus vector) when embeddings are configured, else keyword. Private folders and `.env` never appear, plus any path prefix in `ORG_RECALL_EXCLUDE` (comma-separated). Hits are then trimmed: a hit the keyword branch found stays; a hit only the vector branch found never stands alone (if no hit has any keyword support, the arm returns nothing), fills at most half of `--limit`, and must clear `ORG_RECALL_MIN_SIMILARITY` (default 0.25, which cuts nothing; see below). Hits with the same title and snippet under two paths (a skill copied into a profile) take one slot |
 
 **Why vector-only hits are not trusted.** On a vault embedded with `multilingual-e5-large-instruct`, cosine similarity does not separate good matches from noise: gibberish queries scored 0.80 to 0.85, an off-topic query 0.79, and a relevant query's best vector-only hit 0.82. No fixed floor works on that model, so recall asks for a second signal instead, a shared word. If your embedder spreads more widely, measure it (run a few nonsense queries and a few real ones through `hybridSearch`) and set `ORG_RECALL_MIN_SIMILARITY` above the nonsense scores.
 
@@ -102,7 +107,7 @@ Read these as a baseline, not a verdict. The pattern matches only the CLI spelli
 
 ## Does it help? A recall test you can repeat
 
-The full method, with the kinds of case to include and how to read a run, is on [The golden set](memory-golden-set.md).
+The full method, with the kinds of case to include and how to read a run, is the golden-set test below.
 
 Build a **golden set**: 15 to 30 questions whose answer you already know, each with a string that must appear in the top hits (a path or a distinctive phrase). Run them through `recall` and score them. Rerun after any change to the index, the embedder, or the recall code.
 
@@ -197,4 +202,4 @@ How to judge a change: run the golden set before and after, and compare hit@8 an
 
 - Engine code: `app/server/src/cli-org.ts`, `app/server/src/org-powers.ts`, `app/db/migrations/1756000014000_bot-powers.sql`, `app/server/src/routes/org.ts`, `app/server/src/archive/run.ts`, `zen-agent/src/fetchers.ts`, `zen-agent/src/tools/org.ts`
 - Skills: `org-member` (engine copy; a vault can extend it); `shared-memory` (an example of a vault's own skill)
-- Related pages: [Retrieval and the chat module](rag.md), [Agent harness](agent-harness.md), [Self-improving orchestration (proposal)](self-improvement.md)
+- Related pages: [Retrieval and the chat module](rag.md), [Agent harness](agent-harness.md), self-improving orchestration (proposal)

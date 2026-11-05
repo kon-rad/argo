@@ -26,7 +26,7 @@ AI coding agents are welcome contributors. They follow [AGENTS.md](AGENTS.md), w
 
 ## Set up a development environment
 
-You need git, Node.js 22+, Python 3.9+ (3.11+ recommended), and PostgreSQL 15+ with pgvector built for that Postgres. [docs/getting-started.md](docs/getting-started.md#1-install-the-prerequisites) has install steps for macOS and Ubuntu.
+You need git, Node.js 22+, Python 3.9+ (3.11+ recommended), and PostgreSQL 15+ with pgvector built for that Postgres. [docs/onboarding/02-set-up-your-vault.md](docs/onboarding/02-set-up-your-vault.md#step-1-install-the-prerequisites) has install steps for macOS and Ubuntu.
 
 ```bash
 git clone https://github.com/kon-rad/argo.git
@@ -197,7 +197,7 @@ An add-on runs outside the app (a device, a separate service). It lives in `addo
 
 | You changed | Update |
 |---|---|
-| Install or first-run behaviour | [docs/getting-started.md](docs/getting-started.md) |
+| Install or first-run behaviour | [docs/onboarding/02-set-up-your-vault.md](docs/onboarding/02-set-up-your-vault.md) |
 | A setting | [docs/configuration.md](docs/configuration.md) and the `.example` files |
 | A module | [docs/modules.md](docs/modules.md) |
 | The guard, the gate, or agent wiring | [docs/agent-harness.md](docs/agent-harness.md) |

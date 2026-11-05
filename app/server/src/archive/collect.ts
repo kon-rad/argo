@@ -21,7 +21,7 @@ export async function snapshotSqlite(src: string, dest: string): Promise<void> {
 const REMOTE_USER = process.env.REMOTE_HERMES_USER ?? 'hermes';
 // `~user`, not `~`: the remote shell runs as the ssh login, not as REMOTE_USER.
 const REMOTE_HOME = process.env.REMOTE_HERMES_HOME ?? `~${REMOTE_USER}/.hermes`;
-// The droplet's UFW rate-limits port 22 (6 connections / 30 s): share one connection across ssh and rsync.
+// A server's UFW may rate-limit port 22 (6 connections / 30 s): share one connection across ssh and rsync.
 const SSH_OPTS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15',
   '-o', 'ControlMaster=auto', '-o', 'ControlPath=/tmp/sb-archive-%C', '-o', 'ControlPersist=60'];
 

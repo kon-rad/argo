@@ -1,0 +1,51 @@
+{
+  "version": "1",
+  "company": "Example Co",
+  "ceo": "owner",
+  "agents": {
+    "owner": {
+      "runtime": "human",
+      "role": "CEO"
+    },
+    "atlas": {
+      "role": "Head of Platform",
+      "team": "platform",
+      "reports_to": "owner",
+      "runtime": "claude-code",
+      "model": "opus",
+      "expertise": "the app, the database, the agent harness"
+    },
+    "bolt": {
+      "role": "Platform engineer",
+      "team": "platform",
+      "reports_to": "atlas",
+      "runtime": "claude-code",
+      "model": "sonnet",
+      "capabilities": ["code"],
+      "work": "coding",
+      "expertise": "TypeScript, migrations, the test suite"
+    },
+    "sage": {
+      "role": "Reviewer",
+      "team": "quality",
+      "reports_to": "owner",
+      "runtime": "claude-code",
+      "model": "sonnet",
+      "capabilities": ["review"],
+      "work": "coding",
+      "expertise": "reading a diff against its card and saying what is missing"
+    }
+  },
+  "teams": {
+    "platform": { "name": "Platform", "lead": "atlas" },
+    "quality": { "name": "Quality", "lead": "sage" }
+  },
+  "channels": {
+    "all-hands": { "members": "*", "purpose": "company-wide notices" },
+    "leads": { "members": ["owner", "atlas", "sage"], "purpose": "lead-to-lead coordination" }
+  },
+  "wake_rules": {
+    "owner_channel_post": "wake_lead",
+    "bot_wakes_per_target_per_day": 3
+  }
+}
