@@ -47,6 +47,7 @@
       "flash-high": { "thinking": "high" }
     },
     "budgets": { "dm": { "turns": 8, "tokens": 60000, "minutes": 5 } },
-    "tools": { "routine": ["org", "knowledge", "fs", "skills"] }
+    "tools": { "routine": ["org", "knowledge", "fs", "skills"] },
+    "fallback": { "model": "openrouter/deepseek/deepseek-v4.1-flash" }
   }
 }

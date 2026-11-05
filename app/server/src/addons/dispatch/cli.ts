@@ -54,6 +54,7 @@ export async function main(argv: string[]): Promise<number> {
     config: {
       orgTz: config.orgTz, orgDispatchQuiet: config.orgDispatchQuiet, orgDispatchDailyTokens: config.orgDispatchDailyTokens,
       orgDispatchParallel: config.orgDispatchParallel, orgZenCommand: config.orgZenCommand, vaultRoot: config.vaultRoot,
+      machines: config.ollamaMachines,
     },
     log: (line) => console.error(line),
   });

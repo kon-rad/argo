@@ -2,6 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { ClassifyInput, ClassifyResult } from '../classify/types.js';
+import type { OllamaMachine } from '../../config.js';
+import { discoverMachineModels } from '../../llm/registry.js';
 import { addWakeup, claimWakeups, finishWakeups, type Wakeup } from '../../org.js';
 import type { DispatchSettings } from '../../settings.js';
 import { classifyCard, loadCard } from '../classify/org-classify.js';
@@ -27,6 +29,8 @@ export interface DispatchConfig {
   orgDispatchParallel: number;
   orgZenCommand: string;
   vaultRoot: string;
+  /** The connected computers (OLLAMA_MACHINES); a model on one of them may fall back (settings.fallback). */
+  machines?: OllamaMachine[];
 }
 
 export interface Deps {
@@ -36,9 +40,52 @@ export interface Deps {
   config: DispatchConfig;
   /** Model routing: absent or mode off, the bot's own model runs as before. */
   router?: { mode: 'shadow' | 'on'; cfg: RoutingConfig; maxTier?: Tier };
+  /** Whether a connected computer answers right now; the default asks its Ollama for its models. */
+  probe?: (machine: OllamaMachine) => Promise<boolean>;
   now?: () => Date;
   env?: NodeJS.ProcessEnv;
   log?: (line: string) => void;
+}
+
+/** The provider of a `provider/model` id, or of a bare catalog alias (`qwen3.6:35b-a3b`); null when unknown. */
+export function providerOf(model: string | null | undefined, cfg?: RoutingConfig): string | null {
+  if (!model) return null;
+  const slash = model.indexOf('/');
+  if (slash > 0) return model.slice(0, slash);
+  const hit = cfg?.models.find((m) => m.id === model || m.aliases?.includes(model));
+  return hit ? hit.provider : null;
+}
+
+/** The connected computer behind provider `ollama-<name>`; null for a hosted or unknown provider. */
+export function machineOf(provider: string | null, machines: OllamaMachine[] = []): OllamaMachine | null {
+  if (!provider || !provider.startsWith('ollama-')) return null;
+  return machines.find((m) => `ollama-${m.name}` === provider) ?? null;
+}
+
+/** A failed run's last words that blame the model's host, not the task: the catalogue miss, a dead socket, a gateway error. */
+const PROVIDER_ERROR = /not in provider .*catalogue|unknown model|model .* not found|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|fetch failed|socket hang up|Bad Gateway|Service Unavailable|Gateway Time-?out|\b50[234]\b|connection (refused|reset)/i;
+export function isProviderError(text: string): boolean {
+  return PROVIDER_ERROR.test(text);
+}
+
+async function defaultProbe(machine: OllamaMachine): Promise<boolean> {
+  return (await discoverMachineModels(machine)) !== null;
+}
+
+/** The value after `name` in a flag list, or null. */
+function flagValue(flags: string[], name: string): string | null {
+  const i = flags.indexOf(name);
+  return i >= 0 ? flags[i + 1] ?? null : null;
+}
+
+/** The flag list without `names` and their values. */
+function withoutFlags(flags: string[], names: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < flags.length; i++) {
+    if (names.includes(flags[i]!)) i++;
+    else out.push(flags[i]!);
+  }
+  return out;
 }
 
 export interface Budget { turns: number; tokens: number; minutes: number }
@@ -332,42 +379,85 @@ export class Dispatcher {
       // No tier model: the bot's own, override ?? roster, so `cli-org set` moves a bot to a model with no deploy.
       if (!modelFlags.includes('--model') && agent.model) modelFlags.push('--model', agent.model);
 
-      const meta: Record<string, string> = {
-        run_id: runId,
-        reasons: JSON.stringify(run.map((k) => ({ reason: k.w.reason, ref: k.w.ref }))),
-        wakeup_ids: run.map((k) => k.w.id).join(','),
+      // The fallback model (docs/org-routing.md, "Fallback model"): whatever the pipeline chose, if a connected
+      // computer serves it and that computer does not answer, the fallback runs instead. The router already applied
+      // its floors above, so a card the router parks stays parked; only the host changes.
+      const fallback = this.deps.settings.fallback;
+      const chosen = flagValue(modelFlags, '--model');
+      const machine = fallback ? machineOf(providerOf(chosen, router?.cfg), this.deps.config.machines) : null;
+      let fellBack: 'machine-down' | 'run-error' | null = null;
+      const useFallback = (flags: string[]): string[] => {
+        const next = withoutFlags(flags, ['--model', '--thinking']);
+        next.push('--model', fallback!.model);
+        const thinking = fallback!.thinking ?? flagValue(flags, '--thinking');
+        if (thinking) next.push('--thinking', thinking);
+        return next;
       };
-      if (card) meta['task_id'] = card;
-      if (tier) meta['tier'] = tier;
-      if (agent.team_slug) meta['team'] = agent.team_slug;
-      const metaFlags = Object.entries(meta).flatMap(([k, v]) => ['--meta', `${k}=${v}`]);
-      const common = ['--json', '--tools', tools.join(','), '--max-turns', String(budgetNow.turns), '--max-tokens', String(budgetNow.tokens),
-        '--max-minutes', String(budgetNow.minutes), ...(handoffFile ? ['--handoff-file', handoffFile] : []), ...modelFlags, ...metaFlags];
-      const args = card
-        ? ['wake', card, '--task-file', taskFile, ...common]
-        : ['run', '--file', taskFile, '--persona', agent.name, ...common];
+      let flagsNow = modelFlags;
+      if (fallback && machine && !(await (this.deps.probe ?? defaultProbe)(machine))) {
+        this.log(`${agent.name}: fallback: ${machine.name} (${machine.url}) did not answer; ${fallback.model} runs instead of ${chosen}`);
+        flagsNow = useFallback(modelFlags);
+        fellBack = 'machine-down';
+      }
 
-      const env = { ...this.env, ORG_AGENT: agent.name, ORG_RUN: runId };
-      this.log(`${agent.name}: ${this.deps.config.orgZenCommand} ${args.join(' ')}`);
-      const r = await this.deps.runner(this.deps.config.orgZenCommand, args, env, this.deps.config.vaultRoot, (budget.minutes + 2) * 60_000);
+      const launch = async (id: string, flags: string[]): Promise<RunnerResult> => {
+        const meta: Record<string, string> = {
+          run_id: id,
+          reasons: JSON.stringify(run.map((k) => ({ reason: k.w.reason, ref: k.w.ref }))),
+          wakeup_ids: run.map((k) => k.w.id).join(','),
+        };
+        if (card) meta['task_id'] = card;
+        if (tier) meta['tier'] = tier;
+        if (agent.team_slug) meta['team'] = agent.team_slug;
+        if (fellBack) meta['fallback'] = fellBack;
+        const metaFlags = Object.entries(meta).flatMap(([k, v]) => ['--meta', `${k}=${v}`]);
+        const common = ['--json', '--tools', tools.join(','), '--max-turns', String(budgetNow.turns), '--max-tokens', String(budgetNow.tokens),
+          '--max-minutes', String(budgetNow.minutes), ...(handoffFile ? ['--handoff-file', handoffFile] : []), ...flags, ...metaFlags];
+        const args = card
+          ? ['wake', card, '--task-file', taskFile, ...common]
+          : ['run', '--file', taskFile, '--persona', agent.name, ...common];
+        const env = { ...this.env, ORG_AGENT: agent.name, ORG_RUN: id };
+        this.log(`${agent.name}: ${this.deps.config.orgZenCommand} ${args.join(' ')}`);
+        return this.deps.runner(this.deps.config.orgZenCommand, args, env, this.deps.config.vaultRoot, (budget.minutes + 2) * 60_000);
+      };
+      const lastWords = (res: RunnerResult): string => {
+        const p = parseRunResult(res.stdout);
+        return (p?.text || p?.error || res.stderr.trim().split('\n').pop() || `exit ${res.code}`).slice(0, 600);
+      };
+
+      let runNow = runId;
+      let r = await launch(runId, flagsNow);
       out.ran = true;
+      // A run that died on the machine (not a budget stop, exit 3, and not the task failing) gets one more go on the fallback.
+      if (fallback?.retryOnError && machine && !fellBack && r.code !== 0 && r.code !== 3 && isProviderError(lastWords(r))) {
+        const why = lastWords(r);
+        this.log(`${agent.name}: fallback: run on ${machine.name} failed (${why.slice(0, 160)}); re-running on ${fallback.model}`);
+        await store.recordFailedRun({
+          runId, agent: agent.name, taskId: card, wakeupIds: run.map((k) => k.w.id), team: agent.team_slug ?? null,
+          reasons: run.map((k) => ({ reason: k.w.reason, ref: k.w.ref })), startedAt, endedAt: this.now(), error: `provider error on ${machine.name}: ${why}`.slice(0, 600),
+        });
+        fellBack = 'run-error';
+        runNow = `${runId}-fb`;
+        r = await launch(runNow, useFallback(flagsNow));
+      }
       const parsed = parseRunResult(r.stdout);
-      let result = (parsed?.text || parsed?.error || r.stderr.trim().split('\n').pop() || `exit ${r.code}`).slice(0, 600);
+      let result = lastWords(r);
+      if (fellBack) result = `[fallback ${fellBack}: ${fallback!.model}] ${result}`.slice(0, 600);
       if (r.code === 3 && card) {
         const prev = await store.lastRun(agent.name, card);
         if (prev?.subtype === 'budget') result = `${result} (held: budget twice)`;
       }
-      await finishWakeups(run.map((k) => k.w.id), { run: runId, exit: r.code, result });
+      await finishWakeups(run.map((k) => k.w.id), { run: runNow, exit: r.code, result });
       if (r.code !== 0) {
         await store.recordFailedRun({
-          runId, agent: agent.name, taskId: card, wakeupIds: run.map((k) => k.w.id), team: agent.team_slug ?? null,
+          runId: runNow, agent: agent.name, taskId: card, wakeupIds: run.map((k) => k.w.id), team: agent.team_slug ?? null,
           reasons: run.map((k) => ({ reason: k.w.reason, ref: k.w.ref })), startedAt, endedAt: this.now(), error: result,
         });
       }
       if (routeId !== null) await recordOutcome({ decisionId: routeId, result: r.code === 0 ? 'done' : 'failed' });
       await this.deps.classify({
         decision: 'run-outcome', state: { text: parsed?.text ?? '', stopped: parsed?.stopped ?? (r.code === 0 ? 'done' : 'error'), exit: r.code },
-        source: 'board', runId, agentName: agent.name, ref: card,
+        source: 'board', runId: runNow, agentName: agent.name, ref: card,
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

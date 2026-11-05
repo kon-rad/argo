@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ClassifyInput, ClassifyResult } from '../src/addons/classify/types.js';
 import { query } from '../src/db.js';
-import { Dispatcher, inQuietHours, localTime, parseRunResult, primaryReason, routineDue, type Deps, type RunnerResult } from '../src/addons/dispatch/index.js';
+import { Dispatcher, inQuietHours, isProviderError, localTime, machineOf, parseRunResult, primaryReason, providerOf, routineDue, type Deps, type RunnerResult } from '../src/addons/dispatch/index.js';
 import { addWakeup, dm, getAgent, importOrg, openWakeups, post, unreadCounts } from '../src/org.js';
 import { parseSettings } from '../src/settings.js';
 import { truncateAll } from './helpers.js';
@@ -394,5 +394,148 @@ describe('model routing (docs/org-routing.md)', () => {
     await query(`UPDATE cards SET body = 'Edit server/src/a.ts, then deploy to production' WHERE id = 't_abc123'`);
     await h.d.tick();
     expect(flag(h.calls[0]!.args, '--model')).toBe('openrouter/top');
+  });
+});
+
+describe('fallback model (docs/org-routing.md, "Fallback model")', () => {
+  const m1 = { name: 'box1', url: 'http://box1:11434' };
+  const cfg = {
+    tiers: { t0: { turns: 8 }, t1: { turns: 20 }, t2: { turns: 30 }, t3: { turns: 40 } },
+    floors: { coding_single_file_named_path: 't1', coding_default: 't2', high_risk: 't3', merge: 't3', deploy: 't3' },
+    escalation: { turn_cap_no_commit: 1, tests_failed_twice: 1, review_changes_twice: 1 },
+    risk_keywords: [],
+    models: [{ id: 'ollama-box1/qwen', aliases: ['qwen'], provider: 'ollama-box1', tier: 't1', can_code: false, local: true }],
+  } as const;
+  const onModel = (model: string) => ({ ...ORG, agents: { ...ORG.agents, rune: { ...ORG.agents.rune, model } } });
+  const settings = { fallback: { model: 'together/deepseek-ai/DeepSeek-V4.1-Flash' } };
+  const probed: string[] = [];
+  const withProbe = (h: ReturnType<typeof harness>, up: boolean) => {
+    (h.d as unknown as { deps: Deps }).deps.probe = async (m) => { probed.push(m.name); return up; };
+  };
+  const card = async () => {
+    await query(`INSERT INTO boards (slug, name) VALUES ('exo', 'Exo') ON CONFLICT DO NOTHING`);
+    await query(`INSERT INTO cards (id, board_slug, title, assignee, created_by, work_type) VALUES ('t_abc123', 'exo', 'Summarise the thread', 'rune', 'atlas', 'ops')`);
+    await addWakeup('rune', 'task', 't_abc123');
+  };
+  const wakeResult = async (): Promise<string> =>
+    (await query<{ result: string }>(`SELECT result FROM org_wakeups WHERE agent_name = 'rune'`)).rows[0]!.result;
+  beforeEach(() => { probed.length = 0; });
+
+  it('pure helpers: provider by prefix or catalog alias, machine by provider, provider errors by their words', () => {
+    expect(providerOf('together/deepseek-ai/x')).toBe('together');
+    expect(providerOf('qwen', cfg as never)).toBe('ollama-box1');
+    expect(providerOf('qwen')).toBeNull();
+    expect(providerOf(null)).toBeNull();
+    expect(machineOf('ollama-box1', [m1])).toEqual(m1);
+    expect(machineOf('ollama-other', [m1])).toBeNull();
+    expect(machineOf('together', [m1])).toBeNull();
+    expect(isProviderError("model qwen is not in provider ollama-box1's catalogue")).toBe(true);
+    expect(isProviderError('fetch failed: connect ECONNREFUSED 192.0.2.2:11434')).toBe(true);
+    expect(isProviderError('502 Bad Gateway')).toBe(true);
+    expect(isProviderError('tests failed: 2 of 14')).toBe(false);
+    expect(isProviderError('BLOCKED: the card names no file')).toBe(false);
+  });
+
+  it('machine down: the fallback model runs instead, the trace and the wakeup say so', async () => {
+    await importOrg(onModel('ollama-box1/qwen'));
+    const h = harness({ machines: [m1] }, settings);
+    withProbe(h, false);
+    await card();
+    await h.d.tick();
+    expect(probed).toEqual(['box1']);
+    expect(h.calls).toHaveLength(1);
+    expect(flag(h.calls[0]!.args, '--model')).toBe('together/deepseek-ai/DeepSeek-V4.1-Flash');
+    expect(meta(h.calls[0]!.args, 'fallback')).toBe('machine-down');
+    expect(await wakeResult()).toMatch(/^\[fallback machine-down: together\/deepseek-ai\/DeepSeek-V4\.1-Flash\] posted a status/);
+  });
+
+  it('machine up: the bot runs on its own model and nothing is retried', async () => {
+    await importOrg(onModel('ollama-box1/qwen'));
+    const h = harness({ machines: [m1] }, settings);
+    withProbe(h, true);
+    await card();
+    await h.d.tick();
+    expect(probed).toEqual(['box1']);
+    expect(h.calls).toHaveLength(1);
+    expect(flag(h.calls[0]!.args, '--model')).toBe('ollama-box1/qwen');
+    expect(meta(h.calls[0]!.args, 'fallback')).toBeUndefined();
+  });
+
+  it('a hosted model is never probed; without the setting a machine model is not probed either', async () => {
+    await importOrg(onModel('openrouter/deepseek/deepseek-v4.1-flash'));
+    const h = harness({ machines: [m1] }, settings);
+    withProbe(h, false);
+    await card();
+    await h.d.tick();
+    expect(probed).toEqual([]);
+    expect(flag(h.calls[0]!.args, '--model')).toBe('openrouter/deepseek/deepseek-v4.1-flash');
+
+    await truncateAll();
+    await importOrg(onModel('ollama-box1/qwen'));
+    const h2 = harness({ machines: [m1] });
+    withProbe(h2, false);
+    await card();
+    await h2.d.tick();
+    expect(probed).toEqual([]);
+    expect(flag(h2.calls[0]!.args, '--model')).toBe('ollama-box1/qwen');
+  });
+
+  it('run died on the machine: one re-run on the fallback under <run>-fb, the first run recorded as failed', async () => {
+    await importOrg(onModel('ollama-box1/qwen'));
+    const h = harness({ machines: [m1] }, settings);
+    withProbe(h, true);
+    await card();
+    let first = true;
+    const ok = { code: 0, stdout: JSON.stringify({ text: 'done on the fallback', stopped: 'done', turns: 2 }) + '\n', stderr: '' };
+    (h.d as unknown as { deps: Deps }).deps.runner = async (cmd, args, env, cwd, timeoutMs) => {
+      h.calls.push({ cmd, args, env, cwd, timeoutMs });
+      if (first) { first = false; return { code: 1, stdout: '', stderr: "zen-agent: model qwen is not in provider ollama-box1's catalogue\n" }; }
+      return ok;
+    };
+    await h.d.tick();
+    expect(h.calls).toHaveLength(2);
+    expect(flag(h.calls[0]!.args, '--model')).toBe('ollama-box1/qwen');
+    expect(flag(h.calls[1]!.args, '--model')).toBe('together/deepseek-ai/DeepSeek-V4.1-Flash');
+    expect(meta(h.calls[1]!.args, 'fallback')).toBe('run-error');
+    expect(meta(h.calls[1]!.args, 'run_id')).toBe(`${meta(h.calls[0]!.args, 'run_id')}-fb`);
+    expect(h.calls[1]!.env['ORG_RUN']).toBe(meta(h.calls[1]!.args, 'run_id'));
+    expect(await wakeResult()).toMatch(/^\[fallback run-error: together\/deepseek-ai\/DeepSeek-V4\.1-Flash\] done on the fallback/);
+    const { rows } = await query<{ subtype: string | null; is_error: boolean }>(`SELECT subtype, is_error FROM usage_runs WHERE run_id = $1`, [meta(h.calls[0]!.args, 'run_id')]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.is_error).toBe(true);
+    expect(rows[0]!.subtype).toMatch(/^provider error on box1: /);
+  });
+
+  it('a task failure or a budget stop on the machine is not retried', async () => {
+    await importOrg(onModel('ollama-box1/qwen'));
+    const h = harness({ machines: [m1] }, settings);
+    withProbe(h, true);
+    await card();
+    h.setResult({ code: 1, stdout: JSON.stringify({ text: 'BLOCKED: tests failed twice', stopped: 'error' }) + '\n', stderr: '' });
+    await h.d.tick();
+    expect(h.calls).toHaveLength(1);
+    expect(await wakeResult()).toBe('BLOCKED: tests failed twice');
+
+    await truncateAll();
+    await importOrg(onModel('ollama-box1/qwen'));
+    const h2 = harness({ machines: [m1] }, settings);
+    withProbe(h2, true);
+    await card();
+    h2.setResult({ code: 3, stdout: JSON.stringify({ text: 'out of turns: connection reset mid-run', stopped: 'budget' }) + '\n', stderr: '' });
+    await h2.d.tick();
+    expect(h2.calls).toHaveLength(1);
+  });
+
+  it('with the router on, the routed machine model falls back and keeps the tier budget', async () => {
+    await importOrg(onModel('ollama-box1/qwen'));
+    const h = harness({ machines: [m1] }, settings);
+    (h.d as unknown as { deps: Deps }).deps.router = { mode: 'on', cfg: cfg as never };
+    withProbe(h, false);
+    await card();
+    await h.d.tick();
+    expect(h.calls).toHaveLength(1);
+    expect(flag(h.calls[0]!.args, '--model')).toBe('together/deepseek-ai/DeepSeek-V4.1-Flash');
+    expect(flag(h.calls[0]!.args, '--max-turns')).toBe('20'); // the tier's budget, not the fallback's
+    expect(meta(h.calls[0]!.args, 'tier')).toBe('t1');
   });
 });
