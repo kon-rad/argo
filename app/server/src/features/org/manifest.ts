@@ -5,7 +5,10 @@ export default defineFeature({
   core: true,
   summary: 'A company of named AI agents: teams, channels, messages, wakes, the ship gate and plan|apply from the org config',
   nav: [{ section: 'Work', label: 'Org', path: '/org' }],
-  cli: [{ command: 'org', entry: 'cli-org.js', summary: 'the agent company: whoami/read/post/dm/handoff/ask-owner/standup/plan/apply (org help)' }],
+  cli: [
+    { command: 'org', entry: 'cli-org.js', summary: 'the agent company: whoami/read/post/dm/handoff/ask-owner/standup/plan/apply (org help)' },
+    { command: 'org-compile', entry: 'cli-org-compile.js', summary: 'compile .agents/org/ into org.json, org-agents.json and the agent prompts' },
+  ],
   // The routing report timer now rides the `routing` addon manifest, so the routing pilot can be
   // turned off without touching the org feature (proposal phase 5).
   timers: [],

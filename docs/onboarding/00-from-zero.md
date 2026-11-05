@@ -4,7 +4,7 @@ Status: **works** - the full path from an empty folder to an agent company runs 
 
 The whole path on one page: an empty folder becomes a private vault, the vault gets an app with search, one agent starts working in it under your rules, and then a named company of agents takes the repeatable work and reports to you every morning. Every stage ends with a check. Stop at any stage and what you have still works on its own.
 
-**Status (2026-11-03):** every command on this page runs on `main` today, except where a stage says so. Two things are not in the engine yet: the org compiler (you write the org document by hand, stage 7) and a one-command `init|start|doctor` path (stage 1 to 3 are four commands instead of one). Both are in the core v2 plan: `secondbrain org compile` and a starter org on `init` are phase 7, `start` and `doctor` are phase 3. When they land this page gets shorter, not different.
+**Status (2026-11-03):** every command on this page runs on `main` today, except where a stage says so. The org compiler is now in the engine: `secondbrain org compile` (phase 7, `app/server/src/org-compile.ts`) ported the vault's `compile.py`, so stage 7's by-hand JSON is the fallback rather than the only path (it does not write `routing.json` or the card graphs, and it does not yet check the routing pilot's model floors). Still to come: a starter org on `init` and a one-command `init|start|doctor` path (stage 1 to 3 are four commands instead of one). When they land this page gets shorter, not different.
 
 The pages after this one go deeper on each stage; this page is the spine.
 
@@ -233,7 +233,7 @@ secondbrain org agents                     # the org chart
 
 Commit `.agents/org.json`. An agent you later remove from the file is retired, never deleted, so its messages keep their author.
 
-**Prefer YAML with prose personalities?** The reference vault keeps a config directory (`.agents/org/config/`: `org.yaml`, `teams/<team>.yaml`, `agents/<bot>.yaml`) and a compiler that validates it and writes this JSON plus one identity file per agent. That compiler is a 770-line Python script in that vault, not in the engine; `secondbrain org compile` is core v2 phase 7. Until then the JSON above is the contract, and it is small enough to keep by hand.
+**Prefer YAML with prose personalities?** The reference vault keeps a config directory (`.agents/org/config/`: `org.yaml`, `teams/<team>.yaml`, `agents/<bot>.yaml`), and the engine compiles it now: `secondbrain org compile` validates the tree and writes this JSON plus one identity file per agent. Stage 7 below is still the by-hand path, and it stays the contract the compiler has to produce.
 
 **Check:**
 

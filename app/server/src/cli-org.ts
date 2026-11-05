@@ -46,6 +46,7 @@ import {
 } from './org.js';
 import { generateAvatar, setAvatar, subjectsFromDb, subjectsFromOrgFile } from './org-avatars.js';
 import { applyOrg, formatApply, formatPlan, planOrgFile } from './org-apply.js';
+import { main as compileMain } from './cli-org-compile.js';
 import { clearOverride, dispatchState, listOverrides, pauseAgents, pauseLane, resumeAgents, setDispatch, setOverride } from './board.js';
 import { breakerLimitsFromEnv, runBreaker } from './breaker.js';
 import {
@@ -853,6 +854,10 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       out(json ? JSON.stringify(r, null, 2) : formatApply(r));
       return 0;
     }
+    case 'compile':
+      // The org compiler lives in the engine (engine-core-v2 proposal, decision 3); `secondbrain org compile`
+      // and `secondbrain org-compile` both land here. No database is touched.
+      return compileMain(rest);
     case 'avatar': {
       const sub = pos[0];
       const names = pos.slice(1);
