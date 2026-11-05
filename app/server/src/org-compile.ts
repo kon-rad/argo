@@ -3,7 +3,7 @@
  * files the engine consumes:
  *
  *   .agents/org/org.json         the import document `cli-org plan|apply|import` read
- *   .agents/org/org-agents.json  the per-agent caps/routines the /org route and org-memory read
+ *   .agents/org/org-agents.json  the per-agent caps/routines the /org route reads
  *   .claude/agents/<name>.md     the Claude Code agent prompts (one per claude-code/hermes bot)
  *
  * Ported from the vault's `.agents/org/compile.py` and `routing_config.py` (phase 2 of

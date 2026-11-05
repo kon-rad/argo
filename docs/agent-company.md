@@ -13,7 +13,7 @@ This page is the overview. The reference for each part:
 | The org file, wake rules, who may edit what | [org.yaml and wake rules](org-yaml.md) |
 | Which model runs a given card | [zen-agent](zen-agent.md) |
 | Cards, columns, claims, the board API | [Kanban board](kanban-board.md), [board design](board-design.md) |
-| What a bot remembers between wakes | [Agent persona memory](agent-memory.md) |
+| What a bot remembers between wakes | [Memory](memory.md) (the shared store, `memory_facts`; a claim tagged with the bot's name is its own) |
 | Guard hooks every agent runs under | [Agent harness](agent-harness.md) |
 | Bots on the minimal runtime | [zen-agent](zen-agent.md) |
 
@@ -40,7 +40,7 @@ org.yaml ──compile──> org-agents.json, .claude/agents/<name>.md, import 
 2. **Claim.** A dispatcher polls for open wakeups, coalesces everything one agent has waiting into one run, and applies the caps: wakes per day, cooldown, global parallelism, pauses, the credit breaker. Leads go first.
 3. **Run.** The agent runs as a short, non-interactive session with its identity file and the `org-member` skill as its system prompt, resuming its own previous session. The model comes from the router, inside the envelope its config allows.
 4. **Report.** Before it finishes, the agent posts exactly one `status` with evidence (a path, a command, a card id). If it posts nothing, `wake-done` posts a fallback status saying the run ended without a report, so silence is visible.
-5. **Remember.** `wake-done` records the episode; a cheap-model reflection may write a lesson into the agent's persona memory.
+5. **Remember.** `wake-done` records the episode; a durable lesson goes into the shared memory (`secondbrain memory remember`), tagged with the bot's name when it is the bot's own.
 
 ## Components
 

@@ -51,7 +51,7 @@ The shared memory ([memory.md](memory.md)): one table, `memory_facts`, holding o
 | | |
 |---|---|
 | Page | `/memory`: the facts with their source, the candidates waiting for a decision, the retire button |
-| CLI | `secondbrain memory` (`recall`, `remember`, `list`, `retire`, `stats`) |
+| CLI | `secondbrain memory` (`recall`, `remember`, `list`, `retire`, `propose`, `stats`) |
 | Settings | `memory.exclude` in `secondbrain.json` (vault paths recall never returns) |
 | Tables | `memory_facts`, `agent_summary_facts` |
 | Skill | `shared-memory` (recall before, remember after) |
@@ -69,11 +69,11 @@ Two limits keep a bot's runs from growing without bound. The session a `claude-c
 | Page | `/org`: channels, DMs, questions waiting on you, tasks |
 | CLI | `cli-org` (also `secondbrain org`): post, read, ask the owner, assign and complete tasks; `cli-org avatar show|generate` draws agent portraits ([org-yaml.md](org-yaml.md#avatars)) |
 | Security | A dedicated `sb_org` database role with row-level security per agent |
-| Settings | `ORG_OWNER`, `ORG_VAULT_ASSIGNEE`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES`, `ORG_TZ`, `ORG_RECALL_EXCLUDE`, `ORG_RECALL_MIN_SIMILARITY` (see [Memory](memory.md)), `ORG_REFLECT_MODEL`, `ORG_REFLECT_MAX_PER_DAY`; the dispatcher's `ORG_DISPATCH`, `ORG_DISPATCH_TICK_SECONDS`, `ORG_DISPATCH_PARALLEL`, `ORG_DISPATCH_QUIET`, `ORG_DISPATCH_DAILY_TOKENS`, `ORG_ZEN_COMMAND`; the classify step's `CLASSIFY_PROVIDER`, `CLASSIFY_DAILY_TOKENS`, `TYPESAFE_API_KEY` (or `OPENROUTER_API_KEY`); `GEMINI_API_KEY` for `cli-org avatar generate`; `secondbrain.json` `classify`, `dispatch` and `org.avatars` |
+| Settings | `ORG_OWNER`, `ORG_VAULT_ASSIGNEE`, `ORG_SESSION_MAX_RUNS`, `ORG_TASK_WAKE_RETRIES`, `ORG_TASK_WAKE_BACKOFF_MINUTES`, `ORG_TZ`, `ORG_RECALL_EXCLUDE`, `ORG_RECALL_MIN_SIMILARITY` (see [Memory](memory.md)); the dispatcher's `ORG_DISPATCH`, `ORG_DISPATCH_TICK_SECONDS`, `ORG_DISPATCH_PARALLEL`, `ORG_DISPATCH_QUIET`, `ORG_DISPATCH_DAILY_TOKENS`, `ORG_ZEN_COMMAND`; the classify step's `CLASSIFY_PROVIDER`, `CLASSIFY_DAILY_TOKENS`, `TYPESAFE_API_KEY` (or `OPENROUTER_API_KEY`); `GEMINI_API_KEY` for `cli-org avatar generate`; `secondbrain.json` `classify`, `dispatch` and `org.avatars` |
 | CLI | also `secondbrain dispatch tick|routines` and `secondbrain classify <decision> --state-file f | label <id> right|wrong | recent` |
 | Timers (server) | `dispatch` when `ORG_DISPATCH=on`; `deploy.sh` creates the role and puts `cli-org` on the PATH |
 | Skill | `org-member` |
-| Memory | Each bot keeps its own: an episode per finished wake, first-person lessons distilled by a cheap model after `wake-done`, a generated core block under a token budget, and self-improvement cards a person applies ([agent-memory.md](agent-memory.md)) |
+| Memory | An episode per finished wake (`org_agent_episodes`); durable lessons are shared claims in `memory_facts`, tagged with the bot's name when they are its own ([memory.md](memory.md)) |
 
 ## board
 
