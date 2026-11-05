@@ -53,10 +53,6 @@ import {
   forget,
   listApprovals,
   listFacts,
-  dedupeVaultHits,
-  DEFAULT_RECALL_MIN_SIMILARITY,
-  shapeVaultHits,
-  recallExcluded,
   recallFacts,
   recallMemoryFiles,
   remember,
@@ -67,7 +63,6 @@ import {
   type Approval,
   type Fact,
   type RecallHit,
-  type VaultSearchHit,
 } from './org-powers.js';
 import {
   EPISODE_REASONS,
@@ -87,8 +82,6 @@ import {
 } from './org-memory.js';
 import { search } from './search.js';
 import { settings } from './settings.js';
-import { hybridSearch } from './semantic.js';
-import { defaultEmbeddingProvider, loadEmbeddingConfig } from './embeddings/factory.js';
 
 const USAGE = `cli-org: the agent company's message board (Postgres). Identity comes from ORG_AGENT, never from an argument.
 
@@ -317,37 +310,10 @@ function formatFact(f: Fact): string {
   return `#${f.id} ${f.subject}: ${f.claim}  [${f.confidence}, ${f.source}, ${f.author}${f.via ? ` via ${f.via}` : ''}, ${when(new Date(f.valid_from))}${f.valid_to ? `, closed ${when(new Date(f.valid_to))}${f.retired_why ? `: ${f.retired_why}` : ''}` : ''}]`;
 }
 
-/** A search snippet as plain text for a model: no highlight tags, entities decoded (they cost tokens and mean nothing). */
-export function plainSnippet(html: string): string {
-  return html
-    .replace(/<\/?(?:b|mark|em|strong)>/g, '')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-}
+// The vault arm of recall (hybrid search, the exclusion list) lives in ./recall.ts, shared with `secondbrain memory`.
+import { plainSnippet, recallVault } from './recall.js';
 
-/**
- * The vault side of recall: hybrid (keyword + vector) when embeddings are configured, else keyword, over-fetched and
- * filtered so the owner's working files and finances never come back. Runs on the app's connection: the index
- * isn't the board, so the sb_org role has no grant on it.
- */
-export async function recallVault(q: string, limit: number, env: NodeJS.ProcessEnv = process.env): Promise<RecallHit[]> {
-  const extra = (env.ORG_RECALL_EXCLUDE ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  const floor = Number(env.ORG_RECALL_MIN_SIMILARITY);
-  const minSimilarity = Number.isFinite(floor) && floor > 0 ? floor : DEFAULT_RECALL_MIN_SIMILARITY;
-  let hits: VaultSearchHit[] = [];
-  try {
-    await loadEmbeddingConfig();
-    hits = (await hybridSearch(q, { source: 'vault', limit: limit * 3, offset: 0, provider: defaultEmbeddingProvider(), minSimilarity })).results;
-  } catch {
-    try {
-      hits = (await search(q, { source: 'vault', limit: limit * 3, offset: 0 })).results;
-    } catch {
-      return [];
-    }
-  }
-  const kept = shapeVaultHits(hits.filter((h) => !recallExcluded(h.ref_path, extra)), limit, minSimilarity)
-    .map((h) => ({ source: 'vault' as const, ref: h.ref_path, title: h.title ?? '', text: plainSnippet(h.snippet), score: Number(h.rank) }));
-  return dedupeVaultHits(kept).slice(0, limit);
-}
+export { plainSnippet, recallVault };
 
 async function main(argv: string[], out: (s: string) => void = console.log): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -754,6 +720,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
     }
     case 'recall': {
       const [q] = pos;
+      console.error('deprecated: use `secondbrain memory recall`; this alias goes in one release.');
       if (!q) throw new OrgError('recall "<query>" [--project p] [--limit N]');
       const limit = num(opts.limit, 'limit') ?? 8;
       const hits: RecallHit[] = [
@@ -768,6 +735,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
     }
     case 'remember': {
       const [subject, claim] = pos;
+      console.error('deprecated: use `secondbrain memory remember`; this alias goes in one release.');
       const source = str(opts.source);
       if (!subject || !claim || !source) throw new OrgError('remember "<subject>" "<claim>" --source <path|#msg|t_card|url> [--project p] [--inferred] [--supersedes id]');
       const f = await remember(await me(), {
@@ -778,6 +746,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       return 0;
     }
     case 'facts': {
+      console.error('deprecated: use `secondbrain memory list`; this alias goes in one release.');
       const fs = await listFacts({ subject: str(opts.subject), project: str(opts.project), author: str(opts.author), all: opts.all === true, limit: num(opts.limit, 'limit') });
       if (json) return (out(JSON.stringify(fs, null, 2)), 0);
       out(fs.length ? fs.map(formatFact).join('\n') : 'no facts');
@@ -785,6 +754,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
     }
     case 'forget': {
       const id = num(pos[0], 'id');
+      console.error('deprecated: use `secondbrain memory retire`; this alias goes in one release.');
       if (id === undefined || !pos[1]) throw new OrgError('forget <id> "<why>"');
       await forget(await me(), id, pos[1]);
       out(`fact #${id} closed`);

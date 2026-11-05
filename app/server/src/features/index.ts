@@ -1,6 +1,8 @@
 import type express from 'express';
 import boardManifest from './board/manifest.js';
 import { routes as boardRoutes } from './board/routes.js';
+import memoryManifest from './memory/manifest.js';
+import { routes as memoryRoutes } from './memory/routes.js';
 import orgManifest from './org/manifest.js';
 import { routes as orgRoutes } from './org/routes.js';
 import projectsManifest from './projects/manifest.js';
@@ -17,6 +19,7 @@ export type * from './types.js';
 /** Every feature with its routes, in the registry's order. */
 export const FEATURES: readonly Feature[] = [
   { ...projectsManifest, routes: projectsRoutes },
+  { ...memoryManifest, routes: memoryRoutes },
   { ...orgManifest, routes: orgRoutes },
   { ...boardManifest, routes: boardRoutes },
   { ...usageManifest, routes: usageRoutes },

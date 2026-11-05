@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { Route } from 'react-router-dom';
 import BoardPage from './routes/board/Board.js';
+import Memory from './routes/Memory.js';
 import Org from './routes/org/Org.js';
 import Projects from './routes/Projects.js';
 import LiveAgents from './routes/usage/LiveAgents.js';
@@ -15,6 +16,7 @@ import UsageSession from './routes/usage/UsageSession.js';
  */
 export const FEATURE_ROUTES: Record<string, ReactElement[]> = {
   projects: [<Route key="projects" path="/projects" element={<Projects />} />],
+  memory: [<Route key="memory" path="/memory" element={<Memory />} />],
   org: [<Route key="org" path="/org/*" element={<Org />} />],
   board: [
     <Route key="board" path="/board" element={<BoardPage />} />,

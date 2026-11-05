@@ -140,6 +140,17 @@ const Summaries = z
   })
   .prefault({});
 
+/** The memory feature (docs/memory.md): the one store of sourced claims, `memory_facts`. */
+const Memory = z
+  .object({
+    /**
+     * Vault paths a `memory recall` never returns, on top of the engine's own list (`.env`), matched as path
+     * prefixes. Lets a vault keep its working files out of an agent's recall without an env var. Empty: nothing extra.
+     */
+    exclude: z.array(z.string().min(1)).default([]),
+  })
+  .prefault({});
+
 /** One Telegram bot: which agent answers it, so a session's channel label can name the bot (channel.ts). */
 const TelegramBot = z.object({
   /** Short name shown on /usage, e.g. "claude" */
@@ -212,7 +223,7 @@ const Server = z
 const Settings = z.object({
   server: Server,
   /**
-   * The addons this vault turns on, e.g. `["map", "voice"]`. The five core features are
+   * The addons this vault turns on, e.g. `["map", "voice"]`. The core features are
    * always on and are never listed here. Read at runtime by `config.readAddonList` (which
    * parses the same key directly, because config.ts cannot import this file back);
    * declared here so the settings reference and validation see it.
@@ -221,6 +232,7 @@ const Settings = z.object({
   chat: Chat,
   telegram: Telegram,
   org: OrgSettings,
+  memory: Memory,
   summaries: Summaries,
   classify: Classify,
   dispatch: Dispatch,
