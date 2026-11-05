@@ -1,10 +1,18 @@
 # Set up your vault
 
-Status: **works** - the six-step setup that takes an empty folder to a private vault, the app and search, shipped today.
+Status: **works** - the setup that takes an empty folder to a private vault with the app and search, plus the starter org (`init` writes a minimal company roster); ships today.
 
-From nothing to a private vault you can browse and search, in six steps. Each step ends with a check, so you know it worked before moving on. The reference for every detail is [getting-started.md](../getting-started.md).
+From nothing to a private vault you can browse and search. Each step ends with a check, so you know it worked before moving on. This page is the whole first-run path; the reference for every setting is [configuration.md](../configuration.md).
 
 ## Step 1. Install the prerequisites
+
+The one-command path installs git, Node 22+, Python 3.9+ and PostgreSQL 15+ with pgvector on macOS or Debian/Ubuntu, and touches nothing else:
+
+```bash
+curl -fsSL https://kon-rad.github.io/argo/install.sh | sh
+```
+
+Or install them yourself:
 
 | Tool | Version | Why |
 |---|---|---|
@@ -57,6 +65,7 @@ What `init` created, and what each file is for:
 | `CLAUDE.md` | One line, `@AGENTS.md`, so Claude Code reads the same rules |
 | `.claude/settings.json`, `.claude/agents/`, `.claude/skills` | Claude Code wired to the hooks, the fact-checker subagent, a link to the shared skills folder |
 | `.agents/skills/`, `.agents/guard.local.json` | Your skills (plus links to the engine's), and your extra guard rules |
+| `.agents/org.json` | The **starter org**: owner, one lead, one coder, one reviewer, two teams. Edit it, then `secondbrain org plan` / `apply` ([From zero](00-from-zero.md) stage 7) |
 | `.env`, `.env.example`, `secondbrain.example.json`, `.gitignore` | Settings. `.env` is gitignored from the first commit |
 
 **Check:** `git status` is clean and `cat AGENTS.md | head -3` shows the generated header.
@@ -69,13 +78,25 @@ Two rules from here on. Never make the vault repo public. And never commit insid
 .secondbrain/app/bin/secondbrain
 ```
 
-The first run installs dependencies, creates the `secondbrain` database, runs the migrations, builds the server and the web UI, starts the server on `http://127.0.0.1:5123` and opens your browser. Later runs just start it.
+The first run installs dependencies, creates the `secondbrain` database, runs the migrations, builds the server and the web UI, starts the server on `http://127.0.0.1:5123` and opens your browser (on macOS or a Linux desktop; a headless machine prints the URL). Later runs just start it.
 
 Put the launcher on your PATH so the rest of these docs read naturally:
 
 ```bash
 ln -s "$PWD/.secondbrain/app/bin/secondbrain" ~/.local/bin/secondbrain
 ```
+
+| Command | Does |
+|---|---|
+| `secondbrain` | Start (if needed) and open the browser |
+| `secondbrain stop` / `restart` / `status` / `logs` | Manage the server |
+| `secondbrain scan` | Re-index the vault now |
+| `secondbrain embed` | Embed new and changed notes for semantic search |
+| `secondbrain dev` | Server and web UI in watch mode, for development |
+| `secondbrain doctor` | Health checks: Node, Postgres, pgvector, migrations, modules |
+| `secondbrain help` | Every subcommand, including the feature commands |
+
+The launcher reads `<vault>/.env`. It finds the vault by walking up from `.secondbrain/app/bin/`; set `VAULT_ROOT` to point it elsewhere.
 
 **Check:** the browser shows the app, and `secondbrain status` says it is running.
 
@@ -106,7 +127,17 @@ Then `secondbrain embed`. Re-run it when notes change; a server does it on a tim
 
 **Check:** search in `semantic` mode finds a note by meaning, with different words than the note uses.
 
-## Step 6. Back it up and keep it private
+## Step 6. Turn on the company modules (optional)
+
+Everything beyond browse, search and the database page is a module, and all of them are off by default. The company is five of them:
+
+```
+MODULES=projects,board,org,usage,summaries
+```
+
+Then `secondbrain restart`. What each one does and needs: [modules.md](../modules.md).
+
+## Step 7. Back it up and keep it private
 
 Push the vault to a **private** remote. That is your backup, and it is how a server or a second computer gets a copy later.
 
@@ -128,9 +159,20 @@ git check-ignore .env        # prints .env
 - A private git repo of markdown with the engine pinned inside it.
 - The app on `http://127.0.0.1:5123`, bound to loopback with no login, because on a laptop loopback is the boundary.
 - Keyword search, and semantic search if you turned it on.
+- A starter org in `.agents/org.json`, ready for [From zero](00-from-zero.md) stage 7.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| `extension "vector" is not available` during migrations | pgvector was built for a different Postgres. Rebuild it with that server's `pg_config` |
+| `postgres did not come up on localhost:5432` | Postgres is not running, or not on 5432. Start it (`brew services start postgresql@15`, `sudo systemctl start postgresql`) or set `DATABASE_URL` |
+| Semantic search returns 503 | No embedding provider: add `TOGETHER_API_KEY` or run Ollama |
+| A module's page is missing | The module is not in `MODULES`, or the server was not restarted |
+| `init` says the folder already has content | `init` only starts new vaults. Use an empty folder |
 
 ## Next
 
 - [Connect Claude Code](03-claude-code.md): five minutes, because `init` already wired it.
-- Turn on modules when you want them: `MODULES=projects,map` in `.env`, then `secondbrain restart`. Each one is described in [modules.md](../modules.md).
-- When something fails, the troubleshooting table at the end of [getting-started.md](../getting-started.md#troubleshooting) covers the usual causes: pgvector built for the wrong Postgres, Postgres not on 5432, a module page missing because the server was not restarted.
+- Turn on more modules when you want them, each described in [modules.md](../modules.md).
+- The whole path, stage by stage with a check after each: [From zero to an agent company](00-from-zero.md).

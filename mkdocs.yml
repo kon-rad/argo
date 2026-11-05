@@ -69,7 +69,6 @@ nav:
       - Adapt it: onboarding/10-adapt-it.md
       - Connect Telegram: onboarding/11-telegram.md
   - Reference:
-      - Getting started: getting-started.md
       - Architecture: architecture.md
       - Your vault: vault.md
       - Configuration: configuration.md
