@@ -103,6 +103,14 @@ say()  { printf '%s\n' "$*"; }
 warn() { printf '%s\n' "$*" >&2; }
 die()  { warn "error: $*"; exit 1; }
 
+# Open the app in the browser. macOS has `open`, most Linux desktops have
+# `xdg-open`; a headless machine has neither, so just print the URL.
+open_url() {
+  if command -v open >/dev/null 2>&1; then open "$1" 2>/dev/null && return 0; fi
+  if command -v xdg-open >/dev/null 2>&1; then xdg-open "$1" >/dev/null 2>&1 && return 0; fi
+  say "open $1"
+}
+
 # ---------------------------------------------------------------- process state
 
 # A pid file outlives the process that wrote it, and pids get reused. Checking
@@ -131,8 +139,21 @@ healthy() {
 ensure_postgres() {
   [[ "$REMOTE_DB" == 1 ]] && return
   if pg_isready -q -h localhost -p 5432 2>/dev/null; then return; fi
-  say "starting ${PG_FORMULA}…"
-  brew services start "$PG_FORMULA" >/dev/null 2>&1 || die "could not start $PG_FORMULA"
+  # macOS serves it through Homebrew; Linux through systemd or sysvinit. A
+  # non-interactive `sudo -n` is preferred so a Finder/CI launch never blocks on
+  # a password prompt; it falls back to the user's own service manager.
+  if command -v brew >/dev/null 2>&1; then
+    say "starting ${PG_FORMULA}…"
+    brew services start "$PG_FORMULA" >/dev/null 2>&1 || die "could not start $PG_FORMULA"
+  elif command -v systemctl >/dev/null 2>&1; then
+    say "starting postgresql…"
+    sudo -n systemctl start postgresql 2>/dev/null \
+      || systemctl start postgresql 2>/dev/null \
+      || sudo -n service postgresql start 2>/dev/null \
+      || die "could not start PostgreSQL; start it yourself, then retry"
+  else
+    die "PostgreSQL is not answering on localhost:5432; start it, then retry"
+  fi
   for _ in $(seq 1 30); do
     pg_isready -q -h localhost -p 5432 2>/dev/null && return
     sleep 1
@@ -233,7 +254,7 @@ cmd_start() {
     fi
     start_detached
   fi
-  open "$URL" 2>/dev/null || say "open $URL"
+  open_url "$URL"
 }
 
 cmd_stop() {

@@ -5,12 +5,12 @@
 [![CI](https://github.com/kon-rad/argo/actions/workflows/ci.yml/badge.svg)](https://github.com/kon-rad/argo/actions/workflows/ci.yml)
 [![Docs](https://github.com/kon-rad/argo/actions/workflows/docs.yml/badge.svg)](https://kon-rad.github.io/argo/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-black.svg)](LICENSE)
-[![Node 22+](https://img.shields.io/badge/node-22%2B-339933.svg)](docs/getting-started.md)
-[![PostgreSQL 15+ with pgvector](https://img.shields.io/badge/postgres-15%2B%20%2B%20pgvector-336791.svg)](docs/getting-started.md)
+[![Node 22+](https://img.shields.io/badge/node-22%2B-339933.svg)](docs/onboarding/02-set-up-your-vault.md)
+[![PostgreSQL 15+ with pgvector](https://img.shields.io/badge/postgres-15%2B%20%2B%20pgvector-336791.svg)](docs/onboarding/02-set-up-your-vault.md)
 
 > **Documentation: [kon-rad.github.io/argo](https://kon-rad.github.io/argo/)**
 >
-> [Onboarding](https://kon-rad.github.io/argo/onboarding/) · [Getting started](https://kon-rad.github.io/argo/getting-started/) · [Architecture](https://kon-rad.github.io/argo/architecture/) · [Configuration](https://kon-rad.github.io/argo/configuration/) · [Modules](https://kon-rad.github.io/argo/modules/) · [Contributing](CONTRIBUTING.md)
+> [Onboarding](https://kon-rad.github.io/argo/onboarding/) · [Getting started](https://kon-rad.github.io/argo/onboarding/02-set-up-your-vault/) · [Architecture](https://kon-rad.github.io/argo/architecture/) · [Configuration](https://kon-rad.github.io/argo/configuration/) · [Modules](https://kon-rad.github.io/argo/modules/) · [Contributing](CONTRIBUTING.md)
 
 Argo is an **exocortex you own**: your notes, your projects, your agents and your body's data in one private place. Plain markdown in a git repo you control, a web app that searches and maps it, and AI agents that work inside it under rules you write.
 
@@ -42,7 +42,7 @@ Computing is turning into an exocortex: memory, perception and judgment running 
 
 ## Quick start
 
-You need git, Python 3.9+, Node.js 22+ and PostgreSQL 15+ with [pgvector](https://github.com/pgvector/pgvector) 0.8+. Install steps for macOS and Ubuntu are in [docs/getting-started.md](docs/getting-started.md).
+You need git, Python 3.9+, Node.js 22+ and PostgreSQL 15+ with [pgvector](https://github.com/pgvector/pgvector) 0.8+. Install steps for macOS and Ubuntu are in [docs/onboarding/02-set-up-your-vault.md](docs/onboarding/02-set-up-your-vault.md), or run `curl -fsSL https://kon-rad.github.io/argo/install.sh | sh`.
 
 ```bash
 mkdir my-vault && cd my-vault && git init
@@ -59,7 +59,7 @@ The app runs on `http://127.0.0.1:5123` with no login. Optional next steps, each
 
 | Want | Read |
 |---|---|
-| Semantic search (a [Together AI](https://together.ai) key or local [Ollama](https://ollama.com)) | [getting-started.md, step 4](docs/getting-started.md#4-turn-on-semantic-search-optional) |
+| Semantic search (a [Together AI](https://together.ai) key or local [Ollama](https://ollama.com)) | [onboarding 02, step 5](docs/onboarding/02-set-up-your-vault.md#step-5-turn-on-semantic-search-optional) |
 | The chat module (Anthropic, OpenAI, Together, OpenRouter or Ollama) | [docs/rag.md](docs/rag.md) |
 | Agents working in the vault ([Claude Code](https://claude.com/claude-code), Hermes, Codex, Cursor, your own) | [Onboarding: connect Claude Code](docs/onboarding/03-claude-code.md) |
 | The whole path, from an empty folder to a company of agents | [Onboarding: from zero](docs/onboarding/00-from-zero.md) |
@@ -174,7 +174,7 @@ The full documentation is a site with search and navigation: **[kon-rad.github.i
 
 | Doc | |
 |---|---|
-| [Getting started](docs/getting-started.md) | From nothing to a running vault, with troubleshooting |
+| [Set up your vault](docs/onboarding/02-set-up-your-vault.md) | From nothing to a running vault, with troubleshooting |
 | [Architecture](docs/architecture.md) | Engine and vault, the app and its index, the harness, data flow |
 | [Your vault](docs/vault.md) | The template, `secondbrain-vault`, rules and skills, updating |
 | [Configuration](docs/configuration.md) | Every env variable and `secondbrain.json` key |

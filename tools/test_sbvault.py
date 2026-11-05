@@ -1,5 +1,6 @@
 """Tests for the vault CLI (tools/sbvault.py). Run: python3 -m pytest tools"""
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -120,7 +121,7 @@ def test_init_builds_a_working_vault(vault):
     assert p.returncode == 0, p.stderr
     for rel in ("AGENTS.md", "AGENTS.local.md", "CLAUDE.md", "PARA Guide.md", ".gitignore", ".env.example",
                 "Projects/README.md", "Areas/README.md", "Research/README.md", "Archives/README.md",
-                ".agents/guard.local.json", ".claude/settings.json", "zen.example.json"):
+                ".agents/guard.local.json", ".agents/org.json", ".claude/settings.json", "zen.example.json"):
         assert (vault / rel).exists(), rel
     assert (vault / ".claude" / "skills").is_symlink()
     assert (vault / ".claude" / "skills" / "fact-check" / "SKILL.md").is_file()
@@ -128,6 +129,17 @@ def test_init_builds_a_working_vault(vault):
     assert ".secondbrain/harness/hooks/guard.py" in (vault / ".claude" / "settings.json").read_text()
     assert not (vault / "AGENTS.base.md").exists()
     assert cli(vault, "rules", "--check").returncode == 0
+
+
+def test_init_writes_a_starter_org(vault):
+    """A new vault ships a minimal company: owner, one lead, one coder, one reviewer, two teams."""
+    assert cli(vault, "init", ".").returncode == 0
+    org = json.loads((vault / ".agents" / "org.json").read_text())
+    assert org["ceo"] == "owner"
+    assert set(org["agents"]) == {"owner", "atlas", "bolt", "sage"}
+    assert org["agents"]["bolt"]["team"] == "platform"
+    assert org["agents"]["sage"]["capabilities"] == ["review"]
+    assert set(org["teams"]) == {"platform", "quality"}
 
 
 def test_init_refuses_a_vault_with_content(vault):

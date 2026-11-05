@@ -1,6 +1,6 @@
 # From zero to an agent company
 
-Status: **works** - the full path from an empty folder to an agent company runs on `main` today, except the org compiler and the one-command `init|start|doctor`, which are still to come.
+Status: **works** - the full path from an empty folder to an agent company runs on `main` today, except the one-command `init|start|doctor`, which is still to come.
 
 The whole path on one page: an empty folder becomes a private vault, the vault gets an app with search, one agent starts working in it under your rules, and then a named company of agents takes the repeatable work and reports to you every morning. Every stage ends with a check. Stop at any stage and what you have still works on its own.
 
@@ -84,7 +84,7 @@ cp .env.example .env
 git add -A && git commit -m "new vault"
 ```
 
-`init` writes the PARA folders (`Projects/`, `Areas/`, `Research/`, `Archives/`, each with a README and a `PARA Guide.md`), `AGENTS.local.md` for your rules, the generated `AGENTS.md`, a one-line `CLAUDE.md` that imports it, `.claude/settings.json` wired to the hooks, `.claude/agents/fact-checker.md`, `.agents/skills/` with links to the engine's shared skills, `.agents/guard.local.json`, `secondbrain.example.json`, and a `.gitignore` that already excludes `.env`.
+`init` writes the PARA folders (`Projects/`, `Areas/`, `Research/`, `Archives/`, each with a README and a `PARA Guide.md`), `AGENTS.local.md` for your rules, the generated `AGENTS.md`, a one-line `CLAUDE.md` that imports it, `.claude/settings.json` wired to the hooks, `.claude/agents/fact-checker.md`, `.agents/skills/` with links to the engine's shared skills, `.agents/guard.local.json`, `.agents/org.json` (a starter company: owner, one lead, one coder, one reviewer, two teams), `secondbrain.example.json`, and a `.gitignore` that already excludes `.env`.
 
 Make the repo private before you push it anywhere. The vault will hold your notes, your agents' memory and the board.
 
@@ -111,7 +111,7 @@ Embeddings are part of the base, not a module: scan, embed, keyword, semantic an
 
 **Check:** the app answers at `http://127.0.0.1:5123`; a search for a word in one of your notes finds it; after `embed`, a search in semantic mode finds a note by meaning.
 
-Deeper: [Getting started](../getting-started.md), [Retrieval and the chat module](../rag.md), [Configuration](../configuration.md).
+Deeper: [Set up your vault](02-set-up-your-vault.md), [Retrieval and the chat module](../rag.md), [Configuration](../configuration.md).
 
 ## Stage 4. Your rules, your first skill, your guard
 
@@ -182,7 +182,7 @@ Deeper: [Modules](../modules.md), [Kanban board](../kanban-board.md), [The agent
 
 The company is one document: who the agents are, which team each is on, who it reports to, what it may do, and which messages wake it. The database rows are a copy of the document; `plan` shows the diff and `apply` makes the rows match.
 
-Start with the smallest company that has a hierarchy: you, one lead, one coder, one reviewer, two teams. This is the starter org that core v2 will write on `init` (decision 5); today you write it by hand.
+Start with the smallest company that has a hierarchy: you, one lead, one coder, one reviewer, two teams. `init` already wrote this starter org to `.agents/org.json` when you made the vault; read it, edit it, or use it as-is. If you would rather keep it in the same shape by hand, it looks like this:
 
 `.agents/org.json`:
 
@@ -437,7 +437,7 @@ So you know which commands exist before you type them.
 | `projects`, `board`, `org`, `usage` | shipped modules | core features with a manifest each ([#103](https://github.com/kon-rad/argo/pull/103), open) |
 | `summaries` | shipped behind `SUMMARIES=on` with `usage` | its own module in #103 |
 | Memory (`remember`, `recall`, facts, episodes) | shipped inside `secondbrain org` | `secondbrain memory`, a `/memory` page (phase 6) |
-| The org document | `org.json` by hand, `plan` and `apply` | `secondbrain org compile` from YAML, starter org on `init` (phase 7) |
+| The org document | `org.json` - a starter org written by `init` - plus `plan` and `apply` | `secondbrain org compile` from YAML (shipped, phase 7) |
 | Dispatcher | engine's for `zen-agent` bots; your loop for Claude Code and Hermes | unchanged; the `dispatch` tiers and budgets stay a pilot addon |
 | `init`, `start`, `doctor`, one config file | four commands, `.env` plus `secondbrain.json` | one command each, `secondbrain.json` owns every non-secret setting (phases 3 and 4) |
 | Telegram | `secondbrain telegram add|status|allow|remove`, shipped 2026-11-03 | unchanged |

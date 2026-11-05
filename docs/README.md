@@ -4,7 +4,7 @@ Status: **works** - the index for these docs; every page below is built and publ
 
 These pages are also published as a site at **https://kon-rad.github.io/argo/**, built from this folder on every change to `main`.
 
-New here? Start with the [onboarding path](onboarding/README.md): ten short pages from "I have notes somewhere" to a private knowledge base with agents working in it. Want it running right now? [getting-started.md](getting-started.md). Want to know how it fits together before you change it? [architecture.md](architecture.md).
+New here? Start with the [onboarding path](onboarding/README.md): short pages from "I have notes somewhere" to a private knowledge base with agents working in it. Want it running right now? [Set up your vault](onboarding/02-set-up-your-vault.md). Want to know how it fits together before you change it? [architecture.md](architecture.md).
 
 ## Onboarding
 
@@ -25,7 +25,6 @@ New here? Start with the [onboarding path](onboarding/README.md): ten short page
 
 | Doc | Read it when |
 |---|---|
-| [getting-started.md](getting-started.md) | You want a vault and the app running on your laptop, from nothing |
 | [architecture.md](architecture.md) | You want the big picture: engine vs. vault, the app, the index, the harness, where data flows |
 | [vault.md](vault.md) | You want to understand the vault template, `secondbrain-vault`, `AGENTS.md`, skills, and how to update the engine |
 | [configuration.md](configuration.md) | You need a setting: every env variable and every `secondbrain.json` key |
