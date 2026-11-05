@@ -5,8 +5,8 @@
  * list is computed one way and the same way everywhere.
  */
 
-/** The five core features: always on, in every vault, and the only ones a fresh `init` shows. */
-export const CORE_MODULES = ['projects', 'org', 'board', 'usage', 'summaries'] as const;
+/** The six core features: always on, in every vault, and the only ones a fresh `init` shows. */
+export const CORE_MODULES = ['projects', 'memory', 'org', 'board', 'usage', 'summaries'] as const;
 
 /** Non-core modules. Each has a manifest under `server/src/addons/<name>/` and is off until the vault lists it. */
 export const ADDON_MODULES = [

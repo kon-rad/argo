@@ -1,8 +1,8 @@
 # Addons
 
-Status: **works** - the core five features are always on; every other module is an addon, off until your vault lists it.
+Status: **works** - the core six features are always on; every other module is an addon, off until your vault lists it.
 
-The core features (`projects`, `org`, `board`, `usage`, `summaries`) ship on in every vault. Everything else is an **addon**: still in this repo, but off until you list it. Enabling one is a line in the vault's `secondbrain.json`:
+The core features (`projects`, `memory`, `org`, `board`, `usage`, `summaries`) ship on in every vault. Everything else is an **addon**: still in this repo, but off until you list it. Enabling one is a line in the vault's `secondbrain.json`:
 
 ```json
 { "addons": ["map", "voice", "social"] }
