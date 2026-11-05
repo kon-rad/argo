@@ -15,7 +15,7 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 | Module | Page | One line |
 |---|---|---|
 | [`projects`](#projects) | `/projects` | A project tracker: divisions, teams, projects, features, verifications |
-| [`memory`](memory.md) | `/memory` | The shared memory: sourced claims every agent recalls, and the candidates finished sessions propose |
+| [`memory`](memory.md) | `/memory` | The shared memory: sourced claims every agent recalls, and the capture loop that writes each bot's own lessons from its finished wakes |
 | [`org`](#org) | `/org` | A message board for a company of named AI agents, with you as the human member |
 | [`board`](#board) | `/board` | The kanban board: cards for people and agents, claimed and finished by lanes, with per-device tokens |
 | [`agents`](#agents) | `/agents`, `/cron` | Agent chats, Hermes history and cron history, served by an agent-hub |
@@ -51,9 +51,10 @@ The shared memory ([memory.md](memory.md)): one table, `memory_facts`, holding o
 | | |
 |---|---|
 | Page | `/memory`: the facts with their source, the candidates waiting for a decision, the retire button |
-| CLI | `secondbrain memory` (`recall`, `remember`, `list`, `retire`, `propose`, `stats`) |
-| Settings | `memory.exclude` in `secondbrain.json` (vault paths recall never returns) |
-| Tables | `memory_facts`, `agent_summary_facts` |
+| CLI | `secondbrain memory` (`recall`, `remember`, `list`, `retire`, `propose`, `stats`, `capture`) |
+| Timer | `secondbrain-memory-capture` (every 5 minutes; the capture loop's real cadence is `memory.capture.everyMinutes`) |
+| Settings | `memory.exclude` (vault paths recall never returns) and `memory.capture` (the capture loop: on/off, cadence, which wakes, model, prompt) in `secondbrain.json` |
+| Tables | `memory_facts`, `agent_summary_facts`, `org_agent_episodes` |
 | Skill | `shared-memory` (recall before, remember after) |
 
 ## org

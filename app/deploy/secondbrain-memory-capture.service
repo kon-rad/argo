@@ -1,0 +1,19 @@
+[Unit]
+Description=Second Brain: one model pass over finished bot wakes, writing each bot's durable lessons as its own facts
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+# A fixed 5-minute tick; the loop's real cadence is memory.capture.everyMinutes in secondbrain.json, so it is a
+# vault setting, not a deploy one. Off by default (memory.capture.enabled) so a tick does nothing until turned on.
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-memory.js capture
+TimeoutStartSec=900
+Nice=10
+PrivateTmp=true
+NoNewPrivileges=true

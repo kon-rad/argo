@@ -84,8 +84,8 @@ export function summariesRouter(): Router {
     const id = parseOr400(z.coerce.number().int().positive(), req.params.id);
     const body = parseOr400(decide, req.body ?? {});
     const out = await withTransaction(async (tx) => {
-      const { rows } = await tx.query<{ id: number; subject: string; claim: string; status: string; summary_id: number; project: string | null; host: string; external_id: string }>(
-        `SELECT f.id, f.subject, f.claim, f.status, f.summary_id, s.project, s.host, a.external_id
+      const { rows } = await tx.query<{ id: number; subject: string; claim: string; status: string; summary_id: number; project: string | null; host: string; external_id: string; agent: string | null }>(
+        `SELECT f.id, f.subject, f.claim, f.status, f.summary_id, f.agent, s.project, s.host, a.external_id
            FROM agent_summary_facts f JOIN agent_summaries s ON s.id = f.summary_id JOIN archive_sessions a ON a.id = s.session_id
           WHERE f.id = $1 FOR UPDATE OF f`, [id]);
       const f = rows[0];
@@ -95,9 +95,9 @@ export function summariesRouter(): Router {
       const known = slug ? (await tx.query(`SELECT 1 FROM projects WHERE slug = $1`, [slug])).rowCount : 0;
       const source = `agent-summary:${f.summary_id} (session ${f.host}/${f.external_id})`.slice(0, 500);
       const fact = await tx.query<{ id: number }>(
-        `INSERT INTO memory_facts (subject, claim, source, author, via, project_slug, confidence)
-         VALUES ($1,$2,$3,'summarizer','agent-summaries',$4,'inferred') RETURNING id`,
-        [body.subject ?? f.subject, (body.claim ?? f.claim).replace(/\s+/g, ' '), source, known ? slug : null]);
+        `INSERT INTO memory_facts (subject, claim, source, author, via, project_slug, agent, confidence)
+         VALUES ($1,$2,$3,'summarizer','agent-summaries',$4,$5,'inferred') RETURNING id`,
+        [body.subject ?? f.subject, (body.claim ?? f.claim).replace(/\s+/g, ' '), source, known ? slug : null, f.agent]);
       await tx.query(`UPDATE agent_summary_facts SET status='promoted', fact_id=$2, decided_by='owner', decided_at=now() WHERE id=$1`, [id, fact.rows[0]!.id]);
       return { id, status: 'promoted', fact_id: fact.rows[0]!.id };
     });

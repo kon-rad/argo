@@ -162,6 +162,47 @@ const Memory = z
      * prefixes. Lets a vault keep its working files out of an agent's recall without an env var. Empty: nothing extra.
      */
     exclude: z.array(z.string().min(1)).default([]),
+    /**
+     * The capture loop: after a bot's wakes, one model pass reads the episode log and writes the durable lessons as
+     * that bot's own facts (`memory_facts.agent`). Off by default; nothing is written until it is turned on. Every
+     * part of the decision (which wakes, how often, which model, the prompt) is a knob here, so a vault can tune the
+     * loop and later build a self-improvement cycle on top of it.
+     */
+    capture: z
+      .object({
+        /** Turn the loop on. Off: `secondbrain memory capture` does nothing. */
+        enabled: z.boolean().default(false),
+        /** `schedule`: the `secondbrain-memory-capture` timer drains the eligible episodes. `off`: never. */
+        trigger: z.enum(['schedule', 'off']).default('schedule'),
+        /** How often the loop may run: a tick within this many minutes of the last capture is a no-op. */
+        everyMinutes: z.number().int().min(1).default(30),
+        /** How many finished wakes one run reads at most (a cap on the model calls per tick). */
+        maxWakesPerRun: z.number().int().min(1).max(50).default(10),
+        /** A wake shorter than this many turns is skipped as too thin to teach anything. */
+        minTurns: z.number().int().min(0).default(3),
+        /** Which wake outcomes are worth reading. */
+        outcomes: z
+          .array(z.enum(['done', 'blocked', 'request_changes', 'no_report', 'error']))
+          .min(1)
+          .default(['done', 'blocked', 'request_changes', 'error']),
+        /** Wakes older than this are left alone (a backfill is a deliberate `--all`). */
+        maxAgeHours: z.number().int().min(1).default(24),
+        /** Most facts one wake may produce. */
+        maxFactsPerWake: z.number().int().min(1).max(20).default(3),
+        /** `exact`: skip a claim the bot already holds word for word. `similar`: also skip near-duplicates (pg_trgm). */
+        dedupe: z.enum(['exact', 'similar']).default('exact'),
+        /** With `dedupe: similar`, a claim this close to an existing fact is skipped. */
+        dedupeSimilarity: z.number().min(0).max(1).default(0.86),
+        /** `agent`: the fact is the bot's own memory. `company`: it is written company-wide (no agent tag). */
+        scope: z.enum(['agent', 'company']).default('agent'),
+        /** Providers tried in order; default: the summaries chain (`app/config/summaries.json`). */
+        chain: z.array(SummaryChainEntry).min(1).optional(),
+        /** Vault path of the prompt template; unset: the engine's own `app/config/memory-capture-prompt.md`. */
+        promptFile: z.string().min(1).optional(),
+        /** Inline replacement for the whole template (wins over `promptFile`). */
+        systemPrompt: z.string().min(1).optional(),
+      })
+      .prefault({}),
   })
   .prefault({});
 
