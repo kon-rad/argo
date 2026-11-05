@@ -2,7 +2,7 @@
 
 Status: **works** - the module system ships; every optional feature mounts only when you list it in `MODULES`.
 
-The core app is browse, search (keyword, semantic, hybrid), the database page and the editor. Everything else is a module, and every module is **off** until you list it:
+The core app is browse, search (keyword, semantic, hybrid), the database page and the editor. The five core features (`projects`, `org`, `board`, `usage`, `summaries`) are **always on**. Every other module is an **addon**, off until you list it (in the vault's `secondbrain.json` `addons`, or `MODULES` in `.env`):
 
 ```
 MODULES=projects,org,map
@@ -10,7 +10,7 @@ MODULES=projects,org,map
 
 A module that is off mounts no API routes, shows no nav link and gets no timers from `deploy.sh`. Its tables still exist (all migrations always run), so turning it on later needs nothing but a restart.
 
-The core features (`projects`, `org`, `board`, `usage`, `summaries`) are each wired in one place, a manifest at `app/server/src/features/<name>/manifest.ts`: the nav link, the `secondbrain` commands, the timers, the PATH wrappers, the env keys and the doc page. `secondbrain features list` prints them with their state; `secondbrain <command>` runs any command a manifest names. The other modules still use the older per-file wiring until they move to `addons/`.
+Every feature is wired in one place, a manifest: a core feature at `app/server/src/features/<name>/manifest.ts`, an addon at `app/server/src/addons/<name>/manifest.ts`, the same shape either way - the `secondbrain` commands, the timers, the PATH wrappers, the env keys and the doc page. `secondbrain features list` prints them all with their state; `secondbrain <command>` runs any command a manifest names. See [Addons](addons.md).
 
 | Module | Page | One line |
 |---|---|---|

@@ -365,12 +365,8 @@ if has usage; then
   render "$APP_DIR/deploy/secondbrain-usage-import" > /usr/local/bin/secondbrain-usage-import
   chmod 755 /usr/local/bin/secondbrain-usage-import
 fi
-# Modules that are not core features yet keep their lines here until they move to addons/.
-has agents && unit secondbrain-agents-sync
-if has map; then unit secondbrain-map-build; unit secondbrain-metrics; fi
-if has garden; then unit secondbrain-garden; fi
-has livestream && unit secondbrain-livestream
-has social && unit secondbrain-social
+# Non-core modules name their timers in their addon manifest (server/src/addons/<name>/manifest.ts),
+# so `features units` above installed them; nothing is hardcoded here any more.
 [ "$ZEN_BUILT" = 1 ] && render "$APP_DIR/deploy/zen-agent-serve.service" > /etc/systemd/system/zen-agent-serve.service
 # org-dispatch: only with the org module and ORG_DISPATCH=on (here or in the server's env file).
 grep -qsE '^ORG_DISPATCH=on$' /etc/secondbrain/env && WITH_DISPATCH=on

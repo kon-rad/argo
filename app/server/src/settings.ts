@@ -211,6 +211,13 @@ const Server = z
 
 const Settings = z.object({
   server: Server,
+  /**
+   * The addons this vault turns on, e.g. `["map", "voice"]`. The five core features are
+   * always on and are never listed here. Read at runtime by `config.readAddonList` (which
+   * parses the same key directly, because config.ts cannot import this file back);
+   * declared here so the settings reference and validation see it.
+   */
+  addons: z.array(z.string()).default([]),
   chat: Chat,
   telegram: Telegram,
   org: OrgSettings,

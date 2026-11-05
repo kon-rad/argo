@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { CONFIG_ENV_KEYS } from '../src/config.js';
-import { MANIFESTS } from '../src/features/registry.js';
+import { ALL_MANIFESTS } from '../src/features/registry.js';
 
 /**
  * Phase 4's env-schema test (card t_3d4ce863): every `process.env` key read anywhere in
@@ -97,13 +97,13 @@ describe('env schema', () => {
   });
 
   it('covers every key a feature manifest declares', () => {
-    const offenders = [...new Set(MANIFESTS.flatMap((m) => m.env))].filter((key) => !KNOWN.has(key));
+    const offenders = [...new Set(ALL_MANIFESTS.flatMap((m) => m.env))].filter((key) => !KNOWN.has(key));
     expect(offenders).toEqual([]);
   });
 
   it('keeps the baseline honest: no entry is neither read nor declared', () => {
     const read = new Set(envReads().keys());
-    const declared = new Set(MANIFESTS.flatMap((m) => m.env));
+    const declared = new Set(ALL_MANIFESTS.flatMap((m) => m.env));
     const stale = Object.keys(KNOWN_EXTRA).filter((key) => !read.has(key) && !declared.has(key) && !CONFIG_ENV_KEYS.includes(key));
     expect(stale).toEqual([]);
   });
