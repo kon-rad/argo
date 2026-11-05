@@ -4,7 +4,7 @@ export default defineFeature({
   name: 'uploads',
   core: false,
   summary: 'Send very large files (1 GB to 50 GB) from a browser straight into the vault\'s B2 bucket',
-  nav: [],
+  nav: [{ section: 'Vault', label: 'Upload', path: '/uploads' }],
   cli: [],
   timers: [],
   wrappers: [],

@@ -80,13 +80,15 @@ describe('features mounted from their manifests', () => {
     expect(res.status).toBe(401);
   });
 
-  it('/api/meta lists the nav links of the features that are on', async () => {
+  it('/api/meta lists the nav links of the features that are on, core and addon alike', async () => {
     const res = await request(createApp({ modules: new Set(['board', 'org', 'ring']) })).get('/api/meta');
+    // Core first (their manifests' order), then the addons; each link comes from a manifest.
     expect(res.body.nav).toEqual([
       { section: 'Work', label: 'Org', path: '/org' },
       { section: 'Work', label: 'Board', path: '/board' },
+      { section: 'Life', label: 'Ring', path: '/ring' },
     ]);
-    const none = await request(createApp({ modules: new Set(['ring']) })).get('/api/meta');
+    const none = await request(createApp({ modules: new Set(['garden']) })).get('/api/meta');
     expect(none.body.nav).toEqual([]);
   });
 });

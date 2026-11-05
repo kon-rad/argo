@@ -4,7 +4,7 @@ export default defineFeature({
   name: 'map',
   core: false,
   summary: 'A 3D map of your vault, projects and goals, with daily metrics on top',
-  nav: [],
+  nav: [{ section: 'Vault', label: 'Brain map', path: '/map' }],
   cli: [
     { command: 'map-build', entry: 'cli-map.js', summary: 'build the brain map data' },
     { command: 'metrics', entry: 'cli-metrics.js', summary: 'write the daily metrics the map shows' },

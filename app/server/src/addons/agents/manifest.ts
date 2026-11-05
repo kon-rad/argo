@@ -4,7 +4,10 @@ export default defineFeature({
   name: 'agents',
   core: false,
   summary: 'Views over a separately-run agent-hub: Claude Code chats, Hermes history and the cron page',
-  nav: [],
+  nav: [
+    { section: 'Work', label: 'Agents', path: '/agents' },
+    { section: 'Work', label: 'Cron', path: '/cron' },
+  ],
   cli: [{ command: 'agents-sync', entry: 'cli-agents-sync.js', summary: 'pull a host\'s Hermes history into the agent-hub' }],
   timers: [{ unit: 'secondbrain-agents-sync', summary: 'the agents-sync pull, on a timer' }],
   wrappers: [],

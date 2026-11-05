@@ -118,7 +118,19 @@ describe('nav follows /api/meta', () => {
   });
 
   it('shows enabled modules and configured note links', async () => {
-    META = { modules: ['ring', 'agents'], owner: 'owner', devLogPath: 'Projects/dev-log.md', docsPath: null, robot: false };
+    META = {
+      modules: ['ring', 'agents'],
+      // Each page link comes from its server manifest now, delivered as /api/meta's nav.
+      nav: [
+        { section: 'Work', label: 'Agents', path: '/agents' },
+        { section: 'Work', label: 'Cron', path: '/cron' },
+        { section: 'Life', label: 'Ring', path: '/ring' },
+      ],
+      owner: 'owner',
+      devLogPath: 'Projects/dev-log.md',
+      docsPath: null,
+      robot: false,
+    };
     renderAt('/');
     fireEvent.click(await screen.findByRole('button', { name: /Life/ }));
     expect(screen.getByRole('menuitem', { name: 'Ring' })).toBeDefined();
