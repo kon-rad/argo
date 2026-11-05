@@ -24,6 +24,8 @@ const USAGE = `cli-org-compile: compile a vault's org config (.agents/org/) into
   --vault DIR the vault root (default: config.vaultRoot)
 
 Dropped from the Python compiler: routing.json, graphs.json and the generated overview page.
+The routing pilot's model-floor check (routing_config.py: a bot pinned to a local model that lacks the capability its cards need) is NOT part of this port, because it reads the routing addon's models/providers/machines/routing config. The engine's --check reports every other error and warning the Python one did; the model floors belong with the routing addon when it is built, and until then a vault that has them goes on running its own compile.py check for that one class.
+
 Edit the files in .agents/org/config/, never the compiled output.`;
 
 type Args = { pos: string[]; opts: Record<string, string | true> };

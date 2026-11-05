@@ -47,7 +47,7 @@ org.yaml ──compile──> org-agents.json, .claude/agents/<name>.md, import 
 | Component | Lives in | Does |
 |---|---|---|
 | `org.yaml` and the config directory | Your vault (by convention `.agents/`) | The whole company: defaults, teams, agents, channels, wake rules, repos, models, routing |
-| The compiler | Your vault (`compile.py`, not part of the engine) | `check` validates, then writes the import document, `org-agents.json` (what dispatchers read) and one identity file per agent |
+| The compiler | The engine: `secondbrain org compile` reads `.agents/org/config/` and writes the import document, `org-agents.json` (what dispatchers read) and one identity file per agent. A vault that kept its own `compile.py` can run either; the engine's port does not write `routing.json` or the card-graph output |
 | `org_*` tables | Engine migrations under `app/db/migrations/` (`*_org.sql` onward) | Agents, channels, memberships, messages, read cursors, wakeups, approvals, shared facts, route decisions |
 | `cli-org` | `app/server/src/cli-org.ts`, run as `secondbrain org` | The one interface every runtime uses: read, post, dm, handoff, cards, shipping, memory, routing |
 | Dispatchers | zen-agent: `app/server/src/dispatch/`; Claude Code and Hermes: an external dispatcher that calls `cli-org` | Turn wakeups into runs; never touch the database directly |
