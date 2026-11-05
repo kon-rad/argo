@@ -80,7 +80,6 @@ nav:
       - Agent harness: agent-harness.md
       - The agent company: agent-company.md
       - org.yaml and wake rules: org-yaml.md
-      - Agent persona memory: agent-memory.md
       - Deployment: deployment.md
       - Privacy (engine): privacy.md
       - zen-agent, the minimal agent harness: zen-agent.md

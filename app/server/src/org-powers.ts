@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { query, withTransaction } from './db.js';
 import { getAgent, OrgError, type Agent, type Message } from './org.js';
@@ -426,19 +426,19 @@ function wordStart(w: string): RegExp {
 }
 
 /**
- * Lines of the bots' memory files that share words with the query, best first: the hand-written
- * `.agents/org/memory/<bot>.md` and the generated core block `.agents/org/memory/<bot>/core.md` (org-memory.ts).
- * Plain scoring: the share of the query's words a line contains. These files are small (tens of KB in all).
+ * Lines of the bots' hand-written memory files that share words with the query, best first: `.agents/org/memory/<bot>.md`.
+ * Plain scoring: the share of the query's words a line contains. These files are small (tens of KB in all). The
+ * generated core block (`<bot>/core.md`) was retired with the persona store (engine core v2 phase 6); a bot's own
+ * claims are `memory_facts` tagged with its name now, and `recallFacts` returns those.
  */
 export function recallMemoryFiles(vaultRoot: string, q: string, limit = 5): RecallHit[] {
   const words = terms(q);
   if (!words.length) return [];
   const dir = join(vaultRoot, '.agents', 'org', 'memory');
-  let files: { rel: string; title: string }[] = [];
+  const files: { rel: string; title: string }[] = [];
   try {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       if (e.isFile() && e.name.endsWith('.md')) files.push({ rel: e.name, title: e.name.replace(/\.md$/, '') });
-      else if (e.isDirectory() && existsSync(join(dir, e.name, 'core.md'))) files.push({ rel: `${e.name}/core.md`, title: e.name });
     }
   } catch {
     return [];

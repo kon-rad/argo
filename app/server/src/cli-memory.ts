@@ -2,8 +2,8 @@ import { exitFlushed } from './cli-exit.js';
 import { z } from 'zod';
 import { config } from './config.js';
 import { pool, setDatabaseUrl } from './db.js';
-import { getAgent, OrgError } from './org.js';
-import { factStats, forget, listFacts, recallFacts, recallMemoryFiles, remember, type Fact, type RecallHit } from './org-powers.js';
+import { getAgent, createTask, OrgError } from './org.js';
+import { factById, factStats, forget, listFacts, recallFacts, recallMemoryFiles, remember, type Fact, type RecallHit } from './org-powers.js';
 import { recallVault } from './recall.js';
 import { settings } from './settings.js';
 import { agentDatabaseUrl, identityName, parseArgs } from './cli-org.js';
@@ -23,6 +23,8 @@ const USAGE = `secondbrain memory: the shared memory every runtime recalls (a cl
       [--project p] [--agent a] [--inferred] [--supersedes id] [--via runtime@host]   a sourced claim; --agent tags it as one bot's
   memory list [--subject s] [--project p] [--author a] [--agent a] [--all] [--limit N] [--json]    the current facts (--all includes retired)
   memory retire <id> "<why>"       close a claim that no longer holds (never a hard delete)
+  memory propose <fact-id> [--dry-run]   open one improve card on the owner's backlog from a fact (a lesson that keeps
+                                    recurring); a person applies it, never a bot
   memory stats [--json]            counts: current and retired facts, by agent and author, open candidates
 
 A memory is a claim with a source, never a status check-in; card status lives on the board.`;
@@ -32,6 +34,7 @@ const KNOWN: Record<string, string[]> = {
   remember: ['source', 'project', 'agent', 'inferred', 'supersedes', 'via', 'json'],
   list: ['subject', 'project', 'author', 'agent', 'all', 'limit', 'json'],
   retire: ['json'],
+  propose: ['dry-run', 'json'],
   stats: ['json'],
   help: [],
 };
@@ -120,6 +123,30 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       if (id === undefined || !pos[1]) throw new OrgError('retire <id> "<why>"');
       await forget(await me(), id, pos[1]);
       out(`fact #${id} closed`);
+      return 0;
+    }
+    case 'propose': {
+      const id = num(pos[0], 'id');
+      if (id === undefined) throw new OrgError('propose <fact-id> [--dry-run]');
+      const f = await factById(id);
+      if (!f) throw new OrgError(`no fact #${id}`);
+      if (f.valid_to) throw new OrgError(`fact #${id} is retired; nothing to propose`);
+      const title = `self-improvement: ${f.agent ?? 'company-wide'}, ${f.subject}`.slice(0, 200);
+      if (opts['dry-run'] === true) {
+        out(json ? JSON.stringify({ fact_id: id, title, card: null }) : `would open a card: ${title}`);
+        return 0;
+      }
+      const caller = await getAgent((await me()).name);
+      const body = [
+        `Self-improvement proposal for ${caller.name}, from fact #${f.id}: ${f.subject}`,
+        '',
+        `**Claim:** ${f.claim}`,
+        `**Source:** ${f.source}${f.agent ? ` (${f.agent}'s memory)` : ''}`,
+        '',
+        'A person applies this: edit the prompt, the skill file or the config the claim is about, then close the card. A bot never applies a change to itself.',
+      ].join('\n');
+      const card = await createTask(caller, { assignee: null, title, body, kind: 'improve', priority: 3 });
+      out(json ? JSON.stringify({ fact_id: id, title, card: card.task_id }) : `card ${card.task_id} for the owner: ${title}`);
       return 0;
     }
     case 'stats': {
