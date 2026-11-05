@@ -172,7 +172,45 @@ const OrgSettings = z
   })
   .prefault({});
 
+/**
+ * The `server` block (proposal section 4): what `secondbrain plan|apply` generates the
+ * env file, the systemd units and the Caddyfile from, plus the enabled feature
+ * manifests. Non-secret by design - the login hash, the database URL and the API keys
+ * stay in the machine's env file.
+ */
+const Server = z
+  .object({
+    /**
+     * Generate `/etc/secondbrain/env`, the unit files and the Caddyfile from this block and
+     * the enabled manifests. Off by default: a merge never changes a running server's units
+     * on its own; the owner turns it on, then runs `secondbrain apply`.
+     */
+    generate: z.boolean().default(false),
+    /** The domain Caddy serves, e.g. `sb.example.com`. Unset: no Caddyfile is generated. */
+    host: z.string().min(1).optional(),
+    /** The browser origin mutating requests must carry (PUBLIC_ORIGIN). Defaults to `https://<host>`. */
+    publicOrigin: z.string().url().optional(),
+    /** The Unix user that owns the vault and runs the app. */
+    user: z.string().regex(/^[a-z_][a-z0-9_-]*$/).default('secondbrain'),
+    /** Where the app is installed on the server (@APP_DIR@ in the unit templates). */
+    dir: z.string().min(1).default('/opt/secondbrain-app'),
+    /** The vault checkout on the server (VAULT_ROOT in the generated env). */
+    vaultDir: z.string().min(1).default('/srv/vault'),
+    /** Hermes's home for the app user, for the agents module. Default: `<user>`'s home. */
+    hermesHome: z.string().min(1).optional(),
+    backup: z
+      .object({
+        /** Local time the nightly pg_dump runs, `HH:MM`. */
+        schedule: z.string().regex(/^\d{2}:\d{2}$/).default('03:30'),
+        keepDaily: z.number().int().positive().default(14),
+        keepWeekly: z.number().int().positive().default(8),
+      })
+      .prefault({}),
+  })
+  .prefault({});
+
 const Settings = z.object({
+  server: Server,
   chat: Chat,
   telegram: Telegram,
   org: OrgSettings,
@@ -269,6 +307,7 @@ const Settings = z.object({
 });
 
 export type SecondBrainSettings = z.infer<typeof Settings>;
+export type ServerSettings = SecondBrainSettings['server'];
 export type GardenSettings = SecondBrainSettings['garden'];
 export type ChatSettingsOverrides = z.infer<typeof Chat>;
 export type ClassifySettings = z.infer<typeof Classify>;

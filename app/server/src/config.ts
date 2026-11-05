@@ -182,6 +182,9 @@ const Schema = z.object({
   SOCIAL_X_MAX_CHARS: z.coerce.number().int().positive().default(280),
 });
 
+/** Every env key the schema validates, sorted. `test/env-schema.test.ts` holds this against every `process.env` read in the source. */
+export const CONFIG_ENV_KEYS: readonly string[] = Object.keys(Schema.shape).sort();
+
 export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'board', 'usage', 'summaries', 'map', 'tv', 'voice', 'livestream', 'media', 'social', 'fund', 'chat', 'uploads', 'garden'] as const;
 export type ModuleName = (typeof MODULE_NAMES)[number];
 

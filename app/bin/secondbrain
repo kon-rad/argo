@@ -427,6 +427,14 @@ cmd_doctor() {
   node --no-warnings "$APP_ROOT/server/dist/cli-doctor.js" "$@"
 }
 
+cmd_config() {
+  # Config consolidation (proposal section 4): plan | apply | upgrade. plan and a bare upgrade
+  # print the env file and units the server block implies without writing; apply writes them,
+  # and only when server.generate is true in secondbrain.json.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-config.js" "$@"
+}
+
 cmd_feature() {
   # Any command a feature manifest owns (board, org, projects, usage-sync, summarize, ...) runs through
   # cli-features, which hands the entry its own argv. Identity and the database come from the env, as
@@ -465,6 +473,9 @@ secondbrain ring-pull  copy the ring data from the server into local Postgres
 secondbrain auth-setup  create the password + authenticator login for the server
 secondbrain features   list | units | wrappers | help  the feature manifests and what they wire
 secondbrain doctor     health checks: Node, Postgres, pgvector, migrations, modules, each feature's tables (--deep adds server checks)
+secondbrain plan       the env file + systemd units the server block implies (writes nothing)
+secondbrain apply      write that plan (only when server.generate is true in secondbrain.json)
+secondbrain upgrade    the plan as a dry run; --yes writes it
 USAGE
   # Feature commands come from the manifests, so the list cannot drift from the code.
   if [[ -f "$APP_ROOT/server/dist/cli-features.js" ]]; then
@@ -501,6 +512,9 @@ case "${1:-start}" in
   auth-setup)    cmd_auth_setup ;;
   features)      cmd_features "${@:2}" ;;
   doctor)        cmd_doctor "${@:2}" ;;
+  plan)          cmd_config "$@" ;;
+  apply)         cmd_config "$@" ;;
+  upgrade)       cmd_config "$@" ;;
   help|-h|--help) cmd_help ;;
   # Everything else is a feature's command (board, org, projects, usage-sync, summarize, ...): see its manifest.
   *)             cmd_feature "$@" ;;
