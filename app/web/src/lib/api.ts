@@ -1186,7 +1186,49 @@ export interface OrgMemoryStats {
   proposals: number;
 }
 
+export interface MemoryFact {
+  id: number;
+  subject: string;
+  claim: string;
+  source: string;
+  author: string;
+  via: string | null;
+  project_slug: string | null;
+  agent: string | null;
+  confidence: 'confirmed' | 'inferred';
+  supersedes: number | null;
+  valid_from: string;
+  valid_to: string | null;
+  retired_by: string | null;
+  retired_why: string | null;
+}
+
+export interface MemoryCandidate {
+  id: number;
+  summary_id: number;
+  subject: string;
+  claim: string;
+  status: 'proposed' | 'promoted' | 'rejected';
+  fact_id: number | null;
+  agent: string | null;
+  project_slug: string | null;
+  harness: string;
+  host: string;
+  external_id: string | null;
+  source: string | null;
+  request: string | null;
+  created_at: string;
+}
+
 export const api = {
+  memoryFacts: (params: { agent?: string; project?: string; subject?: string; author?: string; all?: boolean; limit?: number } = {}) =>
+    request<{ facts: MemoryFact[] }>('/memory', params),
+  memoryCandidates: (status: MemoryCandidate['status'] = 'proposed') => request<{ candidates: MemoryCandidate[] }>('/memory/candidates', { status }),
+  promoteMemoryCandidate: (id: number, patch: { subject?: string; claim?: string; project?: string } = {}) =>
+    request<{ id: number; status: 'promoted'; fact_id: number }>(`/memory/candidates/${id}/promote`, undefined, json('POST', patch)),
+  rejectMemoryCandidate: (id: number) => request<{ id: number; status: 'rejected' }>(`/memory/candidates/${id}/reject`, undefined, json('POST', {})),
+  retireMemoryFact: (id: number, why: string) => request<{ id: number; status: 'retired' }>(`/memory/${id}/retire`, undefined, json('POST', { why })),
+
   chatOptions: () => request<ChatOptions>('/chat/options'),
   chatSettings: () => request<{ settings: ChatSettings }>('/chat/settings'),
   putChatSettings: (patch: ChatSettingsPatch) => request<{ settings: ChatSettings }>('/chat/settings', undefined, json('PUT', patch)),

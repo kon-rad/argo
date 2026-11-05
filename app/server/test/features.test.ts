@@ -49,11 +49,11 @@ describe('feature manifests', () => {
     expect(cliFor('bogus')).toBeUndefined();
   });
 
-  it('the core five are always on and the list adds to them', () => {
-    expect([...modulesFromEnv('', undefined)]).toEqual(['projects', 'org', 'board', 'usage', 'summaries']);
-    expect([...modulesFromEnv('map,voice', undefined)]).toEqual(['projects', 'org', 'board', 'usage', 'summaries', 'map', 'voice']);
+  it('the core six are always on and the list adds to them', () => {
+    expect([...modulesFromEnv('', undefined)]).toEqual(['projects', 'memory', 'org', 'board', 'usage', 'summaries']);
+    expect([...modulesFromEnv('map,voice', undefined)]).toEqual(['projects', 'memory', 'org', 'board', 'usage', 'summaries', 'map', 'voice']);
     // A vault's secondbrain.json addons list adds the same way a MODULES name does.
-    expect([...modulesFromEnv('', undefined, ['map'])]).toEqual(['projects', 'org', 'board', 'usage', 'summaries', 'map']);
+    expect([...modulesFromEnv('', undefined, ['map'])]).toEqual(['projects', 'memory', 'org', 'board', 'usage', 'summaries', 'map']);
   });
 
   it('SUMMARIES=on still turns the summaries module on, for one release', () => {
