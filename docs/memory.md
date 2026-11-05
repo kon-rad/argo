@@ -9,6 +9,32 @@ A second brain has no single "memory". It has several stores that were added for
 
 It describes what the engine and a vault do today. Numbers in the "Measured" sections come from one vault on 2026-10-26 and are there to show the method; run the same checks on yours.
 
+## The capture loop: how a bot's own memory gets written
+
+A bot's continuity between wakes is its memory file and the facts it saves. Two writers put a claim into `memory_facts`: a bot calls `secondbrain memory remember` mid-run (tagging its own name for its own memory), and the **capture loop** reads the episode log after the fact.
+
+The capture loop (`app/server/src/memory-capture.ts`) reads the finished wakes in `org_agent_episodes` that the policy admits, asks one model pass per wake what durable lesson it taught, and writes those as facts tagged with the bot's name (`memory_facts.agent`). It is the writer the phase-6 persona retirement left without a producer: the reflect step and `org_agent_memory` are gone, and this replaces them.
+
+Every part of the decision is a knob under `memory.capture` in `secondbrain.json`, and the prompt is a file, so a vault can tune the loop and later build a self-improvement cycle on it (a captured fact can already become a proposal card with `secondbrain memory propose`):
+
+| Knob | Says | Default |
+|---|---|---|
+| `enabled` | turn the loop on | `false` |
+| `trigger` | `schedule` (the timer drains it) or `off` | `schedule` |
+| `everyMinutes` | how often it may run (the timer ticks every 5 minutes; a tick inside this window is a no-op) | `30` |
+| `maxWakesPerRun` | most wakes read per run | `10` |
+| `minTurns` | a shorter wake is skipped as too thin | `3` |
+| `outcomes` | which wake outcomes are worth reading | `done`, `blocked`, `request_changes`, `error` |
+| `maxAgeHours` | older wakes are left alone | `24` |
+| `maxFactsPerWake` | most facts one wake may produce | `3` |
+| `dedupe` / `dedupeSimilarity` | skip a claim the bot already holds (`exact`, or near-duplicates with `similar`) | `exact` / `0.86` |
+| `scope` | `agent` (the fact is the bot's own) or `company` | `agent` |
+| `chain` | providers tried in order | the summaries chain |
+| `promptFile` | vault path of the prompt template | the engine's `app/config/memory-capture-prompt.md` |
+| `systemPrompt` | inline replacement for the whole template | unset |
+
+Run it by hand with `secondbrain memory capture` (`--dry-run` asks and reports but writes nothing, `--agent a` for one bot, `--limit N`, `--all` ignores the age window, `--force` the cadence). The timer `secondbrain-memory-capture` runs it on the server. Each wake it reads is stamped (`reflected_at`, `reflect_model`), so an episode is never read twice and `secondbrain memory stats` shows coverage.
+
 ## The stores at a glance
 
 | # | Store | What it holds | Written by | Loaded or searched when |

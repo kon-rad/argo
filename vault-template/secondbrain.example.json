@@ -41,6 +41,9 @@
     "allow": ["all-hands", "platform", "board", "Research/"],
     "model": "openrouter/typesafe/jev-1.14"
   },
+  "memory": {
+    "capture": { "enabled": false, "everyMinutes": 30, "scope": "agent" }
+  },
   "dispatch": {
     "tiers": {
       "strong": { "model": "openrouter/anthropic/claude-sonnet-5.5", "thinking": "low" },

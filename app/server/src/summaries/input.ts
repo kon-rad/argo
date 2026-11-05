@@ -12,6 +12,8 @@ export interface SessionRow {
   external_id: string;
   project: string | null;
   title: string | null;
+  /** The bot the session belonged to (zen-agent `meta.persona`), when it named one. */
+  agent: string | null;
   started_at: Date | null;
   ended_at: Date | null;
   updated_at: Date;

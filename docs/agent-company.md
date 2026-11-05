@@ -40,7 +40,7 @@ org.yaml ──compile──> org-agents.json, .claude/agents/<name>.md, import 
 2. **Claim.** A dispatcher polls for open wakeups, coalesces everything one agent has waiting into one run, and applies the caps: wakes per day, cooldown, global parallelism, pauses, the credit breaker. Leads go first.
 3. **Run.** The agent runs as a short, non-interactive session with its identity file and the `org-member` skill as its system prompt, resuming its own previous session. The model comes from the router, inside the envelope its config allows.
 4. **Report.** Before it finishes, the agent posts exactly one `status` with evidence (a path, a command, a card id). If it posts nothing, `wake-done` posts a fallback status saying the run ended without a report, so silence is visible.
-5. **Remember.** `wake-done` records the episode; a durable lesson goes into the shared memory (`secondbrain memory remember`), tagged with the bot's name when it is the bot's own.
+5. **Remember.** `wake-done` records the episode; a durable lesson goes into the shared memory (`secondbrain memory remember`), tagged with the bot's name when it is the bot's own (`--agent <name>`, or the `agent` argument of zen-agent's `org_remember`). After the wake, the capture loop reads the episode log and writes the bot's own lessons the same way, tagged with its name (see [memory.md](memory.md#the-capture-loop-how-a-bots-own-memory-gets-written)).
 
 ## Components
 

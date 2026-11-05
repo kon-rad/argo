@@ -141,16 +141,20 @@ export function orgTools(ctx: ToolContext, exec?: OrgExec): AgentTool<any>[] {
     tool({
       name: 'org_remember',
       label: 'Remember',
-      description: 'Save a sourced fact to the shared memory. The source is a path, a message id (#123), a card (t_...) or a URL.',
+      description:
+        'Save a sourced fact to the shared memory. The source is a path, a message id (#123), a card (t_...) or a URL. ' +
+        'Pass agent with your own roster name to save it as your own memory (the capture loop can then build on it); ' +
+        'omit it to write a company-wide fact any bot may recall.',
       parameters: Type.Object({
         subject: Type.String(),
         claim: Type.String(),
         source: Type.String(),
         project: Type.Optional(Type.String()),
         inferred: Type.Optional(Type.Boolean({ description: 'True when you concluded it rather than read it' })),
+        agent: Type.Optional(Type.String({ description: 'Your roster name, to save this as your own memory; omit for company-wide' })),
       }),
       execute: async (a) =>
-        call(['remember', a.subject, a.claim, ...flags({ source: a.source, project: a.project, inferred: a.inferred })]),
+        call(['remember', a.subject, a.claim, ...flags({ source: a.source, project: a.project, inferred: a.inferred, agent: a.agent })]),
     }),
   ];
 }

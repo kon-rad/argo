@@ -29,7 +29,7 @@ export interface RunResult {
   tokens: { input: number; output: number };
 }
 
-const SESSION_COLS = `a.id, a.source, a.harness, a.host, a.profile, a.external_id, a.project, a.title, a.started_at, a.ended_at, a.updated_at`;
+const SESSION_COLS = `a.id, a.source, a.harness, a.host, a.profile, a.external_id, a.project, a.title, NULLIF(a.meta->>'persona','') AS agent, a.started_at, a.ended_at, a.updated_at`;
 
 /** Finished sessions with no current summary. Claude Code subagents are skipped: their work shows in the parent's tool calls. */
 export async function selectSessions(opts: RunOptions, cfg: SummaryConfig): Promise<SessionRow[]> {
@@ -96,6 +96,13 @@ export async function summarizeSession(session: SessionRow, cfg: SummaryConfig, 
   }
 }
 
+/** The named bot, when the roster still knows it and it is not retired; null otherwise (the candidate stays company-wide). */
+async function activeAgent(client: { query: (text: string, values: unknown[]) => Promise<{ rowCount: number | null }> }, name: string | null): Promise<string | null> {
+  if (!name) return null;
+  const { rowCount } = await client.query(`SELECT 1 FROM org_agents WHERE name = $1 AND retired_at IS NULL`, [name]);
+  return rowCount ? name : null;
+}
+
 async function store(
   session: SessionRow, base: unknown[], s: ModelSummary, provider: string, model: string,
   attempts: Attempt[], inTok: number | null, outTok: number | null,
@@ -116,12 +123,15 @@ async function store(
        RETURNING id`,
       [...base, s.request, s.done, s.learned, s.open_items, s.outcome, provider, model, JSON.stringify(attempts), inTok, outTok]);
     const id = rows[0]!.id;
+    // The bot the session belonged to, when the roster still knows it: tagged on every candidate so an approved fact
+    // becomes that bot's own memory (memory_facts.agent), not another company-wide claim.
+    const agent = await activeAgent(client, session.agent);
     // Candidates the owner has not decided on are replaced; promoted and rejected ones stay as history.
     await client.query(`DELETE FROM agent_summary_facts WHERE summary_id = $1 AND status = 'proposed'`, [id]);
     for (const f of s.facts) {
       const dup = await client.query(`SELECT 1 FROM agent_summary_facts WHERE summary_id = $1 AND claim = $2`, [id, f.claim]);
       if (dup.rowCount) continue;
-      await client.query(`INSERT INTO agent_summary_facts (summary_id, subject, claim) VALUES ($1,$2,$3)`, [id, f.subject.slice(0, 200), f.claim.slice(0, 1000)]);
+      await client.query(`INSERT INTO agent_summary_facts (summary_id, subject, claim, agent) VALUES ($1,$2,$3,$4)`, [id, f.subject.slice(0, 200), f.claim.slice(0, 1000), agent]);
     }
     await client.query('COMMIT');
   } catch (err) {

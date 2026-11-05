@@ -4,6 +4,7 @@ import { config } from './config.js';
 import { pool, setDatabaseUrl } from './db.js';
 import { getAgent, createTask, OrgError } from './org.js';
 import { factById, factStats, forget, listFacts, recallFacts, recallMemoryFiles, remember, type Fact, type RecallHit } from './org-powers.js';
+import { runCapture } from './memory-capture.js';
 import { recallVault } from './recall.js';
 import { settings } from './settings.js';
 import { agentDatabaseUrl, identityName, parseArgs } from './cli-org.js';
@@ -26,6 +27,10 @@ const USAGE = `secondbrain memory: the shared memory every runtime recalls (a cl
   memory propose <fact-id> [--dry-run]   open one improve card on the owner's backlog from a fact (a lesson that keeps
                                     recurring); a person applies it, never a bot
   memory stats [--json]            counts: current and retired facts, by agent and author, open candidates
+  memory capture [--dry-run] [--agent a] [--limit N] [--all] [--force] [--json]
+                                    the capture loop (memory.capture in secondbrain.json): read the finished wakes
+                                    and write the durable lessons as facts. --all ignores the age window, --force the
+                                    cadence
 
 A memory is a claim with a source, never a status check-in; card status lives on the board.`;
 
@@ -36,6 +41,7 @@ const KNOWN: Record<string, string[]> = {
   retire: ['json'],
   propose: ['dry-run', 'json'],
   stats: ['json'],
+  capture: ['dry-run', 'agent', 'limit', 'all', 'force', 'json'],
   help: [],
 };
 
@@ -79,8 +85,10 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
   }
 
   // The vault arm runs on the app's own connection (sb_org has no grant on the index), before any switch to a bot's.
+  // The capture loop also stays on the app's own connection: it writes as the table owner, and memory_facts' write
+  // policy would refuse an agent identity.
   const vaultHits = sub === 'recall' && pos[0] ? await recallVault(pos[0], num(opts.limit, 'limit') ?? 8, process.env, settings().memory.exclude) : null;
-  if (process.env.ORG_AGENT?.trim() && process.env.SB_ORG_DB_URL) setDatabaseUrl(agentDatabaseUrl(process.env.SB_ORG_DB_URL, identityName()));
+  if (sub !== 'capture' && process.env.ORG_AGENT?.trim() && process.env.SB_ORG_DB_URL) setDatabaseUrl(agentDatabaseUrl(process.env.SB_ORG_DB_URL, identityName()));
   const me = async (): Promise<{ name: string }> => (process.env.ORG_AGENT?.trim() ? await getAgent(identityName()) : { name: config.orgOwner });
 
   switch (sub) {
@@ -155,6 +163,19 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       out(`${s.current} current facts (${s.retired} retired), ${s.candidates_open} candidate(s) waiting on the /memory page`);
       out(`by author: ${s.by_author.map((a) => `${a.author} ${a.n}`).join(', ') || 'none'}`);
       out(`by agent: ${s.by_agent.map((a) => `${a.agent ?? '(company-wide)'} ${a.n}`).join(', ') || 'none'}`);
+      return 0;
+    }
+    case 'capture': {
+      const r = await runCapture({
+        dryRun: opts['dry-run'] === true,
+        agent: str(opts.agent),
+        all: opts.all === true,
+        force: opts.force === true,
+        limit: num(opts.limit, 'limit'),
+        log: json ? undefined : (m) => out(m),
+      });
+      if (json) return (out(JSON.stringify(r, null, 2)), 0);
+      out(`capture: ${r.considered} wake(s) read, ${r.processed} answered, ${r.facts} fact(s) ${opts['dry-run'] === true ? 'would be ' : ''}written, ${r.skipped} skipped, ${r.failed} failed`);
       return 0;
     }
     default:
