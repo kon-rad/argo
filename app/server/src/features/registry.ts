@@ -6,6 +6,7 @@
  */
 import { ADDON_MANIFESTS } from '../addons/registry.js';
 import board from './board/manifest.js';
+import memory from './memory/manifest.js';
 import org from './org/manifest.js';
 import projects from './projects/manifest.js';
 import summaries from './summaries/manifest.js';
@@ -13,7 +14,7 @@ import type { FeatureCli, FeatureManifest, FeatureNav } from './types.js';
 import usage from './usage/manifest.js';
 
 /** The core features: they ship on in every vault, and their routes live under ./index.ts. */
-export const MANIFESTS: readonly FeatureManifest[] = [projects, org, board, usage, summaries];
+export const MANIFESTS: readonly FeatureManifest[] = [projects, memory, org, board, usage, summaries];
 
 /**
  * Core features plus addons: what `secondbrain features`, the launcher, deploy.sh,

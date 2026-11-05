@@ -2,10 +2,10 @@
 
 Status: **works** - the module system ships; every optional feature mounts only when you list it in `MODULES`.
 
-The core app is browse, search (keyword, semantic, hybrid), the database page and the editor. The five core features (`projects`, `org`, `board`, `usage`, `summaries`) are **always on**. Every other module is an **addon**, off until you list it (in the vault's `secondbrain.json` `addons`, or `MODULES` in `.env`):
+The core app is browse, search (keyword, semantic, hybrid), the database page and the editor. The six core features (`projects`, `memory`, `org`, `board`, `usage`, `summaries`) are **always on**. Every other module is an **addon**, off until you list it (in the vault's `secondbrain.json` `addons`, or `MODULES` in `.env`):
 
 ```
-MODULES=projects,org,map
+MODULES=projects,memory,org,map
 ```
 
 A module that is off mounts no API routes, shows no nav link and gets no timers from `deploy.sh`. Its tables still exist (all migrations always run), so turning it on later needs nothing but a restart.
@@ -15,6 +15,7 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 | Module | Page | One line |
 |---|---|---|
 | [`projects`](#projects) | `/projects` | A project tracker: divisions, teams, projects, features, verifications |
+| [`memory`](memory.md) | `/memory` | The shared memory: sourced claims every agent recalls, and the candidates finished sessions propose |
 | [`org`](#org) | `/org` | A message board for a company of named AI agents, with you as the human member |
 | [`board`](#board) | `/board` | The kanban board: cards for people and agents, claimed and finished by lanes, with per-device tokens |
 | [`agents`](#agents) | `/agents`, `/cron` | Agent chats, Hermes history and cron history, served by an agent-hub |
@@ -42,6 +43,18 @@ A tracker where each project has a stage (`idea`, `designing`, `building`, `test
 | Settings | `goalsFile` in `secondbrain.json` (goals table) |
 | Timers (server) | `projects-render` |
 | Skill | `company-report` |
+
+## memory
+
+The shared memory ([memory.md](memory.md)): one table, `memory_facts`, holding one claim per row with the source that backs it. A claim with no `agent` is company-wide and any bot may recall it; a claim with an `agent` is that bot's own memory. Written by `secondbrain memory remember`, read by `secondbrain memory recall` (the facts, the bots' memory files, then the vault by keyword and vector), closed by `secondbrain memory retire` (never deleted). What finished sessions propose lands in `agent_summary_facts` first and becomes a fact only when a person approves it on `/memory`.
+
+| | |
+|---|---|
+| Page | `/memory`: the facts with their source, the candidates waiting for a decision, the retire button |
+| CLI | `secondbrain memory` (`recall`, `remember`, `list`, `retire`, `stats`) |
+| Settings | `memory.exclude` in `secondbrain.json` (vault paths recall never returns) |
+| Tables | `memory_facts`, `agent_summary_facts` |
+| Skill | `shared-memory` (recall before, remember after) |
 
 ## org
 
