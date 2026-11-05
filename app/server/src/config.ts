@@ -4,6 +4,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { z } from 'zod';
+import { readAddonList } from './addons/list.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** app/ regardless of whether we run from src/ (tsx) or dist/ (built). */
@@ -185,24 +186,10 @@ const Schema = z.object({
 /** Every env key the schema validates, sorted. `test/env-schema.test.ts` holds this against every `process.env` read in the source. */
 export const CONFIG_ENV_KEYS: readonly string[] = Object.keys(Schema.shape).sort();
 
-export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'board', 'usage', 'summaries', 'map', 'tv', 'voice', 'livestream', 'media', 'social', 'fund', 'chat', 'uploads', 'garden'] as const;
-export type ModuleName = (typeof MODULE_NAMES)[number];
+import { modulesFromEnv } from './modules.js';
 
-/** `"ring, agents"` → {'ring', 'agents'}; unknown names are ignored. */
-export function parseModules(raw: string): ReadonlySet<ModuleName> {
-  const wanted = raw.split(',').map((m) => m.trim());
-  return new Set(MODULE_NAMES.filter((m) => wanted.includes(m)));
-}
-
-/** The module list, plus `summaries` when the old `SUMMARIES=on` flag asks for it (deprecated, one release). */
-export function modulesFromEnv(raw: string, summariesFlag: string | undefined): ReadonlySet<ModuleName> {
-  const modules = new Set(parseModules(raw));
-  if (summariesFlag === 'on' && !modules.has('summaries')) {
-    modules.add('summaries');
-    console.warn('SUMMARIES=on is deprecated: add "summaries" to MODULES instead. It still works this release.');
-  }
-  return modules;
-}
+/** The module model (core, addons, the parsers) lives in ./modules.ts, which has no env dependency. */
+export * from './modules.js';
 
 const parsed = Schema.safeParse(process.env);
 if (!parsed.success) {
@@ -288,7 +275,7 @@ export const config = {
   uploadsMaxBytes: Math.floor(parsed.data.UPLOADS_MAX_GB * 1024 ** 3),
   uploadsPullToken: parsed.data.UPLOADS_PULL_TOKEN,
   dataDir: resolve(appRoot, 'data'),
-  modules: modulesFromEnv(parsed.data.MODULES, parsed.data.SUMMARIES),
+  modules: modulesFromEnv(parsed.data.MODULES, parsed.data.SUMMARIES, readAddonList(resolve(parsed.data.VAULT_ROOT))),
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,
   orgVaultAssignee: parsed.data.ORG_VAULT_ASSIGNEE,

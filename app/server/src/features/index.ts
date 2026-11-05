@@ -11,7 +11,7 @@ import type { Feature, FeatureContext, FeatureRoute, MountPoint } from './types.
 import usageManifest from './usage/manifest.js';
 import { routes as usageRoutes } from './usage/routes.js';
 
-export { MANIFESTS, cliFor, enabledManifests, navFor, unitsFor, wrappersFor } from './registry.js';
+export { ALL_MANIFESTS, MANIFESTS, cliFor, enabledManifests, navFor, unitsFor, wrappersFor } from './registry.js';
 export type * from './types.js';
 
 /** Every feature with its routes, in the registry's order. */

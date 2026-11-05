@@ -75,6 +75,7 @@ nav:
       - Configuration: configuration.md
       - Vault sync: sync.md
       - Modules: modules.md
+      - Addons: addons.md
       - Retrieval and the chat module: rag.md
       - Memory, and how to check it works: memory.md
       - Agent harness: agent-harness.md

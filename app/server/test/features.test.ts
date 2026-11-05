@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { MODULE_NAMES, modulesFromEnv } from '../src/config.js';
 import { FEATURES } from '../src/features/index.js';
-import { MANIFESTS, cliFor, navFor, unitsFor, wrapperScript, wrappersFor } from '../src/features/registry.js';
+import { ALL_MANIFESTS, MANIFESTS, cliFor, navFor, unitsFor, wrapperScript, wrappersFor } from '../src/features/registry.js';
 
 const APP_ROOT = resolve(import.meta.dirname, '..', '..');
 const REPO_ROOT = resolve(APP_ROOT, '..');
@@ -19,7 +19,7 @@ describe('feature manifests', () => {
   });
 
   it('every file a manifest names exists: CLI entries, unit pairs, wrappers and docs', () => {
-    for (const m of MANIFESTS) {
+    for (const m of ALL_MANIFESTS) {
       for (const c of m.cli) expect(existsSync(resolve(APP_ROOT, 'server/src', c.entry.replace(/\.js$/, '.ts'))), `${m.name}: ${c.entry}`).toBe(true);
       for (const t of m.timers) {
         expect(existsSync(resolve(APP_ROOT, 'deploy', `${t.unit}.service`)), `${m.name}: ${t.unit}.service`).toBe(true);
@@ -30,12 +30,12 @@ describe('feature manifests', () => {
     }
   });
 
-  it('commands, nav paths and units are unique across features', () => {
-    const commands = MANIFESTS.flatMap((m) => m.cli.map((c) => c.command));
+  it('commands, nav paths and units are unique across features and addons', () => {
+    const commands = ALL_MANIFESTS.flatMap((m) => m.cli.map((c) => c.command));
     expect(new Set(commands).size).toBe(commands.length);
-    const paths = MANIFESTS.flatMap((m) => m.nav.map((n) => n.path));
+    const paths = ALL_MANIFESTS.flatMap((m) => m.nav.map((n) => n.path));
     expect(new Set(paths).size).toBe(paths.length);
-    const units = MANIFESTS.flatMap((m) => m.timers.map((t) => t.unit));
+    const units = ALL_MANIFESTS.flatMap((m) => m.timers.map((t) => t.unit));
     expect(new Set(units).size).toBe(units.length);
   });
 
@@ -49,10 +49,15 @@ describe('feature manifests', () => {
     expect(cliFor('bogus')).toBeUndefined();
   });
 
+  it('the core five are always on and the list adds to them', () => {
+    expect([...modulesFromEnv('', undefined)]).toEqual(['projects', 'org', 'board', 'usage', 'summaries']);
+    expect([...modulesFromEnv('map,voice', undefined)]).toEqual(['projects', 'org', 'board', 'usage', 'summaries', 'map', 'voice']);
+    // A vault's secondbrain.json addons list adds the same way a MODULES name does.
+    expect([...modulesFromEnv('', undefined, ['map'])]).toEqual(['projects', 'org', 'board', 'usage', 'summaries', 'map']);
+  });
+
   it('SUMMARIES=on still turns the summaries module on, for one release', () => {
-    expect([...modulesFromEnv('usage', 'on')]).toEqual(['usage', 'summaries']);
-    expect([...modulesFromEnv('usage,summaries', 'on')]).toEqual(['usage', 'summaries']);
-    expect([...modulesFromEnv('usage', undefined)]).toEqual(['usage']);
+    expect([...modulesFromEnv('', 'on')]).toContain('summaries');
   });
 });
 

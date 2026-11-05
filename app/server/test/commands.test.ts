@@ -17,19 +17,20 @@ describe('the command table', () => {
     }
   });
 
-  it('command words are unique across the core features and the standalone commands', () => {
+  it('command words are unique across the core features and the addons', () => {
     const names = commandsFor().map((c) => c.command);
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it('cliFor finds a core command and a standalone one, and nothing for a bogus word', () => {
+  it('cliFor finds a core command and an addon command, and nothing for a bogus word', () => {
     expect(cliFor('board')?.feature?.name).toBe('board');
     expect(cliFor('social')?.cli.entry).toBe('cli-social.js');
-    expect(cliFor('social')?.feature, 'a standalone command has no feature').toBeUndefined();
+    expect(cliFor('social')?.feature?.name, 'social is an addon feature now').toBe('social');
+    expect(cliFor('ring-pull')?.feature?.name).toBe('ring');
     expect(cliFor('bogus')).toBeUndefined();
   });
 
-  it('the wrappers are a function of the module list: a standalone command wraps only when its module is on', () => {
+  it('the wrappers are a function of the module list: an addon command wraps only when its module is on', () => {
     expect(wrappersFor(new Set(['board', 'org', 'projects', 'social']))).toEqual(['cli-projects', 'cli-org', 'cli-board', 'cli-social']);
     expect(wrappersFor(new Set(['board']))).toEqual(['cli-board']);
     expect(wrappersFor(new Set())).toEqual([]);
