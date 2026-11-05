@@ -12,12 +12,16 @@
 import type { FeatureManifest } from '../features/types.js';
 import agents from './agents/manifest.js';
 import chat from './chat/manifest.js';
+import classify from './classify/manifest.js';
+import dispatch from './dispatch/manifest.js';
 import fund from './fund/manifest.js';
 import garden from './garden/manifest.js';
+import improve from './improve/manifest.js';
 import livestream from './livestream/manifest.js';
 import map from './map/manifest.js';
 import media from './media/manifest.js';
 import ring from './ring/manifest.js';
+import routing from './routing/manifest.js';
 import social from './social/manifest.js';
 import tv from './tv/manifest.js';
 import uploads from './uploads/manifest.js';
@@ -36,4 +40,8 @@ export const ADDON_MANIFESTS: readonly FeatureManifest[] = [
   chat,
   uploads,
   garden,
+  routing,
+  classify,
+  dispatch,
+  improve,
 ];

@@ -1,4 +1,4 @@
-import type { RequestHandler, Router } from 'express';
+import type { Express, RequestHandler, Router } from 'express';
 import type { AppOptions } from '../app.js';
 import type { ModuleName } from '../config.js';
 
@@ -89,6 +89,11 @@ export interface FeatureContext {
   /** The session check, for a public route that gates some of its own paths (the board). Absent locally. */
   sessionGate?: RequestHandler;
   opts: AppOptions;
+  /**
+   * The express app being built. Only an addon that must attach something to `app.locals` a bootstrap
+   * starts later uses it (uploads' worker); route construction otherwise stays off the app object.
+   */
+  app: Express;
 }
 
 export type FeatureRoutes = (ctx: FeatureContext) => FeatureRoute[];

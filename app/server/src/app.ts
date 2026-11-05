@@ -1,45 +1,34 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import express from 'express';
+import { addonRoutes } from './addons/index.js';
 import { createAuth, type AuthOptions } from './auth/router.js';
 import { config, type ModuleName } from './config.js';
 import { healthy, runChecks } from './doctor.js';
 import { connectors as defaultConnectors, type ConnectorRegistry } from './connectors/index.js';
 import { defaultEmbeddingProvider } from './embeddings/factory.js';
 import { featureRoutes, mountAt, navFor } from './features/index.js';
-import { agentsRouter } from './routes/agents.js';
-import { tvRouter } from './routes/tv.js';
 import { b2Router, type B2Options } from './routes/b2.js';
-import { mountUploads } from './uploads/setup.js';
-import { uploadsPullRouter } from './routes/uploadsPull.js';
-import type { UploadsRouterOptions } from './routes/uploads.js';
 import type { BoardRouterOptions } from './routes/board.js';
-import { chatRouter, type ChatOptions } from './routes/chat.js';
-import { errorHandlerFor } from './routes/http.js';
+import type { ChatOptions } from './routes/chat.js';
 import { databaseRouter } from './routes/database.js';
 import { fileRouter } from './routes/file.js';
-import { hubRouter, type HubOptions } from './routes/hub.js';
-import { zenRouter, type ZenOptions } from './routes/zen.js';
-import { presetsRouter } from './routes/presets.js';
-import { mapRouter } from './routes/map.js';
-import { mediaRouter } from './routes/media.js';
-import { fundRouter } from './routes/fund.js';
-import type { FundDeps } from './fund.js';
 import { friendlyRouter, type FriendlyOptions } from './routes/friendly.js';
-import { rawRouter } from './routes/raw.js';
+import { errorHandlerFor } from './routes/http.js';
+import type { HubOptions } from './routes/hub.js';
 import { knowledgeTokenGate } from './auth/knowledgeToken.js';
-import { ringRouter, type RingRouterOptions } from './routes/ring.js';
+import { rawRouter } from './routes/raw.js';
+import type { RingRouterOptions } from './routes/ring.js';
 import { runsRouter } from './routes/runs.js';
 import { searchRouter, type ProviderFactory } from './routes/search.js';
-import { socialCallbackRouter, socialRouter, type SocialOptions } from './routes/social.js';
+import type { SocialOptions } from './routes/social.js';
 import { sourcesRouter } from './routes/sources.js';
 import { systemRouter } from './routes/system.js';
 import { treeRouter } from './routes/tree.js';
-import { voiceRouter, type VoiceOptions } from './routes/voice.js';
-import { bufferProvider } from './social/providers/buffer.js';
-import { linkedinProvider } from './social/providers/linkedin.js';
-import { BUFFER_PROVIDER_KEY } from './social/scheduler.js';
-import type { SocialProvider } from './social/providers/types.js';
+import type { UploadsRouterOptions } from './routes/uploads.js';
+import type { VoiceOptions } from './routes/voice.js';
+import type { ZenOptions } from './routes/zen.js';
+import type { FundDeps } from './fund.js';
 import { togetherSqlGenerator, type SqlGenerator } from './sqlgen.js';
 import { readBuildInfo, type BuildInfo } from './version.js';
 
@@ -98,16 +87,6 @@ function defaultSqlGenerator(): SqlGenerator {
   return togetherSqlGenerator({ apiKey: config.togetherApiKey, model: config.sqlModel });
 }
 
-/** Only LinkedIn is wired today; an unconfigured provider is simply absent, not an error. */
-function defaultSocialProviders(): Record<string, SocialProvider> {
-  const providers: Record<string, SocialProvider> = {};
-  if (config.linkedinClientId && config.linkedinClientSecret) {
-    providers.linkedin = linkedinProvider({ clientId: config.linkedinClientId, clientSecret: config.linkedinClientSecret });
-  }
-  if (config.bufferApiKey) providers[BUFFER_PROVIDER_KEY] = bufferProvider({ apiKey: config.bufferApiKey });
-  return providers;
-}
-
 /** Scripts only from this origin; fetches only from this origin plus `connectOrigins` (the bucket, for direct uploads). */
 export function contentSecurityPolicy(connectOrigins: string[] = []): string {
   return [
@@ -150,8 +129,9 @@ export function createApp(opts: AppOptions = {}): express.Express {
   // Saving a note carries the whole file; everything else stays at 1 MB. The
   // second parser skips a body the first has already read.
   app.use('/api/file/source', express.json({ limit: '6mb' }));
-  // Core features come from their manifests (features/<name>/): three mount points, raw, public and session.
-  // The login is built first so a public route that gates some of its own paths (the board) can use it.
+  // Features come from their manifests, core (features/<name>/) and addon (addons/<name>/) alike:
+  // three mount points, raw, public and session. The login is built first so a public route that
+  // gates some of its own paths (the board) can use it.
   const auth = remote
     ? createAuth(
         opts.auth ?? {
@@ -161,12 +141,11 @@ export function createApp(opts: AppOptions = {}): express.Express {
         },
       )
     : undefined;
-  const features = featureRoutes(modules, { vaultRoot, remote, sessionGate: auth?.requireSession, opts });
-  // Raw: ahead of the global body parser (the usage ingest reads its own large body after checking its token).
+  const ctx = { vaultRoot, remote, sessionGate: auth?.requireSession, opts, app };
+  const features = [...featureRoutes(modules, ctx), ...addonRoutes(modules, ctx)];
+  // Raw: ahead of the global body parser (the usage ingest reads its own large body after checking
+  // its token; a queued social post carries its images as base64 and parses before the session check).
   mountAt(app, features, 'raw');
-  // A queued social post carries its images as base64 (4 x 5 MB at most). Like the
-  // note saver above, it parses before the session check, which still refuses it.
-  app.use('/api/social/posts', express.json({ limit: '30mb' }));
   app.use(express.json({ limit: '1mb' }));
 
   // The same checks `secondbrain doctor` prints, so a monitor and a person see one
@@ -177,23 +156,8 @@ export function createApp(opts: AppOptions = {}): express.Express {
     res.json({ ok: healthy(checks), checks });
   });
 
-  // The OAuth callback (the provider's redirect arrives without the session
-  // cookie) and the public media a relay fetches by token.
-  const socialOpts: SocialOptions | undefined = modules.has('social')
-    ? {
-        providers: defaultSocialProviders(),
-        tokenEncKey: config.socialTokenEncKey,
-        redirectBaseUrl: config.socialRedirectBaseUrl,
-        xMaxChars: config.socialXMaxChars,
-        ...opts.social,
-      }
-    : undefined;
-  if (socialOpts) app.use('/api/social', socialCallbackRouter(socialOpts));
-
-  // The second machine's pull calls carry a bearer token, no session; they sit ahead of the session gate like the board's.
-  if (modules.has('uploads')) app.use('/api/uploads/pull', uploadsPullRouter(opts.uploadsPullToken ?? config.uploadsPullToken));
-
-  // Public: a feature route with its own token check (the projects feed, the board) sits ahead of the login gates.
+  // Public: a feature route with its own token check (the projects feed, the board, the social OAuth
+  // callback, the uploads pull) sits ahead of the login gates.
   mountAt(app, features, 'public');
 
   if (auth) {
@@ -215,7 +179,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
   app.get('/api/meta', (_req, res) => {
     res.json({
       modules: [...modules],
-      // The header links of the core features that are on, from their manifests.
+      // The header links of the features that are on, from their manifests.
       nav: navFor(modules),
       owner: config.ownerName,
       devLogPath: config.devLogPath,
@@ -228,11 +192,6 @@ export function createApp(opts: AppOptions = {}): express.Express {
   app.use('/api/file', fileRouter(vaultRoot));
   app.use('/api/raw', rawRouter(vaultRoot));
   app.use('/api/b2', b2Router(vaultRoot, opts.b2 ?? { serveUrl: config.b2ServeUrl }));
-  if (modules.has('uploads')) {
-    const uploads = mountUploads(vaultRoot, opts.uploads);
-    app.use('/api/uploads', uploads.router);
-    app.locals['uploadsWorker'] = uploads.worker;
-  }
   app.use(
     '/api/search',
     searchRouter(opts.embeddingProvider ?? defaultEmbeddingProvider, [
@@ -244,39 +203,9 @@ export function createApp(opts: AppOptions = {}): express.Express {
   app.use('/api/sources', sourcesRouter(opts.connectors ?? defaultConnectors));
   app.use('/api/runs', runsRouter());
   app.use('/api/db', databaseRouter(opts.sqlGenerator ?? defaultSqlGenerator));
-  // Optional modules: off means not mounted at all, so their API 404s like any unknown path.
-  if (modules.has('ring')) {
-    const host = config.ringPullHost;
-    app.use(
-      '/api/ring',
-      ringRouter({
-        allowPull: !remote && config.indexer && Boolean(host),
-        host: host ?? '',
-        db: config.ringPullDb,
-        ...opts.ring,
-      }),
-    );
-  }
-  if (modules.has('agents')) {
-    app.use('/api/agents', agentsRouter(opts.timers));
-    app.use('/api/hub', hubRouter(opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }));
-    app.use('/api/zen', zenRouter(opts.zen ?? { url: config.zenAgentUrl, token: config.zenAgentToken }));
-    app.use('/api/presets', presetsRouter());
-  }
-  // Session: the rest of the core features' routes, behind the login like everything below.
+  // Session: the rest of the features' routes, behind the login like everything below. A module
+  // that is off is not mounted at all, so its API 404s like any unknown path.
   mountAt(app, features, 'session');
-  if (modules.has('map')) app.use('/api/map', mapRouter());
-  if (modules.has('tv')) app.use('/api/tv', tvRouter(vaultRoot));
-  if (modules.has('media')) app.use('/api/media', mediaRouter(vaultRoot));
-  if (modules.has('fund')) app.use('/api/fund', fundRouter(vaultRoot, opts.fund));
-  if (socialOpts) app.use('/api/social', socialRouter(socialOpts));
-  // Ask the vault: retrieval over the same index the search uses, answered by a chat model.
-  if (modules.has('chat')) {
-    app.use(
-      '/api/chat',
-      chatRouter({ vaultRoot, embeddingProvider: opts.embeddingProvider ?? defaultEmbeddingProvider, ...opts.chat }),
-    );
-  }
   // Local-only: one spawns a shell script, the other stops the process. Neither
   // belongs on an internet-facing box, logged in or not.
   const robotScript = opts.friendly?.script ?? config.robotLaunchScript;
@@ -287,21 +216,6 @@ export function createApp(opts: AppOptions = {}): express.Express {
         script: robotScript,
         logFile: join(config.dataDir, 'friendly-launch.log'),
         ...opts.friendly,
-      }),
-    );
-  }
-  // Read-aloud through a local speech server (Kokoro). Its settings can also
-  // drive a Claude Code Stop hook on the same machine. Never on a server.
-  if (!remote && modules.has('voice')) {
-    app.use(
-      '/api/voice',
-      voiceRouter({
-        vaultRoot,
-        settingsFile: join(config.dataDir, 'voice-settings.json'),
-        cacheDir: join(config.dataDir, 'tts'),
-        ttsUrl: config.ttsUrl,
-        ttsModel: config.ttsModel,
-        ...opts.voice,
       }),
     );
   }

@@ -26,12 +26,25 @@ Each addon has one place it is wired, a manifest at `app/server/src/addons/<name
 | [`chat`](modules.md#chat) | Ask your second brain, answered from retrieved passages | - | - |
 | [`uploads`](uploads.md) | Send 1 GB to 50 GB files from a browser to the B2 bucket | - | - |
 | [`garden`](garden.md) | A nightly shelf-keeping pass over Projects/, Areas/ and Research/ | `garden` | `garden` |
+| [`routing`](modules.md) | The model-routing pilot: tier selection and the weekly routing report | - | `routing-report` |
+| [`classify`](modules.md) | The wake gate: one calibrated decision about a state, logged | `classify` | - |
+| [`dispatch`](modules.md) | The zen-agent dispatcher: one run per bot with open wakeups | `org-dispatch` | `dispatch` |
+| [`improve`](modules.md) | The self-improvement loop (proposal) | - | - |
 
 Two addons run outside the app and so keep a `manifest.json` at the repo root instead of a TypeScript manifest: `addons/tv-kiosk/` (a Raspberry Pi that shows the app on a TV) and `addons/telegram-bridge/` (a Python bridge with its own unit and env). `deploy`, `doctor` and this index read both shapes.
 
 ## Pilot and proposal addons
 
-Four addons are named in the plan but not yet given a manifest, because each is a pilot or a proposal rather than shipped code: `routing` (`org-router.ts`, `route_decisions`, the routing report timer), `classify` (the wake gate at `secondbrain classify`), `dispatch` (the zen-agent dispatcher, which stays a pilot addon) and `improve` (the self-improvement loop, docs only). Their app paths are removed from the core as phase 5's second slice lands; each gets a manifest and a Status line when it does.
+Four addons are pilots or proposals rather than shipped code. Each now has a manifest under `app/server/src/addons/<name>/` and a Status line, so it shows in `secondbrain features list`, but it is off unless your vault lists it:
+
+| Addon | Status | What it is |
+|---|---|---|
+| `routing` | pilot | The model-routing tier selection and the `route_decisions` / `route_outcomes` ledger, and the weekly routing report (its timer moved off the org manifest onto this one). |
+| `classify` | pilot | The wake gate (`secondbrain classify`): one calibrated decision about a state, logged to `classify_decisions`. |
+| `dispatch` | pilot | The zen-agent dispatcher (`secondbrain org-dispatch`), one run per bot with open wakeups. Off unless the module is on and the server sets `ORG_DISPATCH=on`. |
+| `improve` | proposal | The self-improvement loop from the plan. Docs only: no code paths, no CLI, no timer. |
+
+Their **code** still lives in the core tree (`org-router.ts`, `dispatch/`, `classify/`, `cli-classify.ts`, `cli-dispatch.ts`), reached through the launcher's own command functions because those commands bootstrap Postgres before they run. Moving that code under `addons/<name>/` and routing the commands through the manifest's command table is the next slice of phase 5; until then the pilot addons declare their CLI, timer and env, and turning one off stops its timer and its `features` listing.
 
 ## Adding an addon
 

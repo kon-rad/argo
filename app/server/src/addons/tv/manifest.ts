@@ -4,7 +4,7 @@ export default defineFeature({
   name: 'tv',
   core: false,
   summary: 'A player for video episodes kept in your vault, with a kiosk mode for a TV',
-  nav: [],
+  nav: [{ section: 'Vault', label: 'TV', path: '/tv' }],
   cli: [],
   timers: [],
   wrappers: [],
