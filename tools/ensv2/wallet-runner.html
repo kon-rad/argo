@@ -45,7 +45,10 @@ async function send(index, button) {
     await connect(); const item = manifest.transactions[index]
     if (!confirm(`${item.description}\n\nTo: ${item.to}\n\nRonin will show the final confirmation next.`)) return
     button.disabled = true; status(`Waiting for approval: ${item.description}`)
-    const hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: account, to: item.to, data: item.data, value: item.value || '0x0' }] })
+    const transaction = { from: account, to: item.to, data: item.data, value: item.value || '0x0' }
+    const estimated = await provider.request({ method: 'eth_estimateGas', params: [transaction] })
+    transaction.gas = `0x${(BigInt(estimated) * 120n / 100n).toString(16)}`
+    const hash = await provider.request({ method: 'eth_sendTransaction', params: [transaction] })
     status(`Submitted ${short(hash)}. Waiting for confirmation…`); const receipt = await waitReceipt(hash)
     if (receipt.status !== '0x1') throw new Error(`Transaction reverted: ${hash}`)
     button.textContent = `Confirmed ${short(hash)}`; button.className = 'ok'; status(`Confirmed: ${hash}`, 'ok')
