@@ -1,0 +1,58 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Argo ENSv2 wallet runner</title>
+<style>
+  body { max-width: 760px; margin: 40px auto; font: 16px system-ui, sans-serif; line-height: 1.45; }
+  code { word-break: break-all; }
+  button { padding: 10px 14px; margin: 6px 0; cursor: pointer; }
+  .ok { color: #087f23; } .err { color: #b00020; } li { margin: 10px 0; }
+</style>
+<h1>ENSv2 wallet runner</h1>
+<p>This page sends only the transactions in a locally selected Argo manifest. It requires Ronin Wallet on Ethereum Mainnet.</p>
+<input id="file" type="file" accept="application/json">
+<p id="wallet">Wallet: not connected</p><p id="network">Network: not checked</p>
+<p id="target">Manifest: not loaded</p><ol id="txs"></ol><p id="status"></p>
+<script>
+const EXPECTED_CHAIN = '0x1'; let provider, account, manifest
+const $ = (id) => document.getElementById(id)
+const status = (message, cls = '') => { $('status').textContent = message; $('status').className = cls }
+const short = (value) => `${value.slice(0, 6)}…${value.slice(-4)}`
+async function connect() {
+  provider = window.ronin?.provider || window.ethereum
+  if (!provider) throw new Error('No injected wallet found. Open this page where Ronin Wallet is installed.')
+  account = (await provider.request({ method: 'eth_requestAccounts' }))[0]
+  const chain = await provider.request({ method: 'eth_chainId' })
+  $('wallet').textContent = `Wallet: ${account}`
+  $('network').textContent = `Network: ${chain === EXPECTED_CHAIN ? 'Ethereum Mainnet' : `wrong chain (${chain})`}`
+  if (chain !== EXPECTED_CHAIN) throw new Error('Switch Ronin Wallet to Ethereum Mainnet before signing.')
+  if (manifest && account.toLowerCase() !== manifest.parentOwner.toLowerCase()) throw new Error('Connected wallet does not match manifest.parentOwner.')
+}
+function render() {
+  $('target').textContent = `Manifest: ${manifest.fullName} | owner ${manifest.parentOwner}`
+  const list = $('txs'); list.replaceChildren()
+  manifest.transactions.forEach((item, index) => {
+    const li = document.createElement('li'); const label = document.createElement('div')
+    label.innerHTML = `<strong>${index + 1}. ${item.description}</strong><br><code>to: ${item.to}</code>`
+    const button = document.createElement('button'); button.textContent = `Review and sign ${index + 1}`
+    button.onclick = () => send(index, button); li.append(label, button); list.append(li)
+  })
+}
+async function waitReceipt(hash) {
+  for (;;) { const receipt = await provider.request({ method: 'eth_getTransactionReceipt', params: [hash] }); if (receipt) return receipt; await new Promise(r => setTimeout(r, 3000)) }
+}
+async function send(index, button) {
+  try {
+    await connect(); const item = manifest.transactions[index]
+    if (!confirm(`${item.description}\n\nTo: ${item.to}\n\nRonin will show the final confirmation next.`)) return
+    button.disabled = true; status(`Waiting for approval: ${item.description}`)
+    const hash = await provider.request({ method: 'eth_sendTransaction', params: [{ from: account, to: item.to, data: item.data, value: item.value || '0x0' }] })
+    status(`Submitted ${short(hash)}. Waiting for confirmation…`); const receipt = await waitReceipt(hash)
+    if (receipt.status !== '0x1') throw new Error(`Transaction reverted: ${hash}`)
+    button.textContent = `Confirmed ${short(hash)}`; button.className = 'ok'; status(`Confirmed: ${hash}`, 'ok')
+  } catch (error) { button.disabled = false; status(error.message || String(error), 'err') }
+}
+$("file").addEventListener('change', async (event) => {
+  try { manifest = JSON.parse(await event.target.files[0].text()); if (manifest.chainId !== 1 || !manifest.parentOwner || !Array.isArray(manifest.transactions)) throw new Error('Not a valid Argo ENSv2 manifest.'); render(); await connect(); status('Ready. Review and sign transactions one at a time.') }
+  catch (error) { status(error.message || String(error), 'err') }
+})
+</script>
