@@ -13,7 +13,7 @@
 <p id="wallet">Wallet: not connected</p><p id="network">Network: not checked</p>
 <p id="target">Manifest: not loaded</p><ol id="txs"></ol><p id="status"></p>
 <script>
-const EXPECTED_CHAIN = '0x1'; let provider, account, manifest
+const EXPECTED_CHAIN = 1n; let provider, account, manifest
 const $ = (id) => document.getElementById(id)
 const status = (message, cls = '') => { $('status').textContent = message; $('status').className = cls }
 const short = (value) => `${value.slice(0, 6)}…${value.slice(-4)}`
@@ -21,9 +21,9 @@ async function connect() {
   provider = window.ronin?.provider || window.ethereum
   if (!provider) throw new Error('No injected wallet found. Open this page where Ronin Wallet is installed.')
   account = (await provider.request({ method: 'eth_requestAccounts' }))[0]
-  const chain = await provider.request({ method: 'eth_chainId' })
+  const chain = BigInt(await provider.request({ method: 'eth_chainId' }))
   $('wallet').textContent = `Wallet: ${account}`
-  $('network').textContent = `Network: ${chain === EXPECTED_CHAIN ? 'Ethereum Mainnet' : `wrong chain (${chain})`}`
+  $('network').textContent = `Network: ${chain === EXPECTED_CHAIN ? 'Ethereum Mainnet' : `wrong chain (0x${chain.toString(16)})`}`
   if (chain !== EXPECTED_CHAIN) throw new Error('Switch Ronin Wallet to Ethereum Mainnet before signing.')
   if (manifest && account.toLowerCase() !== manifest.parentOwner.toLowerCase()) throw new Error('Connected wallet does not match manifest.parentOwner.')
 }
@@ -54,5 +54,18 @@ async function send(index, button) {
 $("file").addEventListener('change', async (event) => {
   try { manifest = JSON.parse(await event.target.files[0].text()); if (manifest.chainId !== 1 || !manifest.parentOwner || !Array.isArray(manifest.transactions)) throw new Error('Not a valid Argo ENSv2 manifest.'); render(); await connect(); status('Ready. Review and sign transactions one at a time.') }
   catch (error) { status(error.message || String(error), 'err') }
+})
+
+function refreshWalletState() {
+  if (!provider) return
+  connect().then(() => status('Wallet state refreshed.')).catch(error => status(error.message || String(error), 'err'))
+}
+
+// Ronin may report chain IDs with padded hex, such as 0x01. Re-read the
+// provider rather than trusting the event payload so the UI stays current.
+window.addEventListener('load', () => {
+  provider = window.ronin?.provider || window.ethereum
+  provider?.on?.('chainChanged', refreshWalletState)
+  provider?.on?.('accountsChanged', refreshWalletState)
 })
 </script>
