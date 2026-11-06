@@ -4,7 +4,7 @@ import { mutationEnvelope, publicPath } from '../src/wire.mjs';
 
 test('browser and CLI send identical desk record envelope bytes', () => {
   const record = { version: 'desk/v1', type: 'job', jobId: 'job-1', brief: 'hello' };
-  assert.equal(mutationEnvelope(record, 'idem-123'), JSON.stringify({ record, idempotencyKey: 'idem-123' }));
+  assert.equal(mutationEnvelope(record, 'idem-123'), JSON.stringify({ record, idempotencyKey: 'idem-123' })); // gitleaks:allow - test envelope field
 });
 test('mutation requires an idempotency key', () => assert.throws(() => mutationEnvelope({}, 'x'), /idempotency/));
 test('client rejects paths outside the public API', () => {

@@ -2,3 +2,7 @@
 d84c10b6effb2e49ab3fbee17f2669cd835dbf7c:app/server/test/provider.test.ts:generic-api-key:18
 # Fake PEM header in a redaction timing test (agent-sessions PR #8, 2026-10-19); split into two literals in the next commit.
 61e49e863b5d6902d744a5718fe9db890ed37b09:app/server/test/archive-redact.test.ts:private-key:70
+# Synthetic desk test fixtures. These are non-secret values, retained for wire-shape tests.
+28fa8e5afea5d466634dab54c86459f6d13b62a7:addons/desk-client/test/wire.test.mjs:generic-api-key:7
+cd159563124e7325932c41d6c497e42e21d01c0d:addons/desk-client/test/wire.test.mjs:generic-api-key:7
+c8e67d9e8745c5b4118dd431283c5101eb87cb3c:app/server/test/provider.test.ts:generic-api-key:18
