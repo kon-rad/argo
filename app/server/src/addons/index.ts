@@ -27,6 +27,8 @@ import uploadsManifest from './uploads/manifest.js';
 import { routes as uploadsRoutes } from './uploads/routes.js';
 import voiceManifest from './voice/manifest.js';
 import { routes as voiceRoutes } from './voice/routes.js';
+import deskManifest from './desk/manifest.js';
+import { routes as deskRoutes } from './desk/routes.js';
 
 export { ADDON_MANIFESTS } from './registry.js';
 
@@ -42,6 +44,7 @@ export const ADDON_FEATURES: readonly Feature[] = [
   { ...fundManifest, routes: fundRoutes },
   { ...chatManifest, routes: chatRoutes },
   { ...voiceManifest, routes: voiceRoutes },
+  { ...deskManifest, routes: deskRoutes },
 ];
 
 /** The routes of the enabled addons, built once per app alongside the core features'. */

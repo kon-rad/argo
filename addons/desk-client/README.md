@@ -1,0 +1,39 @@
+# Public desk client
+
+`@secondbrain/desk-client` implements the frozen `DeskClient` contract in `@secondbrain/desk-contracts/desk`. It has no server, database, login, secret or RPC implementation. All HTTP calls are restricted to `/public/*`; failed and pending reads stay explicit `Result` values.
+
+## Use
+
+```js
+import { PublicHttpDeskClient } from '@secondbrain/desk-client';
+
+const client = new PublicHttpDeskClient('https://public-desk.example');
+const jobs = await client.discover();
+const offerList = await client.offers('arkiv:CHAIN_ID/ENTITY_ID');
+const state = await client.inspect('arkiv:CHAIN_ID/ENTITY_ID');
+const evidence = await client.independentRead('arkiv:CHAIN_ID/ENTITY_ID');
+```
+
+`post(job, idempotencyKey)`, `accept(acceptance, idempotencyKey)` and `preparePayment(intent)` use the desk/v1 wire shapes without copying schemas. For injected-wallet authorship, use `postWithWallet(wallet, job, key)` and `acceptWithWallet(wallet, acceptance, key)`. Their explicit wallet interface is `address()` plus `publishRecord(record, idempotencyKey)`; the helper checks the record's declared client against the connected wallet and turns user rejection into a recoverable `denied` result. The injected chain integration must publish the actual public record; a detached signature does not count as execution.
+
+Payment submission requires `submitPreparedTransaction(wallet, intent, prepared)` and the same injected wallet implementing `submit(chainId, transaction)`. The helper checks the accepted payer and chain first. Wallet rejection becomes a recoverable `denied` result. A transaction hash is not payment confirmation.
+
+Public endpoint route shapes used by this adapter are `/public/discover`, `/public/jobs`, `/public/jobs/:ref`, `/public/jobs/:ref/offers`, `/public/acceptances`, `/public/payments/prepare`, and `/public/read/:ref`. These are the adapter boundary expected from integration; this package never calls the operator routes. API wiring and route compatibility require the P2 integration adapter.
+
+## Independent reader
+
+After installing the package alongside `@secondbrain/desk-contracts`, run:
+
+```sh
+DESK_PUBLIC_RPC_URL=https://public-rpc.example desk-reader 'chain:network/entity' ./my-chain-reader.mjs
+```
+
+The adapter module must export `readPublicEvidence({ rpcUrl, jobRef })` and return `{ observations, verifiedPayments }`. It must return the complete paginated, finalized observations only after independently verifying chain, creator, timestamp, inclusion and finality; payment entries must come from a receipt verifier that independently confirms and reserves the receipt. The command passes both arrays through `reducePublicState`, prints the job, acceptance, artifact hash and payment evidence references, and exits nonzero for an unknown, conflicting or structurally rejected state. A pending payment is reported without claiming it is verified. Do not implement this adapter from unverified event payloads.
+
+No chain reader is included in this G0-based branch: P2/P5/P6 provide the actual chain, identity and payment adapters. The independent reader cannot claim to verify final payment until the adapter supplies independently validated payment observations. RPC URL is the only credential-like setting; no Argo login or private database is used.
+
+## Build and checks
+
+From the vault app workspace, build contracts first, then build the browser bundle with Vite. The public app is standalone under `addons/desk-public`; the main app workspace and route registry are untouched. Run `npm test --prefix addons/desk-client` for serialization, public-route and bundle-boundary checks after the browser build.
+
+The desk/v1 contract README is the source of truth for record validation, reducer semantics, payment evidence and public-reference rules. This client preserves unavailable/pending outcomes and does not treat fixture data as live evidence.

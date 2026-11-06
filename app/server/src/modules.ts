@@ -27,6 +27,7 @@ export const ADDON_MODULES = [
   'classify',
   'dispatch',
   'improve',
+  'desk',
 ] as const;
 
 export const MODULE_NAMES = [...CORE_MODULES, ...ADDON_MODULES] as const;
