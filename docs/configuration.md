@@ -105,7 +105,7 @@ These settings are optional strings in the global environment schema and are val
 | `DESK_PUBLIC_ORIGIN` | unset | Exact allowed HTTPS browser origin, without a trailing slash |
 | `DESK_RUNTIME_MODULE` | unset | Absolute path to a trusted server-only ES module exporting `createDeskRuntime` for live marketplace, identity, publication and worker services |
 
-The engine supplies a real JSON-RPC reader, the explicitly selected settlement adapter and PostgreSQL receipt reservation. The runtime module supplies the remaining production services through the existing Phase 1 contracts. All adapters must be live, including capabilities and provider wallet transaction preparation. This is a production composition boundary, not a shipped host runtime: a deployment without concrete live host services is blocked. See [desk boot contract](../app/server/src/addons/desk/README.md#production-boot-contract).
+The engine supplies a real JSON-RPC reader, the explicitly selected settlement adapter and PostgreSQL receipt reservation. The runtime module supplies the remaining production services through the existing Phase 1 contracts. All adapters must be live, including capabilities and provider wallet transaction preparation. This is a production composition boundary, not a shipped host runtime: a deployment without concrete live host services is blocked. See [desk boot contract](https://github.com/kon-rad/argo/blob/0c96d254d517e0203f4e98813cd95569336eb5d9/app/server/src/addons/desk/README.md#production-boot-contract).
 
 ## Module settings
 

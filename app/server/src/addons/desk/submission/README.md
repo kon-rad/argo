@@ -55,6 +55,7 @@ Run application commands from `app/` unless stated otherwise.
 | `scripts/check-public.sh <changed-files...>` | Exit 0 |
 | Repository-wide `scripts/check-public.sh` | Fails on existing denylist hits and the local worktree `.git` pointer; no clean full-repository privacy claim |
 | `git diff --check` | Exit 0 |
+| `mkdocs build --strict` | Exit 0 after correcting three links outside the published documentation tree |
 
 The desk project is included in the normal application Vitest configuration. The live PostgreSQL test is separately opt-in and refuses database names outside `sb_*_test`. It rebuilds only the four desk tables in that explicitly selected disposable database. Fixture tests and synthetic receipts are not live Arc acceptance evidence.
 
