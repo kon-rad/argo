@@ -40,14 +40,24 @@ function render() {
 async function waitReceipt(hash) {
   for (;;) { const receipt = await provider.request({ method: 'eth_getTransactionReceipt', params: [hash] }); if (receipt) return receipt; await new Promise(r => setTimeout(r, 3000)) }
 }
+async function withTimeout(promise, milliseconds) {
+  let timer
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Wallet gas estimation timed out')), milliseconds) })
+  try { return await Promise.race([promise, timeout]) } finally { clearTimeout(timer) }
+}
 async function send(index, button) {
   try {
     await connect(); const item = manifest.transactions[index]
     if (!confirm(`${item.description}\n\nTo: ${item.to}\n\nRonin will show the final confirmation next.`)) return
-    button.disabled = true; status(`Waiting for approval: ${item.description}`)
+    button.disabled = true; status(`Preparing wallet request: ${item.description}`)
     const transaction = { from: account, to: item.to, data: item.data, value: item.value || '0x0' }
-    const estimated = await provider.request({ method: 'eth_estimateGas', params: [transaction] })
-    transaction.gas = `0x${(BigInt(estimated) * 120n / 100n).toString(16)}`
+    try {
+      const estimated = await withTimeout(provider.request({ method: 'eth_estimateGas', params: [transaction] }), 15000)
+      transaction.gas = `0x${(BigInt(estimated) * 120n / 100n).toString(16)}`
+    } catch (estimateError) {
+      status(`Wallet gas estimate unavailable; asking Ronin to estimate it. (${estimateError.message})`)
+    }
+    status('Requesting the Ronin Wallet approval prompt…')
     const hash = await provider.request({ method: 'eth_sendTransaction', params: [transaction] })
     status(`Submitted ${short(hash)}. Waiting for confirmation…`); const receipt = await waitReceipt(hash)
     if (receipt.status !== '0x1') throw new Error(`Transaction reverted: ${hash}`)
