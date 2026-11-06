@@ -13,9 +13,11 @@ import {
   parseEventLogs,
   parseAbi,
   stringToHex,
+  toHex,
 } from 'viem'
 import { mainnet } from 'viem/chains'
 import { privateKeyToAccount } from 'viem/accounts'
+import { packetToBytes } from 'viem/ens'
 import { writeFile } from 'node:fs/promises'
 
 const FACTORY = '0x77510ba162dfea3d8989e3f0928a691b345730d2'
@@ -33,9 +35,9 @@ const registryAbi = parseAbi([
   'function register(string label, address owner, address registry, address resolver, uint256 roleBitmap, uint64 expiry)',
 ])
 const resolverAbi = parseAbi([
-  'function initialize(address admin, uint256 roleBitmap, bytes[] setters)',
-  'function setAddr(bytes32 node, address addr)',
-  'function setText(bytes32 node, string key, string value)',
+  'function initialize((address account, uint256 roleBitmap)[] grants, bytes[] calls)',
+  'function setAddress(bytes name, uint256 coinType, bytes addressBytes)',
+  'function setText(bytes name, string key, string value)',
 ])
 
 // ENS EAC role bitmaps use one bit per role and the corresponding admin bit.
@@ -101,7 +103,7 @@ const registryInit = encodeFunctionData({
 const resolverInit = encodeFunctionData({
   abi: resolverAbi,
   functionName: 'initialize',
-  args: [parentOwner, ALL_ROLES, []],
+  args: [[{ account: parentOwner, roleBitmap: ALL_ROLES }], []],
 })
 const registryDeploy = encodeFunctionData({
   abi: factoryAbi,
@@ -138,7 +140,7 @@ function predictProxy(salt) {
 
 const resolverAddress = predictProxy(resolverSalt)
 const registryAddress = predictProxy(registrySalt)
-const fullNameHash = namehash(fullName)
+const encodedName = toHex(packetToBytes(fullName))
 const attachData = encodeFunctionData({
   abi: registryAbi,
   functionName: 'setSubregistry',
@@ -150,11 +152,11 @@ const registerData = encodeFunctionData({
   args: [label, parentOwner, '0x0000000000000000000000000000000000000000', resolverAddress, OWNER_ROLES, expiry],
 })
 const records = [
-  tx(resolverAddress, encodeFunctionData({ abi: resolverAbi, functionName: 'setAddr', args: [fullNameHash, agentWallet] }), 'Set the agent address record'),
-  tx(resolverAddress, encodeFunctionData({ abi: resolverAbi, functionName: 'setText', args: [fullNameHash, 'agentRegistry', `eip155:8453:${ERC8004_IDENTITY}`] }), 'Set the ERC-8004 registry record'),
-  tx(resolverAddress, encodeFunctionData({ abi: resolverAbi, functionName: 'setText', args: [fullNameHash, 'agentId', agentId] }), 'Set the ERC-8004 agent ID record'),
+  tx(resolverAddress, encodeFunctionData({ abi: resolverAbi, functionName: 'setAddress', args: [encodedName, 60n, agentWallet] }), 'Set the agent address record'),
+  tx(resolverAddress, encodeFunctionData({ abi: resolverAbi, functionName: 'setText', args: [encodedName, 'agentRegistry', `eip155:8453:${ERC8004_IDENTITY}`] }), 'Set the ERC-8004 registry record'),
+  tx(resolverAddress, encodeFunctionData({ abi: resolverAbi, functionName: 'setText', args: [encodedName, 'agentId', agentId] }), 'Set the ERC-8004 agent ID record'),
 ]
-if (agentUri) records.push(tx(resolverAddress, encodeFunctionData({ abi: resolverAbi, functionName: 'setText', args: [fullNameHash, 'agentURI', agentUri] }), 'Set the ERC-8004 agent URI record'))
+if (agentUri) records.push(tx(resolverAddress, encodeFunctionData({ abi: resolverAbi, functionName: 'setText', args: [encodedName, 'agentURI', agentUri] }), 'Set the ERC-8004 agent URI record'))
 
 const bundle = {
   chainId: 1,
