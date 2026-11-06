@@ -37,6 +37,7 @@ New here? Start with the [onboarding path](onboarding/README.md): short pages fr
 | [summaries.md](summaries.md) | You want every agent session summarized by a local model (with paid fallbacks), the facts it learned held for your approval, a digest for a stand-up, and quality checks you can run |
 | [agent-harness.md](agent-harness.md) | You run Claude Code or Hermes in the vault and want to know what the guard and the dev-log gate do |
 | [agent-company.md](agent-company.md) | You want a company of named agents on a message board that wake for cards, DMs and mentions and report to you |
+| [ensv2-agent-registration.md](ensv2-agent-registration.md) | You want to publish agent names through ENSv2 and link them to an ERC-8004 identity |
 | [deployment.md](deployment.md) | You want the app on a server behind a login |
 | [privacy.md](privacy.md) | You want to know how the engine stays free of personal data, and how to keep your fork that way |
 | [zen-agent.md](zen-agent.md) | You want to run a roster persona headlessly on any model with the board and the knowledge base as tools: what zen-agent is, how to use it, its architecture and design, and how it compares to Claude Code, Hermes and pi |
