@@ -56,6 +56,10 @@ const KNOWN_EXTRA: Record<string, string> = {
   SUMMARIES_LOCAL_URL: 'summaries manifest: a home server local model address',
   XDG_CONFIG_HOME: 'standard: config dir resolution',
   USER: 'standard: the current Unix user',
+  NODE_ENV: 'desk orchestration: selects production adapter enforcement mode',
+  DESK_DOMAIN: 'desk manifest: public hiring desk domain',
+  DESK_CHAIN_ID: 'desk manifest: settlement chain identifier',
+  DESK_PUBLIC_ORIGIN: 'desk manifest: public hiring desk origin',
 };
 
 const here = dirname(fileURLToPath(import.meta.url));
