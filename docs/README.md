@@ -11,7 +11,7 @@ New here? Start with the [onboarding path](onboarding/README.md): short pages fr
 | Page | Read it when |
 |---|---|
 | [What you get, and what to borrow](onboarding/01-what-you-get.md) | You are deciding whether it fits, or want the patterns for your own notes, app or company without installing anything |
-| [Set up your vault](onboarding/02-set-up-your-vault.md) | You want a vault and the app, step by step with a check after each step |
+| [Set up your vault](onboarding/02-set-up-your-vault.md) | You want a vault and the app, step by step with a check after each step, or the [`setup-vault`](https://github.com/kon-rad/argo/blob/main/skills/setup-vault/SKILL.md) skill to run it for you |
 | [Connect Claude Code](onboarding/03-claude-code.md) | You want Claude Code working in the vault under the guard and the dev-log gate |
 | [Connect Hermes](onboarding/04-hermes.md) | You run Hermes and want it on the same rules |
 | [Connect another harness](onboarding/05-other-harnesses.md) | You use Codex, Cursor, OpenCode, a cron script or your own agent |

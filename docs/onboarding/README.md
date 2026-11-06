@@ -21,6 +21,8 @@ You do not need all of it. The first three pages give you a vault, the app and o
 | 9 | [Adapt it to your notes, app, business or startup](10-adapt-it.md) | Recipes for four kinds of users, and what to leave out | 10 min |
 | 10 | [Connect Telegram](11-telegram.md) | Create a bot and talk to your agents from your phone | 15 min |
 
+An agent can do step 1 for you: load the [`setup-vault`](https://github.com/kon-rad/argo/blob/main/skills/setup-vault/SKILL.md) skill and answer its four questions.
+
 ## Before you start
 
 Three things to know, because everything else follows from them:

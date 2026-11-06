@@ -4,6 +4,8 @@ Status: **works** - the setup that takes an empty folder to a private vault with
 
 From nothing to a private vault you can browse and search. Each step ends with a check, so you know it worked before moving on. This page is the whole first-run path; the reference for every setting is [configuration.md](../configuration.md).
 
+Rather than run this by hand, hand it to an agent: load the [`setup-vault`](https://github.com/kon-rad/argo/blob/main/skills/setup-vault/SKILL.md) skill and it asks four questions, then runs the steps below with a check after each.
+
 ## Step 1. Install the prerequisites
 
 The one-command path installs git, Node 22+, Python 3.9+ and PostgreSQL 15+ with pgvector on macOS or Debian/Ubuntu, and touches nothing else:
