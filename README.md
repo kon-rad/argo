@@ -44,6 +44,8 @@ Computing is turning into an exocortex: memory, perception and judgment running 
 
 You need git, Python 3.9+, Node.js 22+ and PostgreSQL 15+ with [pgvector](https://github.com/pgvector/pgvector) 0.8+. Install steps for macOS and Ubuntu are in [docs/onboarding/02-set-up-your-vault.md](docs/onboarding/02-set-up-your-vault.md), or run `curl -fsSL https://kon-rad.github.io/argo/install.sh | sh`.
 
+**Or hand it to an agent.** The [`setup-vault`](skills/setup-vault/SKILL.md) skill asks four questions (where the vault lives, your OS, whether you want semantic search, which harness comes next) and then runs the steps below, checking each before the next. It is the same path, executed by something that can adapt when your machine differs from the one in these instructions.
+
 ```bash
 mkdir my-vault && cd my-vault && git init
 git submodule add https://github.com/kon-rad/argo.git .secondbrain
