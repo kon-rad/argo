@@ -67,7 +67,10 @@ describe('P2 reviewed Swarm publisher', () => {
     expect([...(fetcher.mock.calls[0]?.[1]?.body as Uint8Array)]).toEqual([...bytes]);
     expect(await bee.download(ref)).toEqual(bytes);
     expect(fetcher.mock.calls[1]?.[0]).toEqual(new URL(`https://bee.example.test/bzz/${ref}`));
-    expect(() => new BeeHttpSwarmGateway('https://user:pass@bee.example.test', 'batch-example')).toThrow();
+    const credentialedBeeUrl = new URL('https://bee.example.test');
+    credentialedBeeUrl.username = 'user';
+    credentialedBeeUrl.password = 'pass';
+    expect(() => new BeeHttpSwarmGateway(credentialedBeeUrl.toString(), 'batch-example')).toThrow();
   });
 
   it('uploads, reads back exact bytes, publishes one delivery, and reconciles retries', async () => {
