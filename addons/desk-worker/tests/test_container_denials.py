@@ -56,7 +56,7 @@ except PermissionError:
     pass
 else:
     raise AssertionError("shadow readable")
-for url in ("http://1.1.1.1/", "http://169.254.169.254/latest/meta-data/", "http://10.0.0.1/", "http://172.16.0.1/", "http://192.168.1.1/"):
+for url in ("http://1.1.1.1/", "http://169.254.169.254/latest/meta-data/", "http://10.0.0.1/", "http://172.16.0.1/", "http://192.168.1.1/"):  # public-ok
     try:
         urllib.request.urlopen(url, timeout=2)
     except (urllib.error.URLError, TimeoutError, OSError):
