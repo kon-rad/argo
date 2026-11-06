@@ -91,6 +91,22 @@ Generation is **off by default** (`server.generate: false`), so a merge never ch
 | `SECONDBRAIN_DB_URL` | Vault `.env` | The launcher connects to this database instead of a local one, and starts the app with `INDEXER=off` |
 | `SECONDBRAIN_DB=local` | Environment | Force the local database for one run |
 
+## Hiring Desk production settings
+
+These settings are optional strings in the global environment schema and are validated only when `desk` boots. With the addon disabled, no payment configuration or runtime module is required. Enabling desk fails before the HTTP listener starts if its production configuration is incomplete. There is no fixture fallback.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DESK_DOMAIN` | unset | Public desk/v1 record domain |
+| `DESK_CHAIN_ID` | unset | Settlement network, explicitly `5042002` for Arc Testnet |
+| `DESK_PAYMENT_INTERFACE` | unset | Explicit `arc:testnet:erc20-usdc:transfer:v1` or preserved `arc:testnet:native-usdc:eip-7708:v1`; never inferred |
+| `DESK_USDC_ADDRESS` | unset | Verified ERC-20 USDC contract, required for the ERC-20 interface |
+| `DESK_RPC_URL` | unset | Server-only HTTP(S) RPC URL; never returned to the public client |
+| `DESK_PUBLIC_ORIGIN` | unset | Exact allowed HTTPS browser origin, without a trailing slash |
+| `DESK_RUNTIME_MODULE` | unset | Absolute path to a trusted server-only ES module exporting `createDeskRuntime` for live marketplace, identity, publication and worker services |
+
+The engine supplies a real JSON-RPC reader, the explicitly selected settlement adapter and PostgreSQL receipt reservation. The runtime module supplies the remaining production services through the existing Phase 1 contracts. All adapters must be live, including capabilities and provider wallet transaction preparation. This is a production composition boundary, not a shipped host runtime: a deployment without concrete live host services is blocked. See [desk boot contract](../app/server/src/addons/desk/README.md#production-boot-contract).
+
 ## Module settings
 
 | Variable | Module | Default | Purpose |

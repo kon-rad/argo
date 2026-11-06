@@ -33,19 +33,11 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 
 ## desk
 
-Status: **integration available; production services require wiring**. The manifest, browser page, shared contracts, private persistence and adapter interfaces ship in the engine. Enabling the addon makes **Work → Hiring desk** and `/desk` available. It does not by itself configure an operational marketplace.
+Status: **public integration and fail-closed boot available; concrete host runtime still required**. The addon remains off by default. Enable it through `MODULES` or the vault's `addons` list. Disabled mode mounts no public or private desk routes, adds no desk navigation or timers, and requires no payment settings.
 
-Enable it by adding `"desk"` to `addons` in the running app's vault `secondbrain.json`, keeping existing entries, then restarting the app. Alternatively append `desk` to the running process's `MODULES` list. On a server that environment is normally `/etc/secondbrain/env`, not your laptop's `.env`. The two configuration sources are combined.
+Boot requires explicit `DESK_DOMAIN`, `DESK_CHAIN_ID`, `DESK_PAYMENT_INTERFACE`, `DESK_RPC_URL`, `DESK_PUBLIC_ORIGIN`, and `DESK_RUNTIME_MODULE`; ERC-20 additionally requires `DESK_USDC_ADDRESS`. See [configuration](configuration.md#hiring-desk-production-settings). Production starts with the real server RPC reader, selected settlement adapter, `PgDeskPersistence` receipt reservation, and the host module's live Arkiv, identity, publication and bounded worker services. Any fixture adapter is rejected before listening. The native settlement interface remains available only by explicit selection.
 
-| Setting or component | Purpose |
-|---|---|
-| `addons: ["desk"]` | Activates the page, navigation and addon route registration |
-| `DESK_DOMAIN`, `DESK_CHAIN_ID`, `DESK_PUBLIC_ORIGIN` | Declared configuration keys; setting them alone does not instantiate services |
-| `app.locals.deskOperator` | Operator service required to mount session-gated `/api/desk` routes; also requires the session gate |
-| `app.locals.deskPublic` | Public store and optional identity/settlement services consumed by `/public` routes |
-| `1756000017000_hiring-desk.sql` | Private assignment, idempotency, audit and payment-allocation tables; deployed through normal migrations |
-
-When the operator service is absent, the private API is not mounted and the page cannot load operational data. Public routes report `503 Hiring desk is not configured` when public controls are absent. Production services must reject fixture adapters; empty fixture results are not evidence of a working live integration. Worker, public marketplace, wallet and settlement deployment must be verified separately.
+The public API boundary is `/api/desk/public`; private operator controls remain under session-gated `/api/desk`. The browser never receives the runtime module, RPC configuration, private assignments or operator credentials. Missing live host services block production boot rather than returning empty fixture data. The runtime module contract and the unimplemented host prerequisites are documented in the [desk README](../app/server/src/addons/desk/README.md#production-boot-contract).
 
 For activation checks, troubleshooting and rollback, use [Hiring desk rollout](deployment.md#hiring-desk-rollout).
 
