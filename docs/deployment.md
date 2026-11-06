@@ -119,6 +119,29 @@ Two things a rollback is not:
 2. **Compare migrations first.** If anything else has run migrations on the server's database, list `pgmigrations` there and check that every applied migration exists in `app/db/migrations/`. node-pg-migrate refuses to run when the database has a migration the code doesn't.
 3. Run `.secondbrain/app/deploy/deploy.sh` again.
 
+## Hiring desk rollout
+
+The `desk` addon is off by default. A successful app deploy and a green general health check do not prove it is enabled or that its production services are connected.
+
+1. **Ship the merged engine code.** Use the normal deploy procedure above. Compare applied migrations first, run `deploy.sh`, and require a successful build, migration step, service restart and health check. The desk migration is `1756000017000_hiring-desk.sql`; an already-applied migration correctly reports no migrations to run.
+2. **Enable it in the running app's configuration.** On the server, locate the vault selected by the service's `VAULT_ROOT`. Add `"desk"` to its `secondbrain.json` `addons` array, preserving existing entries and settings. The minimal shape is `{"addons":["desk"]}`. Alternatively append `desk` to `MODULES` in `/etc/secondbrain/env` without removing other modules. Keep the intended setting in your normal vault sync process so later syncs preserve it.
+3. **Restart and verify activation.** Run `sudo systemctl restart secondbrain` and `systemctl is-active secondbrain`. Visit `/api/health`; require `ok: true` and `desk` in the `modules` check's enabled list. Reload the browser, sign in, and check **Work → Hiring desk** and `/desk`. Authenticated `/api/meta` should include the desk navigation entry; an unauthenticated `401` is expected.
+4. **Verify production service wiring before using jobs.** The merged route integration consumes `app.locals.deskOperator` and `app.locals.deskPublic`; it does not construct these services from environment variables. The private operator API is mounted only with an operator service and session gate. Public routes require public controls. Wire real persistence, public store, identity, runner, publisher, capability issuer and settlement components as required by the operation. Reject fixture adapters in production. Check authenticated inbox/jobs/provider reads and the relevant configured public reads. Verify execution, reviewed release and payment reconciliation separately before calling the full workflow operational.
+
+**Code and settings have separate delivery paths.** `deploy.sh` copies the engine's app source, builds, migrates and restarts it. It does not copy your laptop's `secondbrain.json` or `.env` into the server's vault. Changing only the laptop settings and redeploying leaves the server addon disabled until the server vault receives that change. `DEPLOY_MODULES` controls deploy-time module installation; it does not replace runtime activation through the server settings or environment.
+
+| Symptom | Check and action |
+|---|---|
+| No Hiring desk item in Work | Check the live health module list. If `desk` is absent, fix the server vault's `addons` or runtime `MODULES`, then restart |
+| `desk` is enabled but the old menu remains | Reload the browser to refetch authenticated metadata; inspect `/api/meta` navigation and confirm the deployed commit |
+| Desk page opens but data/actions fail | Check operator service injection and the authenticated `/api/desk` endpoints; page visibility alone does not establish service readiness |
+| Public API returns `503 Hiring desk is not configured` | Supply production `deskPublic` controls; domain/chain/origin environment keys alone do not create them |
+| Health is green but desk operations fail | General health checks do not test the complete desk workflow; verify the configured services and operations separately |
+
+To disable the addon, remove `desk` from **both** activation sources if present (`addons` and `MODULES`), restart, and verify it disappears from the enabled module list and Work menu. This leaves the database tables and records intact. Code rollback follows the normal procedure above and does not reverse migrations or restore vault configuration.
+
+See the [desk module reference](modules.md#desk) for the shipped components and configuration boundary.
+
 ## Several machines, one database
 
 You can keep the server as the only database and have your laptop use it (for example over a private network such as Tailscale or WireGuard):
