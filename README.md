@@ -106,7 +106,7 @@ Markdown is the source of truth. Postgres is an index over it: drop the database
 
 ## Modules
 
-Everything beyond browse, search and the database page is an optional module, off until you list it in `MODULES`:
+The six core features (`projects`, `memory`, `org`, `board`, `usage`, `summaries`) are always on. Addons are off until listed in the vault's `secondbrain.json` `addons` array or the app process's `MODULES` environment variable:
 
 | Module | Adds |
 |---|---|
@@ -126,8 +126,21 @@ Everything beyond browse, search and the database page is an optional module, of
 | `livestream` | Stream stats for YouTube, Twitch and Kick |
 | `ring` | Wearable ring data, stored next to your notes |
 | `fund` | A read-only page for an agentic fund: wallet balances, transactions, pending approvals, committee health |
+| `desk` | Hiring desk under Work at `/desk`; operator actions require connected production services |
 
 Details, settings and timers for each: [docs/modules.md](docs/modules.md).
+
+### Enable Hiring desk after deploying
+
+Deploying the merged code does not enable this addon. Add `"desk"` to the existing `addons` array in **the vault's `secondbrain.json` on the machine running the app**, preserving its other settings. For example:
+
+```json
+{ "addons": ["desk"] }
+```
+
+This is a minimal example, not a replacement for your settings file. On a server, restart with `sudo systemctl restart secondbrain`, then reload the browser. **Work → Hiring desk** should appear, and `/desk` should open. Check `/api/health`: its `modules` check must list `desk`.
+
+`deploy.sh` ships app code, builds, migrates and restarts; it does **not** copy your laptop's vault settings to the server. Sync the settings through your vault's normal sync process or edit the server vault deliberately. A visible desk page verifies activation only: the merged integration still requires production operator/public adapters to be supplied before jobs, execution, publishing and payments work. See the [desk rollout and troubleshooting checklist](docs/deployment.md#hiring-desk-rollout) and [desk module reference](docs/modules.md#desk).
 
 ## Agents in your vault
 

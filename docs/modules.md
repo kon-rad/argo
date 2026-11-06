@@ -29,6 +29,25 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 | [`fund`](#fund) | `/fund` | A read-only view of an agentic fund: wallet balances, transactions, pending approvals, committee and run health |
 | [`social`](#social) | (connect + queue, no page UI yet) | Schedule and publish posts with images to LinkedIn (more platforms planned) |
 | [`chat`](#chat) | (a button in the header) | Ask your notes: conversations with an assistant that answers from retrieved passages, with citations, on the provider and model you pick |
+| [`desk`](#desk) | `/desk` | Hiring desk operator console under Work; requires production service wiring for operations |
+
+## desk
+
+Status: **integration available; production services require wiring**. The manifest, browser page, shared contracts, private persistence and adapter interfaces ship in the engine. Enabling the addon makes **Work → Hiring desk** and `/desk` available. It does not by itself configure an operational marketplace.
+
+Enable it by adding `"desk"` to `addons` in the running app's vault `secondbrain.json`, keeping existing entries, then restarting the app. Alternatively append `desk` to the running process's `MODULES` list. On a server that environment is normally `/etc/secondbrain/env`, not your laptop's `.env`. The two configuration sources are combined.
+
+| Setting or component | Purpose |
+|---|---|
+| `addons: ["desk"]` | Activates the page, navigation and addon route registration |
+| `DESK_DOMAIN`, `DESK_CHAIN_ID`, `DESK_PUBLIC_ORIGIN` | Declared configuration keys; setting them alone does not instantiate services |
+| `app.locals.deskOperator` | Operator service required to mount session-gated `/api/desk` routes; also requires the session gate |
+| `app.locals.deskPublic` | Public store and optional identity/settlement services consumed by `/public` routes |
+| `1756000017000_hiring-desk.sql` | Private assignment, idempotency, audit and payment-allocation tables; deployed through normal migrations |
+
+When the operator service is absent, the private API is not mounted and the page cannot load operational data. Public routes report `503 Hiring desk is not configured` when public controls are absent. Production services must reject fixture adapters; empty fixture results are not evidence of a working live integration. Worker, public marketplace, wallet and settlement deployment must be verified separately.
+
+For activation checks, troubleshooting and rollback, use [Hiring desk rollout](deployment.md#hiring-desk-rollout).
 
 ## projects
 
