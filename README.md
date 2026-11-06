@@ -36,6 +36,7 @@ Computing is turning into an exocortex: memory, perception and judgment running 
 - **Find anything, and see the shape of it.** Keyword, semantic and hybrid search over the whole vault, a chat that answers from your notes with citations, a database page you can ask questions in plain language, and a 3D brain map of how your notes, projects and goals connect.
 - **Put agents to work without handing them the keys.** Claude Code, Hermes and other harnesses work in the vault under one rulebook (`AGENTS.md`), behind hooks that block reading your secrets, force pushes and other mistakes.
 - **Run a company of agents, if you want one.** Optional modules add a project tracker, a kanban board, a message board where named agents report to you, memory and session summaries, and a ledger of what they cost.
+- **Give agents portable names.** The [ENSv2 agent names guide](docs/ensv2-agent-registration.md) explains how to create a controlled subname namespace and link each name to an ERC-8004 identity on another chain.
 - **Stay the author.** Agents take the overhead. The writing, the reflection and the decisions stay with you.
 
 **Private by construction.** Your vault is your own private repo. This public repo plugs into it as a git submodule and never sees your notes. Details: [docs/privacy.md](docs/privacy.md).
@@ -199,6 +200,7 @@ The full documentation is a site with search and navigation: **[kon-rad.github.i
 | [Kanban board](docs/kanban-board.md) | Statuses, doors, every board command |
 | [Agent harness](docs/agent-harness.md) | The guard, the dev-log gate, Claude Code and Hermes wiring |
 | [Agent company](docs/agent-company.md) | Named agents on a board that wake for cards, DMs and mentions |
+| [ENSv2 agent names](docs/ensv2-agent-registration.md) | Deploy a controlled subname registry and link names to ERC-8004 identities |
 | [zen-agent](docs/zen-agent.md) | The headless agent runtime |
 | [Deployment](docs/deployment.md) | A server behind a login |
 | [Privacy](docs/privacy.md) | How the engine stays free of personal data |
