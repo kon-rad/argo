@@ -1,0 +1,33 @@
+services:
+  desk-gateway:
+    container_name: desk-gateway
+    build:
+      context: .
+      dockerfile: gateway.Dockerfile
+    environment:
+      DESK_SIGNING_KEY: ${DESK_SIGNING_KEY:?set a private signing key}
+      DESK_MODEL_URL: ${DESK_MODEL_URL:?set approved HTTPS provider endpoint}
+      DESK_MODEL_NAME: ${DESK_MODEL_NAME:?set approved model}
+      DESK_MODEL_API_KEY: ${DESK_MODEL_API_KEY:?set gateway-only provider key}
+      DESK_INPUT_MICRO_USD_PER_1K: ${DESK_INPUT_MICRO_USD_PER_1K:?set bounded input price}
+      DESK_OUTPUT_MICRO_USD_PER_1K: ${DESK_OUTPUT_MICRO_USD_PER_1K:?set bounded output price}
+      DESK_STATE_DB: /var/lib/desk-gateway/state.sqlite3
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - gateway-state:/var/lib/desk-gateway
+    networks:
+      desk-egress: {}
+    read_only: true
+    tmpfs: [/tmp:size=16m,noexec,nosuid]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+
+networks:
+  desk-egress:
+    name: desk-egress
+
+volumes:
+  gateway-state:

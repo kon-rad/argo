@@ -7,6 +7,7 @@ import Projects from './routes/Projects.js';
 import LiveAgents from './routes/usage/LiveAgents.js';
 import Usage from './routes/usage/Usage.js';
 import UsageSession from './routes/usage/UsageSession.js';
+import Desk from './routes/desk/Desk.js';
 
 /**
  * The page routes of each core feature, by module name. The server's manifest
@@ -27,4 +28,5 @@ export const FEATURE_ROUTES: Record<string, ReactElement[]> = {
     <Route key="usage-live" path="/usage/live" element={<LiveAgents />} />,
     <Route key="usage-session" path="/usage/session/:host/:externalId" element={<UsageSession />} />,
   ],
+  desk: [<Route key="desk" path="/desk" element={<Desk />} />],
 };

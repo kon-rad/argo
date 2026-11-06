@@ -1,0 +1,25 @@
+{
+  "name": "@secondbrain/desk-contracts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./desk": {
+      "types": "./dist/desk/index.d.ts",
+      "import": "./dist/desk/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node --input-type=commonjs -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
