@@ -25,7 +25,7 @@ The agents are not in the app. They are Claude Code, Hermes or any other harness
 | One rulebook for every agent | `AGENTS.md` is compiled from the engine's shared base plus your own `AGENTS.local.md`. `CLAUDE.md` is one line that imports it, so Claude Code, Hermes, Codex and others read the same text |
 | A guard before every tool call | A stdlib Python hook that blocks reading secret files, force pushes, `rsync --delete` without a dry run, and whatever you add: protected folders, no-delete paths, read-only files |
 | A record before "done" | A second hook that sends an agent back once if it changed skills, scripts or config without writing a dev log today |
-| Shared skills | Folders with a `SKILL.md` that both Claude Code and Hermes load from the same place. The engine ships `ingest`, `fact-check`, `company-report`, `org-member` and `livestream-x` |
+| Shared skills | Folders with a `SKILL.md` that both Claude Code and Hermes load from the same place. The engine ships `setup-vault`, `ingest`, `fact-check`, `company-report`, `org-member` and `livestream-x` |
 | A read-only reviewer | A fact-checker subagent that verifies a finished note against its sources and returns an evidence table, never an edit |
 | Contracts for long tasks | The base rules ask for an outcome, a verification, constraints, boundaries and a stop condition before a long task starts, and `BLOCKED: <reason>` instead of a partial result presented as done |
 | A context budget | Rules that keep headless runs cheap: capped output, one task per run, steps written to a file rather than held in context |

@@ -58,6 +58,7 @@ Shared skills in the engine today:
 
 | Skill | Pairs with |
 |---|---|
+| `setup-vault` | Any vault: takes an empty folder to a running vault, asking a few questions and checking each step |
 | `fact-check` | The `fact-checker` subagent: verifies a finished note against its sources |
 | `ingest` | Any vault: turns a link (article, video, paper) into a summarised note tied to your goals |
 | `company-report` | The `projects` module: reads and updates the tracker with `cli-projects` |

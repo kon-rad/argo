@@ -96,7 +96,7 @@ Markdown is the source of truth. Postgres is an index over it: drop the database
 | [`app/`](app/README.md) | The web app: browse your vault with wikilinks and backlinks, search it (keyword, semantic, hybrid), edit notes safely, ask the database page questions in plain language. Runs on your laptop with no login, or on a server behind Caddy with password + authenticator login |
 | [`vault-template/`](vault-template/) | A PARA vault with the shared agent rules (`AGENTS.base.md`), settings templates and folder READMEs, ready to fill |
 | [`harness/`](docs/agent-harness.md) | Hooks Claude Code and Hermes both run: a guard against dangerous tool calls, and a gate that asks for a dev log before an agent finishes. Plus a read-only fact-checker subagent |
-| [`skills/`](skills/) | Shared agent skills (`SKILL.md`, used by every harness): `fact-check`, `ingest`, `company-report`, `org-member`, `livestream-x` and more |
+| [`skills/`](skills/) | Shared agent skills (`SKILL.md`, used by every harness): `setup-vault`, `fact-check`, `ingest`, `company-report`, `org-member`, `livestream-x` and more |
 | [`zen-agent/`](docs/zen-agent.md) | A minimal headless agent runtime: personas, skills, any provider, the board and the knowledge base as tools, budgets and traces |
 | `bin/secondbrain-vault` | Starts a vault, compiles its `AGENTS.md`, links the skills |
 | [`addons/tv-kiosk/`](addons/tv-kiosk/README.md) | Flash a Raspberry Pi that shows the app full screen on a TV |
@@ -164,7 +164,7 @@ The full documentation is a site with search and navigation: **[kon-rad.github.i
 |---|---|
 | [From zero to an agent company](docs/onboarding/00-from-zero.md) | You want the whole path on one page, with a check at every stage |
 | [What you get, and what to borrow](docs/onboarding/01-what-you-get.md) | You are deciding whether it fits, or want the patterns without installing anything |
-| [Set up your vault](docs/onboarding/02-set-up-your-vault.md) | You want a vault and the app, step by step |
+| [Set up your vault](docs/onboarding/02-set-up-your-vault.md) | You want a vault and the app, step by step. The [`setup-vault`](https://github.com/kon-rad/argo/blob/main/skills/setup-vault/SKILL.md) skill runs it for you |
 | [Connect Claude Code](docs/onboarding/03-claude-code.md), [Hermes](docs/onboarding/04-hermes.md), [another harness](docs/onboarding/05-other-harnesses.md) | You want an agent working in the vault under the guard |
 | [Connect servers and computers](docs/onboarding/06-connect-machines.md) | You want a server behind a login, several agent machines, a screen on the wall |
 | [Privacy](docs/onboarding/07-privacy.md), [Configuration and secrets](docs/onboarding/08-config-and-secrets.md) | You want to know what leaves your machine, and where every key lives |
