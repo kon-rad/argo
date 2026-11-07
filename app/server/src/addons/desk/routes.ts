@@ -29,7 +29,7 @@ export const publicDeskRouter = (app: { locals: Record<string, unknown> }): Rout
   const limits = new Map<string, { count: number; reset: number }>();
   router.use((req, res, next) => {
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('Vary', 'Origin');
-    const origin = req.get('Origin'), allowed = (app.locals.deskPublic as DeskPublicControls | undefined)?.publicOrigin;
+    const origin = req.get('Origin'), allowed = (app.locals.deskPublic as DeskPublicControls | undefined)?.publicOrigin ?? process.env.DESK_PUBLIC_ORIGIN;
     if (origin && (!allowed || origin !== allowed)) { res.status(403).json({ state: 'unavailable', message: 'Origin is not allowed.' }); return; }
     if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
     if (req.method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); res.status(204).end(); return; }

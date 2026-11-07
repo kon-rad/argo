@@ -70,7 +70,17 @@ export async function bootDesk(
 ): Promise<DeskBoot | undefined> {
   if (!modules.has('desk')) return undefined;
   const parsed = settingsSchema.safeParse(raw);
-  if (!parsed.success) throw new Error(`Desk production configuration missing or invalid: ${parsed.error.issues.map(issue => issue.path.join('.')).join(', ')}`);
+  if (!parsed.success) {
+    // Keep the rest of the server available while this optional addon is being
+    // configured. Its routes return an explicit 503 until trusted adapters exist.
+    const runtimeUnconfigured = [raw.domain, raw.chainId, raw.paymentInterface, raw.rpcUrl, raw.runtimeModule]
+      .every(value => value === undefined || value === '');
+    if (runtimeUnconfigured) {
+      console.warn('Hiring Desk is enabled but not configured; its API will return 503.');
+      return undefined;
+    }
+    throw new Error(`Desk production configuration missing or invalid: ${parsed.error.issues.map(issue => issue.path.join('.')).join(', ')}`);
+  }
   const settings = parsed.data;
   const persistence = new PgDeskPersistence();
   const runtimeModule = await load(pathToFileURL(settings.runtimeModule).href);
