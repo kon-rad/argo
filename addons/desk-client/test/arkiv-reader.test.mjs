@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readPublicEvidence } from '../src/arkiv-reader.mjs';
 const creator = '0x' + '11'.repeat(20), key = '0x' + '22'.repeat(32), hash = '0x' + '33'.repeat(32);
 const job = { version: 'desk/v1', type: 'job', domain: 'example', chainId: 'arkiv:1', jobId: 'job', nonce: 'unique', client: creator, skill: 'research', brief: 'Public brief', budgetAtomic: '1', asset: 'test', paymentChainId: 'arc:1', deadline: 2000 };
-const row = () => ({ key, creator, owner: creator, creationFlags: { readonly: true }, createdAt: '0x1', updatedAt: '0x1', expiresAt: '0x20', attributes: [{ name: 'record', type: 'str', value: JSON.stringify(job) }] });
+const encodeRecord = r => '0x' + Buffer.from(JSON.stringify(r), 'utf8').toString('hex');
+const row = () => ({ key, creator, owner: creator, creationFlags: { readonly: true }, createdAt: '0x1', updatedAt: '0x1', expiresAt: '0x20', attributes: [{ name: 'record', type: 'bytes', value: encodeRecord(job) }] });
 function config(overrides = {}) {
   let queryCalls = 0;
   const fetchImpl = async (_url, options) => {
@@ -48,7 +49,7 @@ test('entity expiry during finality advancement fails', async () => {
 });
 test('immutable creator, record domain and record chain are checked', async () => {
   for (const patch of [{ client: '0x' + '55'.repeat(20) }, { domain: 'wrong' }, { chainId: 'arkiv:2' }]) {
-    const r = row(); r.attributes[0].value = JSON.stringify({ ...job, ...patch });
+    const r = row(); r.attributes[0].value = encodeRecord({ ...job, ...patch });
     await assert.rejects(readPublicEvidence(config({ row: r })), /authority|domain or chain/);
   }
 });
@@ -59,7 +60,7 @@ test('expired, future-updated and malformed entity block data fail', async () =>
 });
 test('missing, malformed, duplicated and oversized JSON attribute fail', async () => {
   for (const attrs of [[], [{ name: 'record', type: 'str', value: '{' }], [...row().attributes, ...row().attributes], [{ name: 'record', type: 'str', value: 'x'.repeat(65537) }]]) {
-    await assert.rejects(readPublicEvidence(config({ row: { ...row(), attributes: attrs } })), /record attribute|malformed desk/);
+    await assert.rejects(readPublicEvidence(config({ row: { ...row(), attributes: attrs } })), /record attribute|malformed or oversized desk/);
   }
 });
 test('missing job and snapshot hash change fail', async () => {
@@ -104,4 +105,13 @@ test('mutable or transferred records cannot claim exact creator-authored bytes',
 test('response stream errors cannot reveal an RPC URL or credential', async () => {
   const fetchImpl = async () => new Response(new ReadableStream({ start(c) { c.error(new Error('sensitive RPC path')); } }));
   await assert.rejects(readPublicEvidence({ ...config(), fetchImpl }), /^Error: Unavailable: RPC response stream failed$/);
+});
+
+test('actual SDK-compatible record uses bytes, since str is limited to 128 UTF-8 bytes', async () => {
+  const r = row(); r.attributes[0].value = '0xffff';
+  await assert.rejects(readPublicEvidence(config({ row: r })), /malformed or oversized/);
+  const longString = row(); longString.attributes[0] = { name: 'record', type: 'str', value: JSON.stringify(job) };
+  await assert.rejects(readPublicEvidence({ ...config({ row: longString }), recordEncoding: 'str' }), /malformed or oversized/);
+  const withDefaults = config(); delete withDefaults.schema; delete withDefaults.recordAttribute;
+  assert.equal((await readPublicEvidence(withDefaults)).observations.length, 1);
 });

@@ -19,9 +19,11 @@ function literal(value) { return "str('" + value.replaceAll("'", "''") + "')"; }
 
 /** Read only a complete finalized snapshot. No payload encoding or payment proof is guessed. */
 export async function readPublicEvidence({ rpcUrl, jobRef, domain = process.env.DESK_DOMAIN,
-  schema = process.env.DESK_ARKIV_SCHEMA, recordAttribute = process.env.DESK_ARKIV_RECORD_ATTRIBUTE,
+  schema = process.env.DESK_ARKIV_SCHEMA ?? 'argo.hiring-desk.v1', recordAttribute = process.env.DESK_ARKIV_RECORD_ATTRIBUTE ?? 'record',
+  recordEncoding = 'bytes',
   fetchImpl = globalThis.fetch, maxPages = 100, pageSize = 100, timeoutMs = 10000, maxResponseBytes = 2_000_000 }) {
   text(domain, 'DESK_DOMAIN'); text(schema, 'DESK_ARKIV_SCHEMA'); text(recordAttribute, 'DESK_ARKIV_RECORD_ATTRIBUTE');
+  if (recordEncoding !== 'bytes' && recordEncoding !== 'str') throw new Error('Unavailable: unsupported record encoding');
   const match = /^arkiv:([1-9][0-9]*)\/(0x[0-9a-f]+)$/i.exec(jobRef ?? '');
   if (!match || !HEX.test(match[2])) throw new Error('Unavailable: expected arkiv:<decimal-chain>/<hex-key>');
   if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 1000 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new Error('Unavailable: invalid pagination bounds');
@@ -71,9 +73,16 @@ export async function readPublicEvidence({ rpcUrl, jobRef, domain = process.env.
       earliestExpiry = earliestExpiry === undefined || quantity(entity.expiresAt) < earliestExpiry ? quantity(entity.expiresAt) : earliestExpiry;
       if (!Array.isArray(entity.attributes)) throw new Error('Unavailable: missing record attributes');
       const fields = entity.attributes.filter(a => a.name === recordAttribute);
-      if (fields.length !== 1 || fields[0].type !== 'str' || typeof fields[0].value !== 'string' || Buffer.byteLength(fields[0].value) > 65536) throw new Error('Unavailable: configured JSON record attribute missing or oversized');
+      if (fields.length !== 1 || fields[0].type !== recordEncoding || typeof fields[0].value !== 'string') throw new Error('Unavailable: configured JSON record attribute missing or oversized');
       let record;
-      try { record = parseRecord(JSON.parse(fields[0].value)); } catch { throw new Error('Unavailable: malformed desk record'); }
+      try {
+        let json = fields[0].value;
+        if (recordEncoding === 'bytes') {
+          if (!/^0x(?:[0-9a-f]{2})*$/i.test(json) || json.length > 2 + 128 * 1024 * 2) throw Error();
+          json = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(json.slice(2), 'hex'));
+        } else if (Buffer.byteLength(json) > 128) throw Error();
+        record = parseRecord(JSON.parse(json));
+      } catch { throw new Error('Unavailable: malformed or oversized desk record'); }
       if (record.domain !== domain || record.chainId !== `arkiv:${match[1]}`) throw new Error('Unavailable: record domain or chain mismatch');
       const creator = record.type === 'provider' ? record.owner : record.type === 'job' || record.type === 'acceptance' ? record.client : record.type === 'payment' ? record.payer : record.provider;
       if (!ADDRESS.test(creator) || creator !== entity.creator) throw new Error('Unavailable: immutable creator differs from record authority');
