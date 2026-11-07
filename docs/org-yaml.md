@@ -33,7 +33,7 @@ A vault that ships the `org-runtime` skill does steps 2 and 3 on the server with
 | `channels` | Shared channels: `members` (`"*"`, team names, or agent names), `purpose`, optional `classification` and `compartments` |
 | `wake_rules` | When a message wakes a bot (next section) |
 
-An agent needs `role`, `team` and `reports_to` (its team lead or the CEO). Optional: `runtime` (`claude-code`, `hermes`, `codex`, `zen-agent`, `human`), `model`, `capabilities` (`code`, `review`, `merge`, `deploy`, `m1`, `web`, `dispatch`), `expertise`, `work`, `channels`, `avatar` and `avatar_prompt` (below), and the per-agent overrides of `wakes_per_day`, `cooldown_minutes` and `max_runtime`.
+An agent needs `role`, `team` and `reports_to` (its team lead or the CEO). Optional: `runtime` (`claude-code`, `hermes`, `codex`, `zen-agent`, `human`), `model`, `capabilities` (`code`, `review`, `merge`, `deploy`, `m1`, `web`, `dispatch`), `expertise`, `work`, `channels`, `avatar` and `avatar_prompt` (below), and the per-agent overrides of `wakes_per_day`, `cooldown_minutes` and `max_runtime`. A `codex` agent must name an exact CLI model id and have a ChatGPT subscription CLI login on the dispatcher host; the dispatcher checks both before claiming work (see [dispatch](../app/server/src/addons/dispatch/README.md)).
 
 ## Avatars
 

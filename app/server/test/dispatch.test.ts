@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ClassifyInput, ClassifyResult } from '../src/addons/classify/types.js';
 import { query } from '../src/db.js';
+import { createCard, getCard, moveCard, setOverride } from '../src/board.js';
 import { Dispatcher, inQuietHours, isProviderError, localTime, machineOf, parseRunResult, primaryReason, providerOf, routineDue, type Deps, type RunnerResult } from '../src/addons/dispatch/index.js';
 import { addWakeup, dm, getAgent, importOrg, openWakeups, post, unreadCounts } from '../src/org.js';
 import { parseSettings } from '../src/settings.js';
@@ -42,18 +43,35 @@ function harness(over: Partial<Deps['config']> = {}, settings: unknown = {}) {
   const calls: Call[] = [];
   const classified: ClassifyInput[] = [];
   let answer: (input: ClassifyInput) => ClassifyResult = fallthrough;
-  let result: RunnerResult = { code: 0, stdout: '▸ noise\n' + JSON.stringify({ text: 'posted a status', stopped: 'done', turns: 3 }) + '\n', stderr: '' };
+  let result: RunnerResult | ((args: string[]) => RunnerResult) = { code: 0, stdout: '▸ noise\n' + JSON.stringify({ text: 'posted a status', stopped: 'done', turns: 3 }) + '\n', stderr: '' };
   const now = new Date('2026-10-24T12:30:00Z');
   const d = new Dispatcher({
-    runner: async (cmd, args, env, cwd, timeoutMs) => { calls.push({ cmd, args, env, cwd, timeoutMs }); return result; },
+    runner: async (cmd, args, env, cwd, timeoutMs) => { calls.push({ cmd, args, env, cwd, timeoutMs }); return typeof result === 'function' ? result(args) : result; },
     classify: async (input) => { classified.push(input); return answer(input); },
     settings: parseSettings({ dispatch: settings }).dispatch,
     config: { orgTz: 'UTC', orgDispatchQuiet: null, orgDispatchDailyTokens: 0, orgDispatchParallel: 2, orgZenCommand: 'zen-agent', vaultRoot: vault, ...over },
     now: () => now,
     env: { PATH: '/usr/bin' },
   });
-  return { d, vault, calls, classified, now, setAnswer: (f: typeof answer) => { answer = f; }, setResult: (r: RunnerResult) => { result = r; } };
+  return { d, vault, calls, classified, now, setAnswer: (f: typeof answer) => { answer = f; }, setResult: (r: typeof result) => { result = r; } };
 }
+
+const codexOrg = () => ({ ...ORG, agents: { ...ORG.agents,
+  codebot: { role: 'Coder', team: 'platform', reports_to: 'atlas', runtime: 'codex', model: 'gpt-6-sol', capabilities: ['code'] },
+} });
+const codexJson = (text: string) => ({ code: 0, stderr: '', stdout: [
+  JSON.stringify({ type: 'thread.started', thread_id: '01a1b593-4e59-79f3-b85f-00559646839a' }),
+  JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text } }),
+  JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 12, output_tokens: 3 } }),
+].join('\n') });
+const codexFake = (state: 'done' | 'timeout' | 'cancelled' | 'error' = 'done') => (args: string[]): RunnerResult => {
+  if (args[0] === 'login') return { code: 0, stdout: 'Logged in using ChatGPT', stderr: '' };
+  if (args.includes('--ephemeral')) return codexJson('READY');
+  if (state === 'timeout') return { ...codexJson(''), code: 1, timedOut: true };
+  if (state === 'cancelled') return { ...codexJson(''), code: 1, cancelled: true };
+  if (state === 'error') return { code: 1, stdout: '{"type":"turn.failed"}', stderr: 'task failed' };
+  return codexJson('Changed the file; tests pass');
+};
 
 const meta = (args: string[], key: string): string | undefined => {
   const i = args.findIndex((a, j) => a === '--meta' && args[j + 1]?.startsWith(`${key}=`));
@@ -98,6 +116,97 @@ describe('pure helpers', () => {
 });
 
 describe('tick', () => {
+  it('preflights, claims only a Codex card, records usage and moves success to review', async () => {
+    await importOrg(codexOrg());
+    const card = await createCard('owner', { title: 'Fix a file', body: 'Change one file', assignee: 'codebot', needs: 'code' });
+    const h = harness();
+    h.setResult(codexFake());
+    const r = await h.d.tick();
+    expect(r).toMatchObject({ agents: 1, runs: 1, errors: [] });
+    expect(h.calls.map((c) => c.args[0])).toEqual(['login', 'exec', 'exec']);
+    expect(h.calls[2]!.args).toContain('gpt-6-sol');
+    expect((await getCard(card.id)).card.status).toBe('review');
+    expect((await query(`SELECT runtime, outcome, usage->>'input_tokens' AS input FROM usage_runs WHERE agent_name = 'codebot'`)).rows)
+      .toEqual([{ runtime: 'codex', outcome: 'did-work', input: '12' }]);
+    expect((await query(`SELECT source, input_tokens FROM usage_calls WHERE source = 'codex'`)).rows)
+      .toEqual([{ source: 'codex', input_tokens: 12 }]);
+  });
+
+  it('claims a card using an effective Codex runtime override', async () => {
+    await setOverride('owner', 'bolt', { runtime: 'codex', model: 'gpt-6-sol' });
+    const card = await createCard('owner', { title: 'Write a file', assignee: 'bolt' });
+    const h = harness();
+    h.setResult(codexFake());
+    await h.d.tick();
+    expect((await getCard(card.id)).card.status).toBe('review');
+    expect((await query(`SELECT runtime FROM card_runs WHERE card_id = $1`, [card.id])).rows).toEqual([{ runtime: 'codex' }]);
+  });
+
+  it('relays a Codex answer to a same-team DM thread', async () => {
+    await importOrg(codexOrg());
+    await dm(await getAgent('atlas'), 'codebot', 'Can you check this?', {});
+    const h = harness();
+    h.setResult(codexFake());
+    await h.d.tick();
+    const { rows } = await query<{ author: string; body: string; kind: string }>(
+      `SELECT author, body, kind FROM org_messages WHERE author = 'codebot' AND kind = 'reply' ORDER BY id`);
+    expect(rows).toEqual([{ author: 'codebot', body: 'Changed the file; tests pass', kind: 'reply' }]);
+  });
+
+  it('blocks a Codex card visibly when subscription preflight fails', async () => {
+    await importOrg(codexOrg());
+    const card = await createCard('owner', { title: 'Fix a file', assignee: 'codebot', needs: 'code' });
+    const h = harness();
+    h.setResult(() => ({ code: 0, stdout: 'Logged in using API key', stderr: '' }));
+    const r = await h.d.tick();
+    expect(r.errors).toEqual([expect.stringMatching(/subscription login unavailable/)]);
+    expect((await getCard(card.id)).card).toMatchObject({ status: 'blocked', block_kind: 'tool-error' });
+    expect(await openWakeups('codebot')).toEqual([]);
+    expect(h.calls).toHaveLength(1);
+  });
+
+  it('blocks a claimed Codex card on timeout and finishes the wake', async () => {
+    await importOrg(codexOrg());
+    const card = await createCard('owner', { title: 'Fix a file', assignee: 'codebot', needs: 'code' });
+    const h = harness();
+    h.setResult(codexFake('timeout'));
+    await h.d.tick();
+    expect((await getCard(card.id)).card).toMatchObject({ status: 'blocked', block_kind: 'budget' });
+    expect((await openWakeups('codebot'))).toEqual([]);
+  });
+
+  it('resumes the exact prior Codex session after a human retries a timed-out card', async () => {
+    await importOrg(codexOrg());
+    const card = await createCard('owner', { title: 'Fix a file', assignee: 'codebot', needs: 'code' });
+    const h = harness();
+    h.setResult(codexFake('timeout'));
+    await h.d.tick();
+    await moveCard('owner', card.id, 'ready', 'retry');
+    h.setResult(codexFake());
+    await h.d.tick();
+    expect(h.calls.at(-1)!.args.slice(0, 3)).toEqual(['exec', 'resume', '01a1b593-4e59-79f3-b85f-00559646839a']);
+    expect((await getCard(card.id)).card.status).toBe('review');
+  });
+
+  it('blocks a claimed Codex card on a failed turn', async () => {
+    await importOrg(codexOrg());
+    const card = await createCard('owner', { title: 'Fix a file', assignee: 'codebot', needs: 'code' });
+    const h = harness();
+    h.setResult(codexFake('error'));
+    await h.d.tick();
+    expect((await getCard(card.id)).card).toMatchObject({ status: 'blocked', block_kind: 'tool-error' });
+  });
+
+  it('blocks a claimed Codex card on cancellation and releases its run', async () => {
+    await importOrg(codexOrg());
+    const card = await createCard('owner', { title: 'Fix a file', assignee: 'codebot', needs: 'code' });
+    const h = harness();
+    h.setResult(codexFake('cancelled'));
+    await h.d.tick();
+    expect((await getCard(card.id)).card).toMatchObject({ status: 'blocked', block_kind: 'tool-error' });
+    expect((await query(`SELECT outcome, finished_at FROM card_runs WHERE card_id = $1`, [card.id])).rows)
+      .toEqual([{ outcome: 'partial', finished_at: expect.any(Date) }]);
+  });
   it('runs one zen-agent run for a DM and finishes the wakeup with the run id', async () => {
     const h = harness();
     await dm(await getAgent('atlas'), 'rune', 'please check the build', {});

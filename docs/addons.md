@@ -28,7 +28,7 @@ Each addon has one place it is wired, a manifest at `app/server/src/addons/<name
 | [`garden`](garden.md) | A nightly shelf-keeping pass over Projects/, Areas/ and Research/ | `garden` | `garden` |
 | [`routing`](modules.md) | The model-routing pilot: tier selection and the weekly routing report | - | `routing-report` |
 | [`classify`](modules.md) | The wake gate: one calibrated decision about a state, logged | `classify` | - |
-| [`dispatch`](modules.md) | The zen-agent dispatcher: one run per bot with open wakeups | `dispatch` | `dispatch` |
+| [`dispatch`](modules.md) | The zen-agent and Codex dispatcher: one run per bot with open wakeups | `dispatch` | `dispatch` |
 | [`improve`](modules.md) | The self-improvement loop (proposal) | - | - |
 
 Two addons run outside the app and so keep a `manifest.json` at the repo root instead of a TypeScript manifest: `addons/tv-kiosk/` (a Raspberry Pi that shows the app on a TV) and `addons/telegram-bridge/` (a Python bridge with its own unit and env). `deploy`, `doctor` and this index read both shapes.
@@ -41,7 +41,7 @@ Four addons are pilots or proposals rather than shipped code. Each now has a man
 |---|---|---|
 | `routing` | pilot | The model-routing tier selection and the `route_decisions` / `route_outcomes` ledger, and the weekly routing report (its timer moved off the org manifest onto this one). |
 | `classify` | pilot | The wake gate (`secondbrain classify`): one calibrated decision about a state, logged to `classify_decisions`. |
-| `dispatch` | pilot | The zen-agent dispatcher (`secondbrain dispatch`), one run per bot with open wakeups. Off unless the module is on and the server sets `ORG_DISPATCH=on`. |
+| `dispatch` | pilot | The zen-agent and Codex dispatcher (`secondbrain dispatch`), one run per bot with open wakeups. Off unless the module is on and the server sets `ORG_DISPATCH=on`. |
 | `improve` | proposal | The self-improvement loop from the plan. Docs only: no code paths, no CLI, no timer. |
 
 Their **code** now lives under each addon's folder: `addons/classify/` (`org-classify.ts`, the `classify/` module and `cli.ts`), `addons/dispatch/` (`index.ts`, `store.ts` and `cli.ts`) and `addons/routing/` (`org-router.ts`). Their CLIs ride the manifest's command table (`secondbrain classify`, `secondbrain dispatch`), so the launcher dispatches them like any other feature command and `secondbrain features help` lists them; the routing subcommands stay on the core `org` command, which imports the router from `addons/routing/`.

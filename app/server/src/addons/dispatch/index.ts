@@ -1,14 +1,16 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import { claimCard, commentCard, getCard, heartbeat, moveCard } from '../../board.js';
 import type { ClassifyInput, ClassifyResult } from '../classify/types.js';
 import type { OllamaMachine } from '../../config.js';
 import { discoverMachineModels } from '../../llm/registry.js';
-import { addWakeup, claimWakeups, finishWakeups, type Wakeup } from '../../org.js';
+import { addWakeup, claimWakeups, dm, finishWakeups, getAgent, post, type Wakeup } from '../../org.js';
 import type { DispatchSettings } from '../../settings.js';
 import { classifyCard, loadCard } from '../classify/org-classify.js';
 import { decide, recordDecision, recordOutcome, routeSpend, TIERS, type RoutingConfig, type Tier } from '../routing/org-router.js';
 import * as store from './store.js';
+import { codexCommand, codexPreflight, parseCodexResult, subscriptionEnv } from './codex.js';
 import type { MessageRow, Routine, ZenAgentRow } from './store.js';
 
 /**
@@ -18,7 +20,7 @@ import type { MessageRow, Routine, ZenAgentRow } from './store.js';
  * run `zen-agent` once for everything the bot was woken for. Every effect goes through an injected
  * runner, classifier and clock, so the tests never spawn a process or call a provider.
  */
-export interface RunnerResult { code: number; stdout: string; stderr: string }
+export interface RunnerResult { code: number; stdout: string; stderr: string; timedOut?: boolean; cancelled?: boolean }
 export type Runner = (cmd: string, args: string[], env: NodeJS.ProcessEnv, cwd: string, timeoutMs: number) => Promise<RunnerResult>;
 export type Classifier = (input: ClassifyInput) => Promise<ClassifyResult>;
 
@@ -28,6 +30,7 @@ export interface DispatchConfig {
   orgDispatchDailyTokens: number;
   orgDispatchParallel: number;
   orgZenCommand: string;
+  orgCodexCommand?: string;
   vaultRoot: string;
   /** The connected computers (OLLAMA_MACHINES); a model on one of them may fall back (settings.fallback). */
   machines?: OllamaMachine[];
@@ -185,6 +188,7 @@ export class Dispatcher {
   private readonly now: () => Date;
   private readonly env: NodeJS.ProcessEnv;
   private readonly log: (line: string) => void;
+  private readonly codexReady = new Set<string>();
 
   constructor(private readonly deps: Deps) {
     this.now = deps.now ?? (() => new Date());
@@ -230,7 +234,7 @@ export class Dispatcher {
     for (let i = 0; i < agents.length; i += parallel) {
       await Promise.all(agents.slice(i, i + parallel).map(async (a) => {
         try {
-          const r = await this.runAgent(a);
+          const r = a.runtime === 'codex' ? await this.runCodexAgent(a) : await this.runAgent(a);
           res.runs += r.ran ? 1 : 0;
           res.acks += r.acks;
           res.gated += r.gated;
@@ -240,6 +244,89 @@ export class Dispatcher {
       }));
     }
     return res;
+  }
+
+  /** The Codex lane claims only Codex roster rows. A preflight failure leaves the card unclaimed and visible. */
+  async runCodexAgent(agent: ZenAgentRow): Promise<{ ran: boolean; acks: number; gated: number }> {
+    const out = { ran: false, acks: 0, gated: 0 };
+    const model = agent.model;
+    if (!model) throw new Error('Codex agent has no exact model id');
+    const command = this.deps.config.orgCodexCommand ?? 'codex';
+    const env = subscriptionEnv({ ...this.env, ORG_AGENT: agent.name });
+    if (!this.codexReady.has(model)) {
+      const problem = await codexPreflight(this.deps.runner, command, model, this.deps.config.vaultRoot, env);
+      if (problem) {
+        for (const task of await store.pendingTaskCards(agent.name)) {
+          await moveCard(agent.name, task.card, 'blocked', problem, { blockKind: 'tool-error' });
+          await finishWakeups([task.wakeupId], { result: problem });
+        }
+        throw new Error(problem);
+      }
+      this.codexReady.add(model);
+    }
+    const startedAt = this.now();
+    const runId = runIdFor(agent.name, startedAt);
+    const wakeups = await claimWakeups(agent.name, runId);
+    if (!wakeups.length) return out;
+    // One card per run. Other task wakeups remain available for the next tick.
+    const tasks = wakeups.filter((w) => w.reason === 'task');
+    await store.unclaim(tasks.slice(1).map((w) => w.id));
+    const selected = wakeups.filter((w) => !tasks.slice(1).some((x) => x.id === w.id));
+    const card = tasks[0]?.ref ?? null;
+    const budget = this.deps.settings.budgets[card ? 'task' : primaryReason(selected)] ?? DEFAULT_BUDGETS[card ? 'task' : primaryReason(selected)];
+    let claimed = false;
+    try {
+      let prompt = this.taskText(agent, selected.map((w) => ({ w, message: null, routine: null })), card);
+      if (card) {
+        const detail = await getCard(card);
+        if (detail.card.assignee !== agent.name) throw new Error(`card ${card} is assigned to another agent`);
+        const taken = await claimCard(null, { runtime: 'codex', agent: agent.name, taskId: card,
+          leaseMinutes: Math.max(5, budget.minutes + 5), wakeup: tasks[0]?.id });
+        if (!taken) { await store.unclaim(selected.map((w) => w.id)); return out; }
+        claimed = true;
+        prompt += `\nCard ${card}: ${detail.card.title}\n${detail.card.body ?? ''}\n`;
+        if (detail.comments.length) prompt += `\nComments:\n${detail.comments.map((c) => `${c.author}: ${c.body}`).join('\n')}\n`;
+        prompt += '\nWork within the card scope. A human reviews the result before completion. State the checks you actually ran.\n';
+      } else {
+        for (const w of selected) {
+          if (!w.ref || !/^\d+$/.test(w.ref)) continue;
+          const m = await store.messageById(Number(w.ref));
+          if (m) prompt += `\n${renderMessage(m)}\n`;
+        }
+      }
+      const resume = card ? await store.lastCodexSession(agent.name, card) : null;
+      const args = codexCommand(model, this.deps.config.vaultRoot, prompt, resume, Boolean(card));
+      const result = parseCodexResult(await this.deps.runner(command, args, { ...env, ORG_RUN: runId },
+        this.deps.config.vaultRoot, (budget.minutes + 2) * 60_000));
+      out.ran = true;
+      const summary = result.text || `Codex ${result.state} (exit ${result.code})`;
+      await store.recordCodexRun({ runId, sessionId: result.sessionId ?? resume, agent: agent.name, model, card,
+        startedAt, endedAt: this.now(), state: result.state, text: summary, inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens, wakeupIds: selected.map((w) => w.id) });
+      if (card) {
+        await heartbeat(agent.name, card, { tokens: result.inputTokens + result.outputTokens });
+        await commentCard(agent.name, card, `${result.state}: ${summary}`.slice(0, 8000));
+        await moveCard(agent.name, card, result.state === 'done' ? 'review' : 'blocked', summary.slice(0, 600),
+          result.state === 'done' ? {} : { blockKind: result.state === 'timeout' ? 'budget' : 'tool-error' });
+      } else if (result.state === 'done' && result.text.trim()) {
+        const author = await getAgent(agent.name);
+        for (const w of selected) {
+          if (!w.ref || !/^\d+$/.test(w.ref)) continue;
+          const m = await store.messageById(Number(w.ref));
+          if (!m) continue;
+          if (w.reason === 'dm' && !m.author_human) await dm(author, m.author, result.text, { kind: 'reply', thread: m.thread_id ?? m.id });
+          else if (w.reason === 'mention' || w.reason === 'handoff') await post(author, m.channel_slug, result.text,
+            { kind: 'reply', thread: m.thread_id ?? m.id });
+        }
+      }
+      await finishWakeups(selected.map((w) => w.id), { run: runId, exit: result.code, result: summary.slice(0, 600) });
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      if (claimed && card) await moveCard(agent.name, card, 'blocked', why.slice(0, 600), { blockKind: 'tool-error' });
+      await finishWakeups(selected.map((w) => w.id), { run: runId, exit: 1, result: why.slice(0, 600) });
+      throw err;
+    }
+    return out;
   }
 
   /** One bot: claim, apply the rules, gate, then one run for whatever is left. */
