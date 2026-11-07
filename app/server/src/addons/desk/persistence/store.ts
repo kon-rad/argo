@@ -1,3 +1,4 @@
+import type { ProviderWalletIntent } from '@secondbrain/desk-contracts/desk';
 import type { Approval, OperatorJob, PublicState, ReleaseBinding, WorkerResult, WorkerSpec } from '@secondbrain/desk-contracts/desk';
 import { withTransaction, query as appQuery, type TxClient } from '../../../db.js';
 
@@ -12,6 +13,7 @@ export interface AssignmentRecord {
   dispatchIdempotencyKey?: string;
   workerSpec?: WorkerSpec;
   pendingDeliveryIntent?: { chainId: string; transaction: unknown; idempotencyKey: string; release: ReleaseBinding };
+  walletIntents?: Partial<Record<'claim' | 'delivery', { intent: ProviderWalletIntent; txHash?: string }>>;
   paymentReceiptId?: string;
   /** Submitted hashes are restart-safe hints, never proof that payment succeeded. */
   paymentSubmission?: { txHash: string; status: 'pending' | 'failed'; code?: string };
@@ -56,7 +58,7 @@ export class PgDeskPersistence implements DeskPersistence {
       if (current.publicState.acceptanceDigest && state.acceptanceDigest && current.publicState.acceptanceDigest !== state.acceptanceDigest) throw new DeskStoreError('conflict');
       if (JSON.stringify(current.publicState) === JSON.stringify(state)) return current;
       current.publicState = state;
-      if (state.stage === 'delivered' && current.pendingDeliveryIntent && state.delivery && state.claim && state.delivery.provider === state.claim.provider && state.delivery.artifactHash === current.pendingDeliveryIntent.release.artifactHash && state.delivery.mediaType === current.pendingDeliveryIntent.release.mediaType && state.delivery.publicRef === current.pendingDeliveryIntent.release.publicDestination) current.execution = 'released';
+      if (current.execution === 'review' && state.stage === 'delivered' && current.pendingDeliveryIntent && state.delivery && state.claim && state.delivery.provider === state.claim.provider && state.claim.executionId === current.activeAttemptId && state.delivery.artifactHash === current.pendingDeliveryIntent.release.artifactHash && state.delivery.mediaType === current.pendingDeliveryIntent.release.mediaType && state.delivery.publicRef === current.pendingDeliveryIntent.release.publicDestination) current.execution = 'released';
       current.revision += 1;
       await q('UPDATE desk_assignments SET revision=$2, aggregate=$3::jsonb, updated_at=now() WHERE job_ref=$1', [id, current.revision, JSON.stringify(current)]);
       await q('INSERT INTO desk_audit_events(job_ref, revision, actor, action, details) VALUES ($1,$2,$3,$4,$5::jsonb)', [id, current.revision, 'public-store', 'public-state-observed', JSON.stringify({ stage: state.stage })]);
@@ -109,7 +111,7 @@ export class MemoryDeskPersistence implements DeskPersistence {
   async updatePublicState(id: string, state: PublicState): Promise<AssignmentRecord> {
     const current = this.records.get(id); if (!current) throw new DeskStoreError('not-found');
     if (current.publicState.acceptanceDigest && state.acceptanceDigest && current.publicState.acceptanceDigest !== state.acceptanceDigest) throw new DeskStoreError('conflict');
-    if (JSON.stringify(current.publicState) !== JSON.stringify(state)) { current.publicState = structuredClone(state); if (state.stage === 'delivered' && current.pendingDeliveryIntent && state.delivery && state.claim && state.delivery.provider === state.claim.provider && state.delivery.artifactHash === current.pendingDeliveryIntent.release.artifactHash && state.delivery.mediaType === current.pendingDeliveryIntent.release.mediaType && state.delivery.publicRef === current.pendingDeliveryIntent.release.publicDestination) current.execution = 'released'; current.revision += 1; }
+    if (JSON.stringify(current.publicState) !== JSON.stringify(state)) { current.publicState = structuredClone(state); if (current.execution === 'review' && state.stage === 'delivered' && current.pendingDeliveryIntent && state.delivery && state.claim && state.delivery.provider === state.claim.provider && state.claim.executionId === current.activeAttemptId && state.delivery.artifactHash === current.pendingDeliveryIntent.release.artifactHash && state.delivery.mediaType === current.pendingDeliveryIntent.release.mediaType && state.delivery.publicRef === current.pendingDeliveryIntent.release.publicDestination) current.execution = 'released'; current.revision += 1; }
     return structuredClone(current);
   }
   async mutate(id: string, mutation: AssignmentMutation): Promise<{ record: AssignmentRecord; replayed: boolean }> {
