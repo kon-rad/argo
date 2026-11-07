@@ -30,7 +30,23 @@ DESK_PUBLIC_RPC_URL=https://public-rpc.example desk-reader 'chain:network/entity
 
 The adapter module must export `readPublicEvidence({ rpcUrl, jobRef })` and return `{ observations, verifiedPayments }`. It must return the complete paginated, finalized observations only after independently verifying chain, creator, timestamp, inclusion and finality; payment entries must come from a receipt verifier that independently confirms and reserves the receipt. The command passes both arrays through `reducePublicState`, prints the job, acceptance, artifact hash and payment evidence references, and exits nonzero for an unknown, conflicting or structurally rejected state. A pending payment is reported without claiming it is verified. Do not implement this adapter from unverified event payloads.
 
-No chain reader is included in this G0-based branch: P2/P5/P6 provide the actual chain, identity and payment adapters. The independent reader cannot claim to verify final payment until the adapter supplies independently validated payment observations. RPC URL is the only credential-like setting; no Argo login or private database is used.
+A conservative raw Arkiv reader is included as `src/arkiv-reader.mjs`. It checks the RPC chain, immutable creator, exact desk/v1 records and domain, block-based entity expiry, creation-block timestamps, keyset ordering and snapshot consistency. It captures the query block, then requires the finalized head to cover it and the canonical snapshot hash to remain unchanged. Pagination drift or pending finality fails explicitly; rerun after finality. It never supplies verified payments, so it cannot establish `paid`.
+
+Its wire representation must be configured explicitly: `DESK_ARKIV_SCHEMA` selects the `arkiv.schema` string attribute, and `DESK_ARKIV_RECORD_ATTRIBUTE` selects a string attribute holding the complete canonical desk/v1 JSON record. No default encoding is chosen. This is a supported reader contract, **not a claim that an existing deployment uses this representation**. The old schema-1 draft uses separate attributes and a payload; it is not desk/v1 and is deliberately unsupported until a reviewed mapping is supplied. The adapter never guesses an undocumented RPC payload field.
+
+```sh
+DESK_DOMAIN=example \
+DESK_ARKIV_SCHEMA=your-reviewed-schema \
+DESK_ARKIV_RECORD_ATTRIBUTE=your-reviewed-record-attribute \
+DESK_PUBLIC_RPC_URL=https://your-public-rpc.example \
+node addons/desk-client/bin/desk-reader.mjs 'arkiv:7794095/0xENTITY_KEY' ./addons/desk-client/src/arkiv-reader.mjs
+```
+
+Use an actual full hex entity key. No signing key, Argo login or private database is used. Access keys in RPC URL paths are never included in transport errors. Public RPC errors, unsupported finalized tags, missing job data, malformed records and over-limit responses fail closed. The default bounds are 100 pages of at most 100 entities, 2 MB per RPC response, 64 KiB per record JSON and a 10-second timeout per request.
+
+`verifyArtifactBytes(bytes, expectedHash, maxBytes)` checks SHA-256 of separately downloaded bytes with a size bound. It does not fetch URLs or prove Swarm publication. The caller must obtain the bytes through its independent reader. Payment verification and receipt allocation still require a separately reviewed real verifier.
+
+Primary method and network references: [Arkiv raw reads](https://docs.arkiv.network/json-rpc/querying-data/), [Rabdi](https://docs.arkiv.network/networks/rabdi/).
 
 ## Build and checks
 
