@@ -99,6 +99,8 @@ class Browser:
         else:
             raise RuntimeError("Focus one visible HTTP browser tab before recording")
         frame = self.page_call(page["id"], "Page.getFrameTree")["frameTree"]["frame"]
+        if frame.get("url") != page["url"] or not frame.get("loaderId"):
+            raise RuntimeError("Browser page is loading; try again when it is ready")
         return {"id": page["id"], "url": frame["url"], "loader": frame["loaderId"]}
 
     def execute(self, command, pinned):

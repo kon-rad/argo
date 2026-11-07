@@ -49,7 +49,9 @@ def test_real_browser_scroll_fullscreen_navigation_and_stale_page(tmp_path):
             for _ in range(100):
                 try:
                     pinned = browser.snapshot()
-                    break
+                    ready = browser.page_call(pinned["id"], "Runtime.evaluate", {"expression": "document.readyState"})
+                    if ready["result"]["value"] == "complete":
+                        break
                 except Exception:
                     time.sleep(0.1)
             else:

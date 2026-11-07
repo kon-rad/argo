@@ -112,6 +112,18 @@ def test_ambiguous_visible_windows_refused():
         Ambiguous().snapshot()
 
 
+def test_initializing_page_cannot_be_bound():
+    class Loading(voice.Browser):
+        def pages(self):
+            return [{"id": "a", "url": "https://example.com"}]
+        def page_call(self, target, method, params=None):
+            if method == "Runtime.evaluate":
+                return {"result": {"value": {"visible": True, "focused": True}}}
+            return {"frameTree": {"frame": {"url": "", "loaderId": "pending"}}}
+    with pytest.raises(RuntimeError, match="loading"):
+        Loading().snapshot()
+
+
 def test_capture_combines_all_segments_and_does_not_write_audio(tmp_path, monkeypatch):
     import sys
     from types import SimpleNamespace
