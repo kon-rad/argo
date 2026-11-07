@@ -111,6 +111,8 @@ const Schema = z.object({
   ORG_DISPATCH_DAILY_TOKENS: z.coerce.number().int().min(0).default(0),
   // The zen-agent command the dispatcher runs (on the PATH, or an absolute path).
   ORG_ZEN_COMMAND: z.string().min(1).default('zen-agent'),
+  // Subscription-only Codex CLI. A roster row runs only after ChatGPT login and exact-model preflight.
+  ORG_CODEX_COMMAND: z.string().min(1).default('codex'),
   // Where zen-agent writes its traces (zen.json sessionsDir); usage-sync reads them. Default: <vault>/.zen/sessions.
   ZEN_SESSIONS_DIR: z.string().optional(),
   // The classify step (secondbrain classify): `none` falls every decision through to the old path.
@@ -302,6 +304,7 @@ export const config = {
   orgDispatchQuiet: parsed.data.ORG_DISPATCH_QUIET ?? null,
   orgDispatchDailyTokens: parsed.data.ORG_DISPATCH_DAILY_TOKENS,
   orgZenCommand: parsed.data.ORG_ZEN_COMMAND,
+  orgCodexCommand: parsed.data.ORG_CODEX_COMMAND,
   zenSessionsDir: parsed.data.ZEN_SESSIONS_DIR ?? resolve(parsed.data.VAULT_ROOT, '.zen', 'sessions'),
   classifyProvider: parsed.data.CLASSIFY_PROVIDER,
   classifyDailyTokens: parsed.data.CLASSIFY_DAILY_TOKENS,
