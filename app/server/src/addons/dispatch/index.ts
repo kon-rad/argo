@@ -280,6 +280,13 @@ export class Dispatcher {
       if (card) {
         const detail = await getCard(card);
         if (detail.card.assignee !== agent.name) throw new Error(`card ${card} is assigned to another agent`);
+        if (detail.card.repo) {
+          const why = `card ${card} names repo ${detail.card.repo}; use an isolated card runner`;
+          await moveCard(agent.name, card, 'blocked', why, { blockKind: 'tool-error' });
+          await store.unclaim(selected.filter((w) => w.reason !== 'task').map((w) => w.id));
+          await finishWakeups([tasks[0]!.id], { run: runId, exit: 1, result: why });
+          return out;
+        }
         const taken = await claimCard(null, { runtime: 'codex', agent: agent.name, taskId: card,
           leaseMinutes: Math.max(5, budget.minutes + 5), wakeup: tasks[0]?.id });
         if (!taken) { await store.unclaim(selected.map((w) => w.id)); return out; }

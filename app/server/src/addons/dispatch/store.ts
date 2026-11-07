@@ -84,7 +84,7 @@ export async function pendingTaskCards(agent: string): Promise<{ wakeupId: numbe
   const { rows } = await query<{ wakeup_id: number; card: string }>(
     `SELECT w.id AS wakeup_id, c.id AS card FROM org_wakeups w JOIN cards c ON c.id = w.ref
       WHERE w.agent_name = $1 AND w.reason = 'task' AND w.done_at IS NULL AND w.claimed_at IS NULL
-        AND c.status = 'ready' AND c.assignee = $1`, [agent]);
+        AND c.status = 'ready' AND c.assignee = $1 AND board_dispatch_enabled(c.board_slug)`, [agent]);
   return rows.map((r) => ({ wakeupId: r.wakeup_id, card: r.card }));
 }
 

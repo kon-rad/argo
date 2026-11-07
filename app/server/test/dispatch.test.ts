@@ -165,6 +165,16 @@ describe('tick', () => {
     expect(h.calls).toHaveLength(1);
   });
 
+  it('refuses a repository card before launch so the isolated runner owns it', async () => {
+    await importOrg(codexOrg());
+    const card = await createCard('owner', { title: 'Change engine', assignee: 'codebot', needs: 'code', repo: 'engine' });
+    const h = harness();
+    h.setResult(codexFake());
+    await h.d.tick();
+    expect((await getCard(card.id)).card).toMatchObject({ status: 'blocked', block_kind: 'tool-error' });
+    expect(h.calls.map((c) => c.args[0])).toEqual(['login', 'exec']);
+  });
+
   it('blocks a claimed Codex card on timeout and finishes the wake', async () => {
     await importOrg(codexOrg());
     const card = await createCard('owner', { title: 'Fix a file', assignee: 'codebot', needs: 'code' });
