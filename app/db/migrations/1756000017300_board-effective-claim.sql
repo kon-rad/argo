@@ -13,6 +13,9 @@ BEGIN
     RAISE EXCEPTION 'board: no caller';
   END IF;
   IF p_runtime IS NULL AND p_agent IS NULL THEN RAISE EXCEPTION 'claim needs a runtime or an agent'; END IF;
+  IF NOT board_dispatch_enabled(p_board) THEN
+    RETURN NULL;
+  END IF;
   SELECT k.* INTO card FROM cards k JOIN org_agents_effective a ON a.name = k.assignee
    WHERE k.status = 'ready' AND a.retired_at IS NULL AND NOT a.paused AND a.runtime NOT IN ('human', 'session')
      AND (p_runtime IS NULL OR a.runtime = p_runtime) AND (p_agent IS NULL OR a.name = p_agent) AND (p_board IS NULL OR k.board_slug = p_board)
