@@ -36,11 +36,13 @@ export async function readPublicEvidence({ rpcUrl, jobRef, domain = process.env.
     if (!response.ok) throw new Error('Unavailable: public RPC returned an HTTP error');
     const chunks = []; let size = 0;
     if (!response.body) throw new Error('Unavailable: missing RPC response');
-    for await (const chunk of response.body) {
-      size += chunk.length;
-      if (size > maxResponseBytes) { await response.body.cancel().catch(() => {}); throw new Error('Unavailable: RPC response exceeds limit'); }
-      chunks.push(chunk);
-    }
+    try {
+      for await (const chunk of response.body) {
+        size += chunk.length;
+        if (size > maxResponseBytes) throw new Error('response limit');
+        chunks.push(chunk);
+      }
+    } catch { throw new Error(size > maxResponseBytes ? 'Unavailable: RPC response exceeds limit' : 'Unavailable: RPC response stream failed'); }
     let envelope;
     try { envelope = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new Error('Unavailable: malformed RPC response'); }
     if (envelope.jsonrpc !== '2.0' || envelope.id !== id || envelope.error || !Object.hasOwn(envelope, 'result')) throw new Error('Unavailable: RPC rejected or malformed response');
@@ -51,7 +53,7 @@ export async function readPublicEvidence({ rpcUrl, jobRef, domain = process.env.
   for (let page = 0; ; page++) {
     if (page >= maxPages) throw new Error('Unavailable: pagination limit reached');
     const filter = `arkiv.schema = ${literal(schema)}${cursor ? ` AND $key > key(${cursor})` : ''} ORDER BY $key ASC`;
-    const result = await rpc('arkiv_query', [filter, { select: { key: true, creator: true, createdAt: true, updatedAt: true, expiresAt: true, attributes: true }, limit: `0x${pageSize.toString(16)}` }]);
+    const result = await rpc('arkiv_query', [filter, { select: { key: true, creator: true, owner: true, creationFlags: true, createdAt: true, updatedAt: true, expiresAt: true, attributes: true }, limit: `0x${pageSize.toString(16)}` }]);
     if (!result || !Array.isArray(result.data) || result.data.length > pageSize) throw new Error('Unavailable: malformed query page');
     if (!snapshot) {
       block = quantity(result.blockNumber);
@@ -64,6 +66,7 @@ export async function readPublicEvidence({ rpcUrl, jobRef, domain = process.env.
     for (const entity of result.data) {
       if (!HEX.test(entity.key ?? '') || keys.has(entity.key.toLowerCase()) || (cursor && BigInt(entity.key) <= BigInt(cursor))) throw new Error('Unavailable: invalid or repeated entity key');
       cursor = entity.key; keys.add(cursor.toLowerCase());
+      if (entity.creationFlags?.readonly !== true || entity.owner !== entity.creator) throw new Error('Unavailable: creator-authored immutable content is not established');
       if (!ADDRESS.test(entity.creator ?? '') || quantity(entity.createdAt) > block || quantity(entity.updatedAt) > block || quantity(entity.createdAt) > quantity(entity.updatedAt) || quantity(entity.expiresAt) <= block) throw new Error('Unavailable: expired or unfinalized entity');
       earliestExpiry = earliestExpiry === undefined || quantity(entity.expiresAt) < earliestExpiry ? quantity(entity.expiresAt) : earliestExpiry;
       if (!Array.isArray(entity.attributes)) throw new Error('Unavailable: missing record attributes');

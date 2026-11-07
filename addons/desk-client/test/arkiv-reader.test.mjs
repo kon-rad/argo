@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readPublicEvidence } from '../src/arkiv-reader.mjs';
 const creator = '0x' + '11'.repeat(20), key = '0x' + '22'.repeat(32), hash = '0x' + '33'.repeat(32);
 const job = { version: 'desk/v1', type: 'job', domain: 'example', chainId: 'arkiv:1', jobId: 'job', nonce: 'unique', client: creator, skill: 'research', brief: 'Public brief', budgetAtomic: '1', asset: 'test', paymentChainId: 'arc:1', deadline: 2000 };
-const row = () => ({ key, creator, createdAt: '0x1', updatedAt: '0x1', expiresAt: '0x20', attributes: [{ name: 'record', type: 'str', value: JSON.stringify(job) }] });
+const row = () => ({ key, creator, owner: creator, creationFlags: { readonly: true }, createdAt: '0x1', updatedAt: '0x1', expiresAt: '0x20', attributes: [{ name: 'record', type: 'str', value: JSON.stringify(job) }] });
 function config(overrides = {}) {
   let queryCalls = 0;
   const fetchImpl = async (_url, options) => {
@@ -54,7 +54,7 @@ test('immutable creator, record domain and record chain are checked', async () =
 });
 test('expired, future-updated and malformed entity block data fail', async () => {
   for (const patch of [{ expiresAt: '0x10' }, { updatedAt: '0x11' }, { createdAt: '0x2', updatedAt: '0x1' }, { creator: 'not-an-address' }]) {
-    await assert.rejects(readPublicEvidence(config({ row: { ...row(), ...patch } })), /expired or unfinalized/);
+    await assert.rejects(readPublicEvidence(config({ row: { ...row(), ...patch } })), /expired or unfinalized|immutable content/);
   }
 });
 test('missing, malformed, duplicated and oversized JSON attribute fail', async () => {
@@ -91,4 +91,17 @@ test('schema query uses Arkiv single-quote escaping', async () => {
   const queries = [];
   await readPublicEvidence({ ...config({ captureQuery: q => queries.push(q) }), schema: "team's-desk" });
   assert.match(queries[0], /str\('team''s-desk'\)/);
+});
+
+test('mutable or transferred records cannot claim exact creator-authored bytes', async () => {
+  for (const patch of [
+    { creationFlags: { readonly: false } },
+    { creationFlags: undefined },
+    { owner: '0x' + '77'.repeat(20) },
+    { creationFlags: { readonly: false }, owner: '0x' + '77'.repeat(20), updatedAt: '0x2' },
+  ]) await assert.rejects(readPublicEvidence(config({ row: { ...row(), ...patch } })), /immutable content/);
+});
+test('response stream errors cannot reveal an RPC URL or credential', async () => {
+  const fetchImpl = async () => new Response(new ReadableStream({ start(c) { c.error(new Error('sensitive RPC path')); } }));
+  await assert.rejects(readPublicEvidence({ ...config(), fetchImpl }), /^Error: Unavailable: RPC response stream failed$/);
 });
