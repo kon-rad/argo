@@ -50,6 +50,8 @@ ENS documents the initializer and salt derivation in [Verifiable Factory: Deploy
 
 Do not hand-type ABI calldata in MetaMask. Generate it from the official ABI, simulate it with `eth_call`, and compare the implementation, initializer owner and predicted proxy address before signing.
 
+Argo includes a public-safe transaction tool in [`tools/ensv2`](https://github.com/kon-rad/argo/tree/main/tools/ensv2). It predicts both proxy addresses with CREATE2, emits a complete transaction manifest for MetaMask review, and can run the same sequence with an explicitly configured operator key.
+
 ### 2. Attach the registry to the parent name
 
 Call `setSubregistry` for `PARENT_NAME` on the parent ENSv2 registry, using the new proxy address. This makes the registry responsible for names below the parent.

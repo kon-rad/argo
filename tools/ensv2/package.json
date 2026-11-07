@@ -1,0 +1,11 @@
+{
+  "name": "@argo/ensv2-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "register": "node register-agent.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.37.0"
+  }
+}
