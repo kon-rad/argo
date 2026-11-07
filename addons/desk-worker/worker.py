@@ -39,7 +39,7 @@ def main():
             docs.append((ref, content))
             manifest[ref] = hashlib.sha256(content.encode()).hexdigest()
     corpus_digest = hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    if corpus_digest != spec.get("corpusDigest"):
+    if spec.get("corpusDigest") not in (corpus_digest, "sha256:" + corpus_digest):
         raise ValueError("corpus digest does not match approved spec")
     lines = ["# Comparative research brief", "", "## Findings", ""]
     for ref, content in docs:

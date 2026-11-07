@@ -30,6 +30,15 @@ class DeskRunner:
             raise RuntimeError(f"docker {args[0]} failed ({result.returncode})")
         return result.stdout.strip()
 
+    def _remove_network(self, network):
+        # Gateway is attached to every attempt network. Detach it before removal;
+        # Docker otherwise refuses to delete the network even after worker removal.
+        try:
+            self._docker("network", "disconnect", "-f", network, self.gateway_container)
+        except RuntimeError:
+            pass  # May already be detached. Network removal still must succeed.
+        self._docker("network", "rm", network)
+
     def _check_host(self):
         if platform.system() != "Linux":
             raise RuntimeError("runner requires a dedicated Linux VM")
@@ -48,7 +57,7 @@ class DeskRunner:
             networks = self._docker("network", "ls", "-q", "--filter", "label=desk.attempt").splitlines()
             for network in networks:
                 if network:
-                    self._docker("network", "rm", network)
+                    self._remove_network(network)
             return {"kind": "ok", "value": {"containersRemoved": len(containers), "networksRemoved": len(networks)}}
         except Exception as exc:
             return {"kind": "unavailable", "message": str(exc)}
@@ -89,13 +98,14 @@ class DeskRunner:
             expires = min(int(spec["expiresAt"]), int(time.time()) + timeout)
             timer = threading.Timer(max(0, expires - time.time()), self._enforce_deadline, args=(attempt,))
             timer.daemon = True
-            self.active[attempt] = {"name": name, "network": network, "root": str(root), "expires": expires, "capability": capability, "timer": timer}
+            self.active[attempt] = {"name": name, "network": network, "root": str(root), "expires": expires, "capability": capability, "specDigest": hashlib.sha256(json.dumps(spec, sort_keys=True, separators=(",", ":")).encode()).hexdigest(), "timer": timer}
             timer.start()
             return {"kind": "ok", "value": {"attemptId": attempt}}
         except Exception as exc:
             if name:
                 subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
             if network:
+                subprocess.run(["docker", "network", "disconnect", "-f", network, self.gateway_container], capture_output=True, check=False)
                 subprocess.run(["docker", "network", "rm", network], capture_output=True, check=False)
             if root:
                 shutil.rmtree(root, ignore_errors=True)
@@ -118,7 +128,7 @@ class DeskRunner:
             if state["ExitCode"] != 0:
                 run["timer"].cancel()
                 self._docker("rm", "-f", run["name"])
-                self._docker("network", "rm", run["network"])
+                self._remove_network(run["network"])
                 shutil.rmtree(Path(run["root"]) / "scratch", ignore_errors=True)
                 self.finished[attempt_id] = {"status": "failed"}
                 self.active.pop(attempt_id, None)
@@ -127,27 +137,38 @@ class DeskRunner:
             if not result_path.is_file():
                 run["timer"].cancel()
                 self._docker("rm", "-f", run["name"])
-                self._docker("network", "rm", run["network"])
+                self._remove_network(run["network"])
                 shutil.rmtree(run["root"], ignore_errors=True)
                 self.active.pop(attempt_id, None)
                 self.finished[attempt_id] = {"status": "failed"}
                 return {"kind": "ok", "value": {"status": "failed"}}
-            result = result_path.read_bytes()
+            # Reject symlinked/oversized output before reading worker-controlled bytes.
+            if result_path.is_symlink() or result_path.stat().st_size > 1_000_000:
+                self.cancel(attempt_id)
+                self.finished[attempt_id] = {"status": "failed"}
+                return {"kind": "ok", "value": {"status": "failed"}}
+            fd = os.open(result_path, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, "rb") as stream:
+                result = stream.read(1_000_001)
+            if not result or len(result) > 1_000_000:
+                self.cancel(attempt_id)
+                self.finished[attempt_id] = {"status": "failed"}
+                return {"kind": "ok", "value": {"status": "failed"}}
             metadata = json.loads(self._docker("logs", run["name"]).splitlines()[-1])
             actual = hashlib.sha256(result).hexdigest()
             if metadata.get("artifactHash") != actual or metadata.get("artifactRef") != "result.md":
                 run["timer"].cancel()
                 self._docker("rm", "-f", run["name"])
-                self._docker("network", "rm", run["network"])
+                self._remove_network(run["network"])
                 shutil.rmtree(run["root"], ignore_errors=True)
                 self.active.pop(attempt_id, None)
                 self.finished[attempt_id] = {"status": "failed"}
                 return {"kind": "ok", "value": {"status": "failed"}}
             # Move the finished artifact out of disposable scratch for P3 to persist/review.
             durable = Path(run["root"]) / "result" / "result.md"
-            shutil.copyfile(result_path, durable)
+            durable.write_bytes(result)
             self._docker("rm", "-f", run["name"])
-            self._docker("network", "rm", run["network"])
+            self._remove_network(run["network"])
             shutil.rmtree(Path(run["root"]) / "scratch", ignore_errors=True)
             run["timer"].cancel()
             completed = {"status": "complete", "result": {"artifactHash": actual, "mediaType": "text/markdown", "artifactRef": str(durable), "boundedTrace": metadata.get("boundedTrace", "")}}
@@ -180,7 +201,7 @@ class DeskRunner:
         revoke_error = None
         try:
             # Revoke first so a racing container cannot make another gateway call.
-            req = urllib.request.Request(self.gateway_url + "/v1/revoke", b"{}", {"Authorization": "Bearer " + run["capability"], "Content-Type": "application/json"})
+            req = urllib.request.Request(self.gateway_url + "/v1/revoke", b"{}", {"Authorization": "Bearer " + run["capability"], "Content-Type": "application/json", "X-Desk-Spec-Digest": run["specDigest"]})
             with urllib.request.urlopen(req, timeout=3):
                 pass
         except Exception as exc:
@@ -189,7 +210,7 @@ class DeskRunner:
             # Stop the process even if revocation could not be confirmed. Expiry is
             # independently enforced by the gateway when the capability has expired.
             self._docker("rm", "-f", run["name"])
-            self._docker("network", "rm", run["network"])
+            self._remove_network(run["network"])
             shutil.rmtree(run["root"], ignore_errors=True)
             self.active.pop(attempt_id, None)
             self.finished[attempt_id] = {"status": "cancelled"}
