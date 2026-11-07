@@ -268,9 +268,9 @@ export class DeskOrchestrator implements DeskOperatorApi {
     const row = await this.refresh(id); if (row.kind !== 'ok') return row;
     const { job, offer, acceptanceRef } = row.value.publicState;
     if (!job || !offer || !acceptanceRef) return err('denied', 'Payment requires an accepted offer');
+    if (row.value.execution !== 'released' || !row.value.publicState.delivery) return err('denied', 'Payment cannot be assigned before a verified public delivery');
     const intent = { jobRef: id, acceptanceRef, chainId: offer.paymentChainId, payer: job.client, recipient: offer.recipient, asset: offer.asset, amountAtomic: offer.amountAtomic, transferInterface: offer.transferInterface };
     const verified = await this.o.settlement.verify(intent, txHash); if (verified.kind !== 'ok') return verified as Result<never>;
-    if (row.value.execution !== 'released') return err('denied', 'Payment cannot be assigned before a verified public delivery');
     if (!await this.o.store.reservePayment(id, verified.value.receiptId)) return err('denied', 'Payment receipt was already allocated');
     const snap = await this.o.snapshots.snapshot(id); if (snap.kind !== 'ok') return snap;
     const state = await reducePublicState(snap.value, id, timestamp(this.o), [verified.value]);

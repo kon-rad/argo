@@ -15,6 +15,8 @@ export interface AssignmentRecord {
   pendingDeliveryIntent?: { chainId: string; transaction: unknown; idempotencyKey: string; release: ReleaseBinding };
   walletIntents?: Partial<Record<'claim' | 'delivery', { intent: ProviderWalletIntent; txHash?: string }>>;
   paymentReceiptId?: string;
+  /** Submitted hashes are restart-safe hints, never proof that payment succeeded. */
+  paymentSubmission?: { txHash: string; status: 'pending' | 'failed'; code?: string };
 }
 export interface AssignmentMutation {
   action: string;

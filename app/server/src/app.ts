@@ -33,6 +33,8 @@ import { togetherSqlGenerator, type SqlGenerator } from './sqlgen.js';
 import { readBuildInfo, type BuildInfo } from './version.js';
 
 export interface AppOptions {
+  /** Desk bootstrap is constructed before listen, only for the enabled addon. */
+  desk?: import('./addons/desk/boot.js').DeskBoot;
   /** Overridden in tests so the fund page reads a fake chain and a fake Safe service. */
   fund?: Partial<FundDeps>;
   /** Overridden in tests so a run can be held open and inspected mid-flight. */
