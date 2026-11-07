@@ -63,3 +63,14 @@ The shared contracts must be built before importing the package. Runtime values 
 This is an independent merged-main slice. Composition into the pending wallet/public API PRs, concrete authenticated endpoints, delivery publishing and the payment evidence bridge remain separate integration work.
 
 Primary references: [raw transaction ABI](https://docs.arkiv.network/json-rpc/mutating-entities/), [read RPC](https://docs.arkiv.network/json-rpc/querying-data/), [creation flags](https://docs.arkiv.network/writing/create/), and the published npm SDK 1.0.1 source (`entity/operations.ts`, `schema/codec.ts`, `schema/types.ts`, `consts.ts`). The ABI encoders are not public SDK exports, so this module implements the documented ABI using viem and tests it against the actual SDK public operation.
+
+## Provider intent runtime integration still required
+
+This package is not a complete `ProviderTransactionIntents` service. A host must supply these authoritative steps before calling `prepare`:
+
+- `prepareClaim`: resolve the finalized acceptance, selected offer, job and verified provider from their references; confirm exact configured provider and current operator-approved execution ID; construct the desk/v1 claim with those bindings. Choose an absolute expiry block that respects the accepted terms and approval policy.
+- `prepareDelivery`: resolve the finalized claim, reviewed artifact bytes/hash, exact media type and approved publication destination. Resolve the actual `swarm://<64-hex-reference>` from the durable, hash-checked publication ledger. A destination label or Bee URL is not a deliverable reference. Construct the delivery record only after that binding exists.
+- Reserve and persist one reviewed intent per attempt/idempotency key, including exact record, transaction calldata, expiry, predicted key and entity nonce. Serialize concurrent prepares/submits for a signer and reconcile before renewing a pending intent. Blockchain nonce can advance between review and mining; obtain the actual key from finalized creation evidence.
+- Validate the connected provider/client account and chain again before signing, register only the submitted hash, then independently reconcile exact finalized creator-authored records. Return unavailable when any authoritative lookup or public-reference binding is absent.
+
+Ethereum address case is compared semantically after immutable creator verification; returned row creator uses the record's equivalent representation so the existing desk/v1 strict string boundary remains consistent without modifying signed JSON bytes. The host still owns identity authorization and all cross-record job/execution bindings.

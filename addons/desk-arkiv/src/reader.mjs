@@ -47,14 +47,14 @@ export class LiveArkivDeskClient {
     const height = num(snapshot.number), expiry = num(entity.expiresAt), created = num(entity.createdAt), updated = num(entity.updatedAt);
     if (created > updated || updated > height || expiry <= height) throw new Error('Unavailable: expired or unfinalized entity');
     const { record } = decodeRecordAttributes(entity.attributes);
-    if (record.domain !== this.domain || record.chainId !== `arkiv:${this.chainId}` || recordAuthor(record) !== entity.creator) throw new Error('Unavailable: record authority/domain/chain mismatch');
+    if (record.domain !== this.domain || record.chainId !== `arkiv:${this.chainId}` || recordAuthor(record).toLowerCase() !== entity.creator.toLowerCase()) throw new Error('Unavailable: record authority/domain/chain mismatch');
     const creation = await this.block(entity.createdAt);
     if (num(creation.number) !== created || num(creation.timestamp) > num(snapshot.timestamp)) throw new Error('Unavailable: invalid creation block');
     const finalized = await this.finality(snapshot);
     const finalHead = await this.block('finalized');
     if (expiry <= num(finalHead.number)) throw new Error('Unavailable: entity expired during finality');
     // Expiry is a block height. Unix projection uses the SDK's documented nominal 2-second blocks.
-    return { key: entity.key, creator: entity.creator, createdAt: safe(num(creation.timestamp)), expiresAt: safe(num(snapshot.timestamp) + (expiry - height) * 2n), finalized, record };
+    return { key: entity.key, creator: recordAuthor(record), createdAt: safe(num(creation.timestamp)), expiresAt: safe(num(snapshot.timestamp) + (expiry - height) * 2n), finalized, record };
   }
   async page({ afterKey, limit, atBlock } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || (afterKey !== undefined && !KEY.test(afterKey))) throw new Error('Invalid Arkiv page');
