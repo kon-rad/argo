@@ -188,7 +188,7 @@ export class Dispatcher {
   private readonly now: () => Date;
   private readonly env: NodeJS.ProcessEnv;
   private readonly log: (line: string) => void;
-  private readonly codexReady = new Set<string>();
+  private readonly codexPreflights = new Map<string, Promise<string | null>>();
 
   constructor(private readonly deps: Deps) {
     this.now = deps.now ?? (() => new Date());
@@ -253,16 +253,18 @@ export class Dispatcher {
     if (!model) throw new Error('Codex agent has no exact model id');
     const command = this.deps.config.orgCodexCommand ?? 'codex';
     const env = subscriptionEnv({ ...this.env, ORG_AGENT: agent.name });
-    if (!this.codexReady.has(model)) {
-      const problem = await codexPreflight(this.deps.runner, command, model, this.deps.config.vaultRoot, env);
-      if (problem) {
-        for (const task of await store.pendingTaskCards(agent.name)) {
-          await moveCard(agent.name, task.card, 'blocked', problem, { blockKind: 'tool-error' });
-          await finishWakeups([task.wakeupId], { result: problem });
-        }
-        throw new Error(problem);
+    let preflight = this.codexPreflights.get(model);
+    if (!preflight) {
+      preflight = codexPreflight(this.deps.runner, command, model, this.deps.config.vaultRoot, env);
+      this.codexPreflights.set(model, preflight);
+    }
+    const problem = await preflight;
+    if (problem) {
+      for (const task of await store.pendingTaskCards(agent.name)) {
+        await moveCard(agent.name, task.card, 'blocked', problem, { blockKind: 'tool-error' });
+        await finishWakeups([task.wakeupId], { result: problem });
       }
-      this.codexReady.add(model);
+      throw new Error(problem);
     }
     const startedAt = this.now();
     const runId = runIdFor(agent.name, startedAt);

@@ -142,6 +142,21 @@ describe('tick', () => {
     expect((await query(`SELECT runtime FROM card_runs WHERE card_id = $1`, [card.id])).rows).toEqual([{ runtime: 'codex' }]);
   });
 
+  it('shares one subscription and model probe across concurrent bots on the same model', async () => {
+    const doc = codexOrg();
+    await importOrg({ ...doc, agents: { ...doc.agents,
+      codebot2: { role: 'Coder', team: 'platform', reports_to: 'atlas', runtime: 'codex', model: 'gpt-6-sol', capabilities: ['code'] },
+    } });
+    await createCard('owner', { title: 'Fix one', assignee: 'codebot', needs: 'code' });
+    await createCard('owner', { title: 'Fix two', assignee: 'codebot2', needs: 'code' });
+    const h = harness();
+    h.setResult(codexFake());
+    const r = await h.d.tick();
+    expect(r).toMatchObject({ agents: 2, runs: 2, errors: [] });
+    expect(h.calls.filter((c) => c.args[0] === 'login')).toHaveLength(1);
+    expect(h.calls.filter((c) => c.args.includes('--ephemeral'))).toHaveLength(1);
+  });
+
   it('relays a Codex answer to a same-team DM thread', async () => {
     await importOrg(codexOrg());
     await dm(await getAgent('atlas'), 'codebot', 'Can you check this?', {});
