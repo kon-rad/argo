@@ -13,6 +13,8 @@ export interface AssignmentRecord {
   workerSpec?: WorkerSpec;
   pendingDeliveryIntent?: { chainId: string; transaction: unknown; idempotencyKey: string; release: ReleaseBinding };
   paymentReceiptId?: string;
+  /** Submitted hashes are restart-safe hints, never proof that payment succeeded. */
+  paymentSubmission?: { txHash: string; status: 'pending' | 'failed'; code?: string };
 }
 export interface AssignmentMutation {
   action: string;

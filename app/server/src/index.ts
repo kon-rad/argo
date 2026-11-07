@@ -1,4 +1,5 @@
 import { createApp } from './app.js';
+import { bootDesk } from './addons/desk/boot.js';
 import { config } from './config.js';
 import { connectors } from './connectors/index.js';
 import { pool } from './db.js';
@@ -7,7 +8,10 @@ import { log } from './logger.js';
 import * as queue from './queue.js';
 import { startAutoSync } from './schedule.js';
 
+const desk = await bootDesk(config.modules, config.desk);
+
 const app = createApp({
+  desk,
   // POST /api/shutdown is how the menu-bar launcher stops the server; without
   // this the endpoint exists but can only answer 501.
   onShutdown: () => {
