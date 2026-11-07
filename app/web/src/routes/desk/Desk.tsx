@@ -1,3 +1,5 @@
+import type { ProviderWalletApi } from '@secondbrain/desk-contracts/desk';
+import { ProviderSigning } from './ProviderSigning.js';
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -143,13 +145,20 @@ function JobDetail({ job, api, onChanged, onStale }: { job: OperatorJob; api: De
   const release = () => {
     if (!preview || !destination.trim()) return;
     const request: Omit<ReleaseRequest, keyof Mutation> = { artifactHash: preview.artifactHash, mediaType: preview.mediaType, publicDestination: destination.trim() };
-    return run(() => api.release(job.id, { ...request, ...mutation() }), 'Release accepted.');
+    const signing = api as DeskOperatorApi & Partial<ProviderWalletApi>;
+    if (signing.prepareDelivery) return run(async () => {
+      const prepared = await signing.prepareDelivery!(job.id, { ...request, ...mutation() });
+      if (prepared.kind !== 'ok') return prepared;
+      return api.job(job.id);
+    }, 'Release approved. Provider wallet signature and independent confirmation are still required.');
+    return run(() => api.release(job.id, { ...request, ...mutation() }), 'Release approval recorded.');
   };
   const state = job.publicState;
   return <div className="space-y-3">
     <header className="flex flex-wrap items-start justify-between gap-2"><div><h2 className="text-lg font-semibold">{state.job?.skill ?? 'Job details'}</h2><p className="text-xs text-[var(--ink-faint)]">{job.id} · revision {job.revision}</p></div><StateTag tone={job.execution === 'failed' ? 'warn' : 'muted'}>{executionLabel(job.execution)}</StateTag></header>
     {error && <div role="alert" className="rounded border border-[var(--warn)] p-2 text-sm text-[var(--warn)]">{error}</div>}
     {notice && <div role="status" className="rounded border border-[var(--rule)] p-2 text-sm">{notice}</div>}
+    {['approved', 'queued', 'review', 'released'].includes(job.execution) && 'prepareClaim' in api && <ProviderSigning job={job} api={api as DeskOperatorApi & ProviderWalletApi} changed={onChanged} />}
     <div className="grid gap-3 md:grid-cols-2">
       <Panel title="Client-accepted terms">
         {state.acceptance ? <div className="space-y-1 text-sm"><StateTag tone="good">Client accepted</StateTag><p><b>Brief:</b></p><SafeMarkdown source={state.job?.brief ?? ''} /><p><b>Offer:</b> {money(state.offer?.amountAtomic)} {state.offer?.asset ?? ''}</p><p><b>Permitted tools:</b> defined at operator approval</p><p><b>Corpus:</b> defined at operator approval</p><p><b>Deadline:</b> {state.job?.deadline ? new Date(state.job.deadline * 1000).toLocaleString() : 'Unknown'}</p><p className="break-all text-xs text-[var(--ink-faint)]">Accepted terms: {state.acceptanceDigest ?? 'digest unavailable'}</p></div> : <p className="text-sm text-[var(--ink-faint)]">No verified client acceptance is attached.</p>}

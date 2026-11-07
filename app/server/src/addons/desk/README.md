@@ -29,3 +29,35 @@ Acceptance and offer digests use the P1 canonical digest implementation. A faile
 ## Not included
 
 Central manifest wiring, module configuration, real Arkiv/Swarm/identity/runner/payment adapters, capability cryptography, provider wallet UI, live chain verification and deployment belong to integration packages. No server signing key or worker token is accepted for public Claim/Delivery publication.
+
+## Provider browser wallet signing
+
+The private Desk exposes `claim/prepare`, `claim/intent`, `claim/submit`,
+`claim/reconcile` and matching `release/*` routes under `/api/desk/jobs/:id`.
+All require the existing operator session. Prepare uses the approved immutable
+execution specification or reviewed release binding, never browser-supplied
+provider, amount, chain or calldata. `desk-wallet/v1` intents are stored in the
+assignment aggregate with an opaque reference, expiry and execution/acceptance
+binding. GET intent resumes the same review after reload; submit accepts only
+`intentRef` and `txHash` and records pending. A hash is a recovery hint, never
+proof of claim, delivery or payment. Concurrent submissions cannot replace it.
+
+The provider transaction adapter must return an unsigned EVM transaction
+`{ to, data, value? }` and an explicit decimal or hexadecimal EVM chain ID.
+Its idempotency key must identify identical transaction payloads on retries.
+Only `from`, `to`, `chainId`, `data` and integer `value` reach the browser wallet.
+Unsupported adapter-specific transaction shapes return unavailable rather than
+being coerced into an EVM transfer. No concrete Arkiv SDK composition is supplied
+by these routes. Live recording still requires that host adapter and independent
+finalized public snapshots, funded browser wallets and a configured worker.
+
+The browser asks for account access after a click, shows the exact signing
+binding and calldata, blocks wrong account/network and detects wallet changes.
+A nonsecret session-storage hint retains the hash if server submission fails;
+reloading or retrying that hint never establishes confirmation. Claim finality
+starts the worker only through the existing verified reducer gate. Release
+requires the exact provider-authored claim, artifact hash, media type and public
+destination; operator release approval does not publish a delivery itself.
+Expired intents fail closed and require operator intervention; automatic expiry
+renewal, transaction replacement and live client posting/acceptance are outside
+this independent provider slice.
