@@ -51,6 +51,15 @@ export const publicDeskRouter = (app: { locals: Record<string, unknown> }): Rout
 export const routes: FeatureRoutes = ({ app, sessionGate }) => {
   const result: ReturnType<FeatureRoutes> = [{ path: '/public', router: publicDeskRouter(app), mount: 'public' }];
   const operator = app.locals.deskOperator as DeskPrivateControls | undefined;
-  if (operator && sessionGate) result.push({ path: '/api/desk', router: deskOperatorRouter(operator, sessionGate), mount: 'session' });
+  if (operator && sessionGate) {
+    result.push({ path: '/api/desk', router: deskOperatorRouter(operator, sessionGate), mount: 'session' });
+  } else {
+    const unavailable = Router();
+    unavailable.use((_req, res) => {
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(503).json({ error: { code: 'unavailable', message: 'Hiring desk operator service is not configured' } });
+    });
+    result.push({ path: '/api/desk', router: unavailable, mount: 'session' });
+  }
   return result;
 };
