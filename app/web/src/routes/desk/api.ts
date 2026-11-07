@@ -1,3 +1,4 @@
+import type { ProviderWalletApi } from '@secondbrain/desk-contracts/desk';
 import type { DeskOperatorApi, OperatorJob, Provider, ReleaseRequest, Approval, Mutation, Result, WorkerResult } from '@secondbrain/desk-contracts/desk';
 
 type JsonObject = Record<string, unknown>;
@@ -9,8 +10,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<Result<T>> 
       headers: { ...(init?.body ? { 'content-type': 'application/json' } : {}), ...init?.headers },
     });
     const body = (await response.json().catch(() => ({}))) as JsonObject;
+    if (body.error && typeof body.error === 'object') {
+      const error = body.error as JsonObject;
+      const code = error.code;
+      if (typeof code === 'string' && ['invalid-input', 'denied', 'pending', 'unavailable', 'failed'].includes(code)) return { kind: code, message: typeof error.message === 'string' ? error.message : 'Desk request failed' } as Result<T>;
+    }
     if (!response.ok) {
-      const message = typeof body.message === 'string' ? body.message : `Desk request failed (${response.status})`;
+      const nestedError = body.error && typeof body.error === 'object' ? body.error as JsonObject : undefined;
+      const message = typeof body.message === 'string'
+        ? body.message
+        : typeof nestedError?.message === 'string'
+          ? nestedError.message
+          : `Desk request failed (${response.status})`;
       return response.status === 409
         ? { kind: 'failed', message: `STALE_REVISION: ${message}` }
         : response.status === 401 || response.status === 403
@@ -32,9 +43,14 @@ const json = (value: unknown): RequestInit => ({ method: 'POST', body: JSON.stri
 const jobPath = (id: string) => `/api/desk/jobs/${encodeURIComponent(id)}`;
 
 /** Browser adapter for the private operator endpoints. Pass a fake API directly to Desk in tests or fixture mode. */
-export function createHttpDeskOperatorApi(): DeskOperatorApi {
+export function createHttpDeskOperatorApi(): DeskOperatorApi & ProviderWalletApi {
   return {
     mode: 'live',
+    prepareClaim: (id, payload) => request(`${jobPath(id)}/claim/prepare`, json(payload)),
+    prepareDelivery: (id, payload) => request(`${jobPath(id)}/release/prepare`, json(payload)),
+    walletIntent: (id, action) => request(`${jobPath(id)}/${action === 'claim' ? 'claim' : 'release'}/intent`),
+    submitWallet: (id, action, payload) => request(`${jobPath(id)}/${action === 'claim' ? 'claim' : 'release'}/submit`, json(payload)),
+    reconcileWallet: (id, action) => request(`${jobPath(id)}/${action === 'claim' ? 'claim' : 'release'}/reconcile`, json({})),
     inbox: () => request<OperatorJob[]>('/api/desk/inbox'),
     jobs: () => request<OperatorJob[]>('/api/desk/jobs'),
     job: (id) => request<OperatorJob>(jobPath(id)),

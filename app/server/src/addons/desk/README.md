@@ -1,4 +1,12 @@
-# Hiring Desk private orchestration (P3)
+# Hiring Desk orchestration and public integration
+
+Status: **blocked for live operation**. ERC-20 settlement, the server RPC reader, durable receipt reservation, the narrow public API and explicit boot configuration are implemented. The concrete host runtime and hash-only Arc-to-Arkiv payment evidence bridge remain unresolved. See [submission evidence and limitations](submission/README.md).
+
+## Public client boundary
+
+The Vercel client uses `/api/desk/public`. It loads accepted terms with `GET /jobs/:ref/payment` and sends only `{txHash}` to `POST /jobs/:ref/payments/verify` or `/reconcile`. The engine resolves the provider identity and accepted offer itself. A pending hash is persisted only after its independently read transaction matches the accepted payer, token, zero native value and exact calldata. Pending hints never establish payment. The router enforces the configured browser origin, request limits and rate limits, and exposes no operator or generic vault routes.
+
+Public job/offers reads, job/acceptance publications and payment preparation are also available. Job and acceptance publication require exact `desk/v1` records and bounded idempotency keys. The configured public store must authenticate actual chain authorship. Operator controls remain under session-gated `/api/desk`.
 
 The P3 package provides an injectable private orchestration service, session-gated operator router, and Postgres persistence for assignment revisions, idempotency responses, audit events, and one-time payment receipt allocation. It consumes the frozen `@secondbrain/desk-contracts/desk` desk/v1 types. This package deliberately does not register a feature manifest or touch central configuration; the integration lead owns those paths.
 
@@ -28,4 +36,46 @@ Acceptance and offer digests use the P1 canonical digest implementation. A faile
 
 ## Not included
 
-Central manifest wiring, module configuration, real Arkiv/Swarm/identity/runner/payment adapters, capability cryptography, provider wallet UI, live chain verification and deployment belong to integration packages. No server signing key or worker token is accepted for public Claim/Delivery publication.
+The concrete host bindings for Arkiv/Swarm/identity/worker services, capability cryptography, provider wallet UI and live deployment remain prerequisites. The engine now supplies manifest/configuration integration and real native/ERC-20 settlement with an independent RPC reader. No server signing key or worker token is accepted for public Claim/Delivery publication.
+
+## Production boot contract
+
+`bootDesk()` runs before the HTTP listener. It returns immediately when `desk` is disabled. Enabled boot validates explicit payment settings, loads the trusted local `DESK_RUNTIME_MODULE`, and requires its `createDeskRuntime({domain, persistence})` export to return the live `DeskHostRuntime` described in `boot.ts`. The module path is server configuration, never request input. Treat this module as privileged server code and keep it outside the public repository when it contains deployment-specific wiring.
+
+The engine constructs `PgDeskPersistence`, a read-only `ArcJsonRpcReader`, the explicitly selected ERC-20 or native settlement adapter and `DeskOrchestrator`. The settlement callback checks the accepted assignment binding before reserving a chain/transaction/log identity in PostgreSQL. Fixture marketplace, identity, worker, publisher, snapshot, provider-transaction or capability adapters are rejected in every boot mode. There is no production in-memory receipt ledger.
+
+The RPC reader checks JSON-RPC envelopes and hashes, bounds responses, rejects redirects, and requires finalized canonical block inclusion. Missing receipt data remains pending. Unsupported finality reads or RPC errors fail closed as unavailable through the settlement adapter. It never signs or sends a transaction.
+
+This boot composition does not supply the missing host implementations. A usable runtime still needs a concrete Arkiv SDK client with trusted creator/finality and atomic publication idempotency, real ENS/ERC-8004 readers and configured deployments, a durable Swarm publication ledger and release authorization, provider-authorized unsigned claim/delivery transactions, and an authenticated bridge plus capability issuer for the isolated Linux worker. No such host runtime or deployment was verified in this change. Until these are supplied, production integration and the live end-to-end test are blocked.
+
+## Provider browser wallet signing
+
+The private Desk exposes `claim/prepare`, `claim/intent`, `claim/submit`,
+`claim/reconcile` and matching `release/*` routes under `/api/desk/jobs/:id`.
+All require the existing operator session. Prepare uses the approved immutable
+execution specification or reviewed release binding, never browser-supplied
+provider, amount, chain or calldata. `desk-wallet/v1` intents are stored in the
+assignment aggregate with an opaque reference, expiry and execution/acceptance
+binding. GET intent resumes the same review after reload; submit accepts only
+`intentRef` and `txHash` and records pending. A hash is a recovery hint, never
+proof of claim, delivery or payment. Concurrent submissions cannot replace it.
+
+The provider transaction adapter must return an unsigned EVM transaction
+`{ to, data, value? }` and an explicit decimal or hexadecimal EVM chain ID.
+Its idempotency key must identify identical transaction payloads on retries.
+Only `from`, `to`, `chainId`, `data` and integer `value` reach the browser wallet.
+Unsupported adapter-specific transaction shapes return unavailable rather than
+being coerced into an EVM transfer. No concrete Arkiv SDK composition is supplied
+by these routes. Live recording still requires that host adapter and independent
+finalized public snapshots, funded browser wallets and a configured worker.
+
+The browser asks for account access after a click, shows the exact signing
+binding and calldata, blocks wrong account/network and detects wallet changes.
+A nonsecret session-storage hint retains the hash if server submission fails;
+reloading or retrying that hint never establishes confirmation. Claim finality
+starts the worker only through the existing verified reducer gate. Release
+requires the exact provider-authored claim, artifact hash, media type and public
+destination; operator release approval does not publish a delivery itself.
+Expired intents fail closed and require operator intervention; automatic expiry
+renewal, transaction replacement and live client posting/acceptance are outside
+this independent provider slice.

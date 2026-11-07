@@ -1,3 +1,4 @@
+import { validateWalletIntent, walletTransaction, walletHash, type ProviderWalletIntent, type WalletSubmission } from '@secondbrain/desk-contracts/desk';
 import { randomUUID } from 'node:crypto';
 import { artifactDigest, assertProductionAdapters, checkMutation, checkRelease, checkWorkerSpec, dispatchEligibility, reducePublicState, type Adapter, type Approval, type DeskIdentity, type DeskOperatorApi, type DeskPublicStore, type DeskPublisher, type DeskRunner, type DeskSettlement, type EntityRef, type Mutation, type Observation, type OperatorJob, type Provider, type PublicState, type ReleaseRequest, type Result, type WorkerResult, type WorkerSpec } from '@secondbrain/desk-contracts/desk';
 import { DeskStoreError, type AssignmentRecord, type DeskPersistence } from '../persistence/store.js';
@@ -169,13 +170,107 @@ export class DeskOrchestrator implements DeskOperatorApi {
     return ok({ ...asJob(saved.record), transactionIntent: { chainId: prepared.value.chainId, transaction: prepared.value.transaction, requiredCreator: saved.record.publicState.claim?.provider } });
   }
 
+  async prepareClaim(id: string, request: Mutation): Promise<Result<ProviderWalletIntent>> {
+    const row = await this.ensure(id); if (row.kind !== 'ok') return row;
+    const existing = row.value.walletIntents?.claim;
+    if (existing) return this.walletIntent(id, 'claim');
+    const a = row.value.approval; if (!a) return err('denied', 'Operator approval is required');
+    const dispatched = await this.dispatch(id, request, a.corpusDigest, a.inputRefs, a.planDigest, a.limits, a.audience);
+    if (dispatched.kind !== 'ok') return dispatched;
+    // Re-query the trusted adapter to preserve its explicit chain; legacy dispatch returns only calldata.
+    const current = await this.ensure(id); if (current.kind !== 'ok') return current;
+    const r = current.value;
+    const prepared = await this.o.providerTransactions.prepareClaim({ acceptanceRef: r.publicState.acceptanceRef!, provider: r.publicState.offer!.provider, executionId: dispatched.value.attemptId, idempotencyKey: r.dispatchIdempotencyKey! });
+    if (prepared.kind !== 'ok') return prepared;
+    return this.saveWalletIntent(r, 'claim', prepared.value);
+  }
+
+  async prepareDelivery(id: string, request: ReleaseRequest): Promise<Result<ProviderWalletIntent>> {
+    const row = await this.ensure(id); if (row.kind !== 'ok') return row;
+    const prior = row.value.walletIntents?.delivery?.intent;
+    if (prior) {
+      if (prior.artifactHash !== request.artifactHash || prior.mediaType !== request.mediaType || prior.publicDestination !== request.publicDestination) return err('denied', 'Delivery already bound to approved terms');
+      return this.walletIntent(id, 'delivery');
+    }
+    const released = await this.release(id, request); if (released.kind !== 'ok') return released;
+    const current = await this.ensure(id); if (current.kind !== 'ok') return current;
+    const pending = current.value.pendingDeliveryIntent;
+    if (!pending) return err('unavailable', 'Unsigned delivery is unavailable');
+    return this.saveWalletIntent(current.value, 'delivery', pending);
+  }
+
+  private async saveWalletIntent(row: AssignmentRecord, action: 'claim' | 'delivery', prepared: { chainId: string; transaction: unknown }): Promise<Result<ProviderWalletIntent>> {
+    try {
+      const creator = row.publicState.offer?.provider;
+      if (!creator || !row.approval || !row.activeAttemptId || !row.publicState.acceptanceDigest) return err('denied', 'Missing approved signing binding');
+      const transaction = walletTransaction(prepared.transaction, creator, prepared.chainId);
+      const intent: ProviderWalletIntent = {
+        version: 'desk-wallet/v1', intentRef: randomUUID(), action, jobRef: row.id,
+        requiredCreator: creator, chainId: transaction.chainId, transaction,
+        expiresAt: Math.min(row.approval.expiresAt, timestamp(this.o) + 900),
+        acceptanceDigest: row.publicState.acceptanceDigest, executionId: row.activeAttemptId,
+        ...(action === 'delivery' ? row.pendingDeliveryIntent?.release : {}),
+      };
+      validateWalletIntent(intent, timestamp(this.o));
+      const saved = await this.o.store.mutate(row.id, { action: `wallet-prepare:${action}`, idempotencyKey: `wallet-prepare:${action}:${row.activeAttemptId}`, expectedRevision: row.revision, actor: 'operator', apply: current => {
+        current.walletIntents = { ...current.walletIntents, [action]: { intent } }; return current;
+      } });
+      return ok(saved.record.walletIntents![action]!.intent);
+    } catch (e) { return err('unavailable', e instanceof Error ? e.message : 'Unsigned provider transaction unavailable'); }
+  }
+
+  async walletIntent(id: string, action: 'claim' | 'delivery'): Promise<Result<ProviderWalletIntent>> {
+    const row = await this.refresh(id); if (row.kind !== 'ok') return row;
+    const intent = row.value.walletIntents?.[action]?.intent;
+    if (!intent) return err('unavailable', 'No prepared signing intent');
+    try { validateWalletIntent(intent, timestamp(this.o)); } catch { return err('denied', 'Signing intent expired; operator intervention required'); }
+    if ((action === 'claim' && (row.value.execution !== 'queued' || row.value.publicState.claim?.executionId === intent.executionId)) || (action === 'delivery' && row.value.execution !== 'review')) return err('denied', 'Signing action is no longer awaiting a provider signature');
+    if (['cancelled','failed','expired'].includes(row.value.execution) || intent.acceptanceDigest !== row.value.publicState.acceptanceDigest || intent.executionId !== row.value.activeAttemptId || intent.requiredCreator !== row.value.publicState.offer?.provider) return err('denied', 'Signing intent no longer matches authoritative state');
+    if (action === 'delivery' && (row.value.result?.artifactHash !== intent.artifactHash || row.value.pendingDeliveryIntent?.release.publicDestination !== intent.publicDestination)) return err('denied', 'Approved artifact or destination changed');
+    return ok(intent);
+  }
+
+  async submitWallet(id: string, action: 'claim' | 'delivery', request: WalletSubmission): Promise<Result<{ status: 'pending'; txHash: string }>> {
+    const checked = await this.walletIntent(id, action); if (checked.kind !== 'ok') return checked;
+    if (!walletHash(request.txHash) || request.intentRef !== checked.value.intentRef) return err('denied', 'Transaction intent mismatch');
+    const row = await this.ensure(id); if (row.kind !== 'ok') return row;
+    const prior = row.value.walletIntents?.[action]?.txHash;
+    if (prior && prior !== request.txHash) return err('denied', 'A different transaction is already submitted');
+    try {
+      const saved = await this.o.store.mutate(id, { action: `wallet-submit:${action}`, idempotencyKey: `wallet-submit:${request.intentRef}`, expectedRevision: row.value.revision, actor: 'provider-wallet', apply: current => {
+        const entry = current.walletIntents?.[action];
+        if (!entry || entry.intent.intentRef !== request.intentRef || entry.intent.expiresAt <= timestamp(this.o) || entry.intent.acceptanceDigest !== current.publicState.acceptanceDigest || entry.intent.executionId !== current.activeAttemptId || !['queued', 'review'].includes(current.execution)) throw new DeskStoreError('conflict');
+        entry.txHash = request.txHash; return current;
+      } });
+      if (saved.record.walletIntents?.[action]?.txHash !== request.txHash) return err('denied', 'A different transaction was recorded concurrently');
+      return ok({ status: 'pending', txHash: request.txHash });
+    } catch (e) { return this.storeError(e); }
+  }
+
+  async reconcileWallet(id: string, action: 'claim' | 'delivery'): Promise<Result<OperatorJob>> {
+    const row = await this.refresh(id); if (row.kind !== 'ok') return row;
+    if (action === 'claim') {
+      if (['running','review','released'].includes(row.value.execution)) return ok(asJob(row.value));
+      return this.reconcileClaim(id);
+    }
+    const intent = row.value.walletIntents?.delivery?.intent, state = row.value.publicState;
+    if (!intent || !state.delivery || state.conflict || state.claim?.executionId !== intent.executionId || state.delivery.provider !== intent.requiredCreator || state.delivery.artifactHash !== intent.artifactHash || state.delivery.mediaType !== intent.mediaType || state.delivery.publicRef !== intent.publicDestination) return err('pending', 'Matching provider delivery is not yet finalized');
+    if (row.value.execution === 'released') return ok(asJob(row.value));
+    try {
+      const saved = await this.o.store.mutate(id, { action: 'wallet-delivery-confirmed', idempotencyKey: `wallet-confirm:${intent.intentRef}`, expectedRevision: row.value.revision, actor: 'public-reader', apply: current => {
+        if (current.execution !== 'review') throw new DeskStoreError('invalid-state'); current.execution = 'released'; return current;
+      } });
+      return ok(asJob(saved.record));
+    } catch (e) { return this.storeError(e); }
+  }
+
   async reconcilePayment(id: string, txHash: string): Promise<Result<OperatorJob>> {
     const row = await this.refresh(id); if (row.kind !== 'ok') return row;
     const { job, offer, acceptanceRef } = row.value.publicState;
     if (!job || !offer || !acceptanceRef) return err('denied', 'Payment requires an accepted offer');
+    if (row.value.execution !== 'released' || !row.value.publicState.delivery) return err('denied', 'Payment cannot be assigned before a verified public delivery');
     const intent = { jobRef: id, acceptanceRef, chainId: offer.paymentChainId, payer: job.client, recipient: offer.recipient, asset: offer.asset, amountAtomic: offer.amountAtomic, transferInterface: offer.transferInterface };
     const verified = await this.o.settlement.verify(intent, txHash); if (verified.kind !== 'ok') return verified as Result<never>;
-    if (row.value.execution !== 'released') return err('denied', 'Payment cannot be assigned before a verified public delivery');
     if (!await this.o.store.reservePayment(id, verified.value.receiptId)) return err('denied', 'Payment receipt was already allocated');
     const snap = await this.o.snapshots.snapshot(id); if (snap.kind !== 'ok') return snap;
     const state = await reducePublicState(snap.value, id, timestamp(this.o), [verified.value]);

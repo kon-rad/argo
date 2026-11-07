@@ -57,6 +57,7 @@ const KNOWN_EXTRA: Record<string, string> = {
   XDG_CONFIG_HOME: 'standard: config dir resolution',
   USER: 'standard: the current Unix user',
   NODE_ENV: 'desk orchestration: selects production adapter enforcement mode',
+  DESK_TEST_DATABASE_URL: 'desk PostgreSQL integration test only: explicitly selected disposable sb_*_test database, never production config',
   DESK_DOMAIN: 'desk manifest: public hiring desk domain',
   DESK_CHAIN_ID: 'desk manifest: settlement chain identifier',
   DESK_PUBLIC_ORIGIN: 'desk manifest: public hiring desk origin',

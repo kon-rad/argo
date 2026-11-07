@@ -74,6 +74,15 @@ const Schema = z.object({
   SCAN_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(0),
   // Optional features, comma separated (MODULE_NAMES below). Off unless listed.
   MODULES: z.string().default(''),
+  // Desk values are validated only when the addon boots. Disabled installations
+  // do not require a payment network or any external marketplace services.
+  DESK_DOMAIN: z.string().optional(),
+  DESK_CHAIN_ID: z.string().optional(),
+  DESK_PAYMENT_INTERFACE: z.string().optional(),
+  DESK_USDC_ADDRESS: z.string().optional(),
+  DESK_RPC_URL: z.string().optional(),
+  DESK_PUBLIC_ORIGIN: z.string().optional(),
+  DESK_RUNTIME_MODULE: z.string().optional(),
   // Deprecated (one release): `SUMMARIES=on` used to install the summaries timer; `summaries` is a module now.
   SUMMARIES: z.string().optional(),
   // Shown in the TOTP app and as the comment author on the Agents board.
@@ -271,6 +280,15 @@ export const config = {
   uploadsPullToken: parsed.data.UPLOADS_PULL_TOKEN,
   dataDir: resolve(appRoot, 'data'),
   modules: modulesFromEnv(parsed.data.MODULES, parsed.data.SUMMARIES, readAddonList(resolve(parsed.data.VAULT_ROOT))),
+  desk: {
+    domain: parsed.data.DESK_DOMAIN,
+    chainId: parsed.data.DESK_CHAIN_ID,
+    paymentInterface: parsed.data.DESK_PAYMENT_INTERFACE,
+    usdcAddress: parsed.data.DESK_USDC_ADDRESS,
+    rpcUrl: parsed.data.DESK_RPC_URL,
+    publicOrigin: parsed.data.DESK_PUBLIC_ORIGIN,
+    runtimeModule: parsed.data.DESK_RUNTIME_MODULE,
+  },
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,
   orgVaultAssignee: parsed.data.ORG_VAULT_ASSIGNEE,
