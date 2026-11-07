@@ -61,6 +61,7 @@ const KNOWN_EXTRA: Record<string, string> = {
   DESK_DOMAIN: 'desk manifest: public hiring desk domain',
   DESK_CHAIN_ID: 'desk manifest: settlement chain identifier',
   DESK_PUBLIC_ORIGIN: 'desk manifest: public hiring desk origin',
+  DESK_PUBLICATION_TEST_DATABASE_URL: 'opt-in ledger integration test only: disposable sb_*_test database, never production',
 };
 
 const here = dirname(fileURLToPath(import.meta.url));
