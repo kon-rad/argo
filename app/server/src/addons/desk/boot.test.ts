@@ -24,8 +24,9 @@ describe('desk production boot boundary', () => {
     expect(navFor(new Set()).some(nav => nav.path === '/desk')).toBe(false);
     expect(unitsFor(new Set())).toEqual([]);
   });
-  it('enabled module fails closed without explicit payment and runtime config', async () => {
-    await expect(bootDesk(new Set(['desk']), {})).rejects.toThrow('Desk production configuration missing or invalid');
+  it('leaves the server available when the optional module has no configuration', async () => {
+    await expect(bootDesk(new Set(['desk']), {})).resolves.toBeUndefined();
+    await expect(bootDesk(new Set(['desk']), { publicOrigin: 'https://client.example.com' })).resolves.toBeUndefined();
   });
   it('rejects a runtime module that does not export live host composition', async () => {
     const load = vi.fn(async () => ({}));

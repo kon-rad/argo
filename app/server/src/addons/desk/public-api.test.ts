@@ -19,6 +19,16 @@ async function setup() {
   return { app, controls, db, row, settlement, reconcilePayment };
 }
 describe('public Hiring Desk payment boundary', () => {
+  it('serves an exact-origin preflight and clear unavailable response before runtime setup', async () => {
+    vi.stubEnv('DESK_PUBLIC_ORIGIN', 'https://client.example.test');
+    const app = express(); app.use('/api/desk/public', publicDeskRouter(app));
+    const preflight = await request(app).options('/api/desk/public/discover').set('Origin', 'https://client.example.test').set('Access-Control-Request-Method', 'GET');
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers['access-control-allow-origin']).toBe('https://client.example.test');
+    expect((await request(app).get('/api/desk/public/discover').set('Origin', 'https://client.example.test')).status).toBe(503);
+    expect((await request(app).options('/api/desk/public/discover').set('Origin', 'https://evil.example.test')).status).toBe(403);
+    vi.unstubAllEnvs();
+  });
   it('loads accepted terms and verified identity wallet without leaking private aggregate fields', async () => {
     const { app, db, row, settlement } = await setup();
     await db.seed({ ...row, result: { artifactRef: 'private-artifact', artifactHash: fixtures.delivery.artifactHash, mediaType: 'text/markdown', boundedTrace: 'private trace' } });
