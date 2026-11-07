@@ -10,7 +10,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<Result<T>> 
     });
     const body = (await response.json().catch(() => ({}))) as JsonObject;
     if (!response.ok) {
-      const message = typeof body.message === 'string' ? body.message : `Desk request failed (${response.status})`;
+      const nestedError = body.error && typeof body.error === 'object' ? body.error as JsonObject : undefined;
+      const message = typeof body.message === 'string'
+        ? body.message
+        : typeof nestedError?.message === 'string'
+          ? nestedError.message
+          : `Desk request failed (${response.status})`;
       return response.status === 409
         ? { kind: 'failed', message: `STALE_REVISION: ${message}` }
         : response.status === 401 || response.status === 403
