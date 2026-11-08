@@ -54,6 +54,7 @@ async function resolveToken(a: InstagramAccount, deps: SocialDeps, r: SocialResu
   let stored = await loadToken('instagram', username, deps.encKey);
   if (!stored) {
     if (!envToken) throw missing();
+    if (deps.readOnly) return envToken;
     // Seeded from env once; from then on the store wins (it holds the refreshed token).
     await saveToken('instagram', username, envToken, deps.encKey, { expiresAt: null, refreshedAt: deps.now });
     stored = await loadToken('instagram', username, deps.encKey);
@@ -65,7 +66,7 @@ async function resolveToken(a: InstagramAccount, deps: SocialDeps, r: SocialResu
   }
   const age = now - t.refreshedAt.getTime();
   const due = t.expiresAt === null || age >= 7 * DAY || (t.expiresAt.getTime() - now <= 14 * DAY && age >= DAY);
-  if (!due) return t.token;
+  if (!due || deps.readOnly) return t.token;
   try {
     const j = await getJson<{ access_token?: string; expires_in?: number }>(deps.get,
       `${HOST}/refresh_access_token?grant_type=ig_refresh_token&access_token=${encodeURIComponent(t.token)}`, 'refresh', [t.token]);

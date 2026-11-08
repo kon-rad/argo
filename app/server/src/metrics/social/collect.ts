@@ -15,6 +15,7 @@ import { collectYouTube } from './youtube.js';
  * LinkedIn accounts are manual only and are skipped here.
  */
 export async function collectSocial(s: SocialMetricsSettings, deps: SocialDeps, write = true): Promise<SocialResult[]> {
+  if (!write) deps = { ...deps, readOnly: true };
   const accounts = socialAccounts(s);
   const of = <P extends Platform>(p: P) => accounts.filter((a): a is Extract<SocialAccount, { platform: P }> => a.platform === p);
   const secrets = [deps.youtubeApiKey, deps.encKey];

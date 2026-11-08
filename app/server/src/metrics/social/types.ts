@@ -45,6 +45,8 @@ export interface SocialDeps {
   /** Where `tokenEnv` names are looked up. */
   env: Record<string, string | undefined>;
   vaultRoot: string;
+  /** A dry run: read only, so no token is seeded or refreshed. */
+  readOnly?: boolean;
 }
 
 export function emptyResult(a: { collector: string; platform: Platform; account: string; key: string }): SocialResult {

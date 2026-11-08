@@ -19,8 +19,8 @@ import { truncateAll } from './helpers.js';
 const CH1 = 'UC' + 'a'.repeat(22);
 const CH2 = 'UC' + 'b'.repeat(22);
 const ENC = '0'.repeat(63) + '1';
-const YT_KEY = 'yt-secret-key-123';
-const IG_TOKEN = 'IGtokenSECRET0001';
+const YT_KEY = 'yt-secret-key-123'; // gitleaks:allow (fake)
+const IG_TOKEN = 'IGtokenSECRET0001'; // gitleaks:allow (fake)
 const NOW = new Date('2026-11-08T01:00:00Z');
 
 function cfg(raw: Record<string, unknown>): SocialMetricsSettings {
@@ -297,6 +297,17 @@ describe('Instagram collector', () => {
     const ok = await seedInstagramToken(s(), 'Example.Studio', IG_TOKEN, deps(fakeGet(instagramRoutes())));
     expect(ok).toEqual({ username: 'example.studio', followers: 120 });
     expect((await loadToken('instagram', 'example.studio', ENC))!.token).toBe(IG_TOKEN);
+  });
+
+  it('writes nothing on a dry run: no samples, no token seeded or refreshed', async () => {
+    const get = fakeGet(instagramRoutes());
+    const [r] = await collectSocial(s(), deps(get, { env: { IG_TEST_TOKEN: IG_TOKEN } }), false);
+    expect(r!.samples).toHaveLength(2);
+    expect(get.calls.some((c) => c.url.includes('refresh_access_token'))).toBe(false);
+    for (const t of ['social_metric_tokens', 'metric_samples', 'social_post_stats', 'social_metric_status']) {
+      const { rows } = await query<{ n: number }>(`SELECT count(*)::int AS n FROM ${t}`);
+      expect([t, rows[0]!.n]).toEqual([t, 0]);
+    }
   });
 
   it('uses an env token as is, with a warning, when no encryption key is set', async () => {
