@@ -15,6 +15,7 @@ import Summaries from './Summaries.js';
 import Running from './Running.js';
 import { useLiveCount } from './LiveAgents.js';
 import Subscriptions from './Subscriptions.js';
+import AgentToggle from '../../components/AgentToggle.js';
 
 const RANGES = [{ label: '24 h', days: 1 }, { label: '7 d', days: 7 }, { label: '30 d', days: 30 }, { label: '90 d', days: 90 }];
 const GROUP_COLORS = ['var(--chart-bar)', 'var(--ink)', '#c2410c', '#15803d', '#7c3aed', '#0e7490', '#b45309', '#be123c', '#4d7c0f', '#6d28d9'];
@@ -377,7 +378,7 @@ function UsageSessions() {
 /** The manifest controls providers and sections. A hidden section never mounts its polling queries. */
 export default function Usage() {
   const config = useQuery({ queryKey: ['usage-config'], queryFn: api.usageConfig, staleTime: 60_000, retry: false });
-  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity, enabled: config.data?.sections.includes('summaries') ?? false });
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
   const [sp, setSp] = useSearchParams();
   if (config.isPending) return <div className="p-4 text-sm text-[var(--ink-dim)]">Loading Usage configuration…</div>;
   if (config.isError) return <div className="p-4 text-sm text-red-600" role="alert">Usage configuration did not load. Account limits and sections are unavailable.</div>;
@@ -398,6 +399,7 @@ export default function Usage() {
     <div className="flex h-full flex-col">
       <div className={sections.length ? "min-h-0 shrink-0 overflow-auto max-h-[45%]" : "min-h-0 flex-1 overflow-auto"}>
         {config.data.subscriptions.length === 0 && config.data.credits.length === 0 && <p className="px-4 pt-4 text-sm text-[var(--ink-dim)]">No account providers configured. Add subscriptions or credits to the Usage settings in secondbrain.json.</p>}
+        {(meta.data?.modules ?? []).includes('agents') && <section className="px-4 pt-4" aria-label="Agent controls"><AgentToggle /></section>}
         <Subscriptions providers={config.data.subscriptions} />
         <Credits providers={config.data.credits} />
       </div>

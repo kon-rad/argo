@@ -24,7 +24,6 @@ import SearchBox from './components/SearchBox.js';
 import IndexStatus from './components/IndexStatus.js';
 import SyncChip from './components/SyncChip.js';
 import FriendlyButton from './components/FriendlyButton.js';
-import AgentToggle from './components/AgentToggle.js';
 import VoiceToggle from './components/VoiceToggle.js';
 import ShortcutsHelp from './components/ShortcutsHelp.js';
 import ChatButton from './components/chat/ChatButton.js';
@@ -151,12 +150,6 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           )}
         </nav>
 
-        {modules.has('agents') && (
-          <div className="shrink-0 border-l border-[var(--rule)] pl-3">
-            <AgentToggle />
-          </div>
-        )}
-
         {/* This machine's voice: the Claude Code spoken-alert switch. Never on a server. */}
         {!loginRequired && modules.has('voice') && (
           <div className="shrink-0 border-l border-[var(--rule)] pl-3">
@@ -191,7 +184,6 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         search={<SearchBox inputRef={mobileSearchRef} onSubmit={(q) => navigate(`/search?q=${encodeURIComponent(q)}`)} />}
         footer={
           <>
-            {modules.has('agents') && <AgentToggle />}
             <div className="text-xs"><IndexStatus /></div>
             <SyncChip />
             {loginRequired && (

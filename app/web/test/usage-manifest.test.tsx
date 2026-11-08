@@ -10,13 +10,13 @@ const weekly = { key: 'weekly', label: 'Weekly', window_minutes: 10080, used_pct
 const codex: SubscriptionUsage = { provider: 'codex', label: 'Codex', status: 'ok', observed_at: '2026-11-08T00:00:00Z', source: 'account API', message: 'Weekly limit only', stale: false, windows: [weekly] };
 const claude: SubscriptionUsage = { provider: 'claude-code', label: 'Claude Code', status: 'ok', observed_at: '2026-11-08T00:00:00Z', source: 'status line', message: null, stale: false, windows: [weekly] };
 
-function setup(config: UsageConfig, providers: SubscriptionUsage[] = [codex, claude], configStatus = 200) {
+function setup(config: UsageConfig, providers: SubscriptionUsage[] = [codex, claude], configStatus = 200, modules = ['usage', 'summaries']) {
   const fetcher = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     const body = url.includes('/usage/config') ? config : url.includes('/usage/subscriptions') ? { providers }
       : url.includes('/usage/credits') ? { providers: [], history: [] }
         : url.includes('/usage/live') ? { total: 0, agents: [], machines: [] }
-          : url.includes('/meta') ? { modules: ['usage', 'summaries'] }
+          : url.includes('/meta') ? { modules }
             : url.includes('/usage/plan') ? { current: { five_hour: null, seven_day: null }, history: [] }
               : url.includes('/usage/series') ? { bucket: 'hour', tz: 'UTC', rows: [] }
                 : url.includes('/usage/facets') ? { total: { calls: 0, tokens: 0 }, facets: {} }
@@ -35,6 +35,15 @@ function setup(config: UsageConfig, providers: SubscriptionUsage[] = [codex, cla
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Usage manifest', () => {
+  it('shows agent controls on Usage only with the agents module enabled', async () => {
+    setup({ subscriptions: [], credits: [], sections: [] }, [], 200, ['usage', 'agents']);
+    expect(await screen.findByRole('radiogroup', { name: 'Default agent' })).toBeTruthy();
+    cleanup();
+    setup({ subscriptions: [], credits: [], sections: [] }, [], 200, ['usage']);
+    await screen.findByText(/No account providers configured/);
+    expect(screen.queryByRole('radiogroup', { name: 'Default agent' })).toBeNull();
+  });
+
   it('renders Codex weekly-only limits without inventing a five-hour limit or Claude calls', async () => {
     const calls = setup({ subscriptions: ['codex'], credits: [], sections: ['ledger'] }, [codex]);
     expect(await screen.findByText('72% remaining')).toBeTruthy();

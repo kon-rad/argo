@@ -45,6 +45,7 @@ const dir = mkdtempSync(join(tmpdir(), 'sb-codex-usage-'));
 const fakeCli = join(dir, 'fake-codex');
 writeFileSync(fakeCli, `#!/usr/bin/env node
 const mode = process.env.CODEX_FAKE_MODE;
+if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(['app-server'])) process.exit(2);
 let buffer = '';
 process.stdin.on('data', chunk => {
   buffer += chunk.toString();
