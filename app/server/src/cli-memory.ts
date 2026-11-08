@@ -14,7 +14,7 @@ import { agentDatabaseUrl, identityName, parseArgs } from './cli-org.js';
  *
  * One store, `memory_facts`: a claim with a source, written by `remember`, read by `recall`, retired by `retire`. The
  * `agent` column tags a claim as one bot's own memory (the persona rows import here); a claim with no agent is
- * company-wide and any agent may recall it. Facts finished sessions proposed are decided on the /memory page, not here.
+ * company-wide and any agent may recall it. Facts extracted from finished sessions save automatically; /memory lists them and supports retirement.
  */
 
 const USAGE = `secondbrain memory: the shared memory every runtime recalls (a claim with a source, or it is not a fact).

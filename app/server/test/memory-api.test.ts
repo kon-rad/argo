@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
@@ -67,32 +68,66 @@ describe('memory api', () => {
     expect((await request(app).post('/api/memory/99999/retire').send({ why: 'x' })).status).toBe(404);
   });
 
-  it('holds candidates until they are approved, then writes the fact with the session\'s agent', async () => {
+  it('saves session facts automatically with provenance and agent scope', async () => {
     const summary = await seedSummary();
-    const c = await query<{ id: number }>(`INSERT INTO agent_summary_facts (summary_id, subject, claim, agent) VALUES ($1,'billing','Codes are deduplicated.','rune') RETURNING id`, [summary]);
-    const id = c.rows[0]!.id;
-
-    expect((await request(app).get('/api/memory/candidates').expect(200)).body.candidates.map((x: { id: number }) => x.id)).toEqual([id]);
-    expect((await query(`SELECT 1 FROM memory_facts`)).rowCount).toBe(0);
-
-    const ok = await request(app).post(`/api/memory/candidates/${id}/promote`).send({ claim: 'Codes are deduplicated before they apply.' }).expect(200);
-    expect(ok.body).toMatchObject({ id, status: 'promoted' });
-    const fact = (await query(`SELECT subject, claim, source, author, agent, confidence FROM memory_facts WHERE id = $1`, [ok.body.fact_id])).rows[0];
-    expect(fact).toMatchObject({ subject: 'billing', claim: 'Codes are deduplicated before they apply.', author: 'summarizer', agent: 'rune', confidence: 'inferred' });
+    const c = (await query(`INSERT INTO agent_summary_facts (summary_id, subject, claim, agent) VALUES ($1,'billing','Codes are deduplicated.','rune') RETURNING *`, [summary])).rows[0];
+    expect(c.status).toBe('promoted');
+    expect(c.decided_by).toBe('automatic');
+    const fact = (await query(`SELECT * FROM memory_facts WHERE id=$1`, [c.fact_id])).rows[0];
+    expect(fact).toMatchObject({subject:'billing', claim:'Codes are deduplicated.', author:'summarizer', agent:'rune', confidence:'inferred'});
     expect(fact.source).toMatch(/^agent-summary:\d+ \(session box\/a\)$/);
-
-    // A second decision is a 409; the queue is empty now.
-    expect((await request(app).post(`/api/memory/candidates/${id}/promote`).send({})).status).toBe(409);
     expect((await request(app).get('/api/memory/candidates')).body.candidates).toEqual([]);
-    expect((await request(app).get('/api/memory/candidates').query({ status: 'promoted' })).body.candidates).toHaveLength(1);
+    expect((await request(app).get('/api/memory')).body.facts).toHaveLength(1);
+    await request(app).post(`/api/memory/${c.fact_id}/retire`).send({why:'outdated'}).expect(200);
+    expect((await request(app).get('/api/memory')).body.facts).toEqual([]);
+    // A repeat of the same scoped claim links to its history, never revives it.
+    const again = (await query(`INSERT INTO agent_summary_facts (summary_id, subject, claim, agent) VALUES ($1,'billing','Codes are deduplicated.','rune') RETURNING *`, [summary])).rows[0];
+    expect(again.fact_id).toBe(c.fact_id);
+    expect((await request(app).get('/api/memory')).body.facts).toEqual([]);
   });
 
-  it('rejects a candidate and 404s one that never existed', async () => {
+  it('does not reuse another agent memory or save rejected history', async () => {
     const summary = await seedSummary();
-    const c = await query<{ id: number }>(`INSERT INTO agent_summary_facts (summary_id, subject, claim) VALUES ($1,'x','y') RETURNING id`, [summary]);
-    expect((await request(app).post(`/api/memory/candidates/${c.rows[0]!.id}/reject`).expect(200)).body.status).toBe('rejected');
-    expect((await request(app).post(`/api/memory/candidates/${c.rows[0]!.id}/reject`)).status).toBe(409);
-    expect((await request(app).post('/api/memory/candidates/999/promote').send({})).status).toBe(404);
-    expect((await query(`SELECT 1 FROM memory_facts`)).rowCount).toBe(0);
+    await query(`INSERT INTO agent_summary_facts (summary_id,subject,claim,agent) VALUES ($1,'one','same','rune'),($1,'two','same',NULL)`, [summary]);
+    await query(`INSERT INTO agent_summary_facts (summary_id,subject,claim,status) VALUES ($1,'rejected','discarded','rejected')`, [summary]);
+    expect((await query(`SELECT * FROM memory_facts`)).rowCount).toBe(2);
+    // Legacy decision endpoints are gone: memory is automatic.
+    await request(app).post('/api/memory/candidates/1/promote').send({}).expect(410);
+    await request(app).post('/api/memory/candidates/1/reject').send({}).expect(410);
+    await request(app).post('/api/summaries/facts/1/promote').send({}).expect(410);
   });
+  it('migrates pending history once, leaving rejected history untouched', async () => {
+    const sql = readFileSync(new URL('../../db/migrations/1756000017400_automatic-memory.sql', import.meta.url), 'utf8');
+    const [up, down] = sql.split('-- Down Migration');
+    await query(down!);
+    try {
+      const summary = await seedSummary();
+      await query(`INSERT INTO agent_summary_facts (summary_id,subject,claim,status,agent) VALUES
+        ($1,'pending','keep me','proposed','rune'),
+        ($1,'duplicate','keep me','proposed','rune'),
+        ($1,'rejected','discard me','rejected',NULL),
+        ($1,'old rejection','discard me','proposed',NULL)`, [summary]);
+      await query(up!);
+      expect((await query(`SELECT * FROM memory_facts`)).rows).toMatchObject([{claim:'keep me', agent:'rune'}]);
+      expect((await query(`SELECT status FROM agent_summary_facts ORDER BY id`)).rows.map(r=>r.status)).toEqual(['promoted','promoted','rejected','rejected']);
+      await query(`UPDATE agent_summary_facts SET status=status WHERE status='proposed'`);
+      expect((await query(`SELECT 1 FROM memory_facts`)).rowCount).toBe(1);
+    } finally {
+      // Keep the trigger installed even when an assertion fails.
+      await query(down!);
+      await query(up!);
+    }
+  });
+
+  it('deduplicates concurrent sessions within a project and keeps projects separate', async () => {
+    await query(`INSERT INTO projects (slug,title,stage) VALUES ('alpha','Alpha','building'),('beta','Beta','building')`);
+    const summary = await seedSummary();
+    await query(`UPDATE agent_summaries SET project='alpha' WHERE id=$1`, [summary]);
+    await Promise.all(Array.from({length:3}, () => query(`INSERT INTO agent_summary_facts (summary_id,subject,claim) VALUES ($1,'lesson','Concurrent claim')`, [summary])));
+    expect((await query(`SELECT * FROM memory_facts`)).rows).toMatchObject([{project_slug:'alpha'}]);
+    await query(`UPDATE agent_summaries SET project='beta' WHERE id=$1`, [summary]);
+    await query(`INSERT INTO agent_summary_facts (summary_id,subject,claim) VALUES ($1,'lesson','Concurrent claim')`, [summary]);
+    expect((await query(`SELECT project_slug FROM memory_facts ORDER BY id`)).rows).toEqual([{project_slug:'alpha'},{project_slug:'beta'}]);
+  });
+
 });
