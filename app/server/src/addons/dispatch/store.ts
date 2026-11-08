@@ -7,7 +7,7 @@ import { query } from '../../db.js';
  */
 
 /** `model` is the effective one (override ?? roster); only the wake query fills it. */
-export interface ZenAgentRow { name: string; team_slug: string | null; role: string; routines: Routine[]; model?: string | null }
+export interface ZenAgentRow { name: string; team_slug: string | null; role: string; routines: Routine[]; model?: string | null; runtime?: string }
 export interface Routine { name: string; at: string; days?: number[]; task_file: string }
 export interface MessageRow {
   id: number; channel_slug: string; thread_id: number | null; author: string; kind: string; body: string;
@@ -54,7 +54,7 @@ export async function tokensToday(tz: string): Promise<number> {
   const { rows } = await query<{ tokens: string }>(
     `SELECT coalesce(sum(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens), 0)::text AS tokens
        FROM usage_calls
-      WHERE source IN ('claude-code', 'zen-agent') AND run_id IS NOT NULL
+      WHERE source IN ('claude-code', 'zen-agent', 'codex') AND run_id IS NOT NULL
         AND ts >= (date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1)`, [tz]);
   return Number(rows[0]?.tokens ?? 0);
 }
@@ -65,12 +65,44 @@ export async function tokensToday(tz: string): Promise<number> {
  */
 export async function zenAgentsWithOpenWakeups(): Promise<ZenAgentRow[]> {
   const { rows } = await query<ZenAgentRow>(
-    `SELECT a.name, a.team_slug, a.role, a.routines, e.model
+    `SELECT a.name, a.team_slug, a.role, a.routines, e.model, e.runtime
        FROM org_agents a JOIN org_agents_effective e ON e.name = a.name
-      WHERE e.runtime = 'zen-agent' AND a.retired_at IS NULL AND NOT e.paused
+      WHERE e.runtime IN ('zen-agent', 'codex') AND a.retired_at IS NULL AND NOT e.paused
         AND EXISTS (SELECT 1 FROM org_wakeups w WHERE w.agent_name = a.name AND w.done_at IS NULL AND w.claimed_at IS NULL)
       ORDER BY a.name`);
   return rows;
+}
+
+export async function lastCodexSession(agent: string, card: string): Promise<string | null> {
+  const { rows } = await query<{ session_id: string }>(
+    `SELECT session_id FROM usage_runs WHERE runtime = 'codex' AND agent_name = $1 AND task_id = $2
+      AND session_id ~ '^[0-9a-f-]{36}$' ORDER BY started_at DESC NULLS LAST LIMIT 1`, [agent, card]);
+  return rows[0]?.session_id ?? null;
+}
+
+export async function pendingTaskCards(agent: string): Promise<{ wakeupId: number; card: string }[]> {
+  const { rows } = await query<{ wakeup_id: number; card: string }>(
+    `SELECT w.id AS wakeup_id, c.id AS card FROM org_wakeups w JOIN cards c ON c.id = w.ref
+      WHERE w.agent_name = $1 AND w.reason = 'task' AND w.done_at IS NULL AND w.claimed_at IS NULL
+        AND c.status = 'ready' AND c.assignee = $1 AND board_dispatch_enabled(c.board_slug)`, [agent]);
+  return rows.map((r) => ({ wakeupId: r.wakeup_id, card: r.card }));
+}
+
+/** Subscription tokens are recorded without assigning an API dollar price. */
+export async function recordCodexRun(r: { runId: string; sessionId: string | null; agent: string; model: string; card: string | null;
+  startedAt: Date; endedAt: Date; state: string; text: string; inputTokens: number; outputTokens: number; wakeupIds: number[] }): Promise<void> {
+  const session = r.sessionId ?? `dispatch:${r.runId}`;
+  await query(`INSERT INTO usage_runs
+    (host, run_id, session_id, log_path, task_id, agent_name, model, started_at, ended_at, duration_ms, runtime, outcome, subtype, is_error, wakeup_ids, usage)
+    VALUES ('droplet',$1,$2,$3,$4,$5,$6,$7,$8,$9,'codex',$10,$11,$12,$13,$14::jsonb)
+    ON CONFLICT (host, run_id) DO NOTHING`, [r.runId, session, `dispatch:${r.runId}`, r.card, r.agent, r.model,
+      r.startedAt, r.endedAt, Math.max(0, r.endedAt.getTime() - r.startedAt.getTime()), r.state === 'done' ? 'did-work' : 'failed',
+      `${r.state}: ${r.text}`.slice(0, 300), r.state !== 'done', r.wakeupIds,
+      JSON.stringify({ input_tokens: r.inputTokens, output_tokens: r.outputTokens })]);
+  if (r.inputTokens || r.outputTokens) await query(`INSERT INTO usage_calls
+    (source,host,call_id,session_external_id,ts,model,entrypoint,input_tokens,output_tokens,run_id)
+    VALUES ('codex','droplet',$1,$2,$3,$4,'sdk-cli',$5,$6,$7) ON CONFLICT DO NOTHING`,
+    [r.runId, session, r.endedAt, r.model, r.inputTokens, r.outputTokens, r.runId]);
 }
 
 /** Every bot with routines on the roster, whichever runtime runs it. */
