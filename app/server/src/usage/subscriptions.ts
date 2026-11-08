@@ -66,7 +66,7 @@ export function readCodexRpc(command = config.orgCodexCommand ?? 'codex', now = 
     const unavailable = (message: string): SubscriptionUsage => ({ provider: 'codex', label: 'Codex', status: 'unavailable',
       observed_at: null, source: 'codex app-server', message, stale: false, windows: [] });
     try {
-      child = spawn(command, ['app-server', '--stdio'], { env: subscriptionEnv(process.env), stdio: ['pipe', 'pipe', 'ignore'],
+      child = spawn(command, ['app-server'], { env: subscriptionEnv(process.env), stdio: ['pipe', 'pipe', 'ignore'],
         detached: process.platform !== 'win32' });
     } catch { resolve(unavailable('Codex CLI unavailable')); return; }
     let done = false;
@@ -99,13 +99,13 @@ export function readCodexRpc(command = config.orgCodexCommand ?? 'codex', now = 
         if (msg.error) { stop(unavailable('Codex quota read unavailable')); return; }
         if (stage === 0) {
           stage = 1;
-          send({ method: 'initialized' });
+          send({ method: 'initialized', params: {} });
           send({ id: 2, method: 'account/read', params: { refreshToken: false } });
         } else if (stage === 1) {
           const account = asObject(asObject(msg.result)?.account);
           if (account?.type !== 'chatgpt') { stop(unavailable('Codex requires ChatGPT subscription login')); return; }
           stage = 2;
-          send({ id: 3, method: 'account/rateLimits/read', params: { excludeResetCreditDetails: true } });
+          send({ id: 3, method: 'account/rateLimits/read', params: {} });
         } else {
           const observedAt = now.toISOString();
           const windows = parseCodexRateLimits(msg.result, observedAt, now);

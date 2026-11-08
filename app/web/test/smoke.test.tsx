@@ -107,6 +107,16 @@ afterEach(() => {
 });
 
 describe('nav follows /api/meta', () => {
+  it('keeps agent controls and their polling out of desktop and mobile headers', async () => {
+    META = { ...META, modules: ['agents', 'usage'] };
+    renderAt('/');
+    await screen.findByLabelText('Search the vault');
+    expect(screen.queryByRole('radiogroup', { name: 'Default agent' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Menu' }));
+    expect(screen.queryByRole('radiogroup', { name: 'Default agent' })).toBeNull();
+    expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.some((call) => String(call[0]).includes('/telegram'))).toBe(false);
+  });
+
   it('keeps Usage navigation without fetching a header quota meter', async () => {
     META = { modules: ['usage'], owner: 'owner', devLogPath: null, docsPath: null, robot: false,
       nav: [{ section: 'Work', label: 'Usage', path: '/usage' }] };
