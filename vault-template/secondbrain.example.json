@@ -21,6 +21,14 @@
     { "key": "x.example.followers", "label": "X @example", "unit": "followers", "division": "writing",
       "collect": { "type": "x", "handle": "example" } }
   ],
+  "socialMetrics": {
+    "staleHours": 36,
+    "postDays": 90,
+    "youtube": [{ "channelId": "UCxxxxxxxxxxxxxxxxxxxxxx", "key": "yt.example", "label": "YouTube @example" }],
+    "instagram": [{ "username": "example.studio" }],
+    "x": [{ "handle": "example", "key": "x.example", "postIdsFile": "Areas/social/x-post-ids.txt" }],
+    "linkedin": [{ "account": "me" }]
+  },
   "tv": {
     "episodesDir": "tv/episodes",
     "shows": { "weekly": "The weekly report" }

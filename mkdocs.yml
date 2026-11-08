@@ -74,6 +74,7 @@ nav:
       - Configuration: configuration.md
       - Vault sync: sync.md
       - Modules: modules.md
+      - Social metrics: social-metrics.md
       - Addons: addons.md
       - Retrieval and the chat module: rag.md
       - Memory, and how to check it works: memory.md

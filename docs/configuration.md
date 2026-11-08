@@ -134,6 +134,7 @@ The engine supplies a real JSON-RPC reader, the explicitly selected settlement a
 | `CLASSIFY_PROVIDER` | `org` | `none` | The classify step's provider: `openrouter` (through OpenRouter with `OPENROUTER_API_KEY`) or `typesafe` (with `TYPESAFE_API_KEY`). `none`: every decision falls through to the old path |
 | `CLASSIFY_DAILY_TOKENS` | `org` | `2000000` | Classifier input tokens per day; above it, decisions fall through |
 | `TYPESAFE_API_KEY` | `org` | unset | A direct provider key, when `CLASSIFY_PROVIDER=typesafe` |
+| `YOUTUBE_API_KEY` | `map` (social metrics) | unset | YouTube Data API v3 key for the social metrics collector ([social-metrics.md](social-metrics.md)). Unset: configured YouTube accounts report a missing key; nothing else changes. Instagram tokens for the same collector are stored encrypted with `SOCIAL_TOKEN_ENC_KEY` |
 | `RING_PULL_SSH_HOST`, `RING_PULL_DB` | `ring` | unset, `secondbrain` | Mirror a server's ring tables over ssh |
 | `TTS_URL`, `TTS_MODEL` | `voice` | `http://127.0.0.1:8880`, a Kokoro model | A local OpenAI-compatible speech server. Never used on a server |
 | `ROBOT_LAUNCH_SCRIPT` | none (local only) | unset | A script the "start robot" button runs. Unset: the route isn't mounted |
@@ -179,6 +180,7 @@ Settings that don't fit on one env line. Every section is optional; a file that 
 | `map.divisionFolders` | `map` | `{ "division": ["folder", ...] }`: which folders belong to which division when no project claims them |
 | `map.missionFolders` | `map` | Notes that sit at the centre of the map |
 | `metrics[]` | `map` | Numbers the map tracks. Each has `key`, `label`, `unit` (`followers`, `subscribers`, `hours`, `usd`, `count`), optional `goal`, `target`, `division`, `headline`, and either `collect` (type `youtube`, `x`, `instagram` or `base-balance`) or `sum` (a list of other metric keys) |
+| `socialMetrics.*` | `map` | Social accounts the daily metrics timer reads through APIs: `youtube[]` (`channelId`), `instagram[]` (`username`, `tokenEnv`), `x[]` (`handle`, `postIdsFile`), `linkedin[]` (`account`, manual entries only), each with optional `key`, `label`, `staleHours`; and `staleHours` (36), `postDays` (90), `maxPosts` (500), `instagramApiVersion`. All lists empty by default. See [social-metrics.md](social-metrics.md) |
 | `tv.episodesDir` | `tv` | Where episodes live in the vault (default `tv/episodes`) |
 | `tv.shows` | `tv` | `{ "slug": "Show name" }` |
 | `livestream.youtube`, `.twitch`, `.kick` | `livestream` | Your channel handle on each platform |
