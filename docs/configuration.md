@@ -171,6 +171,9 @@ Settings that don't fit on one env line. Every section is optional; a file that 
 | Key | Module | Holds |
 |---|---|---|
 | `server.*` | server | The `server` block: `generate` (default `false`), `host`, `publicOrigin`, `user`, `dir`, `vaultDir`, `hermesHome`, and `backup` (`schedule`, `keepDaily`, `keepWeekly`). Source for `secondbrain plan\|apply`; see "Generated config" above |
+| `usage.subscriptions` | `usage` | Ordered quota panels: `codex`, `claude-code`. Default `[]`: no subscription readers are polled |
+| `usage.credits` | `usage` | Ordered prepaid credit panels: `openrouter`, `fal`, `gemini`. Default `[]` |
+| `usage.sections` | `usage` | Visible sections: `running`, `ledger`, `sessions`, `summaries`. Default all four; `[]` hides all four |
 | `goalsFile` | `projects`, `map` | Your goals note: markdown tables of `\| W1 \| Goal \| Measure \| Due \| Status \|` |
 | `missionFile` | `map` | Your mission note |
 | `map.divisionFolders` | `map` | `{ "division": ["folder", ...] }`: which folders belong to which division when no project claims them |
@@ -235,3 +238,31 @@ What the dispatcher does with it, per wake:
 3. **What does not change.** The router's floors and parks stand: a card the router parks stays parked, only the host changes. The budget is the one the tier set. The wakeup's result is prefixed `[fallback machine-down: <model>]` or `[fallback run-error: <model>]`, so the board and `/usage` show which runs fell back.
 
 Unset, nothing falls back: the wake fails the way it did before, and the card goes back to `ready`. Hermes-runtime bots are not dispatched here and keep their own `fallback_providers`.
+
+### Usage page providers and sections
+
+The Usage page owns subscription quotas, prepaid balances and run/session accounting. The navigation header and agent profile link to Usage instead of polling duplicate quota or token summaries. Select the providers and sections this installation uses in its manifest, `<vault>/secondbrain.json`:
+
+```json
+{
+  "usage": {
+    "subscriptions": ["codex", "claude-code"],
+    "credits": ["openrouter"],
+    "sections": ["running", "ledger", "sessions", "summaries"]
+  }
+}
+```
+
+Restart the app after changing the manifest; settings are read once per server process.
+
+Subscriptions and credits default to empty lists. Listing a provider enables its panel; it does not create credentials, purchase a plan, or change a provider's limits. Array order determines panel order. An explicit empty `sections` list hides all four optional page sections, while subscription/credit panels are controlled separately. Disabled sections do not start their UI polling. The Usage core feature and its navigation remain available.
+
+For Codex, install the supported Codex CLI as the same OS user that runs the app, then sign in using its ChatGPT subscription. `ORG_CODEX_COMMAND` selects the executable (default `codex`). The app makes bounded, read-only app-server calls to `account/read` and `account/rateLimits/read`. It strips API-key and endpoint overrides, rejects API-key authentication, caches quota readings, and never launches a model turn to fetch a quota. CLI credentials stay with Codex and are never returned to the browser.
+
+Quota windows are identified by their reported duration, not by assuming `primary` means five hours: 300 minutes is five hours and 10,080 minutes is weekly. Other returned buckets/windows keep their own labels. Some plans report only a weekly window; the UI does not fabricate a missing five-hour quota. It shows used and remaining percentages, reset time, observation time, and unavailable or stale readings. A passed reset means the previous percentage is no longer current, not that a new reading is zero. Account limits apply to the authenticated account across its usage; they are distinct from tokens recorded on this installation.
+
+Claude Code uses the existing statusline/run-log snapshots for five-hour and weekly quota readings; its history is kept. Neither subscription panel estimates quota from token counts or labels API-equivalent dollar costs as subscription charges. The prepaid API cards remain separate.
+
+The authenticated Usage API provides `GET /api/usage/config` and `GET /api/usage/subscriptions`. Configuration contains only the allow-listed presentation settings, and subscription responses contain only sanitized quota fields. `GET /api/usage/plan` remains the legacy Claude history endpoint.
+
+Official Codex protocol reference: [account rate limits](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt). This UI reads limits; it does not increase them, buy resets, or enforce a separate local spending policy.

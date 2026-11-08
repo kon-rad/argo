@@ -121,14 +121,17 @@ Without an agent-hub or a `zen-agent serve`, the live tabs say so and the rest s
 
 ## usage
 
-A ledger of Claude Code, zen-agent and Hermes usage: tokens per run, which bot, why it woke, which card and project, the work type, runtime and host; plus plan percentages and API credit balances. zen-agent runs come from their traces (`ZEN_SESSIONS_DIR`, default `<vault>/.zen/sessions`) with the size of every system-prompt part and a real dollar cost, which the page shows; Claude Code runs on a subscription never show dollars. The Summaries tab shows one model-written summary per finished session with counted metrics, and holds the facts a session proposes until you approve them ([summaries.md](summaries.md)).
+A ledger of Claude Code, Codex, zen-agent and Hermes usage: tokens per run, which bot, why it woke, which card and project, the work type, runtime and host; plus plan percentages and API credit balances. zen-agent runs come from their traces (`ZEN_SESSIONS_DIR`, default `<vault>/.zen/sessions`) with the size of every system-prompt part and a real dollar cost, which the page shows; Claude Code and Codex subscription runs never show API-equivalent dollars. The Summaries tab shows one model-written summary per finished session with counted metrics, and holds the facts a session proposes until you approve them ([summaries.md](summaries.md)).
 
 | | |
 |---|---|
 | Page | `/usage`, with filters in the URL |
+| Settings | `usage.subscriptions`, `usage.credits` and `usage.sections` in `secondbrain.json`; [provider configuration](configuration.md#usage-page-providers-and-sections) |
 | CLI | `secondbrain usage-sync`, `usage-push`, `usage-backfill`, `credits`, `ingest-device`, `ledger` |
 | Timers (server) | `usage-sync`, `credits-sync`, and the usage importer |
 | Summaries | The Summaries tab, `summarize` and the summarize timer are the `summaries` module ([summaries.md](summaries.md)) |
+
+Subscription quotas and prepaid balances are shown only for configured providers. Codex quota windows come from its subscription-authenticated CLI app-server, including five-hour and weekly limits when reported by the account. Header quota meters are consolidated here. Missing CLI/login or a failed refresh is visible in the provider panel; there is no API billing fallback.
 
 ## map
 

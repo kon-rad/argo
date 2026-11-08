@@ -150,7 +150,7 @@ Everything beyond browse, search and the database page is a module. A module tha
 | `projects` | A project tracker (divisions, projects, features, verifications) on `/projects`, `cli-projects`, a kiosk feed and a rendered markdown report |
 | `org` | An agent company's message board on `/org` (`cli-org`): channels, DMs, wakeups for a dispatcher, row-level security per agent |
 | `board` | The kanban board on `/board` (`cli-board`): cards next to the tracker and the org, written through `board_*` SQL functions, claimed and finished by lanes, reachable from any machine with a per-device token (see `docs/board-design.md`) |
-| `usage` | A ledger of Claude Code and Hermes usage on `/usage`, with plan percentages and API credit balances; also the ingest route each machine's agent ledger syncs to (below) |
+| `usage` | A ledger on `/usage`, with manifest-selected Claude Code/Codex subscription quotas, API credit balances and configurable sections; also the ingest route each machine's agent ledger syncs to (below) |
 | `summaries` | One summary per finished agent session (the Summaries tab of `/usage`, `secondbrain summarize`, the summarize timer); see `docs/summaries.md` |
 | `map` | A 3D brain map of the vault on `/map`, with a lean kiosk view and daily metrics |
 | `tv` | A player for rendered video episodes kept in the vault, on `/tv` |
@@ -194,6 +194,7 @@ Settings that don't fit one env line live in the vault, in `secondbrain.json` at
 | `tv.episodesDir`, `tv.shows` | tv | Where episodes live (default `tv/episodes`) and each show's name |
 | `livestream.youtube`, `.twitch`, `.kick` | livestream | Your channel on each platform |
 | `uploads.destinations`, `uploads.m1Dir` | uploads | Folder presets for the Uploads page (label, vault path, keywords) and where the second machine files its copy |
+| `usage.subscriptions`, `usage.credits`, `usage.sections` | usage | Which subscription quotas, prepaid balances and page sections appear; provider lists default to empty |
 | `projects.reportFile` | projects | Where `cli-projects render` writes the report (default `projects.md`) |
 | `garden.*` | garden | Shelf roots, archive folder, catalog and report paths, age thresholds, caps, pinned shelves, `apply` |
 

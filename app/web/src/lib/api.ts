@@ -581,6 +581,24 @@ export interface UsagePlan {
   history: { observed_at: string; window: PlanWindowName; used_pct: number }[];
 }
 export type CreditProvider = 'openrouter' | 'fal' | 'gemini';
+export type SubscriptionProvider = 'codex' | 'claude-code';
+export type UsageSection = 'running' | 'ledger' | 'sessions' | 'summaries';
+export interface UsageConfig {
+  subscriptions: SubscriptionProvider[];
+  credits: CreditProvider[];
+  sections: UsageSection[];
+}
+export interface QuotaWindow {
+  key: string; label: string; window_minutes: number;
+  used_pct: number | null; left_pct: number | null; resets_at: string | null;
+  observed_at: string | null; reset_since_reading: boolean; last_pct: number | null;
+}
+export interface SubscriptionUsage {
+  provider: SubscriptionProvider; label: string; status: 'ok' | 'unavailable';
+  observed_at: string | null; source: string; message: string | null; stale: boolean;
+  windows: QuotaWindow[];
+}
+export interface UsageSubscriptions { providers: SubscriptionUsage[] }
 export interface CreditRow {
   provider: CreditProvider; origin: 'api' | 'manual'; status: 'ok' | 'error' | 'unsupported'; observed_at: string;
   balance: number | null; total_credits: number | null; total_usage: number | null; currency: string; error: string | null; note: string | null;
@@ -1340,6 +1358,8 @@ export const api = {
       undefined,
       json('PUT', { path, content, base_hash: baseHash }),
     ),
+  usageConfig: () => request<UsageConfig>('/usage/config'),
+  usageSubscriptions: () => request<UsageSubscriptions>('/usage/subscriptions'),
   usagePlan: (from?: string, to?: string) => request<UsagePlan>('/usage/plan', { from, to }),
   usageCredits: (from?: string, to?: string) => request<UsageCredits>('/usage/credits', { from, to }),
   usageSeries: (p: { from: string; to: string; bucket: 'hour' | 'day'; tz: string; group: 'type' | UsageDimension }, f: UsageFilters = {}) =>

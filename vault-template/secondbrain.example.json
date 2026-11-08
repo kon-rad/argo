@@ -1,4 +1,9 @@
 {
+  "usage": {
+    "subscriptions": [],
+    "credits": [],
+    "sections": ["running", "ledger", "sessions", "summaries"]
+  },
   "goalsFile": "Areas/goals.md",
   "missionFile": "Areas/mission.md",
   "map": {

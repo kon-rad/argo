@@ -23,7 +23,6 @@ import { api, AUTH_EXPIRED_EVENT, type AppMeta, type FeatureNav } from './lib/ap
 import SearchBox from './components/SearchBox.js';
 import IndexStatus from './components/IndexStatus.js';
 import SyncChip from './components/SyncChip.js';
-import UsageChip from './components/UsageChip.js';
 import FriendlyButton from './components/FriendlyButton.js';
 import AgentToggle from './components/AgentToggle.js';
 import VoiceToggle from './components/VoiceToggle.js';
@@ -152,12 +151,6 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           )}
         </nav>
 
-        {modules.has('usage') && (
-          <div className="shrink-0 border-l border-[var(--rule)] pl-3">
-            <UsageChip />
-          </div>
-        )}
-
         {modules.has('agents') && (
           <div className="shrink-0 border-l border-[var(--rule)] pl-3">
             <AgentToggle />
@@ -198,7 +191,6 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         search={<SearchBox inputRef={mobileSearchRef} onSubmit={(q) => navigate(`/search?q=${encodeURIComponent(q)}`)} />}
         footer={
           <>
-            {modules.has('usage') && <UsageChip />}
             {modules.has('agents') && <AgentToggle />}
             <div className="text-xs"><IndexStatus /></div>
             <SyncChip />

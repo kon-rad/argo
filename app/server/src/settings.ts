@@ -277,6 +277,13 @@ const Server = z
 
 const Settings = z.object({
   server: Server,
+  /** Providers and panels shown on the Usage page. Empty provider lists do no polling. */
+  usage: z.object({
+    subscriptions: z.array(z.enum(['codex', 'claude-code'])).default([]),
+    credits: z.array(z.enum(['openrouter', 'fal', 'gemini'])).default([]),
+    sections: z.array(z.enum(['running', 'ledger', 'sessions', 'summaries']))
+      .default(['running', 'ledger', 'sessions', 'summaries']),
+  }).prefault({}),
   /**
    * The addons this vault turns on, e.g. `["map", "voice"]`. The core features are
    * always on and are never listed here. Read at runtime by `config.readAddonList` (which

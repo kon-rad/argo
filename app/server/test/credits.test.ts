@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { query } from '../src/db.js';
 import { readFal, readKeys, readOpenRouter, saveReading, type CreditReading } from '../src/credits.js';
+import { resetSettings } from '../src/settings.js';
 import { ALL_MODULES, truncateAll } from './helpers.js';
 
 const fakeFetch = (status: number, body: unknown, seen: { url?: string; auth?: string } = {}) =>
@@ -68,18 +69,30 @@ describe('credit snapshots', () => {
   });
 
   it('GET /api/usage/credits gives every provider, the latest row and the last good balance', async () => {
-    const app = createApp({ modules: ALL_MODULES });
-    const now = Date.now();
-    await saveReading(ok(), new Date(now - 3600_000));
-    await saveReading(ok({ status: 'error', balance: null, totalCredits: null, totalUsage: null, error: 'HTTP 500' }), new Date(now - 60_000));
-    const r = await request(app).get('/api/usage/credits');
-    expect(r.status).toBe(200);
-    const byP = Object.fromEntries(r.body.providers.map((p: { provider: string }) => [p.provider, p]));
-    expect(Object.keys(byP)).toEqual(['openrouter', 'fal', 'gemini']);
-    expect(byP.openrouter.latest).toMatchObject({ status: 'error', error: 'HTTP 500', balance: null });
-    expect(byP.openrouter.last_ok).toMatchObject({ status: 'ok', balance: 7.9394, total_credits: 120 });
-    expect(byP.fal).toMatchObject({ latest: null, last_ok: null });
-    expect(r.body.history).toHaveLength(1);
-    expect(r.body.history[0]).toMatchObject({ provider: 'openrouter', balance: 7.9394 });
+    const dir = mkdtempSync(join(tmpdir(), 'credits-settings-'));
+    const saved = process.env.SECONDBRAIN_SETTINGS;
+    writeFileSync(join(dir, 'secondbrain.json'), JSON.stringify({ usage: { credits: ['openrouter', 'fal', 'gemini'] } }));
+    process.env.SECONDBRAIN_SETTINGS = join(dir, 'secondbrain.json');
+    resetSettings();
+    try {
+      const app = createApp({ modules: ALL_MODULES });
+      const now = Date.now();
+      await saveReading(ok(), new Date(now - 3600_000));
+      await saveReading(ok({ status: 'error', balance: null, totalCredits: null, totalUsage: null, error: 'HTTP 500' }), new Date(now - 60_000));
+      const r = await request(app).get('/api/usage/credits');
+      expect(r.status).toBe(200);
+      const byP = Object.fromEntries(r.body.providers.map((p: { provider: string }) => [p.provider, p]));
+      expect(Object.keys(byP)).toEqual(['openrouter', 'fal', 'gemini']);
+      expect(byP.openrouter.latest).toMatchObject({ status: 'error', error: 'HTTP 500', balance: null });
+      expect(byP.openrouter.last_ok).toMatchObject({ status: 'ok', balance: 7.9394, total_credits: 120 });
+      expect(byP.fal).toMatchObject({ latest: null, last_ok: null });
+      expect(r.body.history).toHaveLength(1);
+      expect(r.body.history[0]).toMatchObject({ provider: 'openrouter', balance: 7.9394 });
+    } finally {
+      if (saved === undefined) delete process.env.SECONDBRAIN_SETTINGS;
+      else process.env.SECONDBRAIN_SETTINGS = saved;
+      resetSettings();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

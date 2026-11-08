@@ -7,6 +7,8 @@ import { live, stopProcess } from '../usage/live.js';
 import { running } from '../usage/running.js';
 import { agentSessionsRouter } from './agentSessions.js';
 import { HttpError, parseOr400, wrap } from './http.js';
+import { settings } from '../settings.js';
+import { claudeSubscription, codexSubscription } from '../usage/subscriptions.js';
 
 /**
  * The Usage board: the ledger written by usage-sync, usage-import and agents-sync
@@ -190,12 +192,30 @@ export function usageRouter(): Router {
   const router = Router();
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
+  router.get('/config', wrap(async (_req, res) => {
+    const { subscriptions, credits, sections } = settings().usage;
+    res.json({ subscriptions, credits, sections });
+  }));
+
+  router.get('/subscriptions', wrap(async (_req, res) => {
+    const providers = await Promise.all(settings().usage.subscriptions.map((provider) =>
+      provider === 'codex' ? codexSubscription() : claudeSubscription().catch(() => ({
+        provider: 'claude-code' as const, label: 'Claude Code', status: 'unavailable' as const, observed_at: null,
+        source: 'plan_usage_snapshots', message: 'Claude Code quota read unavailable', stale: false, windows: [],
+      }))));
+    res.json({ providers });
+  }));
+
   // Prepaid API credits (OpenRouter, fal, Gemini): latest per provider plus the balance history.
   router.use('/agent-sessions', agentSessionsRouter());
 
   router.get('/credits', wrap(async (req, res) => {
+    const enabled = settings().usage.credits;
+    if (!enabled.length) { res.json({ providers: [], history: [] }); return; }
     const [from, to] = span(parseOr400(range, req.query), 30);
-    res.json({ providers: await latestCredits(), history: await creditHistory(from, to) });
+    const [providers, history] = await Promise.all([latestCredits(), creditHistory(from, to)]);
+    res.json({ providers: enabled.map((p) => providers.find((x) => x.provider === p)),
+      history: history.filter((r) => enabled.includes(r.provider)) });
   }));
 
   router.get('/plan', wrap(async (req, res) => {

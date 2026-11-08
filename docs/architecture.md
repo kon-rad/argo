@@ -120,3 +120,7 @@ Both hooks fail open: a payload they can't parse is allowed, so a bug in a hook 
 
 - **Your notes and settings:** commit to your vault, as usual.
 - **The engine:** a branch and a pull request on this repo. CI runs the app suite, the Python suite and the leak checks; `main` is protected. Once merged, each vault moves its pin when it wants the change. See [vault.md](vault.md) and [`CONTRIBUTING.md`](https://github.com/kon-rad/argo/blob/main/CONTRIBUTING.md).
+
+### Usage quota boundary
+
+`secondbrain.json` selects subscription providers, credit cards and Usage page sections. The server returns only that presentation configuration and sanitized quota data. Codex limits are read through its authenticated CLI app-server with bounded requests and a shared cache, separate from dispatcher model turns. Claude retains its existing snapshot pipeline. UI meters live on `/usage`; header and profile links do not run duplicate collectors. Disabled providers are not queried by the subscription endpoint, and hidden sections do not start their browser polling. See [Usage configuration](configuration.md#usage-page-providers-and-sections).

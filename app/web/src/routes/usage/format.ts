@@ -1,5 +1,3 @@
-import type { PlanCurrent } from '../../lib/api.js';
-
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 10_000) return `${(n / 1000).toFixed(1)}k`;
@@ -11,23 +9,6 @@ export function untilText(iso: string | null, now = Date.now()): string {
   const mins = Math.max(0, Math.round((Date.parse(iso) - now) / 60000));
   const d = Math.floor(mins / 1440); const h = Math.floor((mins % 1440) / 60); const m = mins % 60;
   return d ? `resets in ${d} d ${h} h` : h ? `resets in ${h} h ${m} m` : `resets in ${m} m`;
-}
-
-export function planText(p: PlanCurrent | null): { main: string; sub: string } {
-  if (!p) return { main: 'No reading yet', sub: 'Readings come from the local status line and headless runs.' };
-  const asOf = `as of ${new Date(p.observed_at).toLocaleString()} (${p.host}, ${p.origin === 'statusline' ? 'status line' : 'headless run'})`;
-  const lapsed = p.resets_at !== null && Date.parse(p.resets_at) < Date.now();
-  if (p.reset_since_reading || p.left_pct === null || lapsed) {
-    return { main: 'Window reset since the last reading', sub: `was ${p.last_pct}% used, ${asOf}` };
-  }
-  return { main: `${p.left_pct}% left`, sub: `${p.used_pct}% used, ${untilText(p.resets_at)}, ${asOf}` };
-}
-
-/** The header chip's number for one window: '41%', or '-' with no current reading (none yet, or the window reset since). */
-export function chipPct(p: PlanCurrent | null, now = Date.now()): string {
-  if (!p || p.used_pct === null || p.reset_since_reading) return '-';
-  if (p.resets_at !== null && Date.parse(p.resets_at) < now) return '-';
-  return `${Math.round(p.used_pct)}%`;
 }
 
 export function money(v: number | null, currency: string): string {
