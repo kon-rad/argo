@@ -1206,9 +1206,6 @@ export const api = {
   memoryFacts: (params: { agent?: string; project?: string; subject?: string; author?: string; all?: boolean; limit?: number } = {}) =>
     request<{ facts: MemoryFact[] }>('/memory', params),
   memoryCandidates: (status: MemoryCandidate['status'] = 'proposed') => request<{ candidates: MemoryCandidate[] }>('/memory/candidates', { status }),
-  promoteMemoryCandidate: (id: number, patch: { subject?: string; claim?: string; project?: string } = {}) =>
-    request<{ id: number; status: 'promoted'; fact_id: number }>(`/memory/candidates/${id}/promote`, undefined, json('POST', patch)),
-  rejectMemoryCandidate: (id: number) => request<{ id: number; status: 'rejected' }>(`/memory/candidates/${id}/reject`, undefined, json('POST', {})),
   retireMemoryFact: (id: number, why: string) => request<{ id: number; status: 'retired' }>(`/memory/${id}/retire`, undefined, json('POST', { why })),
 
   chatOptions: () => request<ChatOptions>('/chat/options'),
@@ -1369,8 +1366,6 @@ export const api = {
     request<{ summaries: AgentSummary[] }>('/summaries', { from, to, q: f.q, outcome: f.outcome?.join(','), harness: f.harness?.join(','), host: f.host?.join(','), project: f.project?.join(',') }),
   summaryOverview: (from: string, to: string, tz: string) => request<SummaryOverview>('/summaries/overview', { from, to, tz }),
   summaryFacts: (status: 'proposed' | 'promoted' | 'rejected' = 'proposed') => request<{ facts: SummaryFact[] }>('/summaries/facts', { status }),
-  promoteSummaryFact: (id: number) => request<{ id: number; fact_id: number }>(`/summaries/facts/${id}/promote`, undefined, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
-  rejectSummaryFact: (id: number) => request<{ id: number }>(`/summaries/facts/${id}/reject`, undefined, { method: 'POST' }),
   usageHosts: () => request<{ hosts: UsageHost[] }>('/usage/hosts'),
   usageSessions: (from: string, to: string, f: UsageFilters = {}) => request<{ sessions: UsageSessionRow[] }>('/usage/sessions', { from, to, ...usageFilterParams(f) }),
   usageSession: (host: string, externalId: string, source: string) =>

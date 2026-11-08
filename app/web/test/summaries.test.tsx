@@ -69,19 +69,11 @@ describe('Summaries view', () => {
     await waitFor(() => expect(calls.some((c) => c.url.startsWith('/api/summaries?') && c.url.includes('outcome=blocked'))).toBe(true));
   });
 
-  it('promotes a proposed fact and the list empties', async () => {
+  it('links to automatically saved memory without approval controls', async () => {
     renderView();
-    expect(await screen.findByText('Discount codes are deduplicated.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Promote' }));
-    await waitFor(() => expect(calls.some((c) => c.url === '/api/summaries/facts/5/promote' && c.init?.method === 'POST')).toBe(true));
-    await waitFor(() => expect(screen.getByText('Nothing waiting.')).toBeTruthy());
-  });
-
-  it('rejects a proposed fact', async () => {
-    renderView();
-    await screen.findByText('Discount codes are deduplicated.');
-    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
-    await waitFor(() => expect(calls.some((c) => c.url === '/api/summaries/facts/5/reject')).toBe(true));
+    expect(await screen.findByRole('link', {name:'Memory'})).toBeTruthy();
+    expect(screen.queryByRole('button', {name:'Promote'})).toBeNull();
+    expect(screen.queryByRole('button', {name:'Reject'})).toBeNull();
   });
 
   it('says what an empty range means', async () => {
@@ -94,6 +86,6 @@ describe('Summaries view', () => {
     }));
     renderView();
     expect(await screen.findByText(/No summaries in this range/)).toBeTruthy();
-    expect(screen.getByText('Nothing waiting.')).toBeTruthy();
+    expect(screen.getByRole('link', {name:'Memory'})).toBeTruthy();
   });
 });

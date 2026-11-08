@@ -49,28 +49,16 @@ describe('summaries api', () => {
     expect((await request(app).get('/api/summaries/overview').query({ tz: 'Mars/Base' })).status).toBe(400);
   });
 
-  it('promotes a candidate into memory_facts with its source, once', async () => {
-    await query(`INSERT INTO teams (slug, name) VALUES ('t','T') ON CONFLICT DO NOTHING`).catch(() => {});
+  it('automatically saves session facts and retires legacy decision endpoints', async () => {
     const { summary } = await seed('a', { project: 'not-a-project' });
-    const f = await query<{ id: number }>(`INSERT INTO agent_summary_facts (summary_id, subject, claim) VALUES ($1,'billing','Discount codes are deduplicated.') RETURNING id`, [summary]);
-    const id = f.rows[0]!.id;
-    const ok = await request(app).post(`/api/summaries/facts/${id}/promote`).send({ claim: 'Discount codes are deduplicated before they apply.' });
-    expect(ok.status).toBe(200);
-    const fact = (await query(`SELECT subject, claim, source, author, via, confidence, project_slug FROM memory_facts WHERE id = $1`, [ok.body.fact_id])).rows[0];
-    expect(fact).toMatchObject({ subject: 'billing', claim: 'Discount codes are deduplicated before they apply.', author: 'summarizer', via: 'agent-summaries', confidence: 'inferred', project_slug: null });
+    const f = (await query(`INSERT INTO agent_summary_facts (summary_id, subject, claim) VALUES ($1,'billing','Discount codes are deduplicated.') RETURNING *`, [summary])).rows[0];
+    expect(f.status).toBe('promoted');
+    const fact = (await query(`SELECT * FROM memory_facts WHERE id=$1`, [f.fact_id])).rows[0];
+    expect(fact).toMatchObject({subject:'billing', claim:'Discount codes are deduplicated.', author:'summarizer', confidence:'inferred', project_slug:null});
     expect(fact.source).toMatch(/^agent-summary:\d+ \(session droplet\/a\)$/);
-    expect((await request(app).post(`/api/summaries/facts/${id}/promote`).send({})).status).toBe(409);
-    expect((await request(app).get('/api/summaries/facts').query({ status: 'promoted' })).body.facts).toHaveLength(1);
+    await request(app).post(`/api/summaries/facts/${f.id}/promote`).send({}).expect(410);
+    await request(app).post(`/api/summaries/facts/${f.id}/reject`).send({}).expect(410);
     expect((await request(app).get('/api/summaries/facts')).body.facts).toHaveLength(0);
-  });
-
-  it('rejects a candidate, and 404s a missing one', async () => {
-    const { summary } = await seed('a');
-    const f = await query<{ id: number }>(`INSERT INTO agent_summary_facts (summary_id, subject, claim) VALUES ($1,'x','y') RETURNING id`, [summary]);
-    expect((await request(app).post(`/api/summaries/facts/${f.rows[0]!.id}/reject`)).body.status).toBe('rejected');
-    expect((await request(app).post(`/api/summaries/facts/${f.rows[0]!.id}/reject`)).status).toBe(404);
-    expect((await request(app).post('/api/summaries/facts/999/promote').send({})).status).toBe(404);
-    expect((await query(`SELECT 1 FROM memory_facts`)).rowCount).toBe(0);
   });
 
   it('returns one summary with its candidates', async () => {

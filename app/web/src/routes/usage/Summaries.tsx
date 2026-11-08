@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, type AgentSummary } from '../../lib/api.js';
 import { zoned } from '../../lib/time.js';
@@ -45,41 +45,9 @@ function Card({ s }: { s: AgentSummary }) {
         {s.touched.files_edited.length ? <span title={s.touched.files_edited.join('\n')}>{s.touched.files_edited.length} files edited</span> : null}
         {s.touched.cards.length ? <span>{s.touched.cards.join(', ')}</span> : null}
         {s.touched.skills.length ? <span>skills: {s.touched.skills.join(', ')}</span> : null}
-        {s.proposed_facts ? <span>{s.proposed_facts} proposed {s.proposed_facts === 1 ? 'fact' : 'facts'}</span> : null}
         <span title="Written by this model; the counts above are computed from the transcript, not written by it.">written by {s.writer_provider}/{s.writer_model}</span>
       </div>
     </article>
-  );
-}
-
-function Facts() {
-  const qc = useQueryClient();
-  const facts = useQuery({ queryKey: ['summary-facts', 'proposed'], queryFn: () => api.summaryFacts('proposed') });
-  const done = () => { void qc.invalidateQueries({ queryKey: ['summary-facts'] }); void qc.invalidateQueries({ queryKey: ['summary-overview'] }); };
-  const promote = useMutation({ mutationFn: (id: number) => api.promoteSummaryFact(id), onSuccess: done });
-  const reject = useMutation({ mutationFn: (id: number) => api.rejectSummaryFact(id), onSuccess: done });
-  const list = facts.data?.facts ?? [];
-  return (
-    <section aria-label="Proposed facts">
-      <h2 className="text-sm font-semibold">Learned, waiting for you</h2>
-      <p className="text-xs text-[var(--ink-dim)]">Facts a session proposed. Promote one to put it in shared memory with this session as its source; reject one and it is not proposed again.</p>
-      {facts.isLoading ? <p className="text-sm text-[var(--ink-dim)]">Loading…</p> : null}
-      {!facts.isLoading && !list.length ? <p className="text-sm text-[var(--ink-dim)]">Nothing waiting.</p> : null}
-      <ul className="mt-1 space-y-2">
-        {list.map((f) => (
-          <li key={f.id} className="rounded border border-[var(--rule)] p-2 text-sm">
-            <div><span className="font-medium">{f.subject}</span>{f.project ? <span className="text-xs text-[var(--ink-dim)]"> · {f.project}</span> : null}</div>
-            <div>{f.claim}</div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-              <button type="button" className="rounded border border-[var(--ink)] px-2 py-0.5" disabled={promote.isPending} onClick={() => promote.mutate(f.id)}>Promote</button>
-              <button type="button" className="rounded border border-[var(--rule)] px-2 py-0.5" disabled={reject.isPending} onClick={() => reject.mutate(f.id)}>Reject</button>
-              <Link className="text-[var(--ink-dim)] underline" to={sessionLink({ host: f.host, external_id: f.external_id, source: f.source })}>from: {f.request.slice(0, 70)}</Link>
-            </div>
-          </li>
-        ))}
-      </ul>
-      {promote.error || reject.error ? <p role="alert" className="text-xs text-red-600">{String((promote.error ?? reject.error) as Error)}</p> : null}
-    </section>
   );
 }
 
@@ -122,7 +90,7 @@ export default function Summaries() {
             <span><b>{o?.summarized ?? '…'}</b> summarized</span>
             <span><b>{total ? Math.round((finished / total) * 100) : 0}%</b> finished</span>
             <span>{o?.skipped ?? 0} too short</span>
-            <span>{o?.proposed_facts ?? 0} facts waiting</span>
+
           </div>
           <div className="mt-1 flex flex-wrap gap-1 text-xs">{o?.outcomes.map((x) => <span key={x.key}><Chip outcome={x.key} /> {x.n}</span>)}</div>
           <div className="mt-2 text-xs text-[var(--ink-dim)]">Written by {o?.writers.length ? o.writers.map((w) => `${w.key} (${w.n}, ${formatTokens(Number(w.input) + Number(w.output))} tokens)`).join('; ') : 'nothing yet'}</div>
@@ -167,7 +135,7 @@ export default function Summaries() {
         {list.data?.summaries.map((s) => <Card key={s.id} s={s} />)}
       </section>
 
-      <Facts />
+      <p className="text-xs text-[var(--ink-dim)]">Learned facts are saved automatically in <Link className="underline" to="/memory">Memory</Link>.</p>
     </div>
   );
 }

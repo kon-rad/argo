@@ -18,7 +18,7 @@ const one = (s: string, n: number) => { const f = s.replace(/\s+/g, ' ').trim();
 
 /**
  * What the stand-up reads: the last `hours` of summaries as markdown, grouped by project, with the
- * open items and the unreviewed candidate facts pulled out. Bounded by `maxChars` so the pack stays small.
+ * open items and the automatically saved facts pulled out. Bounded by `maxChars` so the pack stays small.
  */
 export async function buildDigest(hours = 24, maxChars = 6000): Promise<string> {
   const { rows } = await query<Row>(
@@ -51,9 +51,9 @@ export async function buildDigest(hours = 24, maxChars = 6000): Promise<string> 
   const openLines = open.length ? ['\n### Open items', ...open.map((r) => `- ${one(r.open_items, 200)} (${one(r.request, 60)})`)] : [];
   const facts = (await query<{ subject: string; claim: string }>(
     `SELECT f.subject, f.claim FROM agent_summary_facts f JOIN agent_summaries s ON s.id = f.summary_id
-      WHERE f.status = 'proposed' AND s.status = 'ok' AND coalesce(s.ended_at, s.started_at, s.updated_at) >= now() - make_interval(hours => $1)
+      WHERE f.status = 'promoted' AND s.status = 'ok' AND coalesce(s.ended_at, s.started_at, s.updated_at) >= now() - make_interval(hours => $1)
       ORDER BY f.id DESC LIMIT 8`, [hours])).rows;
-  const factLines = facts.length ? ['\n### Learned, not yet reviewed', ...facts.map((f) => `- ${f.subject}: ${one(f.claim, 220)}`)] : [];
+  const factLines = facts.length ? ['\n### Learned, saved to memory', ...facts.map((f) => `- ${f.subject}: ${one(f.claim, 220)}`)] : [];
 
   let out = [head, ...body, ...openLines, ...factLines].join('\n');
   if (out.length > maxChars) out = `${out.slice(0, maxChars - 40).trimEnd()}\n\n[... cut at ${maxChars} characters]\n`;

@@ -2,7 +2,7 @@
 
 Status: **works** - the `summaries` module ships; the items under "Not built" below are proposals, not shipped.
 
-One short, structured record for every finished agent session, on any harness and any machine, with the metrics counted from the transcript and the facts it learned held back until you approve them. It feeds three things: a daily digest for a stand-up, candidate facts for shared memory, and numbers you can compare before and after a change to your agents.
+One short, structured record for every finished agent session, on any harness and any machine, with metrics counted from the transcript and learned facts saved automatically. It feeds three things: a daily digest for a stand-up, sourced facts for shared memory, and numbers you can compare before and after a change to your agents.
 
 Module: `summaries` (its own since the feature manifests; it reads the `usage` ledger but mounts without it). `MODULES=usage,summaries` on the server installs the timer. `SUMMARIES=on` still works for one release and prints a notice.
 
@@ -31,7 +31,7 @@ usage_calls                                   │ compact: prompts, responses, t
               agent_summaries (+ computed touched, metrics)   agent_summary_facts (proposed)
                                               │
               /usage?view=summaries ◀─────────┴────────▶ digest for the stand-up
-                                                           promote ──▶ memory_facts (confidence: inferred, source: the session)
+                                                           automatic ──▶ memory_facts (confidence: inferred, source: the session)
 ```
 
 - **Which sessions.** Claude Code, Hermes and zen-agent sessions, interactive and headless. Claude Code subagents are skipped (their work shows in the parent's tool calls). A session with fewer than `minSteps` prompt and response steps is recorded as skipped, without a model call.
@@ -79,9 +79,9 @@ A chain entry is a preset provider id from `llm-presets.json`, a model, and opti
 
 Install the timer: add `summaries` to `DEPLOY_MODULES` (and set `SUMMARIES_M1_URL` if you use a home server) and run the deploy script. It runs every 30 minutes, 50 sessions at most per run. Summaries run on the machine that holds the archive.
 
-## Memory: facts are candidates
+## Memory: facts save automatically
 
-The model may propose up to five facts per session. They sit in `agent_summary_facts` and are invisible to recall until you promote one on the page (or `POST /api/summaries/facts/:id/promote`). Promotion writes a `memory_facts` row with `confidence = inferred`, author `summarizer`, and the session as its source. A rejected claim is not proposed again for that session.
+The model extracts up to five facts per session. The database saves them into `memory_facts` in the same transaction, with inferred confidence, author `summarizer`, agent/project scope and a session source. Existing pending facts are saved during migration. Duplicate claims reuse existing history; rejected and retired claims are not revived. Review saved facts on `/memory` and retire an incorrect or outdated fact. The former promote/reject endpoints return 410.
 
 ## Checking the quality
 

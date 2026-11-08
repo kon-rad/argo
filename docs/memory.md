@@ -2,7 +2,7 @@
 
 Status: **works** - maps the stores the engine reads today (the vault index and vectors, shared facts, bot memory, harness memory) and the `secondbrain memory recall` arms, with measured checks from one vault on 2026-10-26.
 
-The shared memory is a **core feature** (`app/server/src/features/memory/`): `memory_facts` is the one store, a claim with a source and an optional `agent` tag for a bot's own memory, reached through `secondbrain memory recall|remember|list|retire|propose|stats` and shown on `/memory` with the candidates finished sessions proposed. One row, one layer: the vault holds prose, `memory_facts` holds claims that cite it.
+The shared memory is a **core feature** (`app/server/src/features/memory/`): `memory_facts` is the one store, a claim with a source and an optional `agent` tag for a bot's own memory, reached through `secondbrain memory recall|remember|list|retire|propose|stats` and shown on `/memory`. Finished session facts are saved automatically, without human approval. One row, one layer: the vault holds prose, `memory_facts` holds claims that cite it.
 
 
 A second brain has no single "memory". It has several stores that were added for different jobs, written by different parties and loaded at different moments. This page maps them: what each holds, who writes it, **where it is invoked** (the exact call sites), how to look at what is recorded, and how to tell whether it helps or just fills the context window.
@@ -229,3 +229,9 @@ How to judge a change: run the golden set before and after, and compare hit@8 an
 - Engine code: `app/server/src/cli-org.ts`, `app/server/src/org-powers.ts`, `app/db/migrations/1756000014000_bot-powers.sql`, `app/server/src/routes/org.ts`, `app/server/src/archive/run.ts`, `zen-agent/src/fetchers.ts`, `zen-agent/src/tools/org.ts`
 - Skills: `org-member` (engine copy; a vault can extend it); `shared-memory` (an example of a vault's own skill)
 - Related pages: [Retrieval and the chat module](rag.md), [Agent harness](agent-harness.md), self-improving orchestration (proposal)
+
+## Automatic session memory
+
+Session-summary facts enter memory automatically in the summary transaction. The database trigger also covers older summarizers during upgrades. Existing pending facts are saved once on migration; rejected history stays rejected. Equal claims in the same agent and project scope link to existing history, including retired facts, without reviving them. Extracted claims retain their session source, summarizer author and inferred confidence.
+
+The Memory page lists saved facts with agent filtering and retirement. Summaries links to that page instead of presenting a second approval queue. Legacy approval/rejection HTTP endpoints return 410. `remember` is the CLI verb for writing to this same store; it is not a separate memory section. `propose` creates an improvement card from an existing fact, not a memory approval request.
