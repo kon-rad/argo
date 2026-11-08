@@ -107,6 +107,17 @@ afterEach(() => {
 });
 
 describe('nav follows /api/meta', () => {
+  it('keeps Usage navigation without fetching a header quota meter', async () => {
+    META = { modules: ['usage'], owner: 'owner', devLogPath: null, docsPath: null, robot: false,
+      nav: [{ section: 'Work', label: 'Usage', path: '/usage' }] };
+    renderAt('/');
+    await screen.findByLabelText('Search the vault');
+    fireEvent.click(await screen.findByRole('button', { name: /Work/ }));
+    expect(screen.getByRole('menuitem', { name: 'Usage' })).toBeTruthy();
+    expect(document.body.textContent).not.toContain('5h');
+    expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.some((call) => String(call[0]).includes('/usage/plan'))).toBe(false);
+  });
+
   it('hides optional pages and note links when nothing is enabled', async () => {
     renderAt('/');
     await screen.findByLabelText('Search the vault');

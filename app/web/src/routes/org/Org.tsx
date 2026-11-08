@@ -3,8 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, NavLink, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { api, type OrgApproval, type OrgChannel, type OrgChartAgent, type OrgMessage, type OrgWakeup, type UsageFacetValue } from '../../lib/api.js';
-import { formatTokens } from '../usage/format.js';
+import { api, type OrgApproval, type OrgChannel, type OrgChartAgent, type OrgMessage, type OrgWakeup } from '../../lib/api.js';
 import { ago, zoned } from '../../lib/time.js';
 import { useStickToBottom } from '../../lib/useStickToBottom.js';
 import { ChatInput } from '../../components/ChatInput.js';
@@ -438,27 +437,9 @@ function Approvals() {
   );
 }
 
-/** Seven days of the bot's tokens by what woke it and what it did; the link opens /usage filtered to it. */
+/** Keep usage accounting on the Usage page. */
 function UsageStrip({ name }: { name: string }) {
-  const [from, to] = useMemo(() => {
-    const end = new Date(Math.ceil(Date.now() / 3600_000) * 3600_000);
-    return [new Date(end.getTime() - 7 * 86400_000).toISOString(), end.toISOString()];
-  }, []);
-  const q = useQuery({ queryKey: ['usage-facets', from, to, name], queryFn: () => api.usageFacets(from, to, { agent: [name] }), retry: false, staleTime: 60_000 });
-  const facets = q.data?.facets;
-  const row = (label: string, xs: UsageFacetValue[] | undefined) => (xs?.length ? (
-    <div className="text-xs"><span className="text-[var(--ink-dim)]">{label}: </span>{xs.map((x) => `${x.value} ${formatTokens(x.tokens)}`).join(' · ')}</div>
-  ) : null);
-  if (!q.data || !q.data.total?.calls) return <p className="text-sm text-[var(--ink-faint)]">No model calls in the last 7 days.</p>;
-  return (
-    <div className="space-y-1">
-      <div className="text-sm">{formatTokens(q.data.total.tokens)} tokens in {q.data.total.calls} calls, last 7 days. <Link className="text-[var(--accent)]" to={`/usage?days=7&agent=${encodeURIComponent(name)}&group=action`}>Open in Usage</Link></div>
-      {row('woken by', facets?.reason)}
-      {row('did', facets?.action)}
-      {row('projects', facets?.project)}
-      {row('work', facets?.work_type)}
-    </div>
-  );
+  return <Link className="text-sm text-[var(--accent)] underline" to={`/usage?view=ledger&days=7&agent=${encodeURIComponent(name)}&group=action`}>View this agent's last 7 days in Usage</Link>;
 }
 
 function RunRow({ w }: { w: OrgWakeup }) {
@@ -583,7 +564,7 @@ function AgentPage() {
           </ul>
         ))}
         {section(`Runs (${p.runs.length})`, p.runs.length ? <ul className="space-y-1">{p.runs.map((w) => <RunRow key={w.id} w={w} />)}</ul> : <p className="text-sm text-[var(--ink-faint)]">Never woken.</p>)}
-        {p.agent.runtime !== 'human' && section('Tokens', <UsageStrip name={name} />)}
+        {p.agent.runtime !== 'human' && section('Usage', <UsageStrip name={name} />)}
         {section(`Cards (${cardRows.length})`, cardRows.length ? (
           <ul className="space-y-1 text-sm">
             {cardRows.map((t) => (

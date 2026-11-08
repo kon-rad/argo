@@ -17,7 +17,9 @@ const RUNNING = { host: 'server-1', at: '2026-10-26T12:03:12Z', configured: { 'c
 
 function mockFetch() {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-    const body = String(input).includes('/usage/running') ? RUNNING : {};
+    const url = String(input);
+    const body = url.includes('/usage/config') ? { subscriptions: [], credits: [], sections: ['ledger', 'running'] }
+      : url.includes('/usage/running') ? RUNNING : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }));
 }
@@ -33,7 +35,7 @@ describe('Running now tab', () => {
   it('is reached from the Usage tabs and groups bots, lane workers and other sessions', async () => {
     mockFetch();
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/usage']}><Usage /></MemoryRouter></QueryClientProvider>);
-    expect(screen.getByRole('tab', { name: 'Usage' }).getAttribute('aria-selected')).toBe('true');
+    expect((await screen.findByRole('tab', { name: 'Ledger' })).getAttribute('aria-selected')).toBe('true');
     fireEvent.click(screen.getByRole('tab', { name: 'Server processes' }));
     expect(await screen.findByRole('heading', { name: /Bots/ })).toBeTruthy();
     expect(screen.getByRole('heading', { name: /Lane workers/ })).toBeTruthy();

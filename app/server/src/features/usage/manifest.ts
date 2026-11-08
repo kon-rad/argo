@@ -3,7 +3,7 @@ import { defineFeature } from '../types.js';
 export default defineFeature({
   name: 'usage',
   core: true,
-  summary: 'What your agents cost: a ledger of every run by bot, task, project and host, plan percentages and API credit balances',
+  summary: 'What your agents cost: a ledger of every run by bot, task, project and host, manifest-selected subscription quotas and API credit balances',
   nav: [{ section: 'Work', label: 'Usage', path: '/usage' }],
   cli: [
     { command: 'usage-sync', entry: 'cli-usage-sync.js', summary: "this machine's Claude Code usage into the ledger" },
@@ -18,6 +18,6 @@ export default defineFeature({
   ],
   wrappers: [],
   health: { label: 'the usage tables answer', tables: ['usage_runs', 'usage_calls', 'usage_hosts', 'usage_files'] },
-  env: ['ZEN_SESSIONS_DIR', 'USAGE_SYNC_SERVER', 'USAGE_SYNC_TOKEN'],
+  env: ['ORG_CODEX_COMMAND', 'ZEN_SESSIONS_DIR', 'USAGE_SYNC_SERVER', 'USAGE_SYNC_TOKEN'],
   docs: 'docs/modules.md#usage',
 });

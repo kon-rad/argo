@@ -3,12 +3,16 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import Usage from '../src/routes/usage/Usage.js';
-import { bucketEnd, formatTokens, planText } from '../src/routes/usage/format.js';
+import { bucketEnd, formatTokens, money } from '../src/routes/usage/format.js';
 
 const PLAN = { current: {
   five_hour: { used_pct: null, left_pct: null, resets_at: '2026-10-14T01:00:00Z', observed_at: '2026-10-13T22:00:00Z', host: 'mac', origin: 'statusline', reset_since_reading: true, last_pct: 92 },
   seven_day: { used_pct: 41.2, left_pct: 58.8, resets_at: '2099-01-01T00:00:00Z', observed_at: '2026-10-14T00:00:00Z', host: 'mac', origin: 'statusline', reset_since_reading: false, last_pct: 41.2 } },
   history: [] };
+const CONFIG = { subscriptions: ['claude-code'], credits: [], sections: ['ledger', 'sessions', 'running', 'summaries'] };
+const SUBSCRIPTIONS = { providers: [{ provider: 'claude-code', label: 'Claude Code', status: 'ok', observed_at: '2026-10-14T00:00:00Z', source: 'statusline', message: null, stale: false,
+  windows: [{ key: 'seven_day', label: '7-day window', window_minutes: 10080, used_pct: 41.2, left_pct: 58.8, resets_at: '2099-01-01T00:00:00Z', observed_at: '2026-10-14T00:00:00Z', reset_since_reading: false, last_pct: 41.2 },
+    { key: 'five_hour', label: '5-hour window', window_minutes: 300, used_pct: null, left_pct: null, resets_at: '2026-10-14T01:00:00Z', observed_at: '2026-10-13T22:00:00Z', reset_since_reading: true, last_pct: 92 }] }] };
 const SERIES = { bucket: 'hour', tz: 'UTC', rows: [
   { bucket: '2026-10-14T01:00:00.000Z', key: 'all', input: 10, cache_write: 100, cache_read: 1000, output: 50, calls: 1 }] };
 const row = (o: Record<string, unknown>) => ({ id: 1, source: 'claude-code', harness: 'claude-code', profile: null, provider: 'anthropic', host: 'droplet',
@@ -36,7 +40,7 @@ let seriesBody: unknown = SERIES;
 function mockFetch() {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const u = String(input);
-    const body = u.includes('/usage/plan') ? PLAN : u.includes('/usage/series') ? seriesBody
+    const body = u.includes('/usage/config') ? CONFIG : u.includes('/usage/subscriptions') ? SUBSCRIPTIONS : u.includes('/usage/plan') ? PLAN : u.includes('/usage/series') ? seriesBody
       : u.includes('/usage/agent-sessions/facets') ? AFACETS : u.includes('/usage/agent-sessions') ? SESSIONS : u.includes('/usage/runs') ? RUNS
       : u.includes('/usage/org-wakes') ? { agents: [{ agent_name: 'atlas', team_slug: 'platform', role: 'Head', wakes: 3, done: 2, open: 1, routine: 1, dm: 1, mention: 1, task: 1, tokens: 5000, avg_minutes: 1.2, last_wake: '2026-10-14T01:00:00Z' }] }
       : u.includes('/usage/facets') ? FACETS : {};
@@ -50,12 +54,10 @@ describe('format', () => {
   it('formats token counts', () => {
     expect([formatTokens(812), formatTokens(34_512), formatTokens(1_234_567)]).toEqual(['812', '34.5k', '1.2M']);
   });
-  it('never shows a stale reading as current', () => {
-    expect(planText(PLAN.current.five_hour).main).toMatch(/reset/i);
-    expect(planText(PLAN.current.seven_day).main).toBe('58.8% left');
-    expect(planText(null).main).toMatch(/no reading/i);
-    const lapsed = { ...PLAN.current.seven_day, resets_at: '2020-01-01T00:00:00Z' };
-    expect(planText(lapsed).main).toBe(planText(PLAN.current.five_hour).main);
+  it('writes explicit currency for credit balances', () => {
+    expect(money(7.9394, 'USD')).toBe('$7.94');
+    expect(money(12, 'EUR')).toBe('12.00 EUR');
+    expect(money(null, 'USD')).toBe('-');
   });
 });
 
@@ -74,6 +76,7 @@ describe('Usage page', () => {
     const { container } = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Usage /></MemoryRouter></QueryClientProvider>);
     await waitFor(() => expect(container.querySelector('g[style*="cursor"]')).toBeTruthy());
     fireEvent.click(container.querySelector('g[style*="cursor"]')!);
+    fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }));
     await waitFor(() => expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.some((c) => {
       const u = String(c[0]);
       return u.includes('/usage/agent-sessions?') && u.includes('from=2026-10-14T01%3A00%3A00.000Z') && u.includes('to=2026-10-14T02%3A00%3A00.000Z');
@@ -84,6 +87,7 @@ describe('Usage page', () => {
       seriesBody = { bucket: 'hour', tz: 'UTC', rows };
       mockFetch();
       render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Usage /></MemoryRouter></QueryClientProvider>);
+      fireEvent.click(await screen.findByRole('tab', { name: 'Sessions' }));
       expect(await screen.findByRole('link', { name: 'Fix dispatcher' })).toBeTruthy();
     });
 
@@ -112,7 +116,7 @@ describe('Usage page', () => {
   it('shows a bot\'s run with who, why, card, project, work and tokens', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const u = String(input);
-      const body = u.includes('/usage/plan') ? PLAN : u.includes('/usage/series') ? SERIES
+      const body = u.includes('/usage/config') ? CONFIG : u.includes('/usage/subscriptions') ? SUBSCRIPTIONS : u.includes('/usage/plan') ? PLAN : u.includes('/usage/series') ? SERIES
         : u.includes('/usage/agent-sessions/facets') ? AFACETS : u.includes('/usage/agent-sessions') ? SESSIONS
         : u.includes('/usage/runs') ? RUNS2 : u.includes('/usage/facets') ? FACETS : u.includes('/usage/org-wakes') ? { agents: [] } : {};
       return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -125,24 +129,27 @@ describe('Usage page', () => {
     expect(screen.getByRole('button', { name: 'secondbrain-app' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'coding' })).toBeTruthy();
     expect(screen.getByText('1070')).toBeTruthy();                       // 10 + 0 + 1000 + 60 tokens for the run
-    expect(document.body.textContent).not.toContain('$');                 // dollars only as Hermes's USD column
-    expect(screen.getAllByText('0.42 USD')).toHaveLength(1);
+    expect(document.body.textContent).not.toContain('$');
   });
 
-  it('shows plan cards, the sessions table and a failed verify', async () => {
+  it('shows subscription cards, the sessions table and a failed verify', async () => {
     mockFetch();
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Usage /></MemoryRouter></QueryClientProvider>);
-    await waitFor(() => expect(screen.getByText('58.8% left')).toBeTruthy());
-    expect(screen.getByText(/was 92% used/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('58.8% remaining')).toBeTruthy());
+    expect(screen.getByText(/Last reading: 92% used/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }));
     expect(await screen.findByRole('link', { name: 'Fix dispatcher' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Fix dispatcher' }).getAttribute('href')).toBe('/usage/session/droplet/cc1?source=claude-code');
     expect(screen.getByRole('link', { name: 'arch-only-se' })).toBeTruthy();   // null surface/started_at render blank, no crash
-    expect(screen.getByText(/failed.*901/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Ledger' }));
+    expect(await screen.findByText(/failed.*901/i)).toBeTruthy();
     expect(document.body.textContent).not.toContain('$');
-    expect(screen.getAllByText('0.42 USD')).toHaveLength(1);                     // only the Hermes row shows a cost
+    fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }));
+    expect(screen.getAllByText('0.42 USD')).toHaveLength(1);
     // The list's own filters: a harness chip adds s_harness to the request.
     fireEvent.click(screen.getByRole('button', { name: 'hermes' }));
     await waitFor(() => expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.some((c) => String(c[0]).includes('/usage/agent-sessions?') && String(c[0]).includes('harness=hermes'))).toBe(true));
+    fireEvent.click(screen.getByRole('tab', { name: 'Ledger' }));
     fireEvent.click(screen.getByRole('button', { name: '90 d' }));     // over 31 days: hourly buckets switch off
     await waitFor(() => expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.some((c) => String(c[0]).includes('bucket=day'))).toBe(true));
   });

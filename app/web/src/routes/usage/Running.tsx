@@ -36,7 +36,7 @@ function Group({ kind, rows }: { kind: RunningRow['kind']; rows: RunningRow[] })
             return (
               <tr key={`${r.pid ?? r.runId ?? i}-${i}`} className="border-t border-[var(--rule)] align-top">
                 <td>
-                  {r.kind === 'bot' ? <Link className="inline-flex items-center gap-1 hover:underline" to={`/usage?agent=${encodeURIComponent(r.name)}`}><AgentAvatar name={r.name} size={18} />{r.name}</Link> : r.name}
+                  {r.kind === 'bot' ? <Link className="inline-flex items-center gap-1 hover:underline" to={`/usage?view=ledger&agent=${encodeURIComponent(r.name)}`}><AgentAvatar name={r.name} size={18} />{r.name}</Link> : r.name}
                   {r.state === 'claimed' && <span className="ml-1 rounded bg-[var(--paper-sunk)] px-1 text-xs text-[var(--ink-dim)]" title={r.detail ?? ''}>claimed, no process</span>}
                 </td>
                 <td>

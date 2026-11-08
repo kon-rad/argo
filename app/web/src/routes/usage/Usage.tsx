@@ -3,40 +3,24 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   api, USAGE_DIMENSION_LABELS, USAGE_DIMENSIONS,
-  type CreditProvider, type PlanCurrent, type UsageCredits, type UsageDimension, type UsageFacets, type UsageFilters, type UsageRun, type UsageSeriesRow,
+  type CreditProvider, type UsageCredits, type UsageDimension, type UsageFacets, type UsageFilters, type UsageRun, type UsageSection, type UsageSeriesRow,
 } from '../../lib/api.js';
 import LineChart from '../../components/charts/LineChart.js';
 import { AgentAvatar } from '../../components/AgentAvatar.js';
 import StackedBars, { type BarSeries } from '../../components/charts/StackedBars.js';
-import { bucketEnd, formatTokens, money, planText, TYPE_SERIES } from './format.js';
+import { bucketEnd, formatTokens, money, TYPE_SERIES } from './format.js';
 import { zoned } from '../../lib/time.js';
 import AgentSessions from './AgentSessions.js';
 import Summaries from './Summaries.js';
 import Running from './Running.js';
 import { useLiveCount } from './LiveAgents.js';
+import Subscriptions from './Subscriptions.js';
 
 const RANGES = [{ label: '24 h', days: 1 }, { label: '7 d', days: 7 }, { label: '30 d', days: 30 }, { label: '90 d', days: 90 }];
 const GROUP_COLORS = ['var(--chart-bar)', 'var(--ink)', '#c2410c', '#15803d', '#7c3aed', '#0e7490', '#b45309', '#be123c', '#4d7c0f', '#6d28d9'];
 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 type Group = 'type' | UsageDimension;
 const GROUPS: Group[] = ['type', ...USAGE_DIMENSIONS];
-
-function PlanCard({ title, plan }: { title: string; plan: PlanCurrent | null }) {
-  const t = planText(plan);
-  const used = plan?.used_pct ?? null;
-  return (
-    <div className="rounded border border-[var(--rule)] p-3">
-      <div className="text-xs text-[var(--ink-dim)]">{title}</div>
-      <div className="text-2xl font-semibold">{t.main}</div>
-      {used !== null && (
-        <div className="my-1 h-2 rounded bg-[var(--paper-sunk)]">
-          <div className="h-2 rounded bg-[var(--chart-bar)]" style={{ width: `${Math.min(100, used)}%` }} />
-        </div>
-      )}
-      <div className="text-xs text-[var(--ink-dim)]">{t.sub}</div>
-    </div>
-  );
-}
 
 const PROVIDER_NAMES: Record<CreditProvider, string> = { openrouter: 'OpenRouter', fal: 'fal.ai', gemini: 'Gemini API' };
 const CREDIT_HINTS: Record<CreditProvider, string> = {
@@ -68,6 +52,23 @@ function CreditCard({ entry, history }: { entry: UsageCredits['providers'][numbe
       {(!ok || entry.provider === 'gemini') && <div className="mt-1 text-xs text-[var(--ink-faint)]">{CREDIT_HINTS[entry.provider]}</div>}
     </div>
   );
+}
+
+function Credits({ providers }: { providers: CreditProvider[] }) {
+  const credits = useQuery({ queryKey: ['usage-credits'], queryFn: () => api.usageCredits(), enabled: providers.length > 0, refetchInterval: 300_000 });
+  if (providers.length === 0) return null;
+  const entries = new Map(credits.data?.providers.map((entry) => [entry.provider, entry]));
+  return <section className="px-4 pt-4" aria-label="API credits">
+    <h2 className="text-sm font-semibold">API credits</h2>
+    <div className="mt-1 grid gap-3 sm:grid-cols-3">
+      {providers.map((provider) => {
+        const entry = entries.get(provider);
+        return entry ? <CreditCard key={provider} entry={entry} history={credits.data!.history} />
+          : credits.isSuccess ? <div key={provider} className="rounded border border-[var(--rule)] p-3 text-sm">{PROVIDER_NAMES[provider]}: no reading returned.</div> : null;
+      })}
+      {credits.isError && <div className="text-sm text-red-600">Credits did not load.</div>}
+    </div>
+  </section>;
 }
 
 function toSeries(rows: UsageSeriesRow[], group: string): { buckets: string[]; series: BarSeries[] } {
@@ -159,7 +160,7 @@ function who(r: UsageRun): { dim: UsageDimension; value: string } | null {
   return null;
 }
 
-function UsageOverview() {
+function UsageLedger({ claudeConfigured }: { claudeConfigured: boolean }) {
   const [sp, setSp] = useSearchParams();
   const days = Number(sp.get('days')) || 1;
   const group: Group = isGroup(sp.get('group')) ? (sp.get('group') as Group) : 'type';
@@ -175,7 +176,22 @@ function UsageOverview() {
   const update = (fn: (next: URLSearchParams) => void) => {
     const next = new URLSearchParams(sp);
     fn(next);
+    next.delete('sessionFrom');
+    next.delete('sessionTo');
     setSelected(null);
+    setSp(next, { replace: true });
+  };
+  const selectBucket = (index: number) => {
+    const next = new URLSearchParams(sp);
+    const chosen = selected === index ? null : buckets[index];
+    if (chosen) {
+      next.set('sessionFrom', chosen);
+      next.set('sessionTo', bucketEnd(chosen, bucket, tz));
+    } else {
+      next.delete('sessionFrom');
+      next.delete('sessionTo');
+    }
+    setSelected(chosen ? index : null);
     setSp(next, { replace: true });
   };
   const setDays = (d: number) => update((n) => { if (d === 1) n.delete('days'); else n.set('days', String(d)); });
@@ -193,8 +209,7 @@ function UsageOverview() {
   const clearFilters = () => update((n) => { for (const d of USAGE_DIMENSIONS) n.delete(d); });
   const filterKey = JSON.stringify(filters);
 
-  const plan = useQuery({ queryKey: ['usage-plan', from, to], queryFn: () => api.usagePlan(from, to), refetchInterval: 60_000 });
-  const credits = useQuery({ queryKey: ['usage-credits'], queryFn: () => api.usageCredits(), refetchInterval: 300_000 });
+  const plan = useQuery({ queryKey: ['usage-plan', from, to], queryFn: () => api.usagePlan(from, to), enabled: claudeConfigured, refetchInterval: 60_000 });
   const series = useQuery({ queryKey: ['usage-series', from, to, bucket, group, filterKey], queryFn: () => api.usageSeries({ from, to, bucket, tz, group }, filters) });
   const { buckets, series: bars } = useMemo(() => toSeries(series.data?.rows ?? [], group), [series.data, group]);
   const sel = selected !== null && buckets[selected] ? buckets[selected]! : null;
@@ -212,19 +227,6 @@ function UsageOverview() {
 
   return (
     <div className="h-full overflow-auto p-4 space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <PlanCard title="Claude plan, 5-hour window" plan={plan.data?.current.five_hour ?? null} />
-        <PlanCard title="Claude plan, 7-day window" plan={plan.data?.current.seven_day ?? null} />
-      </div>
-
-      <section>
-        <h2 className="text-sm font-semibold">API credits</h2>
-        <div className="mt-1 grid gap-3 sm:grid-cols-3">
-          {(credits.data?.providers ?? []).map((c) => <CreditCard key={c.provider} entry={c} history={credits.data!.history} />)}
-          {credits.isError && <div className="text-sm text-red-600">Credits did not load.</div>}
-        </div>
-      </section>
-
       <div className="flex flex-wrap items-center gap-2 text-sm">
         {RANGES.map((r) => (
           <button key={r.label} type="button" onClick={() => setDays(r.days)}
@@ -243,7 +245,7 @@ function UsageOverview() {
       <FilterBar filters={filters} facets={facets.data} onAdd={addFilter} onRemove={removeFilter} onClear={clearFilters} />
 
       <section>
-        <StackedBars buckets={buckets} series={bars} selected={selected} onSelect={(i) => setSelected(selected === i ? null : i)}
+        <StackedBars buckets={buckets} series={bars} selected={selected} onSelect={selectBucket}
           formatBucket={fmtBucket} formatValue={formatTokens} />
         <div className="flex flex-wrap gap-3 text-xs text-[var(--ink-dim)]">
           {bars.map((s) => (
@@ -281,13 +283,13 @@ function UsageOverview() {
         </section>
       )}
 
-      <section>
+      {claudeConfigured && <section>
         <h2 className="text-sm font-semibold">Plan used over time (%)</h2>
         <LineChart label="Plan usage" yMax={100} xMin={Date.parse(from)} xMax={Date.parse(to)} lines={[
           { key: '5h', color: 'var(--chart-line)', points: history.filter((h) => h.window === 'five_hour').map((h) => ({ x: Date.parse(h.observed_at), y: h.used_pct })) },
           { key: '7d', color: 'var(--ink)', points: history.filter((h) => h.window === 'seven_day').map((h) => ({ x: Date.parse(h.observed_at), y: h.used_pct })) },
         ]} />
-      </section>
+      </section>}
 
       <section>
         <h2 className="text-sm font-semibold">Runs (bots and lanes)</h2>
@@ -323,8 +325,6 @@ function UsageOverview() {
         </table></div>
       </section>
 
-      <AgentSessions from={selFrom} to={selTo} tz={tz} />
-
       <section>
         <h2 className="text-sm font-semibold">Agent wakes (the company board)</h2>
         <p className="text-xs text-[var(--ink-dim)]">Each wake is one <code>claude -p</code> run against the shared daily cap. Open = waiting or running. Tokens are the bot's calls in this range.</p>
@@ -357,37 +357,60 @@ function UsageOverview() {
   );
 }
 
-/** Two views on one route: the spend overview (the default) and what is running on the server now (`?view=running`). */
-export default function Usage() {
+function RunningLink() {
   const liveCount = useLiveCount();
-  // The Summaries tab is the summaries module's page; without it the API is not mounted.
-  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
-  const hasSummaries = (meta.data?.modules ?? []).includes('summaries');
+  return <Link to="/usage/live" className="ml-auto mb-1 flex items-center gap-1.5 self-center rounded border border-[var(--rule)] px-2 py-0.5 text-sm hover:bg-[var(--paper-sunk)]">
+    <span className="inline-block h-2 w-2 rounded-full bg-[#1f9d63]" />Running now{liveCount !== null ? ` · ${liveCount}` : ''}
+  </Link>;
+}
+
+function UsageSessions() {
+  const [sp] = useSearchParams();
+  const days = Number(sp.get('days')) || 1;
+  const [from, to] = useMemo(() => {
+    const end = new Date(Math.ceil(Date.now() / 3600_000) * 3600_000);
+    return [new Date(end.getTime() - days * 86400_000).toISOString(), end.toISOString()];
+  }, [days]);
+  return <div className="h-full overflow-auto p-4"><AgentSessions from={sp.get('sessionFrom') ?? from} to={sp.get('sessionTo') ?? to} tz={tz} /></div>;
+}
+
+/** The manifest controls providers and sections. A hidden section never mounts its polling queries. */
+export default function Usage() {
+  const config = useQuery({ queryKey: ['usage-config'], queryFn: api.usageConfig, staleTime: 60_000, retry: false });
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity, enabled: config.data?.sections.includes('summaries') ?? false });
   const [sp, setSp] = useSearchParams();
-  const view = sp.get('view') === 'running' ? 'running' : sp.get('view') === 'summaries' ? 'summaries' : 'usage';
-  const pick = (v: 'usage' | 'running' | 'summaries') => {
+  if (config.isPending) return <div className="p-4 text-sm text-[var(--ink-dim)]">Loading Usage configuration…</div>;
+  if (config.isError) return <div className="p-4 text-sm text-red-600" role="alert">Usage configuration did not load. Account limits and sections are unavailable.</div>;
+  const sections = config.data.sections.filter((section) => section !== 'summaries' || (meta.data?.modules ?? []).includes('summaries'));
+  const requested = sp.get('view') === 'usage' ? 'ledger' : sp.get('view');
+  const view = sections.find((section) => section === requested) ?? sections[0];
+  const pick = (v: UsageSection) => {
     const next = new URLSearchParams(sp);
-    if (v === 'usage') next.delete('view'); else next.set('view', v);
+    if (v === sections[0]) next.delete('view'); else next.set('view', v);
     setSp(next, { replace: true });
   };
-  const tab = (v: 'usage' | 'running' | 'summaries', label: string) => (
+  const tab = (v: UsageSection, label: string) => (
     <button type="button" role="tab" aria-selected={view === v} onClick={() => pick(v)}
       className={`px-3 py-1.5 text-sm ${view === v ? 'border-b-2 border-[var(--ink)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}>{label}</button>
   );
+  const labels: Record<UsageSection, string> = { running: 'Server processes', ledger: 'Ledger', sessions: 'Sessions', summaries: 'Summaries' };
   return (
     <div className="flex h-full flex-col">
-      <div role="tablist" aria-label="Usage views" className="flex shrink-0 gap-1 border-b border-[var(--rule)] px-4 pt-2">
-        {tab('usage', 'Usage')}
-        {hasSummaries && tab('summaries', 'Summaries')}
-        {tab('running', 'Server processes')}
-        <Link to="/usage/live" className="ml-auto mb-1 flex items-center gap-1.5 self-center rounded border border-[var(--rule)] px-2 py-0.5 text-sm hover:bg-[var(--paper-sunk)]">
-          <span className="inline-block h-2 w-2 rounded-full bg-[#1f9d63]" />Running now{liveCount !== null ? ` · ${liveCount}` : ''}
-        </Link>
+      <div className={sections.length ? "min-h-0 shrink-0 overflow-auto max-h-[45%]" : "min-h-0 flex-1 overflow-auto"}>
+        {config.data.subscriptions.length === 0 && config.data.credits.length === 0 && <p className="px-4 pt-4 text-sm text-[var(--ink-dim)]">No account providers configured. Add subscriptions or credits to the Usage settings in secondbrain.json.</p>}
+        <Subscriptions providers={config.data.subscriptions} />
+        <Credits providers={config.data.credits} />
       </div>
-      <div className="min-h-0 flex-1">
+      {sections.length > 0 && <div role="tablist" aria-label="Usage views" className="flex shrink-0 gap-1 border-b border-[var(--rule)] px-4 pt-2">
+        {sections.map((section) => tab(section, labels[section]))}
+        {sections.includes('running') && <RunningLink />}
+      </div>}
+      {view && <div className="min-h-0 flex-1">
         {view === 'running' ? <div className="h-full overflow-auto p-4"><Running /></div>
-          : view === 'summaries' ? <div className="h-full overflow-auto p-4"><Summaries /></div> : <UsageOverview />}
-      </div>
+          : view === 'summaries' ? <div className="h-full overflow-auto p-4"><Summaries /></div>
+            : view === 'sessions' ? <UsageSessions />
+              : view === 'ledger' ? <UsageLedger claudeConfigured={config.data.subscriptions.includes('claude-code')} /> : null}
+      </div>}
     </div>
   );
 }
