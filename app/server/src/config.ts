@@ -187,6 +187,9 @@ const Schema = z.object({
   SOCIAL_MEDIA_BASE_URL: z.string().url().optional(),
   // X counts a post's length by weight; 280 on a free account, 25000 on Premium.
   SOCIAL_X_MAX_CHARS: z.coerce.number().int().positive().default(280),
+  // YouTube Data API v3 key for the social metrics collector (docs/social-metrics.md).
+  // Unset: configured YouTube accounts report "missing credential" and nothing else changes.
+  YOUTUBE_API_KEY: z.string().min(1).optional(),
 });
 
 /** Every env key the schema validates, sorted. `test/env-schema.test.ts` holds this against every `process.env` read in the source. */
@@ -340,4 +343,5 @@ export const config = {
   socialTokenEncKey: parsed.data.SOCIAL_TOKEN_ENC_KEY,
   bufferApiKey: parsed.data.BUFFER_API_KEY,
   socialXMaxChars: parsed.data.SOCIAL_X_MAX_CHARS,
+  youtubeApiKey: parsed.data.YOUTUBE_API_KEY,
 } as const;
