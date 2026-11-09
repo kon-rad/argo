@@ -260,3 +260,10 @@ it.each(['project','feature'])('ignores only board %s audit stamps while retaini
   }
   expect(evidence(snap('malformed before'))).not.toBe(evidence(snap('malformed after')));
 });
+it('retains the raw revision for redacted project content and audit changes',()=>{
+  const snap=(title:string,updated_at='before')=>({...snapshot(),sources:[source('board:t_123abc:project',{title,updated_at})]});
+  const before=snap('token=old-sensitive-value'),changed=snap('token=new-sensitive-value');
+  expect(before.sources[0]!.redacted).toBe(true);expect(before.sources[0]!.text).toBe(changed.sources[0]!.text);
+  expect(evidence(before)).not.toBe(evidence(changed));
+  expect(evidence(before)).not.toBe(evidence(snap('token=old-sensitive-value','after')));
+});

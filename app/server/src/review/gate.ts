@@ -41,7 +41,7 @@ export function digest(value: unknown): string { return createHash('sha256').upd
 export function evidence(s: Snapshot): string {
   const normalized=Snapshot.parse(s);
   normalized.sources=normalized.sources.map(item=>{
-    if(!/^board:t_[a-f0-9]{6,32}:(?:project|feature)$/.test(item.ref))return item;
+    if(item.redacted || !/^board:t_[a-f0-9]{6,32}:(?:project|feature)$/.test(item.ref))return item;
     try {
       const record:unknown=JSON.parse(item.text);
       if(!record || typeof record!=='object' || Array.isArray(record))return item;
