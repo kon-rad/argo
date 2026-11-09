@@ -124,3 +124,7 @@ Both hooks fail open: a payload they can't parse is allowed, so a bug in a hook 
 ### Usage quota boundary
 
 `secondbrain.json` selects subscription providers, credit cards and Usage page sections. The server returns only that presentation configuration and sanitized quota data. Codex limits are read through its authenticated CLI app-server with bounded requests and a shared cache, separate from dispatcher model turns. Claude retains its existing snapshot pipeline. UI meters live on `/usage`; header and profile links do not run duplicate collectors. Disabled providers are not queried by the subscription endpoint, and hidden sections do not start their browser polling. See [Usage configuration](configuration.md#usage-page-providers-and-sections).
+
+## Automatic review and shipping boundary
+
+The board's database trigger intercepts coding completion and runner review handoff when owner-managed review policy is enabled. `review_jobs` and append-only `review_attempts` retain submissions, original builders, revision-bound verdicts and shipping receipts. A dedicated database login, separate from org identities and builder logins, coordinates a read-only Codex reviewer with GitHub, an atomic Git base/head comparison and an owner-registered serialized deployment target. Only exact merged-revision deployment and health release dependent work. Existing approval wrappers refuse gated cards. See [automatic review](automatic-review.md) for commands, host isolation, evidence staging and failure recovery.

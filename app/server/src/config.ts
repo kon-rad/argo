@@ -21,6 +21,9 @@ if (existsSync(vaultEnv)) dotenv.config({ path: vaultEnv, quiet: true });
 const Schema = z.object({
   VAULT_ROOT: z.string().default(defaultVaultRoot),
   DATABASE_URL: z.string().default('postgres://localhost:5432/secondbrain'),
+  // Standalone review worker only; never passed to its model subprocess.
+  REVIEW_DB_URL: z.string().optional(),
+  GH_TOKEN: z.string().optional(),
   PORT: z.coerce.number().int().positive().default(5123),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   // Optional: the embeddings source falls back to a local Ollama provider, and

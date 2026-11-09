@@ -268,3 +268,7 @@ Claude Code uses the existing statusline/run-log snapshots for five-hour and wee
 The authenticated Usage API provides `GET /api/usage/config` and `GET /api/usage/subscriptions`. Configuration contains only the allow-listed presentation settings, and subscription responses contain only sanitized quota fields. `GET /api/usage/plan` remains the legacy Claude history endpoint.
 
 Official Codex protocol reference: [account rate limits](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt). This UI reads limits; it does not increase them, buy resets, or enforce a separate local spending policy.
+
+### Automatic review host settings
+
+Automatic review is off until the owner enables `review_policy` in PostgreSQL. The standalone worker receives `REVIEW_DB_URL` only in its dedicated service environment and takes an explicit owner-owned host JSON policy path. Repository mappings, required checks, the sole reviewer, note exclusions, subscription transport and registered deployment targets have no personal defaults. This service does not load the app's vault environment. See [automatic review setup](automatic-review.md).

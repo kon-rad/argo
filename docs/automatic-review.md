@@ -1,0 +1,153 @@
+# Automatic contextual review and shipping
+
+This owner-managed board feature is **disabled by default**. The migration inserts a disabled policy. No timer is installed automatically. It implements catalog card `t_420cc80c`: builder completion becomes submission, and only reviewed, merged, deployed and healthy work becomes done.
+
+`finish --done`, a coding card's direct `move done`, and a runner's `move review` all enqueue the same durable database job. The database trigger changes the requested status to review in the same transaction. An archive request cannot release dependencies around the gate. Non-code cards and disabled installations retain their previous behavior. Already submitted work remains gated when policy is disabled. Disabling pauses the worker; it does not accept work.
+
+The builder, repository and work classification are retained. Rejection posts findings to the PR, then atomically records a ticket comment, increments the round, returns the original card to ready and wakes the original builder. Ready is required by existing lane claim semantics. Resubmission creates another durable round and retains the previous PR binding. Escalation never approves work.
+
+## Local fixture
+
+From `app/`:
+
+```sh
+npm ci
+npm run build
+node server/dist/cli-review.js fixture
+npx vitest run --config vitest.review.config.ts
+```
+
+The fixture runs both rejection and exact-head merge, deployment and health paths using adapters with no production writes, network or credentials. The unit suite also executes the concrete target bridge against temporary local programs, tests uncertain-effect reconciliation, context exclusions, full verdict parsing and Git push arguments.
+
+Real SQL tests use the normal application test harness. Use a new PostgreSQL cluster with pgvector and an isolated database, never a production endpoint or a retired local database:
+
+```sh
+PGHOST=/tmp/review-test-socket PGPORT=55432 SB_TEST_DB=sb_review_gate_test npm test -- --project server review-db.test.ts board.test.ts
+```
+
+The harness rebuilds only that test database. It requires a PostgreSQL role able to create test roles. SQL authorization is verified only when this command actually passes against PostgreSQL, not by inspecting migration text.
+
+## Owner setup
+
+Apply migrations using the normal owner-controlled migration process. The migration creates the group role `sb_review_worker` if absent. On a host where the migration role cannot create roles, the database owner must create that NOLOGIN role first. Do not grant it to `sb_org`, a builder login, or a shared application login.
+
+Create a dedicated LOGIN with a private authentication mechanism, grant it `sb_review_worker`, and register that exact login and the roster's reviewer. These are owner-only SQL writes:
+
+```sql
+CREATE ROLE review_service LOGIN;
+GRANT sb_review_worker TO review_service;
+UPDATE review_policy SET reviewer='auditor', worker_login='review_service', enabled=false, shipping_enabled=false;
+```
+
+The reviewer must be an independent roster agent. The worker verifies its configured identity against the structured verdict. Database functions authorize the actual `session_user` and role membership, not the caller's `org.agent` setting. Builders have no grants on review state, attempts, policy or decisions. The legacy `ship check` refuses gated cards even if they have a ship-now approval. Other approvals keep their existing rules.
+
+Create an owner-owned host policy file, mode 0600. All paths and identities are host configuration, never PR or model output:
+
+```json
+{
+  "repositories": {
+    "engine": {
+      "github": "example/engine",
+      "gitDir": "/srv/review/engine.git",
+      "base": "main",
+      "target": "application",
+      "checks": ["tests", "build"],
+      "notes": ["Projects/example/design.md"]
+    }
+  },
+  "targets": {
+    "application": {
+      "argv": ["/usr/bin/node", "/srv/engine/app/server/dist/review/target.js", "/etc/secondbrain/review-target.json"],
+      "cwd": "/srv/review"
+    }
+  },
+  "notesRoot": "/srv/vault",
+  "exclude": ["CURRENT", "Areas/Finance", "private"],
+  "evidenceRoot": "/srv/review/evidence",
+  "home": "/srv/review/service-home",
+  "gh": "/usr/bin/gh",
+  "git": "/usr/bin/git",
+  "reviewer": {
+    "argv": ["/usr/local/bin/isolated-codex-reviewer"],
+    "model": "configured-subscription-model",
+    "home": "/srv/review/reviewer-home",
+    "cwd": "/srv/review/empty"
+  }
+}
+```
+
+Use a dedicated, trusted bare repository (`git init --bare /srv/review/engine.git`). Do not point `gitDir` at a builder-controlled repository or allow builders to modify host policy, target programs, the worker executable, its HOME or its state directory. Give only the trusted orchestrator GitHub write access. `GH_TOKEN` is passed only to git/GitHub children. The worker supplies an ephemeral GitHub authentication header to its Git subprocesses. Global and system Git configuration and repository hooks are disabled by the adapter.
+
+Run the review model outside the trusted worker account. A fixed transport may forward only bounded prompt text and the verdict schema to a subscription-authenticated model on another host. It must provide an empty working directory, disable shell, unified execution, subagents and web search, ignore user configuration, and expose no MCP or shipping tools. It must support `login status` and the schema-bound `exec` protocol. Never send the worker HOME, environment, credentials or configurable commands to that endpoint. The adapter strips ambient environment variables, requests read-only sandboxing, disables the shell tool, ignores user configuration, selects the exact configured model, uses the JSON output schema and parses the **full** final message. The 600-character dispatcher display text is never a verdict. A read-only filesystem sandbox alone does not establish credential isolation. Verify the fixed endpoint and a real no-tool review before enabling shipping. The engine does not provision accounts or subscription authentication.
+
+## Runner handoff and evidence
+
+Before submitting, the runner must create or retain a single same-repository PR whose body or branch includes the full card id. The worker discovers it through GitHub and fails closed on unknown or ambiguous PRs. Fork PRs are unsupported and blocked. The existing runner's `move review` is the handoff; it needs no shipping power.
+
+The owner host integration must stage immutable, scrubbed builder evidence at:
+
+```text
+<evidenceRoot>/<card-id>/RESULT.md
+<evidenceRoot>/<card-id>/run.log
+```
+
+Both files are essential. Freeze them before handoff, keep them inaccessible to later builder processes, and replace them only for a new submission round. No runner-supplied absolute path is followed. A nonempty ticket body and explicit acceptance checks are essential; checks may be in a structured completion contract or a Done when, Acceptance or Verify section of the body. The worker collects comments, dependencies, task-linked org conversation threads, run metadata, previous verdicts, project and feature metadata, registered design notes, PR metadata, the patch and current CI checks. Ticket wikilinks resolve only to registered notes or unambiguous Markdown beneath owner-selected noteRoots; unavailable or ambiguous links block. Conversation links use `org-thread:<id>` and must belong to the card's task-linked threads; inaccessible or unrelated threads block. Empty comments, conversations or dependency collections are explicit, valid evidence of absence.
+
+Files are restricted to explicit registered notes within `notesRoot`. Dot paths, credential names, key files, path traversal, escaping symlinks and owner exclusions are denied. Secret-like literals are redacted before model access. The source explicitly records redaction, so the reviewer can distinguish missing semantic context from a clearly labeled test fixture without seeing secret values. PRs touching excluded secret files block before diff collection. Sources carry content hashes and provenance. Individual sources, collection counts, total context and subprocess output are bounded. Essential truncation blocks review; it is never treated as a pass. PR text and logs are untrusted evidence and cannot select commands, URLs or authority.
+
+Database evidence writers contend on the worker's per-card advisory content lock during review and shipping. The worker checks evidence again before merging and final completion. Host evidence files must be immutable while that lock is held; the database cannot lock filesystem files. A late evidence change keeps the actual merge/deployment receipts and blocks completion for owner reconciliation.
+
+## Worker service
+
+Give only the worker service `REVIEW_DB_URL`, using its dedicated login. This standalone CLI intentionally does not load the application's vault `.env`. Supply host policy explicitly:
+
+```sh
+node /srv/engine/app/server/dist/cli-review.js tick /etc/secondbrain/review-host.json
+```
+
+Run one tick periodically using an owner-installed supervisor or timer. Each tick processes at most one job. Queued work takes priority, oldest retries rotate fairly, and blocked jobs wait at least five minutes before retry. After max_rounds correction runs (default two), repeated rejection blocks for escalation and never implies acceptance. Multiple workers use PostgreSQL session advisory locks for the job, evidence and target. Durable checkpoints and append-only attempts survive worker crashes. Loss of the lock connection terminates the worker. The target bridge independently serializes real effects. Inspect `review_jobs`, `review_attempts` and ticket `review-blocked` events for errors and actual merged/deployed revisions. No model-supplied command or URL reaches a shipping adapter.
+
+On acceptance, all named CI checks must have successful evidence for the current PR head. The adapter uses GitHub's normal PR merge operation with `--match-head-commit`. It requires server-side strict status checks covering the registered checks and disabled force pushes. A worker authenticated as an administrator also requires administrator enforcement; a non-administrator worker can use protected checks while the owner's existing publishing flow retains its own authority. The adapter verifies the returned merge commit's first parent against the reviewed base and second parent against the reviewed head before allowing deployment. An uncertain response is reconciled by the PR's confirmed merge receipt. It never force-pushes, bypasses branch rules or deletes a source branch. Draft PRs, unresolved review threads, active changes-requested reviews and failed required checks produce actionable rejections. Pending checks wait for retry.
+
+A retry verifies merge parents and recovers a previously successful push before attempting anything else. A changed PR head invalidates approval. Review authorization binds repository, PR, base, head, ticket/source revisions, independent reviewer and target. Health must attest the exact merge commit, not the pre-merge head or a generic HTTP 200.
+
+## Registered target bridge
+
+The included `review/target.js` bridge accepts an owner-owned JSON configuration:
+
+```json
+{
+  "stateDir": "/srv/review/target-state/application",
+  "cwd": "/srv/review",
+  "home": "/srv/review/target-home",
+  "deployArgv": ["/usr/local/libexec/deploy-registered-app"],
+  "healthArgv": ["/usr/local/libexec/health-registered-app"]
+}
+```
+
+Both programs receive only `revision` and numeric `idempotency-key` appended to their fixed argv. The deploy program must apply that exact revision. The health program must print strict JSON `{"revision":"<40 hex characters>","healthy":true}` only after verifying the running release and health. Scripts and their destinations are owner-installed. A target receives no ambient database, API or GitHub credentials; credentials it needs must be isolated behind its registered program or service account.
+
+The bridge writes an in-flight barrier before running deployment, serializes the target with a filesystem lock and records per-key receipts. A repeat key checks health and never runs deployment again. An unresolved prior effect blocks every different key. Nonzero exits, timeout, malformed receipts, health failure and wrong revision remain open. No automatic replay follows an ambiguous result. After a host crash, the owner must confirm no deployment child remains, remove the stale lock directory, then retry the same job to reconcile exact-revision health. Do not delete the in-flight barrier to skip reconciliation. Run the bridge on a single registered host per target with persistent local storage. Cross-host filesystem lock recovery and remote target provisioning are outside this bridge's contract.
+
+## Rollout
+
+Keep policy disabled until the real PostgreSQL completion and authorization tests pass, inspect the host adapters and worker isolation, then verify a non-shipping queue and rejection round trip. Enable only after required checks, normal PR merge permissions and strict branch checks, immutable runner evidence, registered target programs and exact-revision health are verified:
+
+```sql
+-- First: a smoke board, registered repos only, and no shipping.
+UPDATE review_policy SET enabled=true, boards=ARRAY['review-smoke'], repositories=ARRAY['engine'], shipping_enabled=false;
+-- Only after the queue/rejection and target receipt smoke passes:
+UPDATE review_policy SET boards=NULL, shipping_enabled=true;
+```
+
+No deployment or production configuration is performed by the implementation card. A passing local fixture does not establish live shipping readiness.
+
+## Immutable host handoff
+
+The trusted host sends bounded JSON on stdin to `cli-review stage /absolute/owner-policy.json`:
+
+```json
+{"card":"t_123abc","head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","result":"Actual completion evidence","log":"Execution index with the full log hash and explicit omissions"}
+```
+
+The importer uses the same per-card content lock, stamps both sources with the actual builder revision, sanitizes secret literals and atomically writes private files. It accepts identical retries and refuses replacement after review or merge. The worker requires both stamps to match the PR head. `cli-review retries /absolute/owner-policy.json` returns only claimable correction rounds for the trusted launching host. A host can relaunch the original coder with the same card, branch, PR, persona and runtime; findings remain acceptance constraints and never grant merge or deploy authority. Worker subprocess errors are kept in the private `review-adapters.log` beneath its configured HOME; board errors contain no raw stderr or credentials.
