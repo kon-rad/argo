@@ -5,6 +5,7 @@ export interface CodexResult {
   code: number;
   state: 'done' | 'error' | 'cancelled' | 'timeout';
   text: string;
+  fullText: string;
   sessionId: string | null;
   inputTokens: number;
   outputTokens: number;
@@ -55,7 +56,7 @@ export function parseCodexResult(raw: RunnerResult): CodexResult {
     if (event.type === 'turn.failed' || event.type === 'error') failed = true;
   }
   const state = raw.timedOut ? 'timeout' : raw.cancelled ? 'cancelled' : raw.code === 0 && completed && !failed ? 'done' : 'error';
-  return { code: raw.code, state, text: text.slice(0, 600), sessionId, inputTokens, outputTokens };
+  return { code: raw.code, state, text: text.slice(0, 600), fullText: text, sessionId, inputTokens, outputTokens };
 }
 
 /** A cheap, explicit subscription check followed by an exact-model CLI request. No model fallback. */
