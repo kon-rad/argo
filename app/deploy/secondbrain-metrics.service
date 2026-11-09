@@ -1,11 +1,13 @@
 [Unit]
-Description=Second Brain: collect the brain map's numbers (followers, fund Safe) into metric_samples
+Description=Second Brain: collect the brain map's numbers (followers, fund Safe) and social post stats
 After=network-online.target postgresql.service
 Requires=postgresql.service
 
 [Service]
 Type=oneshot
-# Public pages only, no API keys.
+# Public pages, plus the socialMetrics API collectors when configured
+# (YOUTUBE_API_KEY, Instagram tokens stored encrypted with SOCIAL_TOKEN_ENC_KEY).
+# Each account fails on its own; see docs/social-metrics.md.
 User=@APP_USER@
 Group=@APP_USER@
 WorkingDirectory=@APP_DIR@

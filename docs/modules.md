@@ -141,8 +141,10 @@ A 3D graph of the vault: notes, projects, divisions and goals, drawn from wikili
 |---|---|
 | Page | `/map` |
 | CLI | `secondbrain map-build`, `secondbrain metrics`, `secondbrain backlinks` |
-| Settings | `map.divisionFolders`, `map.missionFolders`, `metrics[]`, `goalsFile`, `missionFile` in `secondbrain.json` |
+| Settings | `map.divisionFolders`, `map.missionFolders`, `metrics[]`, `socialMetrics`, `goalsFile`, `missionFile` in `secondbrain.json`; `YOUTUBE_API_KEY`, `SOCIAL_TOKEN_ENC_KEY` for social metrics |
 | Timers (server) | `map-build` (hourly), `metrics` (daily) |
+
+The daily `metrics` run also collects **social metrics** when `socialMetrics` lists accounts: follower counts and per-post views, likes and comments for YouTube, Instagram and X, plus LinkedIn numbers entered by hand, with `secondbrain metrics social` for the weekly report. See [social-metrics.md](social-metrics.md).
 
 `secondbrain backlinks` writes a "related" block at the end of notes from their links. It is a dry run unless you pass `--write`.
 
