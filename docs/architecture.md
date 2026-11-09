@@ -128,3 +128,11 @@ Both hooks fail open: a payload they can't parse is allowed, so a bug in a hook 
 ## Automatic review and shipping boundary
 
 The board's database trigger intercepts coding completion and runner review handoff when owner-managed review policy is enabled. `review_jobs` and append-only `review_attempts` retain submissions, original builders, revision-bound verdicts and shipping receipts. A dedicated database login, separate from org identities and builder logins, coordinates a read-only Codex reviewer with GitHub, an atomic Git base/head comparison and an owner-registered serialized deployment target. Only exact merged-revision deployment and health release dependent work. Existing approval wrappers refuse gated cards. See [automatic review](automatic-review.md) for commands, host isolation, evidence staging and failure recovery.
+
+Native Codex rollouts join the existing usage SSH wire/import transaction path
+as `codex` complete-prefix envelopes. The collector hashes complete prefixes,
+redacts them locally and advances its cursor only on import acknowledgement.
+The parser derives disjoint token deltas from cumulative high-water snapshots,
+with stable host/session/counter IDs. The forward migration includes Codex in
+`usage_facts`; archives remain the transcript store. No provider pricing is
+inferred. Recent Codex sessions are observations with a 20-minute stale window.

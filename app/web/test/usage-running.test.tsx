@@ -19,7 +19,7 @@ function mockFetch() {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     const body = url.includes('/usage/config') ? { subscriptions: [], credits: [], sections: ['ledger', 'running'] }
-      : url.includes('/usage/running') ? RUNNING : {};
+      : url.includes('/usage/live') ? { at: RUNNING.at, total: 1, serverMachine: 'server-1', machines: [{slug: 'laptop-a', display: 'Laptop A', kind: 'laptop', agents: [{ id: 'session:laptop-a:s1', machine: 'laptop-a', harness: 'codex', name: 'native Codex', model: 'example-model', task: null, source: 'session', turns: 3, tokens: {input: 100, output: 20}, startedAt: RUNNING.at, lastActivityAt: RUNNING.at, elapsedSec: 120, log: null, pid: null, runId: null, stoppable: false }]}] } : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }));
 }
@@ -32,25 +32,20 @@ describe('elapsedText', () => {
 });
 
 describe('Running now tab', () => {
-  it('is reached from the Usage tabs and groups bots, lane workers and other sessions', async () => {
+  it('is reached from the Usage tabs and shows native sessions from other machines', async () => {
     mockFetch();
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/usage']}><Usage /></MemoryRouter></QueryClientProvider>);
     expect((await screen.findByRole('tab', { name: 'Ledger' })).getAttribute('aria-selected')).toBe('true');
-    fireEvent.click(screen.getByRole('tab', { name: 'Server processes' }));
-    expect(await screen.findByRole('heading', { name: /Bots/ })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: /Lane workers/ })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: /Other agent sessions/ })).toBeTruthy();
-    expect(screen.getByText('Remote Control server')).toBeTruthy();
-    expect(screen.getByText(/20 on claude-code, 2 on zen-agent/)).toBeTruthy();
-    // a bot whose process differs from the roster says so, and a claim with no process says that
-    expect(screen.getByText('roster: zen-agent')).toBeTruthy();
-    expect(screen.getByText('claimed, no process')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Running now' }));
+    expect(await screen.findByText('Laptop A')).toBeTruthy();
+    expect(screen.getByText('native Codex')).toBeTruthy();
+    expect(screen.getByText('codex')).toBeTruthy();
   });
 
   it('opens straight onto the tab from ?view=running', async () => {
     mockFetch();
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/usage?view=running']}><Usage /></MemoryRouter></QueryClientProvider>);
-    expect(await screen.findByRole('heading', { name: /Bots/ })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Server processes' }).getAttribute('aria-selected')).toBe('true');
+    expect(await screen.findByText('Laptop A')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Running now' }).getAttribute('aria-selected')).toBe('true');
   });
 });

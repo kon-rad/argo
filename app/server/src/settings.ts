@@ -44,6 +44,66 @@ const Metric = z.object({
   derived: z.literal('livestream-hours-30d').optional(),
 });
 
+/**
+ * Social accounts the metrics timer reads through official APIs (docs/social-metrics.md).
+ * Every list is empty by default: nothing is collected until the owner names their accounts.
+ * `key` is the metric_samples prefix (`<key>.followers`); it defaults from the handle, so a
+ * corrected handle gets a new key and the old account's history is left as it was.
+ */
+const MetricKeyPrefix = z.string().regex(/^[a-z0-9_.-]+$/);
+const SocialAccountBase = {
+  key: MetricKeyPrefix.optional(),
+  label: z.string().min(1).optional(),
+  /** Hours after which a reading counts as stale in reports and totals; default `socialMetrics.staleHours`. */
+  staleHours: z.number().positive().optional(),
+};
+const SocialMetrics = z
+  .object({
+    /** A reading older than this many hours is stale: reports flag it and leave it out of totals. */
+    staleHours: z.number().positive().default(36),
+    /** Per-post numbers are collected for posts published in the last this many days. */
+    postDays: z.number().int().positive().default(90),
+    /** Upper bound on posts read per account per run. */
+    maxPosts: z.number().int().positive().default(500),
+    /** Graph API version for Instagram calls. */
+    instagramApiVersion: z.string().regex(/^v\d+\.\d+$/).default('v23.0'),
+    /** YouTube Data API v3 (YOUTUBE_API_KEY): channel subscribers, views, video count, and per-video stats. */
+    youtube: z
+      .array(z.object({ ...SocialAccountBase, channelId: z.string().regex(/^UC[A-Za-z0-9_-]{22}$/), posts: z.boolean().default(true) }))
+      .default([]),
+    /** Instagram API with Instagram Login (a Professional account): followers and per-post insights. */
+    instagram: z
+      .array(
+        z.object({
+          ...SocialAccountBase,
+          /** The account's username; checked against the token's account before anything is written. */
+          username: z.string().regex(/^[A-Za-z0-9_.]{1,30}$/),
+          /** Env var holding a long-lived token to seed the encrypted store with (optional; `metrics social token` also seeds it). */
+          tokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),
+          posts: z.boolean().default(true),
+        }),
+      )
+      .default([]),
+    /** X through fxtwitter (public, no key): followers, and per-post numbers for known post ids only. */
+    x: z
+      .array(
+        z.object({
+          ...SocialAccountBase,
+          handle: z.string().regex(/^[A-Za-z0-9_]{1,15}$/),
+          followers: z.boolean().default(true),
+          posts: z.boolean().default(true),
+          /** Vault-relative text file of post ids or URLs, one per line (`#` comments), for posts not published by the social module. */
+          postIdsFile: z.string().min(1).optional(),
+        }),
+      )
+      .default([]),
+    /** LinkedIn has no self-service analytics API: these accounts take manual entries only (`metrics social linkedin`). */
+    linkedin: z
+      .array(z.object({ ...SocialAccountBase, account: z.string().regex(/^[a-z0-9_.-]+$/) }))
+      .default([]),
+  })
+  .prefault({});
+
 /** `chat.providers.<id>`: extra models for a preset provider, or another default or base URL. */
 const ChatProviderOverride = z.object({
   models: z.array(z.object({ id: z.string().min(1), label: z.string().min(1).optional() })).optional(),
@@ -311,6 +371,7 @@ const Settings = z.object({
     })
     .prefault({}),
   metrics: z.array(Metric).default([]),
+  socialMetrics: SocialMetrics,
   tv: z
     .object({
       /** Vault-relative folder of episodes, one subfolder each with an episode.md. */
@@ -394,6 +455,7 @@ export type ChatSettingsOverrides = z.infer<typeof Chat>;
 export type ClassifySettings = z.infer<typeof Classify>;
 export type DispatchSettings = z.infer<typeof Dispatch>;
 export type MetricSetting = z.infer<typeof Metric>;
+export type SocialMetricsSettings = z.infer<typeof SocialMetrics>;
 export type TelegramBotSetting = z.infer<typeof TelegramBot>;
 
 export function parseSettings(raw: unknown): SecondBrainSettings {

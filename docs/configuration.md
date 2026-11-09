@@ -148,6 +148,7 @@ The engine supplies a real JSON-RPC reader, the explicitly selected settlement a
 | `CLASSIFY_PROVIDER` | `org` | `none` | The classify step's provider: `openrouter` (through OpenRouter with `OPENROUTER_API_KEY`) or `typesafe` (with `TYPESAFE_API_KEY`). `none`: every decision falls through to the old path |
 | `CLASSIFY_DAILY_TOKENS` | `org` | `2000000` | Classifier input tokens per day; above it, decisions fall through |
 | `TYPESAFE_API_KEY` | `org` | unset | A direct provider key, when `CLASSIFY_PROVIDER=typesafe` |
+| `YOUTUBE_API_KEY` | `map` (social metrics) | unset | YouTube Data API v3 key for the social metrics collector ([social-metrics.md](social-metrics.md)). Unset: configured YouTube accounts report a missing key; nothing else changes. Instagram tokens for the same collector are stored encrypted with `SOCIAL_TOKEN_ENC_KEY` |
 | `RING_PULL_SSH_HOST`, `RING_PULL_DB` | `ring` | unset, `secondbrain` | Mirror a server's ring tables over ssh |
 | `TTS_URL`, `TTS_MODEL` | `voice` | `http://127.0.0.1:8880`, a Kokoro model | A local OpenAI-compatible speech server. Never used on a server |
 | `ROBOT_LAUNCH_SCRIPT` | none (local only) | unset | A script the "start robot" button runs. Unset: the route isn't mounted |
@@ -199,6 +200,7 @@ The reference below lists shipped settings. It is not a generic registry for arb
 | `map.divisionFolders` | `map` | `{ "division": ["folder", ...] }`: which folders belong to which division when no project claims them |
 | `map.missionFolders` | `map` | Notes that sit at the centre of the map |
 | `metrics[]` | `map` | Numbers the map tracks. Each has `key`, `label`, `unit` (`followers`, `subscribers`, `hours`, `usd`, `count`), optional `goal`, `target`, `division`, `headline`, and either `collect` (type `youtube`, `x`, `instagram` or `base-balance`) or `sum` (a list of other metric keys) |
+| `socialMetrics.*` | `map` | Social accounts the daily metrics timer reads through APIs: `youtube[]` (`channelId`), `instagram[]` (`username`, `tokenEnv`), `x[]` (`handle`, `postIdsFile`), `linkedin[]` (`account`, manual entries only), each with optional `key`, `label`, `staleHours`; and `staleHours` (36), `postDays` (90), `maxPosts` (500), `instagramApiVersion`. All lists empty by default. See [social-metrics.md](social-metrics.md) |
 | `tv.episodesDir` | `tv` | Where episodes live in the vault (default `tv/episodes`) |
 | `tv.shows` | `tv` | `{ "slug": "Show name" }` |
 | `livestream.youtube`, `.twitch`, `.kick` | `livestream` | Your channel handle on each platform |
@@ -279,11 +281,13 @@ Subscriptions and credits default to empty lists. Listing a provider enables its
 
 For Codex, install the supported Codex CLI as the same OS user that runs the app, then sign in using its ChatGPT subscription. `ORG_CODEX_COMMAND` selects the executable (default `codex`). The app starts `codex app-server` using its default stdio transport (no `--stdio` flag), then makes bounded, read-only app-server calls to `account/read` and `account/rateLimits/read`. It strips API-key and endpoint overrides, rejects API-key authentication, caches quota readings, and never launches a model turn to fetch a quota. CLI credentials stay with Codex and are never returned to the browser.
 
+If the default `codex` command is absent from the app service's `PATH`, the quota reader also checks the service user's `~/.local/bin/codex`. A custom `ORG_CODEX_COMMAND` is used exactly as configured; use an absolute executable path when the service has a different `PATH` from your interactive shell. Verify quotas under the actual service user's environment, since a successful interactive-shell read does not verify service executable discovery.
+
 Quota windows are identified by their reported duration, not by assuming `primary` means five hours: 300 minutes is five hours and 10,080 minutes is weekly. Other returned buckets/windows keep their own labels. Some plans report only a weekly window; the UI does not fabricate a missing five-hour quota. It shows used and remaining percentages, reset time, observation time, and unavailable or stale readings. A passed reset means the previous percentage is no longer current, not that a new reading is zero. Account limits apply to the authenticated account across its usage; they are distinct from tokens recorded on this installation.
 
 Agent selection and Telegram bot controls live on the Usage page when the agents module is enabled, rather than in desktop or mobile headers.
 
-Claude Code uses the existing statusline/run-log snapshots for five-hour and weekly quota readings; its history is kept. Neither subscription panel estimates quota from token counts or labels API-equivalent dollar costs as subscription charges. The prepaid API cards remain separate.
+Claude Code uses the existing statusline/run-log snapshots for five-hour and weekly quota readings; its history is kept. Nonexpired observations over 30 minutes old are shown as stale, and an account with only expired windows is unavailable until collection supplies a new reading. Missing windows and missing observations name the statusline wrapper and usage collector to check. A fresh weekly window can still be current when an older five-hour window has expired. Neither subscription panel estimates quota from token counts or labels API-equivalent dollar costs as subscription charges. The prepaid API cards remain separate.
 
 The authenticated Usage API provides `GET /api/usage/config` and `GET /api/usage/subscriptions`. Configuration contains only the allow-listed presentation settings, and subscription responses contain only sanitized quota fields. `GET /api/usage/plan` remains the legacy Claude history endpoint.
 
@@ -292,3 +296,22 @@ Official Codex protocol reference: [account rate limits](https://learn.chatgpt.c
 ### Automatic review host settings
 
 Automatic review is off until the owner enables `review_policy` in PostgreSQL. The standalone worker receives `REVIEW_DB_URL` only in its dedicated service environment and takes an explicit owner-owned host JSON policy path. Repository mappings, required checks, the sole reviewer, note exclusions, subscription transport and registered deployment targets have no personal defaults. This service does not load the app's vault environment. See [automatic review setup](automatic-review.md).
+
+The opt-in Mac usage installer accepts `CODEX_HOME` (default `~/.codex`),
+`USAGE_HOST` (required unique host slug), `USAGE_PUSH_HOST` (required existing SSH
+destination), and `USAGE_PUSH_STATE` (default `~/.local/share/secondbrain`).
+It persists them in the LaunchAgent. See [native conversation setup](modules.md#native-codex-conversation-usage).
+`USAGE_PUSH_MAX_BYTES` remains a soft budget for whole Codex session replay.
+
+### Codex quotas in a hardened server service
+
+The systemd app service keeps `ProtectHome=read-only`. The Codex CLI still needs writable local state for a read-only quota request, so the template permits only the app user's optional `~/.codex` directory in addition to the vault and app data. The leading `-` on this `ReadWritePaths` entry lets services without a Codex installation start normally. It does not create a login or copy credentials.
+
+If `CODEX_HOME` names another absolute directory, add that exact directory to the service's writable paths with `sudo systemctl edit secondbrain`:
+
+```ini
+[Service]
+ReadWritePaths=-/srv/codex-state
+```
+
+Replace the example path with the selected `CODEX_HOME`, keep its ownership with the app user, and restart the app after `sudo systemctl daemon-reload`. Leave `ProtectHome=read-only` enabled. Verify quota retrieval through the running app's authenticated `/api/usage/subscriptions` endpoint; a successful shell probe does not verify the systemd sandbox.

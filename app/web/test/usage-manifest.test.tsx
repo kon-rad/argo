@@ -93,7 +93,7 @@ describe('Usage manifest', () => {
     await screen.findByRole('tab', { name: 'Sessions' });
     await waitFor(() => expect(calls().some((url) => url.includes('/usage/agent-sessions'))).toBe(true));
     expect(calls().some((url) => ['/usage/live', '/usage/running', '/usage/series', '/usage/plan', '/usage/facets', '/usage/runs', '/usage/org-wakes', '/usage/summaries'].some((path) => url.includes(path)))).toBe(false);
-    expect(screen.queryByRole('tab', { name: 'Server processes' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Running now' })).toBeNull();
   });
 
   it('shows configuration errors without assuming providers or sections', async () => {

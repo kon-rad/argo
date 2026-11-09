@@ -15,7 +15,7 @@ export interface ParsedMessage {
 }
 
 export interface SessionInput {
-  source: 'claude-code' | 'hermes' | `hermes:${string}` | 'zen-agent'; // hermes:<profile> comes from agents-sync; zen-agent from its traces
+  source: 'claude-code' | 'hermes' | `hermes:${string}` | 'zen-agent' | 'codex'; // hermes:<profile> comes from agents-sync; zen-agent from its traces
   host: Host;
   externalId: string;
   parentExternalId: string | null;

@@ -141,8 +141,10 @@ A 3D graph of the vault: notes, projects, divisions and goals, drawn from wikili
 |---|---|
 | Page | `/map` |
 | CLI | `secondbrain map-build`, `secondbrain metrics`, `secondbrain backlinks` |
-| Settings | `map.divisionFolders`, `map.missionFolders`, `metrics[]`, `goalsFile`, `missionFile` in `secondbrain.json` |
+| Settings | `map.divisionFolders`, `map.missionFolders`, `metrics[]`, `socialMetrics`, `goalsFile`, `missionFile` in `secondbrain.json`; `YOUTUBE_API_KEY`, `SOCIAL_TOKEN_ENC_KEY` for social metrics |
 | Timers (server) | `map-build` (hourly), `metrics` (daily) |
+
+The daily `metrics` run also collects **social metrics** when `socialMetrics` lists accounts: follower counts and per-post views, likes and comments for YouTube, Instagram and X, plus LinkedIn numbers entered by hand, with `secondbrain metrics social` for the weekly report. See [social-metrics.md](social-metrics.md).
 
 `secondbrain backlinks` writes a "related" block at the end of notes from their links. It is a dry run unless you pass `--write`.
 
@@ -257,3 +259,66 @@ Semantic search is not required: without an embeddings provider the chat retriev
 ## garden
 
 `MODULES=garden`. A nightly command, `secondbrain garden`, that treats every top-level folder under `Projects/`, `Areas/` and `Research/` as a shelf with a small frontmatter header, archives project shelves that are done or untouched for 90 days, proposes stale areas, normalises folder names, regenerates a wiki block in each shelf note and a catalog, and writes a report. Shadow mode by default; the timer moves nothing until `garden.apply` is true. Design, modes, caps and how to revert a night: [garden.md](garden.md).
+
+### Native Codex conversation usage
+
+The usage collector imports Codex Desktop, CLI and `codex exec` sessions from
+`$CODEX_HOME/sessions` (default `~/.codex/sessions`), including dated directories
+and nested agents. This is separate from the Codex subscription quota panel.
+Conversation import needs no API key and never opens Codex authentication files.
+Only locally available messages and token counters can be imported; missing usage
+stays unknown and subscription sessions have no USD cost.
+
+On each Mac, from an engine checkout with app dependencies installed, opt in with
+one command. Choose a different host slug on each machine and use your existing
+SSH upload destination, where the engine usage importer is installed:
+
+```bash
+USAGE_HOST=laptop-a USAGE_PUSH_HOST=my-server app/bin/install-usage-push-mac.sh
+```
+
+Repeat on another host with `USAGE_HOST=laptop-b`. For a custom Codex home, prefix
+the same command with `CODEX_HOME=/path/to/codex-home`. The installer persists the
+host, destination and directory settings and safely escapes service values.
+Rerunning replaces the same LaunchAgent. New installs push every 60 seconds.
+No hand-edited service file or SQL host registration is needed. The existing SSH
+identity authorizes upload; this does not create another authentication channel.
+The server must have the usage feature enabled and the new migration applied.
+
+Verify local discovery with:
+
+```bash
+app/bin/install-usage-push-mac.sh doctor
+```
+
+Doctor reports missing or empty sessions directories without reading transcript
+content. Start a Codex conversation and retry if there are no files. It checks
+saved local configuration, not remote connectivity. After an upload, open Usage,
+Sessions and filter harness to `codex`, then host to your chosen slug. Open a
+session to inspect messages, tool calls/results and token totals. Check
+`~/Library/Logs/usage-push.log` for the upload count if it does not appear.
+The first upload includes existing history. A failed SSH/import retains the
+cursor for retry. The live page treats a Codex session with activity in the last
+3 minutes as a recent observation, not proof a process is still running.
+
+Disable or uninstall the schedule with either command below; both preserve the
+cursor and already imported history. Reinstall to enable it again:
+
+```bash
+app/bin/install-usage-push-mac.sh disable
+app/bin/install-usage-push-mac.sh uninstall
+```
+
+Codex files are replayed from their complete prefix when that prefix changes,
+so cumulative counters retain context across pushes and partial tails wait for
+a newline. Stable host/session/event IDs deduplicate retries. Rewrites do not
+erase historical messages or calls already imported. A changed session can exceed
+`USAGE_PUSH_MAX_BYTES` so a large session still makes progress; this budget is
+soft for Codex. Large histories increase local scan and upload work.
+Redaction runs before transcript content leaves the host and again in archive
+storage. It covers recognized tokens, credential assignments and connection
+passwords, including truncated errors; it is not a guarantee against arbitrary
+secrets embedded in prose. The collector never reads `.env` or authentication
+files. Server-local `secondbrain usage-sync` also discovers the same Codex home.
+
+The Running now tab lists all machines with observations in the last three minutes. The collector and server importer run every 60 seconds. Installing the collector preserves and wraps an existing Claude command status line to record quota observations; disable restores it if it has not been edited since. Unchanged quota readings refresh at least once per minute while Claude emits status updates.

@@ -75,7 +75,7 @@ export default function AgentSessions({ from, to, tz }: { from: string; to: stri
   return (
     <section>
       <h2 className="text-sm font-semibold">Sessions</h2>
-      <p className="text-xs text-[var(--ink-dim)]">Every Claude Code, Hermes and zen-agent session on every machine, Telegram chats included (filter by channel). Open one to read its prompts, thinking, tool calls and responses.</p>
+      <p className="text-xs text-[var(--ink-dim)]">Every Claude Code, Codex, Hermes and zen-agent session on every machine, Telegram chats included (filter by channel). Open one to read its prompts, thinking, tool calls and responses.</p>
       <div className="my-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
         <form onSubmit={(e) => { e.preventDefault(); update((n) => { if (q.trim()) n.set('s_q', q.trim()); else n.delete('s_q'); }); }}>
           <input aria-label="Search sessions" className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-0.5" placeholder="search text"

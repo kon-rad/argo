@@ -15,6 +15,7 @@ export default defineFeature({
     { unit: 'secondbrain-metrics', summary: 'write the daily metrics, daily' },
   ],
   wrappers: [],
-  env: [],
+  // Both optional: the social metrics collectors (docs/social-metrics.md) report a missing key per account.
+  env: ['YOUTUBE_API_KEY', 'SOCIAL_TOKEN_ENC_KEY'],
   docs: 'docs/modules.md#map',
 });
