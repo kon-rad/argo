@@ -38,7 +38,21 @@ export interface GateIO {
   mayShip?(): Promise<boolean>;
 }
 export function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
-export function evidence(s: Snapshot): string { return digest({ ...Snapshot.parse(s), merged: null }); }
+export function evidence(s: Snapshot): string {
+  const normalized=Snapshot.parse(s);
+  normalized.sources=normalized.sources.map(item=>{
+    if(!/^board:t_[a-f0-9]{6,32}:(?:project|feature)$/.test(item.ref))return item;
+    try {
+      const record:unknown=JSON.parse(item.text);
+      if(!record || typeof record!=='object' || Array.isArray(record))return item;
+      // Preserve raw source/provenance in the snapshot. Audit stamps do not change project requirements.
+      const content={...record} as Record<string,unknown>;delete content.updated_at;delete content.updated_by;
+      const text=JSON.stringify(content);
+      return {...item,text,revision:digest(text)};
+    } catch { return item; } // Malformed context remains fully significant; never discard it.
+  });
+  return digest({ ...normalized, merged: null });
+}
 function ready(s: Snapshot, checks: string[]): void {
   const unavailable=s.sources.filter(x=>x.essential && (x.missing || x.truncated || !x.text.trim()));
   if(!s.sources.length || unavailable.length)throw new Error('Essential context missing or truncated: '+unavailable.slice(0,5).map(x=>x.ref).join(', '));
