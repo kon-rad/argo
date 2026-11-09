@@ -140,7 +140,7 @@ export class HttpBoard implements BoardClient {
     return data as T;
   }
   async boards() { return (await this.call<{ boards: (Board & { open: number })[] }>('GET', '/boards')).boards; }
-  async list(f: CardFilter) { return (await this.call<{ cards: Card[] }>('GET', '/cards', { ...f, done_days: f.doneDays, doneDays: undefined })).cards; }
+  async list(f: CardFilter) { return (await this.call<{ cards: Card[] }>('GET', '/cards', { ...f, id: f.ids?.join(','), ids: undefined, done_days: f.doneDays, doneDays: undefined })).cards; }
   show(id: string) { return this.call<CardDetail>('GET', `/cards/${id}`); }
   create(c: Record<string, unknown>) { return this.call<{ card: Card; message: { id: number; channel_slug: string } | null }>('POST', '/cards', undefined, c); }
   async comment(id: string, body: string) { await this.call('POST', `/cards/${id}/comment`, undefined, { body }); }

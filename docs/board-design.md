@@ -182,6 +182,7 @@ Every write is a `SECURITY DEFINER` function, as `org_dm_channel`, `org_task_fla
 | `board_card_finish(card, outcome, result, verification?)` | The caller is the card's assignee. `done` sets `completed_at` and `result`; `blocked` needs a `block_kind`; `budget` is `blocked` with kind `budget`. Closes the run. Writes the `verifications` row when asked. Promotes dependants. |
 | `board_card_link(card, depends_on)` | No cycles (walk up at most 64 steps). A `todo` card with a new open dependency stays `todo`; a `ready` one goes back to `todo`. |
 | `board_card_flags(card, ship_now, needs)` | `ship_now` only from a human: the owner marks ship-now, by construction. |
+| `board_card_tag(card, project, feature)` | Sets, changes or clears (null) the project and feature; nothing else. A human, a dispatcher, the giver or the assignee. A feature needs a project; both must exist in the tracker. |
 | `board_reclaim()` | For every open run past its lease with no heartbeat in the last lease period: outcome `lost`, card back to `ready`, event `reclaimed`. Called by a timer; cheap. |
 
 Reads are plain `SELECT`s under row-level security. Cards are company work, so, as `task_links` today, every roster member reads every card on boards whose `team_slug` is NULL or their own team. A board with a team is that team's and the owner's. That is the whole privacy model for the board; DMs stay in the org module.
@@ -216,11 +217,12 @@ Mounted only when `board` is in `MODULES`; off by default like every module. Ids
 | Verb | Route | Body / query |
 |---|---|---|
 | GET | `/api/board/boards` | |
-| GET | `/api/board/cards` | `board`, `status`, `assignee`, `project`, `feature`, `kind`, `q`, `limit` |
+| GET | `/api/board/cards` | `board`, `status`, `assignee`, `project`, `feature`, `kind`, `q`, `id`, `limit`. A `q` that looks like a ticket number (`t_1d4c0eff`, `#1d4c`, or 4+ hex) also matches ids by prefix, the exact id first. `id=t_1d4c0eff,2e5d` keeps only those cards (full ids or prefixes); the page's deep link is `/board?id=…`. Either way done cards of any age are included. |
 | GET | `/api/board/cards/:id` | card, comments, events, deps (both directions), runs |
 | POST | `/api/board/cards` | `board`, `title`, `body`, `contract`, `assignee`, `project`, `feature`, `kind`, `work`, `needs`, `repo`, `priority`, `deps` |
 | POST | `/api/board/cards/:id/comment` | `body` |
 | POST | `/api/board/cards/:id/assign` | `assignee`, `project`, `feature` |
+| POST | `/api/board/cards/:id/project` | `project` (null clears), `feature`: the project tag alone, without reassigning or waking anyone |
 | POST | `/api/board/cards/:id/move` | `status`, `note` |
 | POST | `/api/board/cards/:id/link` | `depends_on` |
 | POST | `/api/board/cards/:id/flags` | `ship_now`, `needs` |
