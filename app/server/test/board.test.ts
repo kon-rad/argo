@@ -6,7 +6,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import {
   assignCard, BoardBus, claimCard, commentCard, createCard, createToken, driftReport, finishCard, findToken, flagCard, getCard, heartbeat, importHermesCards, linkCards,
-  listBoards, listCards, listTokens, moveCard, reclaim, revokeToken,
+  listBoards, listCards, listTokens, moveCard, reclaim, revokeToken, tagCard,
 } from '../src/board.js';
 import { formatCard, formatDetail, HttpBoard, main, parseHermesExport } from '../src/cli-board.js';
 import { agentDatabaseUrl } from '../src/cli-org.js';
@@ -235,6 +235,79 @@ describe('the record', () => {
     expect((await listCards({}, 'rune')).map((x) => x.id)).toEqual([c.id]);
     expect((await listBoards('lena')).map((b) => b.slug)).toEqual(['exo', 'media-only']);
     await expect(getCard(m.id, 'rune')).rejects.toThrow(/no card/);
+  });
+});
+
+describe('ticket numbers and project tags', () => {
+  const app = () => createApp({ modules: ALL_MODULES, board: { owner: 'owner' } });
+  const ids = (cs: { id: string }[]): string[] => cs.map((c) => c.id);
+
+  it('q finds a card by its ticket number: t_<id>, a bare 8-hex id, #<prefix>, and the exact id comes first', async () => {
+    const a = await createCard('owner', { id: 't_1d4c0eff', title: 'Search by ticket number' });
+    const b = await createCard('owner', { id: 't_1d4c0eff99', title: 'A longer id with the same prefix' });
+    const other = await createCard('owner', { id: 't_abcdef12', title: 'Unrelated' });
+    expect(ids(await listCards({ q: 't_1d4c0eff' }))).toEqual([a.id, b.id]);
+    expect(ids(await listCards({ q: '1d4c0eff' }))).toEqual([a.id, b.id]);
+    expect(ids(await listCards({ q: '#1d4c' }))).toEqual(expect.arrayContaining([a.id, b.id]));
+    expect(ids(await listCards({ q: '#1d4c' }))).not.toContain(other.id);
+    expect(ids(await listCards({ q: '1D4C0EFF99' }))).toEqual([b.id]);
+    expect(ids(await listCards({ q: ' t_abcdef12 ' }))).toEqual([other.id]);
+    // Words still go through the full-text index; a short hex word is not an id and a hex-looking word still matches text.
+    expect(ids(await listCards({ q: 'unrelated' }))).toEqual([other.id]);
+    expect(await listCards({ q: '1d4' })).toEqual([]);
+    const beef = await createCard('owner', { title: 'beef stew' });
+    expect(ids(await listCards({ q: 'beef' }))).toEqual([beef.id]);
+  });
+
+  it('ids filters the board to one or several cards by id or prefix, and the API takes ?id=', async () => {
+    const a = await createCard('owner', { id: 't_1d4c0eff', title: 'One' });
+    const b = await createCard('owner', { id: 't_2e5d1f00', title: 'Two' });
+    await createCard('owner', { id: 't_3f6e2a11', title: 'Three' });
+    expect(ids(await listCards({ ids: ['t_1d4c0eff'] }))).toEqual([a.id]);
+    expect(ids(await listCards({ ids: ['1d4c0eff', '#2e5d'] })).sort()).toEqual([a.id, b.id]);
+    const r = await request(app()).get('/api/board/cards').query({ id: 't_1d4c0eff,2e5d1f00' }).expect(200);
+    expect(ids(r.body.cards).sort()).toEqual([a.id, b.id]);
+    await request(app()).get('/api/board/cards').query({ id: 'not-an-id' }).expect(400);
+  });
+
+  it('a project filter returns only that project\'s cards; a card made with --project carries the tag', async () => {
+    await query(`INSERT INTO projects (slug, title, team_slug, stage) VALUES ('argo-second-brain', 'Argo second brain', 'platform', 'building')`);
+    const tagged = await createCard('owner', { title: 'Tagged', project: 'argo-second-brain' });
+    await createCard('owner', { title: 'Other project', project: 'secondbrain-app' });
+    await createCard('owner', { title: 'No project' });
+    expect(tagged.project_slug).toBe('argo-second-brain');
+    expect(ids(await listCards({ project: 'argo-second-brain' }))).toEqual([tagged.id]);
+    const r = await request(app()).get('/api/board/cards').query({ project: 'argo-second-brain' }).expect(200);
+    expect(r.body.cards.map((c: { id: string; project_slug: string }) => [c.id, c.project_slug])).toEqual([[tagged.id, 'argo-second-brain']]);
+    await expect(createCard('owner', { title: 'Bad', project: 'no-such-project' })).rejects.toThrow(/no project/);
+  });
+
+  it('tagCard sets, changes and clears a card\'s project and feature without touching its assignee', async () => {
+    await query(`INSERT INTO projects (slug, title, team_slug, stage) VALUES ('argo-second-brain', 'Argo second brain', 'platform', 'building')`);
+    const c = await createCard('atlas', { title: 'Untagged', assignee: 'rune' });
+    const before = await wakes();
+    const t1 = await tagCard('owner', c.id, { project: 'secondbrain-app', feature: 'board' });
+    expect([t1.project_slug, t1.feature_slug, t1.assignee]).toEqual(['secondbrain-app', 'board', 'rune']);
+    const t2 = await tagCard('owner', c.id, { project: 'argo-second-brain', feature: null });
+    expect([t2.project_slug, t2.feature_slug]).toEqual(['argo-second-brain', null]);
+    const t3 = await tagCard('owner', c.id, { project: null, feature: null });
+    expect([t3.project_slug, t3.feature_slug, t3.assignee]).toEqual([null, null, 'rune']);
+    expect(await wakes()).toEqual(before);
+    await expect(tagCard('owner', c.id, { project: 'no-such-project', feature: null })).rejects.toThrow(/no project/);
+    await expect(tagCard('owner', c.id, { project: 'secondbrain-app', feature: 'nope' })).rejects.toThrow(/no feature/);
+    await expect(tagCard('owner', c.id, { project: null, feature: 'board' })).rejects.toThrow(/feature needs a project/);
+    // The giver, the assignee and dispatch may tag; another bot may not.
+    expect((await tagCard('atlas', c.id, { project: 'secondbrain-app', feature: null })).project_slug).toBe('secondbrain-app');
+    expect((await tagCard('rune', c.id, { project: 'argo-second-brain', feature: null })).project_slug).toBe('argo-second-brain');
+    expect((await tagCard('sol', c.id, { project: null, feature: null })).project_slug).toBeNull();
+    await expect(tagCard('lena', c.id, { project: 'secondbrain-app', feature: null })).rejects.toThrow(/can't tag/);
+    expect((await getCard(c.id)).events.filter((e) => e.kind === 'tagged').length).toBe(6);
+    // The page's door: POST /cards/:id/project, as the owner.
+    const r = await request(app()).post(`/api/board/cards/${c.id}/project`).send({ project: 'secondbrain-app', feature: 'board' }).expect(200);
+    expect([r.body.card.project_slug, r.body.card.feature_slug]).toEqual(['secondbrain-app', 'board']);
+    const cleared = await request(app()).post(`/api/board/cards/${c.id}/project`).send({ project: null }).expect(200);
+    expect([cleared.body.card.project_slug, cleared.body.card.feature_slug]).toEqual([null, null]);
+    await request(app()).post(`/api/board/cards/${c.id}/project`).send({ project: 'no-such-project' }).expect(404);
   });
 });
 

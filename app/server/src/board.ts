@@ -176,10 +176,19 @@ export interface CardFilter {
   project?: string;
   feature?: string;
   kind?: string;
+  /** Full text; a ticket number (t_xxxx, #xxxx or 4+ hex) also matches ids by prefix, the exact id first. */
   q?: string;
+  /** Only these cards: full ids or prefixes, each as t_xxxx, #xxxx or bare hex (4+ chars). */
+  ids?: string[];
   /** Done cards older than this many days are left out (default 7; 0 = all). */
   doneDays?: number;
   limit?: number;
+}
+
+/** The hex part of a ticket number as people type it (t_1d4c0eff, #1d4c, 1D4C0EFF), lower case; null if it isn't one. */
+export function ticketPrefix(s: string): string | null {
+  const m = /^(?:t_|#)?([0-9a-f]{4,32})$/i.exec(s.trim());
+  return m ? m[1]!.toLowerCase() : null;
 }
 
 export async function listCards(f: CardFilter = {}, viewer: string | null = null): Promise<Card[]> {
@@ -196,13 +205,30 @@ export async function listCards(f: CardFilter = {}, viewer: string | null = null
   if (f.project) add('project_slug = ?', f.project);
   if (f.feature) add('feature_slug = ?', f.feature);
   if (f.kind) add('kind = ?', f.kind);
-  if (f.q) add(`tsv @@ plainto_tsquery('simple', ?)`, f.q);
+  if (f.ids?.length) {
+    const prefixes = f.ids.map((s) => {
+      const p = ticketPrefix(s);
+      if (!p) throw new BoardError(`bad card id "${s}" (t_ followed by 4 or more hex)`, 400);
+      return `t_${p}%`;
+    });
+    add('id LIKE ANY (?)', prefixes);
+  }
+  // A ticket number in the search box matches ids by prefix as well as the text; the exact id sorts first.
+  let exact = '';
+  const tp = f.q ? ticketPrefix(f.q) : null;
+  if (f.q && tp) {
+    params.push(f.q.trim(), `t_${tp}%`, `t_${tp}`);
+    const n = params.length;
+    where.push(`(tsv @@ plainto_tsquery('simple', $${n - 2}) OR id LIKE $${n - 1})`);
+    exact = `(id = $${n}) DESC, `;
+  } else if (f.q) add(`tsv @@ plainto_tsquery('simple', ?)`, f.q);
   const doneDays = f.doneDays ?? 7;
-  if (doneDays > 0) add(`(status NOT IN ('done','archived') OR coalesce(completed_at, updated_at) > now() - make_interval(days => ?))`, doneDays);
+  // With an id asked for by number, done cards of any age still show: a deep link to an old card should find it.
+  if (doneDays > 0 && !f.ids?.length && !tp) add(`(status NOT IN ('done','archived') OR coalesce(completed_at, updated_at) > now() - make_interval(days => ?))`, doneDays);
   params.push(Math.min(Math.max(f.limit ?? 500, 1), 2000));
   const { rows } = await query<Card>(
     `SELECT ${CARD_COLS} FROM cards WHERE ${where.join(' AND ')}
-      ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'ready' THEN 1 WHEN 'review' THEN 2 WHEN 'blocked' THEN 3 WHEN 'todo' THEN 4 WHEN 'scheduled' THEN 5 WHEN 'triage' THEN 6 ELSE 7 END,
+      ORDER BY ${exact}CASE status WHEN 'running' THEN 0 WHEN 'ready' THEN 1 WHEN 'review' THEN 2 WHEN 'blocked' THEN 3 WHEN 'todo' THEN 4 WHEN 'scheduled' THEN 5 WHEN 'triage' THEN 6 ELSE 7 END,
                priority, coalesce(completed_at, started_at, created_at) DESC LIMIT $${params.length}`,
     params,
   );
@@ -265,6 +291,12 @@ export async function createCard(by: string, c: NewCard): Promise<Card> {
 export async function assignCard(by: string, id: string, assignee: string | null, opts: { project?: string; feature?: string; work?: string; needs?: string; repo?: string } = {}): Promise<Card> {
   checkId(id);
   return fn<Card>(`SELECT * FROM board_card_assign($1,$2,$3,$4,$5,$6,$7,$8)`, [by, id, assignee, opts.project ?? null, opts.feature ?? null, opts.work ?? null, opts.needs ?? null, opts.repo ?? null]);
+}
+
+/** Set, change or clear a card's project and feature (null clears). Leaves the assignee and status alone. */
+export async function tagCard(by: string, id: string, t: { project: string | null; feature: string | null }): Promise<Card> {
+  checkId(id);
+  return fn<Card>(`SELECT * FROM board_card_tag($1,$2,$3,$4)`, [by, id, t.project, t.feature]);
 }
 
 export async function commentCard(by: string, id: string, body: string): Promise<CardComment> {

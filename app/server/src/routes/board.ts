@@ -2,7 +2,7 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { z } from 'zod';
 import {
   assignCard, BLOCK_KINDS, BoardBus, BoardError, CARD_KINDS, claimCard, commentCard, finishCard, flagCard, getCard, heartbeat, linkCards, listBoards,
-  listCards, listTokens, moveCard, OUTCOMES, reclaim, revokeToken, STATUSES, findToken, type BoardNotice,
+  listCards, listTokens, moveCard, OUTCOMES, reclaim, revokeToken, STATUSES, findToken, tagCard, type BoardNotice,
 } from '../board.js';
 import { config } from '../config.js';
 import { assignTask, createTask, getAgent, OrgError, redoTask, type Agent } from '../org.js';
@@ -40,7 +40,9 @@ const Contract = z.object({
 });
 const ListQuery = z.object({
   board: BoardSlug.optional(), status: z.string().regex(/^[a-z,]+$/).optional(), assignee: z.union([Name, z.literal('none')]).optional(), project: Slug.optional(), feature: Slug.optional(),
-  kind: z.enum(CARD_KINDS).optional(), q: z.string().trim().min(1).max(200).optional(), done_days: z.coerce.number().int().min(0).max(3650).optional(), limit: z.coerce.number().int().min(1).max(2000).optional(),
+  kind: z.enum(CARD_KINDS).optional(), q: z.string().trim().min(1).max(200).optional(),
+  // ?id=t_1d4c0eff,2e5d: a deep link to one or several cards, by full id or prefix.
+  id: z.string().regex(/^(?:(?:t_|#)?[0-9a-fA-F]{4,32})(?:,(?:t_|#)?[0-9a-fA-F]{4,32}){0,49}$/).optional(), done_days: z.coerce.number().int().min(0).max(3650).optional(), limit: z.coerce.number().int().min(1).max(2000).optional(),
 });
 const NewCardBody = z.object({
   board: BoardSlug.optional(), title: z.string().trim().min(1).max(200), body: z.string().max(20000).optional(), contract: Contract.optional(),
@@ -49,7 +51,8 @@ const NewCardBody = z.object({
   repo: z.string().regex(/^[A-Za-z0-9._-]{1,80}$/).optional(), priority: z.number().int().min(1).max(5).optional(), deps: z.array(Id).max(50).optional(), ship_now: z.boolean().optional(),
 });
 const AssignBody = z.object({ assignee: Name.nullable(), project: Slug.optional(), feature: Slug.optional(), work: z.string().optional(), needs: z.string().optional(), repo: z.string().regex(/^[A-Za-z0-9._-]{1,80}$/).optional(), ship_now: z.boolean().optional() });
-const RedoBody = z.object({ changes: z.string().trim().min(1).max(8000), run_id: z.string().max(200).optional() });
+const TagBody = z.object({ project: Slug.nullable(), feature: Slug.nullable().optional() });
+const RedoBody =z.object({ changes: z.string().trim().min(1).max(8000), run_id: z.string().max(200).optional() });
 const CommentBody = z.object({ body: z.string().trim().min(1).max(8000) });
 const MoveBody = z.object({ status: z.enum(STATUSES), note: z.string().trim().max(2000).optional() });
 const LinkBody = z.object({ depends_on: Id });
@@ -122,7 +125,8 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
   router.get('/cards', wrap(async (req, res) => {
     const q = parseOr400(ListQuery, req.query);
     noStore(res);
-    res.json({ cards: await boardErrors(() => listCards({ ...q, doneDays: q.done_days }, caller(res).viewer)) });
+    const { id, done_days, ...rest } = q;
+    res.json({ cards: await boardErrors(() => listCards({ ...rest, ids: id?.split(','), doneDays: done_days }, caller(res).viewer)) });
   }));
 
   router.get('/cards/:id', wrap(async (req, res) => {
@@ -152,6 +156,13 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
     }
     const r = await boardErrors(() => assignTask(me, { taskId: id, assignee: b.assignee!, project: b.project, feature: b.feature, type: b.work, needs: b.needs, repo: b.repo, shipNow: b.ship_now, run: 'app' }));
     res.json({ card: r.card, message: r.message });
+  }));
+
+  // The project tag alone: set, change or clear (null) without reassigning or waking anyone.
+  router.post('/cards/:id/project', wrap(async (req, res) => {
+    const id = parseOr400(Id, req.params['id']);
+    const b = parseOr400(TagBody, req.body);
+    res.json({ card: await boardErrors(() => tagCard(caller(res).name, id, { project: b.project, feature: b.project ? (b.feature ?? null) : null })) });
   }));
 
   // Changes requested on a review card: a new round for the builder, the review card parked until it is done.
