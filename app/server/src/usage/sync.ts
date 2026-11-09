@@ -50,16 +50,22 @@ export async function ingestTranscript(tx: TxClient, host: Host, path: string, b
   return { calls: await store.upsertCalls(tx, calls), sessions, messages, consumedBytes, lines };
 }
 
+/** The wire carries the complete prefix, so reconcile this derived session exactly on rewrites. */
 export async function ingestCodex(tx: TxClient, host: Host, buf: Buffer) {
   const split = splitJsonLines(buf);
   const parsed = parseCodex(split.records, host);
-  let sessions = 0, messages = 0;
+  let sessions = 0, messages = 0, calls = 0;
   if (parsed.session) {
     const s = await archive.upsertSession(tx, parsed.session);
     sessions = Number(s.changed);
+    await tx.query(`DELETE FROM archive_messages WHERE session_id=$1 AND NOT (external_id=ANY($2::text[]))`,
+      [s.id, parsed.messages.map(m => m.externalId)]);
     messages = await archive.upsertMessages(tx, s.id, parsed.messages);
+    await tx.query(`DELETE FROM usage_calls WHERE source='codex' AND host=$1 AND session_external_id=$2 AND NOT (call_id=ANY($3::text[]))`,
+      [host, parsed.session.externalId, parsed.calls.map(c => c.callId)]);
+    calls = await store.upsertCalls(tx, parsed.calls, true);
   }
-  return { calls: await store.upsertCalls(tx, parsed.calls), sessions, messages, ...split };
+  return { calls, sessions, messages, ...split };
 }
 
 async function syncAppendOnly(host: Host, path: string,

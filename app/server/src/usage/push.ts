@@ -11,7 +11,7 @@ import { buildRedactor } from '../archive/redact.js';
 import type { WireLine } from './wire.js';
 
 export interface PushInput { claudeProjectsDir: string; planLog: string | null; maxBytes: number; host?: string; codexSessionsDir?: string | null }
-export interface PushCursor { files: Record<string, { fingerprint: string; offset: number; lines: number; processedAt?: number }> }
+export interface PushCursor { files: Record<string, { fingerprint: string; offset: number; lines: number; processedAt?: number; size?: number; mtimeMs?: number }> }
 
 export function buildPush(input: PushInput, cursor: PushCursor): { lines: string[]; next: PushCursor; bytes: number } {
   const next: PushCursor = { files: { ...cursor.files } };
@@ -63,9 +63,16 @@ export function buildPush(input: PushInput, cursor: PushCursor): { lines: string
   // Hash the prefix, rather than size/mtime, to detect same-size rewrites and leave torn tails pending.
   let codexSent = false;
   const nativeFiles = input.codexSessionsDir ? walkFiles(input.codexSessionsDir).filter(p => p.endsWith('.jsonl')) : [];
-  nativeFiles.sort((a, b) => (cursor.files[a]?.processedAt ?? 0) - (cursor.files[b]?.processedAt ?? 0) || a.localeCompare(b));
+  const nativeStats = new Map(nativeFiles.map(path => [path, statSync(path)]));
+  const activeAfter = Date.now() - 180_000;
+  nativeFiles.sort((a, b) => Number(nativeStats.get(b)!.mtimeMs >= activeAfter) - Number(nativeStats.get(a)!.mtimeMs >= activeAfter)
+    || (cursor.files[a]?.processedAt ?? 0) - (cursor.files[b]?.processedAt ?? 0)
+    || nativeStats.get(b)!.mtimeMs - nativeStats.get(a)!.mtimeMs || a.localeCompare(b));
   for (const path of nativeFiles) {
     if (bytes >= input.maxBytes && codexSent) break;
+    const st = nativeStats.get(path)!;
+    const previous = cursor.files[path];
+    if (previous?.size === st.size && previous?.mtimeMs === st.mtimeMs) continue;
     const buf = readFileSync(path);
     const parsed = splitJsonLines(buf);
     if (!parsed.consumedBytes) continue;
@@ -77,7 +84,7 @@ export function buildPush(input: PushInput, cursor: PushCursor): { lines: string
     lines.push(JSON.stringify(w));
     bytes += prefix.length;
     codexSent = true;
-    next.files[path] = { fingerprint, offset: parsed.consumedBytes, lines: parsed.lines, processedAt: Date.now() };
+    next.files[path] = { fingerprint, offset: parsed.consumedBytes, lines: parsed.lines, processedAt: Date.now(), size: st.size, mtimeMs: st.mtimeMs };
   }
   return { lines, next, bytes };
 }

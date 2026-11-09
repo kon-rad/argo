@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { ALL_MODULES } from './helpers.js';
-import { beforeEach, expect, it } from 'vitest';
+import { afterAll, beforeEach, expect, it } from 'vitest';
 import { parseCodex } from '../src/usage/codex.js';
 import { buildPush } from '../src/usage/push.js';
 import { importLines } from '../src/usage/importer.js';
@@ -26,6 +26,7 @@ const fixture = (source: unknown = 'cli') => [
 ];
 const jsonl = (records: unknown[]) => records.map(x => JSON.stringify(x)).join('\n') + '\n';
 beforeEach(truncateAll);
+afterAll(async () => { await truncateAll(); await query("DELETE FROM usage_hosts WHERE slug IN ('laptop-a','laptop-b')"); });
 it('parses Desktop, CLI and nested headless identities and cumulative snapshots', () => {
   for (const source of ['cli', 'vscode', 'exec', { subagent: { thread_spawn: { parent_thread_id: 'synthetic-parent', agent_nickname: 'helper' } } }]) {
     const p = parseCodex(fixture(source), 'laptop-a');
@@ -64,7 +65,7 @@ it('redacts wire and storage; replays growing, partial, rewritten and truncated 
   expect(rewritten.lines.length).toBeGreaterThan(0);
   await importLines(rewritten.lines, 'laptop-a');
   expect(JSON.stringify((await query('SELECT content_text, raw FROM archive_messages')).rows)).not.toMatch(/syntheticpassword|syntheticsecret/);
-  expect((await query("SELECT sum(input+cache_read)::int input, sum(output)::int output FROM usage_facts WHERE source='codex' AND host='laptop-a'")).rows[0]).toEqual({ input: 220, output: 60 });
+  expect((await query("SELECT sum(input+cache_read)::int input, sum(output)::int output FROM usage_facts WHERE source='codex' AND host='laptop-a'")).rows[0]).toEqual({ input: 180, output: 40 });
 });
 
 it('exposes native sessions, source filters, facets and drilldown through usage APIs', async () => {
@@ -87,4 +88,18 @@ it('exposes native sessions, source filters, facets and drilldown through usage 
 it('keeps usage routes absent when the caller disables the feature', async () => {
   const app = createApp({ modules: new Set() });
   await request(app).get('/api/usage/sessions').expect(404);
+});
+
+it('reconciles counter rewrites rather than adding a second cumulative history', async () => {
+  const native = (n: number) => JSON.stringify({ t: 'codex', text: jsonl([
+    row('session_meta', { id: 'rewritten', cwd: '/srv/example', source: 'cli' }), tokens(n, 20), tokens(100, 40),
+  ]) });
+  await importLines([native(80), native(88), native(88)], 'laptop-a');
+  expect((await query("SELECT sum(input_tokens+cache_read_tokens)::int n FROM usage_calls WHERE source='codex'")).rows[0].n).toBe(100);
+  expect((await query("SELECT sum(output_tokens)::int n FROM usage_calls WHERE source='codex'")).rows[0].n).toBe(40);
+  await importLines([JSON.stringify({ t: 'codex', text: jsonl([
+    row('session_meta', { id: 'rewritten', source: 'cli' }), tokens(88, 20),
+  ]) })], 'laptop-a');
+  expect((await query("SELECT sum(input_tokens+cache_read_tokens)::int n FROM usage_calls WHERE source='codex'")).rows[0].n).toBe(88);
+  expect((await query("SELECT input_tokens::int n FROM archive_sessions WHERE source='codex'")).rows[0].n).toBe(44);
 });

@@ -94,7 +94,8 @@ it('does not starve other native sessions when one active session exceeds the so
   writeFileSync(b, jsonl([{ ...meta, payload: { ...meta.payload, id: 'second-session' } }, token(80)]));
   const input = { claudeProjectsDir: join(dir, 'absent'), codexSessionsDir: dir, planLog: null, maxBytes: 1 };
   const first = buildPush(input, { files: {} });
-  appendFileSync(a, jsonl([token(160)]));
+  const firstIsA = JSON.parse(first.lines[0]!).text.includes('fake-session');
+  appendFileSync(firstIsA ? a : b, jsonl([token(160)]));
   const next = buildPush(input, first.next);
-  expect(JSON.parse(next.lines[0]!).text).toContain('second-session');
+  expect(JSON.parse(next.lines[0]!).text).toContain(firstIsA ? 'second-session' : 'fake-session');
 });
