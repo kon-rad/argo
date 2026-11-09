@@ -124,3 +124,11 @@ Both hooks fail open: a payload they can't parse is allowed, so a bug in a hook 
 ### Usage quota boundary
 
 `secondbrain.json` selects subscription providers, credit cards and Usage page sections. The server returns only that presentation configuration and sanitized quota data. Codex limits are read through its authenticated CLI app-server with bounded requests and a shared cache, separate from dispatcher model turns. Claude retains its existing snapshot pipeline. UI meters live on `/usage`; header and profile links do not run duplicate collectors. Disabled providers are not queried by the subscription endpoint, and hidden sections do not start their browser polling. See [Usage configuration](configuration.md#usage-page-providers-and-sections).
+
+Native Codex rollouts join the existing usage SSH wire/import transaction path
+as `codex` complete-prefix envelopes. The collector hashes complete prefixes,
+redacts them locally and advances its cursor only on import acknowledgement.
+The parser derives disjoint token deltas from cumulative high-water snapshots,
+with stable host/session/counter IDs. The forward migration includes Codex in
+`usage_facts`; archives remain the transcript store. No provider pricing is
+inferred. Recent Codex sessions are observations with a 20-minute stale window.

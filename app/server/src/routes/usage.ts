@@ -289,7 +289,7 @@ export function usageRouter(): Router {
 
   router.get('/sessions/:host/:externalId', wrap(async (req, res) => {
     const host = parseOr400(z.string().regex(HOST_RE), req.params.host);
-    const source = parseOr400(z.enum(['claude-code', 'hermes', 'zen-agent']).default('claude-code'), req.query.source);
+    const source = parseOr400(z.enum(['claude-code', 'hermes', 'zen-agent', 'codex']).default('claude-code'), req.query.source);
     const sid = String(req.params.externalId);
     const a = await query<{ archive_id: number }>(
       `SELECT a.id AS archive_id FROM archive_sessions a WHERE a.host=$1 AND a.external_id=$2
@@ -314,8 +314,8 @@ export function usageRouter(): Router {
                 'cost_usd', CASE WHEN c.source = 'claude-code' THEN NULL ELSE c.cost_usd END) END AS call
        FROM archive_messages m
        -- A Claude message id is unique on its own; a zen-agent trace numbers its lines, so its calls match within the session.
-       LEFT JOIN usage_calls c ON c.host=$2 AND c.message_external_id=m.external_id AND (c.source <> 'zen-agent' OR c.session_external_id=$3)
-       WHERE m.session_id=$1 ORDER BY m.seq LIMIT 5000`, [a.rows[0].archive_id, host, sid])).rows : [];
+       LEFT JOIN usage_calls c ON c.host=$2 AND c.message_external_id=m.external_id AND c.source=$4 AND c.session_external_id=$3
+       WHERE m.session_id=$1 ORDER BY m.seq LIMIT 5000`, [a.rows[0].archive_id, host, sid, source])).rows : [];
     res.json({
       session,
       run: runs.rows[runs.rows.length - 1] ?? null,

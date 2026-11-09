@@ -28,11 +28,11 @@ export type ListQuery = z.infer<typeof listQuery>;
 
 interface Only { id: number }
 
-/** `c` is a Claude Code subagent of `p`. */
-const CHILD_OF = (c: string, p: string) => `${c}.harness = 'claude-code' AND ${c}.host = ${p}.host AND ${c}.source = ${p}.source
+/** `c` is a native Claude Code or Codex subagent of `p`. */
+const CHILD_OF = (c: string, p: string) => `${c}.harness IN ('claude-code', 'codex') AND ${c}.host = ${p}.host AND ${c}.source = ${p}.source
   AND ${c}.parent_external_id = ${p}.external_id AND ${c}.id <> ${p}.id`;
-/** `a` is a Claude Code subagent whose parent is archived (so it shows inside the parent, not as a row). */
-const IS_CHILD = (a: string) => `${a}.harness = 'claude-code' AND ${a}.parent_external_id IS NOT NULL AND EXISTS (
+/** `a` is a native subagent whose parent is archived (so it shows inside the parent, not as a row). */
+const IS_CHILD = (a: string) => `${a}.harness IN ('claude-code', 'codex') AND ${a}.parent_external_id IS NOT NULL AND EXISTS (
   SELECT 1 FROM archive_sessions pa WHERE pa.host = ${a}.host AND pa.source = ${a}.source AND pa.external_id = ${a}.parent_external_id)`;
 
 /**
@@ -83,7 +83,7 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
        SELECT f.root, count(*)::int AS calls, sum(u.input_tokens)::bigint AS input, sum(u.cache_write_tokens)::bigint AS cache_write,
               sum(u.cache_read_tokens)::bigint AS cache_read, sum(u.output_tokens)::bigint AS output,
               sum(u.thinking_tokens)::bigint AS reasoning, array_agg(DISTINCT u.model) AS models
-       FROM fam f JOIN usage_calls u ON u.host = f.host AND u.session_external_id = f.external_id AND f.source = 'claude-code'
+       FROM fam f JOIN usage_calls u ON u.host = f.host AND u.session_external_id = f.external_id AND f.source IN ('claude-code', 'codex') AND u.source = f.source
        GROUP BY f.root)
      SELECT p.id, p.source, p.harness, p.profile, p.provider, p.host, p.external_id, p.parent_external_id, p.project, p.title,
             p.channel, p.meta ->> 'channel_bot' AS channel_bot,
@@ -91,16 +91,16 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
                AND m.content_text <> '' ORDER BY m.seq LIMIT 1) AS first_prompt,
             p.started_at, p.ended_at, p.total,
             st.steps, st.tool_calls, st.errors, st.subagents,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.models, CASE WHEN p.model IS NULL THEN '{}'::text[] ELSE ARRAY[p.model] END)
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.models, CASE WHEN p.model IS NULL THEN '{}'::text[] ELSE ARRAY[p.model] END)
                  ELSE CASE WHEN p.model IS NULL THEN '{}'::text[] ELSE ARRAY[p.model] END END AS models,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.calls, 0) ELSE coalesce((p.meta ->> 'api_call_count')::int, 0) END AS calls,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.input, 0) ELSE coalesce(p.input_tokens, 0) END AS input,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.cache_write, 0) ELSE coalesce((p.meta ->> 'cache_write_tokens')::bigint, 0) END AS cache_write,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.cache_read, 0) ELSE coalesce((p.meta ->> 'cache_read_tokens')::bigint, 0) END AS cache_read,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.output, 0) ELSE coalesce(p.output_tokens, 0) END AS output,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.reasoning, 0) ELSE coalesce((p.meta ->> 'reasoning_tokens')::bigint, 0) END AS reasoning,
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.calls, 0) ELSE coalesce((p.meta ->> 'api_call_count')::int, 0) END AS calls,
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.input, 0) ELSE coalesce(p.input_tokens, 0) END AS input,
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.cache_write, 0) ELSE coalesce((p.meta ->> 'cache_write_tokens')::bigint, 0) END AS cache_write,
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.cache_read, 0) ELSE coalesce((p.meta ->> 'cache_read_tokens')::bigint, 0) END AS cache_read,
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.output, 0) ELSE coalesce(p.output_tokens, 0) END AS output,
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.reasoning, 0) ELSE coalesce((p.meta ->> 'reasoning_tokens')::bigint, 0) END AS reasoning,
             -- Hermes's own estimate in USD; Claude Code never shows dollars.
-            CASE WHEN p.harness = 'claude-code' THEN NULL ELSE p.cost_usd END AS cost_usd
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN NULL ELSE p.cost_usd END AS cost_usd
      FROM page p LEFT JOIN st ON st.root = p.id LEFT JOIN ca ON ca.root = p.id
      ORDER BY coalesce(p.started_at, p.first_seen_at) DESC, p.id DESC`, params);
   const total = rows[0] ? Number(rows[0].total) : 0;
@@ -224,7 +224,7 @@ export function agentSessionsRouter(): Router {
                 'cache_write', u.cache_write_tokens, 'cache_read', u.cache_read_tokens, 'output', u.output_tokens,
                 'reasoning', u.thinking_tokens) END AS call
        FROM fam f JOIN archive_messages m ON m.session_id = f.id
-       LEFT JOIN usage_calls u ON f.source = 'claude-code' AND u.host = f.host AND u.session_external_id = f.external_id
+       LEFT JOIN usage_calls u ON f.source IN ('claude-code', 'codex') AND u.source = f.source AND u.host = f.host AND u.session_external_id = f.external_id
          AND u.message_external_id = m.external_id
        WHERE ($2 OR m.step IS DISTINCT FROM 'meta')
        ORDER BY m.ts NULLS FIRST, f.own DESC, m.session_id, m.seq

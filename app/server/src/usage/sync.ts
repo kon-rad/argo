@@ -1,3 +1,5 @@
+import { sha256 } from '../archive/clean.js';
+import { parseCodex } from './codex.js';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { withTransaction, type TxClient } from '../db.js';
 import { parseClaudeJsonl } from '../archive/claude.js';
@@ -21,7 +23,7 @@ import * as store from './store.js';
  * hermes from secondbrain-usage-sync.timer. Every write is idempotent.
  */
 /** `zenSessionsDir`: zen-agent's traces (zen.json sessionsDir); null or missing: none to read. */
-export interface UsageSyncPaths { claudeProjectsDir: string; runsDir: string | null; statuslineLog: string | null; zenSessionsDir?: string | null }
+export interface UsageSyncPaths { claudeProjectsDir: string; runsDir: string | null; statuslineLog: string | null; zenSessionsDir?: string | null; codexSessionsDir?: string | null }
 export interface UsageSyncCounts {
   files: number; calls: number; sessions: number; messages: number; runs: number; plan: number; attached: number; errors: string[];
 }
@@ -48,6 +50,18 @@ export async function ingestTranscript(tx: TxClient, host: Host, path: string, b
   return { calls: await store.upsertCalls(tx, calls), sessions, messages, consumedBytes, lines };
 }
 
+export async function ingestCodex(tx: TxClient, host: Host, buf: Buffer) {
+  const split = splitJsonLines(buf);
+  const parsed = parseCodex(split.records, host);
+  let sessions = 0, messages = 0;
+  if (parsed.session) {
+    const s = await archive.upsertSession(tx, parsed.session);
+    sessions = Number(s.changed);
+    messages = await archive.upsertMessages(tx, s.id, parsed.messages);
+  }
+  return { calls: await store.upsertCalls(tx, parsed.calls), sessions, messages, ...split };
+}
+
 async function syncAppendOnly(host: Host, path: string,
   apply: (tx: TxClient, buf: Buffer, startLine: number) => Promise<{ consumedBytes: number; lines: number }>): Promise<boolean> {
   const size = statSync(path).size;
@@ -69,6 +83,8 @@ async function syncAppendOnly(host: Host, path: string,
 
 export async function syncUsage(paths: UsageSyncPaths, host: Host): Promise<UsageSyncCounts> {
   const c: UsageSyncCounts = { files: 0, calls: 0, sessions: 0, messages: 0, runs: 0, plan: 0, attached: 0, errors: [] };
+
+  await withTransaction(tx => tx.query('INSERT INTO usage_hosts (slug, display, kind) VALUES ($1,$1,\'laptop\') ON CONFLICT DO NOTHING', [host]).then(() => undefined));
 
   for (const path of walk(paths.claudeProjectsDir).filter((p) => p.endsWith('.jsonl')).sort()) {
     try {
@@ -129,6 +145,23 @@ export async function syncUsage(paths: UsageSyncPaths, host: Host): Promise<Usag
         c.errors.push(`${path}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+  }
+
+  for (const path of paths.codexSessionsDir ? walk(paths.codexSessionsDir).filter(p => p.endsWith('.jsonl')).sort() : []) {
+    try {
+      const buf = readFileSync(path);
+      const { consumedBytes } = splitJsonLines(buf);
+      const prefix = buf.subarray(0, consumedBytes);
+      const fingerprint = sha256(prefix);
+      const prev = await store.getCursor(host, path);
+      if (!consumedBytes || prev?.fingerprint === fingerprint) continue;
+      await withTransaction(async tx => {
+        const r = await ingestCodex(tx, host, prefix);
+        c.calls += r.calls; c.sessions += r.sessions; c.messages += r.messages;
+        await store.saveCursor(tx, host, path, { fingerprint, offsetBytes: consumedBytes, lines: r.lines, sizeBytes: buf.length });
+      });
+      c.files++;
+    } catch { c.errors.push('Codex session import failed; cursor kept'); }
   }
 
   // Calls join their run once both sides are in (a transcript may land a sync before its run log, or after).

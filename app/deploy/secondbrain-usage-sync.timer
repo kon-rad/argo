@@ -1,9 +1,9 @@
 [Unit]
-Description=Second Brain usage sync every 5 minutes
+Description=Second Brain usage sync every minute
 
 [Timer]
 OnBootSec=3min
-OnUnitActiveSec=5min
+OnUnitActiveSec=1min
 Persistent=true
 
 [Install]

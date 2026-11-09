@@ -14,6 +14,7 @@ const paths = {
   claudeProjectsDir: process.env.CLAUDE_PROJECTS_DIR ?? join(home, '.claude', 'projects'),
   runsDir: process.env.CC_RUNS_DIR ?? join(home, 'cc-runs'),
   statuslineLog: process.env.PLAN_USAGE_LOG ?? join(home, '.local', 'share', 'secondbrain', 'plan-usage.ndjson'),
+  codexSessionsDir: join(process.env.CODEX_HOME ?? join(home, '.codex'), 'sessions'),
   zenSessionsDir: config.zenSessionsDir,
 };
 
