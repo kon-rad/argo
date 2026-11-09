@@ -383,31 +383,43 @@ export default function Usage() {
   if (config.isError) return <div className="p-4 text-sm text-red-600" role="alert">Usage configuration did not load. Account limits and sections are unavailable.</div>;
   const sections = config.data.sections.filter((section) => section !== 'summaries' || (meta.data?.modules ?? []).includes('summaries'));
   const requested = sp.get('view') === 'usage' ? 'ledger' : sp.get('view');
-  const view = sections.find((section) => section === requested) ?? sections[0];
-  const pick = (v: UsageSection) => {
+  const view = requested === 'account' ? 'account' : sections.find((section) => section === requested) ?? sections[0] ?? 'account';
+  const pick = (v: UsageSection | 'account') => {
     const next = new URLSearchParams(sp);
     if (v === sections[0]) next.delete('view'); else next.set('view', v);
     setSp(next, { replace: true });
   };
-  const tab = (v: UsageSection, label: string) => (
-    <button type="button" role="tab" aria-selected={view === v} onClick={() => pick(v)}
+  const tab = (v: UsageSection | 'account', label: string) => (
+    <button type="button" role="tab" id={`usage-tab-${v}`} aria-controls={`usage-panel-${v}`} tabIndex={view === v ? 0 : -1} aria-selected={view === v} onClick={() => pick(v)}
+      onKeyDown={(e) => {
+        const tabs: (UsageSection | 'account')[] = [...sections, 'account'];
+        const i = tabs.indexOf(v);
+        const index = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1
+          : e.key === 'ArrowRight' ? (i + 1) % tabs.length : e.key === 'ArrowLeft' ? (i - 1 + tabs.length) % tabs.length : null;
+        if (index === null) return;
+        e.preventDefault();
+        pick(tabs[index]!);
+        document.getElementById(`usage-tab-${tabs[index]}`)?.focus();
+      }}
       className={`px-3 py-1.5 text-sm ${view === v ? 'border-b-2 border-[var(--ink)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}>{label}</button>
   );
   const labels: Record<UsageSection, string> = { running: 'Running now', ledger: 'Ledger', sessions: 'Sessions', summaries: 'Summaries' };
   return (
     <div className="flex h-full flex-col">
-      <div className={sections.length ? "min-h-0 shrink-0 overflow-auto max-h-[45%]" : "min-h-0 flex-1 overflow-auto"}>
+      <div role="tablist" aria-label="Usage views" className="flex shrink-0 flex-wrap gap-1 border-b border-[var(--rule)] px-4 pt-2">
+        {sections.map((section) => tab(section, labels[section]))}
+        {tab('account', 'Account')}
+        {sections.includes('running') && <RunningLink />}
+      </div>
+      {view && <div role="tabpanel" id={`usage-panel-${view}`} aria-labelledby={`usage-tab-${view}`} aria-label={view === 'account' ? 'Account' : labels[view]} className="min-h-0 flex-1">
+        {view === 'account' ? (
+      <div className="h-full overflow-auto pb-4">
         {config.data.subscriptions.length === 0 && config.data.credits.length === 0 && <p className="px-4 pt-4 text-sm text-[var(--ink-dim)]">No account providers configured. Add subscriptions or credits to the Usage settings in secondbrain.json.</p>}
         {(meta.data?.modules ?? []).includes('agents') && <section className="px-4 pt-4" aria-label="Agent controls"><AgentToggle /></section>}
         <Subscriptions providers={config.data.subscriptions} />
         <Credits providers={config.data.credits} />
       </div>
-      {sections.length > 0 && <div role="tablist" aria-label="Usage views" className="flex shrink-0 gap-1 border-b border-[var(--rule)] px-4 pt-2">
-        {sections.map((section) => tab(section, labels[section]))}
-        {sections.includes('running') && <RunningLink />}
-      </div>}
-      {view && <div className="min-h-0 flex-1">
-        {view === 'running' ? <LiveAgents embedded />
+        ) : view === 'running' ? <LiveAgents embedded />
           : view === 'summaries' ? <div className="h-full overflow-auto p-4"><Summaries /></div>
             : view === 'sessions' ? <UsageSessions />
               : view === 'ledger' ? <UsageLedger claudeConfigured={config.data.subscriptions.includes('claude-code')} /> : null}

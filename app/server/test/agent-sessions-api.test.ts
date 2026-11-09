@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
-import { withTransaction } from '../src/db.js';
+import { query, withTransaction } from '../src/db.js';
 import { sha256 } from '../src/archive/clean.js';
 import * as archive from '../src/archive/store.js';
 import type { ParsedMessage, SessionInput } from '../src/archive/types.js';
@@ -65,6 +65,22 @@ const list = (q: Record<string, string> = {}) => request(app).get('/api/usage/ag
   .query({ from: '2026-10-18T00:00:00Z', to: '2026-10-19T00:00:00Z', ...q });
 
 describe('agent sessions api', () => {
+  it('returns distinct tickets for the matching host and runtime, with empty tickets for unrelated sessions', async () => {
+    await query(`INSERT INTO usage_runs (host, run_id, session_id, task_id, log_path, runtime) VALUES
+      ('mac', 'run-a', 's1', 't_1234abcd', '/tmp/a.jsonl', 'claude-code'),
+      ('mac', 'run-b', 's1', 't_1234abcd', '/tmp/b.jsonl', 'claude-code'),
+      ('mac', 'run-c', 's1', 't_abcdef12', '/tmp/c.jsonl', 'claude-code'),
+      ('mac', 'run-wrong-runtime', 's1', 't_11111111', '/tmp/d.jsonl', 'zen-agent'),
+      ('droplet', 'run-wrong-host', 's1', 't_22222222', '/tmp/e.jsonl', 'claude-code')`);
+    const r = await list();
+    expect(r.status).toBe(200);
+    expect(r.body.sessions.find((s: { external_id: string }) => s.external_id === 's1').task_ids).toEqual(['t_1234abcd', 't_abcdef12']);
+    expect(r.body.sessions.find((s: { external_id: string }) => s.external_id === 'h1').task_ids).toEqual([]);
+    const detail = await request(app).get('/api/usage/agent-sessions/mac/s1').query({ source: 'claude-code' });
+    expect(detail.status).toBe(200);
+    expect(detail.body.runs.map((r: { run_id: string }) => r.run_id).sort()).toEqual(['run-a', 'run-b', 'run-c']);
+  });
+
   it('lists every harness, newest first, with Hermes tokens from its own counters and subagents folded in', async () => {
     const r = await list();
     expect(r.status).toBe(200);
