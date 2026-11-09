@@ -38,7 +38,7 @@ export interface GateIO {
   mayShip?(): Promise<boolean>;
 }
 export function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
-export function evidence(s: Snapshot): string { return digest({ ...s, merged: null }); }
+export function evidence(s: Snapshot): string { return digest({ ...Snapshot.parse(s), merged: null }); }
 function ready(s: Snapshot, checks: string[]): void {
   const unavailable=s.sources.filter(x=>x.essential && (x.missing || x.truncated || !x.text.trim()));
   if(!s.sources.length || unavailable.length)throw new Error('Essential context missing or truncated: '+unavailable.slice(0,5).map(x=>x.ref).join(', '));
@@ -120,7 +120,7 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
       await save({ state: 'deployed', deployed: revision });
     }
     if (!(await io.health(job.merged!))) throw new Error('Health does not attest merged revision');
-    await save({ health:job.merged });
+    await save({ health:job.merged, ...(job.state==='deployed' ? {} : {state:'deployed' as const}) });
     await io.complete();
     await save({ state: 'done', error: null });
   } catch (error) {
