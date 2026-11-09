@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ChatInput } from '../../components/ChatInput.js';
 import EventFeed from '../../components/EventFeed.js';
 import { VaultMarkdown } from '../../components/VaultMarkdown.js';
-import { api, BOARD_STATUSES, type BoardCard, type BoardCardDetail, type BoardStatus, type OrgChart } from '../../lib/api.js';
+import { api, BOARD_STATUSES, type BoardCard, type BoardCardDetail, type BoardStatus, type OrgChart, type TrackerProject } from '../../lib/api.js';
 import { useEventLog } from '../../lib/useEventLog.js';
 import { CardNotes, useCardNotesFor } from '../../components/CardNotes.js';
 
@@ -70,6 +70,20 @@ export function AgentChip({ name, chart }: { name: string | null; chart?: OrgCha
   );
 }
 
+/** The tracker's projects a card can be tagged with: everything but parked and done, by slug. */
+function useTrackerProjects(): TrackerProject[] {
+  const report = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, retry: false });
+  return useMemo(() => (report.data?.projects ?? []).filter((p) => p.stage !== 'parked' && p.stage !== 'done').sort((a, b) => a.slug.localeCompare(b.slug)), [report.data]);
+}
+
+export function ProjectChip({ project, feature, to }: { project: string; feature: string | null; to: string }) {
+  return (
+    <Link to={to} title={`Cards in ${project}`} className="truncate rounded bg-[var(--paper-sunk)] px-1.5 py-0.5 font-medium text-[var(--accent)] hover:underline">
+      {project}{feature ? `/${feature}` : ''}
+    </Link>
+  );
+}
+
 /** The live feed: one invalidation per board event, scoped to the card it names. */
 function useBoardLive(board: string | undefined) {
   const qc = useQueryClient();
@@ -104,6 +118,7 @@ export default function Board() {
   const assignee = params.get('assignee') ?? undefined;
   const kind = params.get('kind') ?? undefined;
   const q = params.get('q') ?? '';
+  const ids = params.get('id') ?? undefined;
   const sort = params.get('sort') ?? 'newest';
   const set = (k: string, v: string): void => {
     const next = new URLSearchParams(params);
@@ -116,13 +131,19 @@ export default function Board() {
   const boards = useQuery({ queryKey: ['board', 'boards'], queryFn: api.boardBoards, staleTime: 60_000 });
   const chart = useQuery({ queryKey: ['org', 'chart'], queryFn: api.orgChart, staleTime: 60_000, retry: false });
   const cards = useQuery({
-    queryKey: ['board', 'cards', { board, project, assignee, kind, q }],
-    queryFn: () => api.boardCards({ board, project, assignee, kind, q: q || undefined }),
+    queryKey: ['board', 'cards', { board, project, assignee, kind, q, ids }],
+    queryFn: () => api.boardCards({ board, project, assignee, kind, q: q.trim() || undefined, id: ids }),
     refetchInterval: live ? false : 15_000,
   });
   const list = cards.data?.cards ?? [];
   const notes = useCardNotesFor(list.map((c) => ({ id: c.id, text: [c.title, c.body, c.result].filter(Boolean).join('\n\n') })));
-  const projects = useMemo(() => [...new Set(list.map((c) => c.project_slug).filter((p): p is string => !!p))].sort(), [list]);
+  const tracker = useTrackerProjects();
+  // The tracker's live projects, plus any slug a loaded card still carries (a parked project's card stays filterable).
+  const projects = useMemo(
+    () => [...new Set([...tracker.map((p) => p.slug), ...list.map((c) => c.project_slug).filter((p): p is string => !!p)])].sort(),
+    [tracker, list],
+  );
+  const projectHref = (slug: string): string => `/board?${new URLSearchParams({ project: slug }).toString()}`;
   const assignees = useMemo(() => [...new Set(list.map((c) => c.assignee ?? 'none'))].sort(), [list]);
 
   if (cards.isError) return <p className="p-4 text-sm text-[var(--warn)]">⚠ {cards.error.message}</p>;
@@ -145,8 +166,15 @@ export default function Board() {
           <select value={sort} onChange={(e) => set('sort', e.target.value === 'newest' ? '' : e.target.value)} aria-label="Sort by" className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
             {SORTS.map((o) => <option key={o.key} value={o.key}>Sort: {o.label}</option>)}
           </select>
-          <input value={q} onChange={(e) => set('q', e.target.value)} placeholder="Search cards" aria-label="Search cards"
-            className="w-36 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs" />
+          <input value={q} onChange={(e) => set('q', e.target.value)} placeholder="Search or t_1d4c…" aria-label="Search cards"
+            title="Words search the text; a ticket number (t_1d4c0eff, #1d4c or 1d4c0eff) finds the card by id"
+            className="w-40 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs" />
+          {ids && (
+            <span className="flex items-center gap-1 rounded bg-[var(--paper-sunk)] px-2 py-0.5 text-xs">
+              Only {ids.split(',').join(', ')}
+              <button type="button" onClick={() => set('id', '')} aria-label="Show all cards" className="text-[var(--ink-dim)] hover:text-[var(--ink)]">✕</button>
+            </span>
+          )}
           <span className="text-xs text-[var(--ink-faint)]">{list.length} cards · {live ? 'live' : 'refreshes every 15 s'}</span>
           <button type="button" onClick={() => setShowNew((v) => !v)} className="ml-auto rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white">
             {showNew ? 'Close' : 'New card'}
@@ -174,11 +202,12 @@ export default function Board() {
                           {c.block_kind && <span title={c.block_reason ?? ''}>⛔ {c.block_kind}</span>}
                           <span className="ml-auto tabular-nums">{age(c.completed_at ?? c.started_at ?? c.created_at)}</span>
                         </div>
-                        <div className="mt-0.5 flex items-center gap-1 text-[0.65rem] text-[var(--ink-faint)]">
-                          <span className="tabular-nums" title={c.id}>#{c.id.replace(/^t_/, '')}</span>
-                          {c.project_slug && <span className="truncate">· {c.project_slug}{c.feature_slug ? `/${c.feature_slug}` : ''}</span>}
-                        </div>
                       </button>
+                      {/* Outside the button so the id selects like text and the chip is a real link. */}
+                      <div className="flex min-w-0 items-center gap-1.5 px-2 pb-1.5 text-[0.65rem] text-[var(--ink-faint)]">
+                        <span className="select-all font-mono">{c.id}</span>
+                        {c.project_slug && <ProjectChip project={c.project_slug} feature={c.feature_slug} to={projectHref(c.project_slug)} />}
+                      </div>
                       <CardNotes refs={notes.refsByTask.get(c.id) ?? []} resolved={notes.resolved} />
                     </li>
                   ))}
@@ -202,8 +231,8 @@ function NewCard({ board, chart, onCreated }: { board: string | undefined; chart
   const [feature, setFeature] = useState('');
   const [kind, setKind] = useState('work');
   const [priority, setPriority] = useState(3);
-  const projects = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, retry: false });
-  const features = projects.data?.projects.find((p) => p.slug === project)?.features ?? [];
+  const projects = useTrackerProjects();
+  const features = projects.find((p) => p.slug === project)?.features ?? [];
   const bots = (chart?.agents ?? []).filter((a) => a.runtime !== 'human');
   const byRuntime = new Map<string, typeof bots>();
   for (const b of bots) byRuntime.set(b.runtime, [...(byRuntime.get(b.runtime) ?? []), b]);
@@ -229,7 +258,7 @@ function NewCard({ board, chart, onCreated }: { board: string | undefined; chart
         </select>
         <select aria-label="Project" value={project} onChange={(e) => { setProject(e.target.value); setFeature(''); }} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
           <option value="">project (optional)</option>
-          {(projects.data?.projects ?? []).map((p) => <option key={p.slug} value={p.slug}>{p.slug}</option>)}
+          {projects.map((p) => <option key={p.slug} value={p.slug}>{p.slug}</option>)}
         </select>
         <select aria-label="Feature" value={feature} onChange={(e) => setFeature(e.target.value)} disabled={!project} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
           <option value="">feature (optional)</option>
@@ -290,12 +319,25 @@ function CardPanel({ id, chart, onClose }: { id: string; chart: OrgChart | null;
   const finish = useMutation({ mutationFn: (outcome: 'done' | 'partial') => api.boardFinish(id, { outcome }), onSuccess: refresh });
   const assign = useMutation({ mutationFn: (to: string | null) => api.boardAssign(id, { assignee: to }), onSuccess: () => { setAssignee(null); refresh(); } });
   const flag = useMutation({ mutationFn: (ship_now: boolean) => api.boardFlags(id, { ship_now }), onSuccess: refresh });
-  const err = [send, move, finish, assign, flag].find((m) => m.isError)?.error;
+  const tag = useMutation({ mutationFn: (t: { project: string | null; feature: string | null }) => api.boardTag(id, t), onSuccess: refresh });
+  const err = [send, move, finish, assign, flag, tag].find((m) => m.isError)?.error;
   const bots = (chart?.agents ?? []).filter((a) => a.runtime !== 'human');
+  const tracker = useTrackerProjects();
+  const [copied, setCopied] = useState(false);
+  const copy = (): void => {
+    void navigator.clipboard?.writeText(id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => undefined);
+  };
+  // The card's own project stays in the list even when the tracker parked it, so the select shows the truth.
+  const projectOptions = c?.project_slug && !tracker.some((p) => p.slug === c.project_slug) ? [c.project_slug, ...tracker.map((p) => p.slug)] : tracker.map((p) => p.slug);
+  const featureOptions = tracker.find((p) => p.slug === c?.project_slug)?.features.map((f) => f.slug) ?? [];
+  if (c?.feature_slug && !featureOptions.includes(c.feature_slug)) featureOptions.unshift(c.feature_slug);
   return (
     <aside className="flex w-full max-w-xl shrink-0 flex-col border-l border-[var(--rule)] max-md:fixed max-md:inset-0 max-md:z-20 max-md:max-w-none max-md:bg-[var(--paper)]" aria-label="Card">
       <div className="flex items-center gap-2 border-b border-[var(--rule)] px-3 py-2">
-        <code className="text-xs text-[var(--ink-faint)]">{id}</code>
+        <span className="select-all font-mono text-xs text-[var(--ink-dim)]">{id}</span>
+        <button type="button" onClick={copy} aria-label={`Copy ${id}`} title="Copy the ticket number" className="rounded border border-[var(--rule)] px-1.5 text-[0.65rem] text-[var(--ink-dim)] hover:text-[var(--ink)]">
+          {copied ? 'copied' : 'copy'}
+        </button>
         {c && <AgentChip name={c.assignee} chart={chart} />}
         {c && <span className="text-xs text-[var(--ink-dim)]">{c.status}{c.block_kind ? ` · ${c.block_kind}` : ''}</span>}
         <button type="button" onClick={onClose} className="ml-auto text-sm text-[var(--ink-dim)] hover:text-[var(--ink)]" aria-label="Close">✕</button>
@@ -310,6 +352,21 @@ function CardPanel({ id, chart, onClose }: { id: string; chart: OrgChart | null;
               {c.project_slug && <> · <Link className="text-[var(--accent)]" to={`/projects?view=board`}>{c.project_slug}{c.feature_slug ? `/${c.feature_slug}` : ''}</Link></>}
               {c.repo && <> · repo {c.repo}</>}{c.graph && <> · {c.graph}/{c.node}</>}{c.rounds ? <> · round {c.rounds}</> : null}
             </p>
+            <div className="flex flex-wrap items-center gap-2 text-xs" aria-label="Project">
+              <span className="text-[var(--ink-dim)]">Project</span>
+              <select aria-label="Card project" value={c.project_slug ?? ''}
+                onChange={(e) => tag.mutate({ project: e.target.value || null, feature: null })}
+                className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1">
+                <option value="">none</option>
+                {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <select aria-label="Card feature" value={c.feature_slug ?? ''} disabled={!c.project_slug}
+                onChange={(e) => tag.mutate({ project: c.project_slug, feature: e.target.value || null })}
+                className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1">
+                <option value="">no feature</option>
+                {featureOptions.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
             {c.block_reason && <p className="rounded border border-[var(--warn)] p-2 text-sm">⛔ {c.block_kind}: {c.block_reason}</p>}
             {c.body && <VaultMarkdown text={c.body} />}
             <Contract c={c.contract} />

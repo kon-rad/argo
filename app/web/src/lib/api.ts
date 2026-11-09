@@ -465,6 +465,8 @@ export interface BoardCardFilter {
   feature?: string;
   kind?: string;
   q?: string;
+  /** Comma list of card ids or prefixes (t_1d4c0eff,2e5d). */
+  id?: string;
   done_days?: number;
 }
 
@@ -1337,6 +1339,7 @@ export const api = {
   boardAssign: (id: string, t: { assignee: string | null; project?: string; feature?: string }) => request<{ card: BoardCard }>(`/board/cards/${id}/assign`, undefined, json('POST', t)),
   boardMove: (id: string, status: BoardStatus, note?: string) => request<{ card: BoardCard }>(`/board/cards/${id}/move`, undefined, json('POST', { status, note })),
   boardFinish: (id: string, b: { outcome: 'done' | 'blocked' | 'partial' | 'budget'; result?: string; block_kind?: string }) => request<{ card: BoardCard }>(`/board/cards/${id}/finish`, undefined, json('POST', b)),
+  boardTag: (id: string, t: { project: string | null; feature?: string | null }) => request<{ card: BoardCard }>(`/board/cards/${id}/project`, undefined, json('POST', t)),
   boardFlags: (id: string, b: { ship_now?: boolean; needs?: string }) => request<{ card: BoardCard }>(`/board/cards/${id}/flags`, undefined, json('POST', b)),
   boardLink: (id: string, dependsOn: string) => request<{ ok: true }>(`/board/cards/${id}/link`, undefined, json('POST', { depends_on: dependsOn })),
   boardLog: (id: string, offset: number) => request<EventPage>(`/board/cards/${id}/log`, { offset }),
