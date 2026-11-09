@@ -267,3 +267,21 @@ it('retains the raw revision for redacted project content and audit changes',()=
   expect(evidence(before)).not.toBe(evidence(changed));
   expect(evidence(before)).not.toBe(evidence(snap('token=old-sensitive-value','after')));
 });
+it('completes a previously healthy release after bookkeeping fails without replaying superseded effects',async()=>{
+  const f=fixture(),complete=f.io.complete,health=f.io.health;let healthCalls=0;
+  f.io.health=async revision=>{healthCalls++;return health(revision);};
+  f.io.complete=async()=>{throw new Error('Bookkeeping interrupted after verified health');};
+  await runReview(f.job,['test'],f.io);
+  expect(f.job.state).toBe('blocked');expect(f.job.health).toBe(merged);
+  f.io.health=async()=>{healthCalls++;throw new Error('A newer release is now running');};
+  f.io.complete=complete;await runReview(f.job,['test'],f.io);
+  expect(f.job.state).toBe('done');expect(healthCalls).toBe(1);
+  expect(f.counts()).toEqual({reviews:1,merges:1,deploys:1,completions:1});
+});
+it.each([undefined,'d'.repeat(40)])('requires live health when the durable health receipt is absent or wrong (%s)',async receipt=>{
+  const f=fixture();f.io.complete=async()=>{throw new Error('Bookkeeping interrupted');};
+  await runReview(f.job,['test'],f.io);f.job.health=receipt;
+  let healthCalls=0;f.io.health=async()=>{healthCalls++;return false;};
+  await runReview(f.job,['test'],f.io);
+  expect(f.job.state).toBe('blocked');expect(healthCalls).toBe(1);expect(f.counts().completions).toBe(0);
+});

@@ -133,7 +133,9 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
       if (revision !== job.merged) throw new Error('Deploy receipt is for a different revision');
       await save({ state: 'deployed', deployed: revision });
     }
-    if (!(await io.health(job.merged!))) throw new Error('Health does not attest merged revision');
+    // A durable receipt attests this historical release even if a newer release now runs.
+    const verifiedHealth=job.deployed===job.merged && job.health===job.merged;
+    if (!verifiedHealth && !(await io.health(job.merged!))) throw new Error('Health does not attest merged revision');
     await save({ health:job.merged, ...(job.state==='deployed' ? {} : {state:'deployed' as const}) });
     await io.complete();
     await save({ state: 'done', error: null });
