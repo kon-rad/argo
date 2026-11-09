@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runReview, type GateIO, type Job, type Snapshot, type Verdict } from '../src/review/gate.js';
+import { runReview, evidence, Snapshot, type GateIO, type Job, type Verdict } from '../src/review/gate.js';
 
 const sha = 'a'.repeat(40), base = 'b'.repeat(40), merged = 'c'.repeat(40);
 const snapshot = (): Snapshot => ({ repo: 'example/engine', pr: 7, head: sha, base, branch: 'main', merged: null,
@@ -220,4 +220,22 @@ it('does not permit a reviewer persona to self-approve through a machine-session
  expect(builderIsReviewer({assignee:'machine',body:'Persona: auditor'},'auditor')).toBe(true);
  expect(builderIsReviewer({assignee:'machine',body:'Persona: coder'},'auditor','Builder persona: auditor')).toBe(true);
  expect(builderIsReviewer({assignee:'machine',body:'Persona: coder'},'auditor','Builder persona: coder')).toBe(false);
+});
+
+function jsonbRoundTrip<T>(value:T):T {
+  const sorted=(v:unknown):unknown => Array.isArray(v) ? v.map(sorted) : v!==null && typeof v==='object'
+    ? Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b)).map(([k,item])=>[k,sorted(item)])) : v;
+  return JSON.parse(JSON.stringify(sorted(value))) as T;
+}
+it('fingerprints equivalent raw, parsed and JSONB-reordered snapshots identically',()=>{
+  const raw=snapshot(),parsed=Snapshot.parse(raw),stored=jsonbRoundTrip(parsed);
+  expect(evidence(raw)).toBe(evidence(parsed));expect(evidence(stored)).toBe(evidence(parsed));
+  stored.sources[0]!.text+=' changed acceptance';
+  expect(evidence(stored)).not.toBe(evidence(parsed));
+});
+it('reuses the accepted review after a PostgreSQL JSONB worker restart',async()=>{
+  const f=fixture();f.io.mayShip=async()=>false;await runReview(f.job,['test'],f.io);
+  Object.assign(f.job,jsonbRoundTrip(f.job));
+  f.io.mayShip=async()=>true;await runReview(f.job,['test'],f.io);
+  expect(f.job.state).toBe('done');expect(f.counts()).toEqual({reviews:1,merges:1,deploys:1,completions:1});
 });
