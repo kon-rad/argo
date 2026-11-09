@@ -293,6 +293,10 @@ The authenticated Usage API provides `GET /api/usage/config` and `GET /api/usage
 
 Official Codex protocol reference: [account rate limits](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt). This UI reads limits; it does not increase them, buy resets, or enforce a separate local spending policy.
 
+### Automatic review host settings
+
+Automatic review is off until the owner enables `review_policy` in PostgreSQL. The standalone worker receives `REVIEW_DB_URL` only in its dedicated service environment and takes an explicit owner-owned host JSON policy path. Repository mappings, required checks, the sole reviewer, note exclusions, subscription transport and registered deployment targets have no personal defaults. This service does not load the app's vault environment. See [automatic review setup](automatic-review.md).
+
 The opt-in Mac usage installer accepts `CODEX_HOME` (default `~/.codex`),
 `USAGE_HOST` (required unique host slug), `USAGE_PUSH_HOST` (required existing SSH
 destination), and `USAGE_PUSH_STATE` (default `~/.local/share/secondbrain`).

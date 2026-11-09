@@ -128,6 +128,8 @@ export async function shipDecide(caller: Agent, id: number, approve: boolean, no
  */
 export async function shipCheck(card: string, opts: { pr?: string; deploy?: string } = {}): Promise<{ ok: boolean; approval: Approval | null; reason: string }> {
   if (!CARD_ID.test(card)) throw new OrgError(`bad card id "${card}"`);
+  const gate = await query<{ required: boolean }>('SELECT review_required($1) AS required', [card]);
+  if (gate.rows[0]?.required) return { ok: false, approval: null, reason: 'Automatic review gate owns exact-revision shipping for this card' };
   const { rows } = await query<Approval>(
     `SELECT * FROM org_approvals WHERE task_id = $1 AND status = 'approved' AND decided_at > now() - make_interval(days => $2) ORDER BY id DESC`,
     [card, APPROVAL_DAYS],

@@ -124,3 +124,7 @@ python3 -m pytest .secondbrain/harness
 ```
 
 Then, inside the agent, ask it to `cat .env`. It should be refused with a reason that starts with `guard:`.
+
+## Automatic code review
+
+The disabled-by-default board review gate turns coding completion into a durable review submission. Its dedicated trusted worker gathers bounded evidence, dispatches a read-only subscription reviewer, returns findings to the original builder, or merges and deploys the exact reviewed revision through registered adapters. [Setup, fixture, commands and rollout](automatic-review.md).
