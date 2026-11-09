@@ -14,7 +14,7 @@ try {
   for (const e of c.errors.slice(0, 20)) console.error(`  ! ${e}`);
   code = c.errors.length ? 2 : 0;
 } catch (err) {
-  console.error(`usage-import failed: ${err instanceof Error ? err.message : String(err)}`);
+  console.error('usage-import failed; cursor must be retained (check server database availability)');
 } finally {
   await pool.end();
 }

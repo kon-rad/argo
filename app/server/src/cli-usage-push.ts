@@ -1,18 +1,31 @@
-// Laptop -> server, every 15 minutes from the LaunchAgent bin/install-usage-push-mac.sh installs. One SSH
+// Laptop -> server, every minute from the LaunchAgent bin/install-usage-push-mac.sh installs. One SSH
 // connection per run, to USAGE_PUSH_HOST (an ~/.ssh/config alias with root on the server).
 // The cursor only moves when the server confirms the whole import (exit 0 or 2 = imported with some bad lines).
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { walkFiles } from './usage/walkFiles.js';
 import { buildPush, type PushCursor } from './usage/push.js';
 
 const home = homedir();
 const stateDir = process.env.USAGE_PUSH_STATE ?? join(home, '.local', 'share', 'secondbrain');
 const cursorFile = join(stateDir, 'usage-push-cursor.json');
+if (process.argv.includes('--doctor')) {
+  const dir = join(process.env.CODEX_HOME ?? join(home, '.codex'), 'sessions');
+  try {
+    const n = walkFiles(dir).filter(p => p.endsWith('.jsonl')).length;
+    console.log(`Codex conversations: ${!existsSync(dir) ? 'sessions directory missing; start a Codex session first' : n ? `${n} JSONL files found` : 'sessions directory empty; start a Codex session first'}`);
+    console.log(`Upload destination: ${process.env.USAGE_PUSH_HOST ? 'configured (SSH authentication checked only on push)' : 'missing; set USAGE_PUSH_HOST'}`);
+    console.log(`Host identity: ${process.env.USAGE_HOST ? 'configured' : 'missing; set a unique USAGE_HOST per machine'}`);
+    console.log(`Cursor: ${existsSync(cursorFile) ? 'present' : 'new; first upload includes history'}`);
+    console.log('Quota panels are configured separately from conversation ingestion.');
+    process.exit(process.env.USAGE_PUSH_HOST && process.env.USAGE_HOST ? 0 : 1);
+  } catch { console.error('usage-push: cannot scan sessions; check directory permissions'); process.exit(1); }
+}
 const sshHost = process.env.USAGE_PUSH_HOST ?? '';
-if (!sshHost) { console.error('usage-push: set USAGE_PUSH_HOST (ssh destination of the server)'); process.exit(1); }
-// This machine's slug in usage_hosts (register hosts in usage_hosts first).
+if (!/^[a-zA-Z0-9][a-zA-Z0-9@._:-]*$/.test(sshHost)) { console.error('usage-push: set USAGE_PUSH_HOST (ssh destination of the server)'); process.exit(1); }
+// This machine's slug in usage_hosts (the authenticated importer registers new slugs).
 const usageHost = process.env.USAGE_HOST ?? 'mac';
 if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(usageHost)) { console.error(`usage-push: bad USAGE_HOST ${usageHost}`); process.exit(1); }
 
@@ -25,6 +38,7 @@ try {
 }
 const push = buildPush({
   claudeProjectsDir: process.env.CLAUDE_PROJECTS_DIR ?? join(home, '.claude', 'projects'),
+  codexSessionsDir: join(process.env.CODEX_HOME ?? join(home, '.codex'), 'sessions'),
   planLog: join(stateDir, 'plan-usage.ndjson'),
   maxBytes: Number(process.env.USAGE_PUSH_MAX_BYTES ?? 20_000_000),
   host: usageHost,

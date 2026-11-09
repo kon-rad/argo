@@ -12,8 +12,7 @@ import { bucketEnd, formatTokens, money, TYPE_SERIES } from './format.js';
 import { zoned } from '../../lib/time.js';
 import AgentSessions from './AgentSessions.js';
 import Summaries from './Summaries.js';
-import Running from './Running.js';
-import { useLiveCount } from './LiveAgents.js';
+import LiveAgents, { useLiveCount } from './LiveAgents.js';
 import Subscriptions from './Subscriptions.js';
 import AgentToggle from '../../components/AgentToggle.js';
 
@@ -394,7 +393,7 @@ export default function Usage() {
     <button type="button" role="tab" aria-selected={view === v} onClick={() => pick(v)}
       className={`px-3 py-1.5 text-sm ${view === v ? 'border-b-2 border-[var(--ink)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}>{label}</button>
   );
-  const labels: Record<UsageSection, string> = { running: 'Server processes', ledger: 'Ledger', sessions: 'Sessions', summaries: 'Summaries' };
+  const labels: Record<UsageSection, string> = { running: 'Running now', ledger: 'Ledger', sessions: 'Sessions', summaries: 'Summaries' };
   return (
     <div className="flex h-full flex-col">
       <div className={sections.length ? "min-h-0 shrink-0 overflow-auto max-h-[45%]" : "min-h-0 flex-1 overflow-auto"}>
@@ -408,7 +407,7 @@ export default function Usage() {
         {sections.includes('running') && <RunningLink />}
       </div>}
       {view && <div className="min-h-0 flex-1">
-        {view === 'running' ? <div className="h-full overflow-auto p-4"><Running /></div>
+        {view === 'running' ? <LiveAgents embedded />
           : view === 'summaries' ? <div className="h-full overflow-auto p-4"><Summaries /></div>
             : view === 'sessions' ? <UsageSessions />
               : view === 'ledger' ? <UsageLedger claudeConfigured={config.data.subscriptions.includes('claude-code')} /> : null}

@@ -7,7 +7,7 @@ export interface Cursor { fingerprint: string; offsetBytes: number; lines: numbe
 const BATCH = 200;
 
 /** First file wins for session and timing; a later pass that sees more output for the same response raises it. */
-export async function upsertCalls(tx: TxClient, calls: UsageCall[]): Promise<number> {
+export async function upsertCalls(tx: TxClient, calls: UsageCall[], exact = false): Promise<number> {
   const dedup = new Map<string, UsageCall>();
   for (const c of calls) {
     const key = `${c.source}|${c.host}|${c.callId}`;
@@ -42,8 +42,11 @@ export async function upsertCalls(tx: TxClient, calls: UsageCall[]): Promise<num
          thinking_tokens, web_search_requests, tool, action, provider, match_key, cost_usd)
        VALUES ${values.join(',')}
        ON CONFLICT (source, host, call_id) DO UPDATE SET
-         output_tokens = GREATEST(u.output_tokens, EXCLUDED.output_tokens),
-         thinking_tokens = CASE WHEN EXCLUDED.output_tokens > u.output_tokens THEN EXCLUDED.thinking_tokens ELSE u.thinking_tokens END,
+         input_tokens = ${exact ? 'EXCLUDED.input_tokens' : 'u.input_tokens'},
+         cache_read_tokens = ${exact ? 'EXCLUDED.cache_read_tokens' : 'u.cache_read_tokens'},
+         cache_write_tokens = ${exact ? 'EXCLUDED.cache_write_tokens' : 'u.cache_write_tokens'},
+         output_tokens = ${exact ? 'EXCLUDED.output_tokens' : 'GREATEST(u.output_tokens, EXCLUDED.output_tokens)'},
+         thinking_tokens = CASE WHEN ${exact ? 'true' : 'EXCLUDED.output_tokens > u.output_tokens'} THEN EXCLUDED.thinking_tokens ELSE u.thinking_tokens END,
          tool = COALESCE(u.tool, EXCLUDED.tool), action = COALESCE(u.action, EXCLUDED.action),
          provider = COALESCE(EXCLUDED.provider, u.provider), match_key = COALESCE(u.match_key, EXCLUDED.match_key),
          cost_usd = COALESCE(EXCLUDED.cost_usd, u.cost_usd),
@@ -51,7 +54,8 @@ export async function upsertCalls(tx: TxClient, calls: UsageCall[]): Promise<num
                                     THEN EXCLUDED.message_external_id ELSE u.message_external_id END
        -- A fuller copy of the response, the first one that says which provider served it, or the first with a price.
        WHERE EXCLUDED.output_tokens > u.output_tokens OR (u.provider IS NULL AND EXCLUDED.provider IS NOT NULL)
-          OR (u.cost_usd IS NULL AND EXCLUDED.cost_usd IS NOT NULL)`, params);
+          OR (u.cost_usd IS NULL AND EXCLUDED.cost_usd IS NOT NULL)
+          ${exact ? 'OR (u.input_tokens,u.cache_read_tokens,u.cache_write_tokens,u.output_tokens,u.thinking_tokens) IS DISTINCT FROM (EXCLUDED.input_tokens,EXCLUDED.cache_read_tokens,EXCLUDED.cache_write_tokens,EXCLUDED.output_tokens,EXCLUDED.thinking_tokens)' : ''}`, params);
     changed += r.rowCount ?? 0;
   }
   return changed;

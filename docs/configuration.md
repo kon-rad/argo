@@ -279,12 +279,33 @@ Subscriptions and credits default to empty lists. Listing a provider enables its
 
 For Codex, install the supported Codex CLI as the same OS user that runs the app, then sign in using its ChatGPT subscription. `ORG_CODEX_COMMAND` selects the executable (default `codex`). The app starts `codex app-server` using its default stdio transport (no `--stdio` flag), then makes bounded, read-only app-server calls to `account/read` and `account/rateLimits/read`. It strips API-key and endpoint overrides, rejects API-key authentication, caches quota readings, and never launches a model turn to fetch a quota. CLI credentials stay with Codex and are never returned to the browser.
 
+If the default `codex` command is absent from the app service's `PATH`, the quota reader also checks the service user's `~/.local/bin/codex`. A custom `ORG_CODEX_COMMAND` is used exactly as configured; use an absolute executable path when the service has a different `PATH` from your interactive shell. Verify quotas under the actual service user's environment, since a successful interactive-shell read does not verify service executable discovery.
+
 Quota windows are identified by their reported duration, not by assuming `primary` means five hours: 300 minutes is five hours and 10,080 minutes is weekly. Other returned buckets/windows keep their own labels. Some plans report only a weekly window; the UI does not fabricate a missing five-hour quota. It shows used and remaining percentages, reset time, observation time, and unavailable or stale readings. A passed reset means the previous percentage is no longer current, not that a new reading is zero. Account limits apply to the authenticated account across its usage; they are distinct from tokens recorded on this installation.
 
 Agent selection and Telegram bot controls live on the Usage page when the agents module is enabled, rather than in desktop or mobile headers.
 
-Claude Code uses the existing statusline/run-log snapshots for five-hour and weekly quota readings; its history is kept. Neither subscription panel estimates quota from token counts or labels API-equivalent dollar costs as subscription charges. The prepaid API cards remain separate.
+Claude Code uses the existing statusline/run-log snapshots for five-hour and weekly quota readings; its history is kept. Nonexpired observations over 30 minutes old are shown as stale, and an account with only expired windows is unavailable until collection supplies a new reading. Missing windows and missing observations name the statusline wrapper and usage collector to check. A fresh weekly window can still be current when an older five-hour window has expired. Neither subscription panel estimates quota from token counts or labels API-equivalent dollar costs as subscription charges. The prepaid API cards remain separate.
 
 The authenticated Usage API provides `GET /api/usage/config` and `GET /api/usage/subscriptions`. Configuration contains only the allow-listed presentation settings, and subscription responses contain only sanitized quota fields. `GET /api/usage/plan` remains the legacy Claude history endpoint.
 
 Official Codex protocol reference: [account rate limits](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt). This UI reads limits; it does not increase them, buy resets, or enforce a separate local spending policy.
+
+The opt-in Mac usage installer accepts `CODEX_HOME` (default `~/.codex`),
+`USAGE_HOST` (required unique host slug), `USAGE_PUSH_HOST` (required existing SSH
+destination), and `USAGE_PUSH_STATE` (default `~/.local/share/secondbrain`).
+It persists them in the LaunchAgent. See [native conversation setup](modules.md#native-codex-conversation-usage).
+`USAGE_PUSH_MAX_BYTES` remains a soft budget for whole Codex session replay.
+
+### Codex quotas in a hardened server service
+
+The systemd app service keeps `ProtectHome=read-only`. The Codex CLI still needs writable local state for a read-only quota request, so the template permits only the app user's optional `~/.codex` directory in addition to the vault and app data. The leading `-` on this `ReadWritePaths` entry lets services without a Codex installation start normally. It does not create a login or copy credentials.
+
+If `CODEX_HOME` names another absolute directory, add that exact directory to the service's writable paths with `sudo systemctl edit secondbrain`:
+
+```ini
+[Service]
+ReadWritePaths=-/srv/codex-state
+```
+
+Replace the example path with the selected `CODEX_HOME`, keep its ownership with the app user, and restart the app after `sudo systemctl daemon-reload`. Leave `ProtectHome=read-only` enabled. Verify quota retrieval through the running app's authenticated `/api/usage/subscriptions` endpoint; a successful shell probe does not verify the systemd sandbox.

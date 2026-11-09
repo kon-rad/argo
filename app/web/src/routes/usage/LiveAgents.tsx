@@ -107,7 +107,7 @@ function Machine({ m, onStop, stopping }: { m: LiveMachine; onStop: (a: LiveAgen
   );
 }
 
-export default function LiveAgents() {
+export default function LiveAgents({ embedded = false }: { embedded?: boolean }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['usage-live'], queryFn: () => api.usageLive(), refetchInterval: LIVE_POLL_MS });
   const stop = useMutation({
@@ -118,7 +118,7 @@ export default function LiveAgents() {
     <div className="live-root h-full overflow-auto p-4">
       <style>{CSS}</style>
       <div className="mb-3 flex flex-wrap items-baseline gap-x-3">
-        <Link className="text-sm underline" to="/usage">Usage</Link>
+        {!embedded && <Link className="text-sm underline" to="/usage">Usage</Link>}
         <h1 className="text-lg font-semibold">Running now <span className="font-normal text-[var(--ink-dim)]">({q.data?.total ?? '…'})</span></h1>
         <span className="text-xs text-[var(--ink-dim)]">
           {q.data ? `Updated ${new Date(q.data.at).toLocaleTimeString()}, every ${LIVE_POLL_MS / 1000} s. Other machines show sessions active in the last 3 minutes, as of their last sync.` : 'Loading...'}

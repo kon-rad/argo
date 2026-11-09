@@ -196,3 +196,8 @@ git check-ignore .env        # prints .env
 - [Connect Claude Code](03-claude-code.md): five minutes, because `init` already wired it.
 - Turn on more modules when you want them, each described in [modules.md](../modules.md).
 - The whole path, stage by stage with a check after each: [From zero to an agent company](00-from-zero.md).
+
+For optional Codex Desktop/CLI conversation history on multiple Macs, use the
+[one-command usage collector setup](../modules.md#native-codex-conversation-usage)
+on each host, then run its `doctor` command. Conversation ingestion and subscription
+quota panels are configured separately.
