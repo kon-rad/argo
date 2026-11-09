@@ -46,6 +46,7 @@ describe('Usage manifest', () => {
 
   it('renders Codex weekly-only limits without inventing a five-hour limit or Claude calls', async () => {
     const calls = setup({ subscriptions: ['codex'], credits: [], sections: ['ledger'] }, [codex]);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Account' }));
     expect(await screen.findByText('72% remaining')).toBeTruthy();
     expect(screen.getByText('Weekly limit only')).toBeTruthy();
     expect(screen.queryByText(/5-hour/i)).toBeNull();
@@ -56,6 +57,10 @@ describe('Usage manifest', () => {
 
   it('renders Claude alone and loads its ledger history only on the ledger tab', async () => {
     const calls = setup({ subscriptions: ['claude-code'], credits: [], sections: ['sessions', 'ledger'] }, [claude]);
+    expect(await screen.findByRole('tab', { name: 'Sessions' })).toBeTruthy();
+    expect(screen.queryByRole('article', { name: 'Claude Code subscription usage' })).toBeNull();
+    expect(calls().some((url) => url.includes('/usage/subscriptions'))).toBe(false);
+    fireEvent.click(screen.getByRole('tab', { name: 'Account' }));
     expect(await screen.findByRole('article', { name: 'Claude Code subscription usage' })).toBeTruthy();
     expect(calls().some((url) => url.includes('/usage/plan'))).toBe(false);
     fireEvent.click(screen.getByRole('tab', { name: 'Ledger' }));

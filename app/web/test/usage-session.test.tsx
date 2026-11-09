@@ -85,13 +85,16 @@ describe('UsageSession', () => {
     expect(screen.getByText('fatal: not a git repository')).toBeTruthy();
     expect(screen.getByText(/claude-opus-5-5 · in 10 · cache w 100/)).toBeTruthy();
     expect(screen.getByText('subagent: Explore')).toBeTruthy();
-    expect(screen.queryByText('secret plan of attack')).toBeNull();     // thinking hidden by default
-    fireEvent.click(screen.getByRole('checkbox', { name: 'thinking' }));
-    expect(screen.getByText('secret plan of attack')).toBeTruthy();
+    const thinking = screen.getByText('secret plan of attack').closest('details');
+    expect(thinking?.open).toBe(false);
+    expect(screen.getByText('Build the usage board').closest('article')?.getAttribute('aria-label')).toBe('User message');
+    expect(screen.getByText('sub says hi').closest('article')?.getAttribute('aria-label')).toBe('Assistant message');
+    expect(screen.getByText('Session metadata').closest('details')?.open).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: /show full text/i }));
     await waitFor(() => expect(screen.getByText('FULL TEXT HERE')).toBeTruthy());
     expect(String(fetchMock.mock.calls[0]![0])).toContain('/usage/agent-sessions/mac/s1');
     expect(String(fetchMock.mock.calls[0]![0])).toContain('source=claude-code');
+    expect(String(fetchMock.mock.calls[0]![0])).toContain('meta=1');
     expect(document.body.textContent).not.toContain('$');
     expect(document.body.textContent).not.toContain('USD');
   });

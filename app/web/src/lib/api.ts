@@ -690,6 +690,7 @@ export interface SummaryFact {
 }
 /** One row of /usage/agent-sessions: a session from any harness and host. `cost_usd` only for non-Claude harnesses (Hermes's own estimate). */
 export interface AgentSessionRow {
+  task_ids?: string[];
   id: number; source: string; harness: string; profile: string | null; provider: string | null; host: string;
   external_id: string; parent_external_id: string | null; project: string | null; title: string | null; first_prompt: string | null;
   /** Where the prompts came from when not a keyboard: 'telegram', 'web', 'remote-control'; the bot's configured name. */
@@ -1381,7 +1382,7 @@ export const api = {
   agentSessionFacets: (from: string, to: string) => request<{ facets: AgentSessionFacets }>('/usage/agent-sessions/facets', { from, to }),
   agentSession: (host: string, externalId: string, source: string | null, offset = 0) =>
     request<{ session: AgentSessionRow; runs: AgentSessionRun[]; steps: AgentStep[]; next: number | null }>(
-      `/usage/agent-sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}`, { source: source ?? undefined, offset }),
+      `/usage/agent-sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}`, { source: source ?? undefined, offset, meta: '1' }),
   usageRuns: (from: string, to: string, f: UsageFilters = {}) => request<{ runs: UsageRun[] }>('/usage/runs', { from, to, ...usageFilterParams(f) }),
   usageRunning: () => request<RunningNow>('/usage/running'),
   usageLive: () => request<LiveNow>('/usage/live'),
