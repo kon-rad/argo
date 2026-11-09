@@ -5,6 +5,7 @@ const Sha = z.string().regex(/^[a-f0-9]{40}$/);
 export const Source = z.object({ ref: z.string(), revision: z.string(), text: z.string(), essential: z.boolean(), missing: z.boolean(), truncated: z.boolean(), redacted:z.boolean().optional() }).strict();
 export type Source = z.infer<typeof Source>;
 export const Snapshot = z.object({ repo: z.string(), pr: z.number().int().positive(), head: Sha, base: Sha, branch: z.string(), merged: Sha.nullable(),
+  behind:z.boolean().optional(), conflicting:z.boolean().optional(),
   draft: z.boolean().optional(), unresolved: z.number().int().nonnegative().optional(), changesRequested: z.boolean().optional(),
   checks: z.array(z.object({ name: z.string(), state: z.string() }).strict()), sources: z.array(Source) }).strict();
 export type Snapshot = z.infer<typeof Snapshot>;
@@ -39,7 +40,7 @@ export interface GateIO {
 }
 export function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 export function evidence(s: Snapshot): string {
-  const normalized=Snapshot.parse(s);
+  const normalized=Snapshot.parse({...s,behind:s.behind??false,conflicting:s.conflicting??false});
   normalized.sources=normalized.sources.map(item=>{
     if(item.redacted || !/^board:t_[a-f0-9]{6,32}:(?:project|feature)$/.test(item.ref))return item;
     try {
@@ -61,6 +62,8 @@ function ready(s: Snapshot, checks: string[]): void {
 function preflightFindings(s: Snapshot, checks: string[]): Verdict['findings'] {
   const failures: Verdict['findings'] = [];
   const add = (location: string, detail: string, fix: string, verification: string) => failures.push({ severity:'high',location,evidence:detail,impact:'This PR is not ready for acceptance and shipping',fix,verification });
+  if (s.behind) add('PR base','PR branch is behind the protected base','Merge the current base into the same PR branch and address any resulting changes','Rerun required checks and resubmit the same card');
+  if (s.conflicting) add('PR conflicts','PR conflicts with its protected base','Resolve the conflicts on the same PR branch without force-pushing','Rerun required checks and resubmit the same card');
   if (s.draft) add('PR readiness','PR is marked as draft','Complete the work and mark the PR ready for review','Confirm isDraft=false');
   if (s.unresolved) add('PR review threads',`${s.unresolved} unresolved review threads`,'Address and resolve the outstanding findings','Confirm no unresolved review threads remain');
   if (s.changesRequested) add('PR reviews','An active review requests changes','Address the requested changes and obtain an updated review','Confirm the changes-requested review has been resolved');

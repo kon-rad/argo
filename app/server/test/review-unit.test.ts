@@ -285,3 +285,22 @@ it.each([undefined,'d'.repeat(40)])('requires live health when the durable healt
   await runReview(f.job,['test'],f.io);
   expect(f.job.state).toBe('blocked');expect(healthCalls).toBe(1);expect(f.counts().completions).toBe(0);
 });
+
+it('gives legacy snapshots the same fingerprint as explicit ready merge flags',()=>{
+  const old=snapshot();expect(evidence(old)).toBe(evidence({...old,behind:false,conflicting:false}));
+});
+it.each(['behind','conflicting'] as const)('returns %s PRs to their original builder before model review and accepts correction',key=>{
+  return (async()=>{
+    const f=fixture(),s=snapshot();s[key]=true;f.setCurrent(s);
+    await runReview(f.job,['test'],f.io);
+    expect(f.job.state).toBe('rejected');expect(f.job.builder).toBe('builder');expect(f.counts().reviews).toBe(0);
+    expect(f.events.join(' ')).toContain('same PR branch');expect(f.counts().merges).toBe(0);
+    f.job.round++;f.job.state='queued';f.job.verdict=null;f.job.snapshot=null;s[key]=false;f.setCurrent(s);
+    await runReview(f.job,['test'],f.io);expect(f.job.state).toBe('done');expect(f.counts().reviews).toBe(1);
+  })();
+});
+it('invalidates a paused approval when its branch falls behind',async()=>{
+  const f=fixture();f.io.mayShip=async()=>false;await runReview(f.job,['test'],f.io);
+  f.setCurrent({...snapshot(),behind:true});f.io.mayShip=async()=>true;
+  await runReview(f.job,['test'],f.io);expect(f.job.state).toBe('rejected');expect(f.counts().merges).toBe(0);
+});

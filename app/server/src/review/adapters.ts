@@ -20,7 +20,7 @@ export const HostConfig = z.object({
 export type HostConfig = z.infer<typeof HostConfig>;
 const Sha = z.string().regex(/^[a-f0-9]{40}$/);
 const PR = z.object({ number: z.number().int().positive(), body: z.string(), headRefOid: Sha, baseRefOid: Sha,
-  isDraft:z.boolean(), reviewDecision:z.string().nullable(), isCrossRepository: z.boolean(), baseRefName: z.string(), headRefName: z.string(), state: z.enum(['OPEN','MERGED','CLOSED']), mergeCommit: z.object({ oid: Sha }).nullable(),
+  mergeStateStatus:z.string(),mergeable:z.string(),isDraft:z.boolean(), reviewDecision:z.string().nullable(), isCrossRepository: z.boolean(), baseRefName: z.string(), headRefName: z.string(), state: z.enum(['OPEN','MERGED','CLOSED']), mergeCommit: z.object({ oid: Sha }).nullable(),
   statusCheckRollup: z.array(z.object({ name: z.string().optional(), context: z.string().optional(), status: z.string().optional(), conclusion: z.string().nullable().optional(), state: z.string().optional() }).passthrough()) }).passthrough();
 export class GitHub {
   constructor(readonly host: HostConfig, readonly repo: Repository) {}
@@ -35,7 +35,7 @@ export class GitHub {
       if (list.length !== 1) throw new Error('Unknown or ambiguous PR; link exactly one PR using the card id');
       number = list[0]!.number;
     }
-    const p = PR.parse(JSON.parse(await this.gh(['pr','view',String(number),'--repo',this.repo.github,'--json','number,body,headRefOid,baseRefOid,baseRefName,headRefName,isDraft,reviewDecision,isCrossRepository,state,mergeCommit,statusCheckRollup'])));
+    const p = PR.parse(JSON.parse(await this.gh(['pr','view',String(number),'--repo',this.repo.github,'--json','number,body,headRefOid,baseRefOid,baseRefName,headRefName,isDraft,mergeStateStatus,mergeable,reviewDecision,isCrossRepository,state,mergeCommit,statusCheckRollup'])));
     if (p.isCrossRepository || p.baseRefName !== this.repo.base || (!p.body.includes(card) && !p.headRefName.includes(card)) || p.state === 'CLOSED') throw new Error('PR is closed, unrelated or targets an unregistered base');
     return p;
   }
