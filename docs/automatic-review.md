@@ -151,3 +151,11 @@ The trusted host sends bounded JSON on stdin to `cli-review stage /absolute/owne
 ```
 
 The importer uses the same per-card content lock, stamps both sources with the actual builder revision, sanitizes secret literals and atomically writes private files. It accepts identical retries and refuses replacement after review or merge. The worker requires both stamps to match the PR head. `cli-review retries /absolute/owner-policy.json` returns only claimable correction rounds for the trusted launching host. A host can relaunch the original coder with the same card, branch, PR, persona and runtime; findings remain acceptance constraints and never grant merge or deploy authority. Worker subprocess errors are kept in the private `review-adapters.log` beneath its configured HOME; board errors contain no raw stderr or credentials.
+
+### Stable context and historical shipping receipts
+
+Approval fingerprints normalize snapshots through the strict schema, so PostgreSQL JSONB key ordering does not invalidate equivalent evidence. For exact board project/feature sources only, unredacted top-level `updated_at` and `updated_by` audit stamps do not change the fingerprint. Raw sources remain in the audit snapshot; title, owner, stage and every other content field stay significant. Redacted or malformed sources keep their original revisions and conservative invalidation behavior.
+
+Completion attests that the accepted merge was deployed and passed exact-revision health, not that it is still the currently active release. If final bookkeeping fails after both matching deployment and health receipts were durably recorded, a retry revalidates accepted context and merge identity and completes without replaying those effects. Missing or mismatched health receipts still require a successful live check. A newer release does not erase an older release's verified history.
+
+Behind or conflicting open PRs are readiness rejections, not endless tool-error retries. Findings instruct the original builder to update the same branch and rerun checks. These flags are false for merged PRs; legacy snapshots normalize absent flags to false. A branch falling behind invalidates a paused approval before merge.

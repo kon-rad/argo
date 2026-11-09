@@ -115,7 +115,7 @@ describe('bounded context and concrete adapters',()=>{
   it('requires a unique known PR and uses normal exact-head PR merge under strict branch protection',async()=>{
     const repo={github:'example/engine',gitDir:'/tmp/fixture.git',base:'main',target:'fixture',checks:['test'],notes:['design.md']};
     const github=new GitHub({home:'/tmp'} as HostConfig,repo), calls:string[][]=[], ghCalls:string[][]=[];
-    const metadata={number:7,body:'t_123abc',headRefOid:sha,baseRefOid:base,baseRefName:'main',headRefName:'card/t_123abc',isCrossRepository:false,isDraft:false,reviewDecision:null,state:'OPEN',mergeCommit:null as null|{oid:string},statusCheckRollup:[]};
+    const metadata={number:7,body:'t_123abc',headRefOid:sha,baseRefOid:base,baseRefName:'main',headRefName:'card/t_123abc',isCrossRepository:false,isDraft:false,mergeStateStatus:'CLEAN',mergeable:'MERGEABLE',reviewDecision:null,state:'OPEN',mergeCommit:null as null|{oid:string},statusCheckRollup:[]};
     github.gh=async args=> {ghCalls.push(args);if(args[1]==='list')return '[]';if(args[0]==='api' && !args[1]?.endsWith('/protection'))return JSON.stringify({permissions:{admin:false}});if(args[0]==='api')return JSON.stringify({required_status_checks:{strict:true,contexts:['test']},allow_force_pushes:{enabled:false},enforce_admins:{enabled:true}});if(args[1]==='merge'){metadata.state='MERGED';metadata.mergeCommit={oid:merged};return '';}return JSON.stringify(metadata);};
     await expect(github.pr('t_123abc')).rejects.toThrow(/Unknown/);
     github.git=async args=>{
@@ -247,4 +247,60 @@ it('restores deployed state after health failure before SQL completion without r
   expect(f.job.state).toBe('blocked');expect(f.job.deployed).toBe(merged);
   f.io.health=health;await runReview(f.job,['test'],f.io);
   expect(f.job.state).toBe('done');expect(f.counts()).toEqual({reviews:1,merges:1,deploys:1,completions:1});
+});
+it.each(['project','feature'])('ignores only board %s audit stamps while retaining meaningful evidence',kind=>{
+  const project={title:'Platform',owner:'lead',stage:'building',updated_at:'before',updated_by:'writer'};
+  const snap=(data:unknown,ref=`board:t_123abc:${kind}`)=>({...snapshot(),sources:[source(ref,data)]});
+  const original=snap(project),before=structuredClone(original);
+  for(const field of ['updated_at','updated_by'])expect(evidence(snap({...project,[field]:'after'}))).toBe(evidence(original));
+  expect(original).toEqual(before);
+  for(const field of ['title','owner','stage'])expect(evidence(snap({...project,[field]:'changed'}))).not.toBe(evidence(original));
+  for(const ref of [`github:t_123abc:${kind}`,`board:not-a-card:${kind}`,`board:t_123abc:ticket`]){
+    expect(evidence(snap({...project,updated_at:'after'},ref))).not.toBe(evidence(snap(project,ref)));
+  }
+  expect(evidence(snap('malformed before'))).not.toBe(evidence(snap('malformed after')));
+});
+it('retains the raw revision for redacted project content and audit changes',()=>{
+  const snap=(title:string,updated_at='before')=>({...snapshot(),sources:[source('board:t_123abc:project',{title,updated_at})]});
+  const before=snap('token=old-sensitive-value'),changed=snap('token=new-sensitive-value');
+  expect(before.sources[0]!.redacted).toBe(true);expect(before.sources[0]!.text).toBe(changed.sources[0]!.text);
+  expect(evidence(before)).not.toBe(evidence(changed));
+  expect(evidence(before)).not.toBe(evidence(snap('token=old-sensitive-value','after')));
+});
+it('completes a previously healthy release after bookkeeping fails without replaying superseded effects',async()=>{
+  const f=fixture(),complete=f.io.complete,health=f.io.health;let healthCalls=0;
+  f.io.health=async revision=>{healthCalls++;return health(revision);};
+  f.io.complete=async()=>{throw new Error('Bookkeeping interrupted after verified health');};
+  await runReview(f.job,['test'],f.io);
+  expect(f.job.state).toBe('blocked');expect(f.job.health).toBe(merged);
+  f.io.health=async()=>{healthCalls++;throw new Error('A newer release is now running');};
+  f.io.complete=complete;await runReview(f.job,['test'],f.io);
+  expect(f.job.state).toBe('done');expect(healthCalls).toBe(1);
+  expect(f.counts()).toEqual({reviews:1,merges:1,deploys:1,completions:1});
+});
+it.each([undefined,'d'.repeat(40)])('requires live health when the durable health receipt is absent or wrong (%s)',async receipt=>{
+  const f=fixture();f.io.complete=async()=>{throw new Error('Bookkeeping interrupted');};
+  await runReview(f.job,['test'],f.io);f.job.health=receipt;
+  let healthCalls=0;f.io.health=async()=>{healthCalls++;return false;};
+  await runReview(f.job,['test'],f.io);
+  expect(f.job.state).toBe('blocked');expect(healthCalls).toBe(1);expect(f.counts().completions).toBe(0);
+});
+
+it('gives legacy snapshots the same fingerprint as explicit ready merge flags',()=>{
+  const old=snapshot();expect(evidence(old)).toBe(evidence({...old,behind:false,conflicting:false}));
+});
+it.each(['behind','conflicting'] as const)('returns %s PRs to their original builder before model review and accepts correction',key=>{
+  return (async()=>{
+    const f=fixture(),s=snapshot();s[key]=true;f.setCurrent(s);
+    await runReview(f.job,['test'],f.io);
+    expect(f.job.state).toBe('rejected');expect(f.job.builder).toBe('builder');expect(f.counts().reviews).toBe(0);
+    expect(f.events.join(' ')).toContain('same PR branch');expect(f.counts().merges).toBe(0);
+    f.job.round++;f.job.state='queued';f.job.verdict=null;f.job.snapshot=null;s[key]=false;f.setCurrent(s);
+    await runReview(f.job,['test'],f.io);expect(f.job.state).toBe('done');expect(f.counts().reviews).toBe(1);
+  })();
+});
+it('invalidates a paused approval when its branch falls behind',async()=>{
+  const f=fixture();f.io.mayShip=async()=>false;await runReview(f.job,['test'],f.io);
+  f.setCurrent({...snapshot(),behind:true});f.io.mayShip=async()=>true;
+  await runReview(f.job,['test'],f.io);expect(f.job.state).toBe('rejected');expect(f.counts().merges).toBe(0);
 });
