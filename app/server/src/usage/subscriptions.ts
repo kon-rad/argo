@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { accessSync, constants, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { config } from '../config.js';
 import { query } from '../db.js';
 import { subscriptionEnv } from '../addons/dispatch/codex.js';
@@ -16,6 +19,7 @@ export interface SubscriptionUsage {
 const TTL_MS = 60_000;
 const TIMEOUT_MS = 8_000;
 const OUTPUT_MAX = 512_000;
+const CLAUDE_FRESH_MS = 30 * 60_000;
 const asObject = (v: unknown): Record<string, unknown> | null => v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
 const iso = (v: unknown): string | null => typeof v === 'number' && Number.isSafeInteger(v) && v > 0 && v < 8.64e12
   ? new Date(v * 1000).toISOString() : null;
@@ -59,6 +63,17 @@ export function parseCodexRateLimits(raw: unknown, observedAt: string, now = new
 
 type Rpc = { id?: number; result?: unknown; error?: unknown };
 
+/** Services often omit the CLI's user-local bin directory from PATH. Explicit commands still win. */
+export function resolveCodexCommand(command: string, env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  if (command !== 'codex') return command;
+  const executable = (path: string): boolean => {
+    try { accessSync(path, constants.X_OK); return statSync(path).isFile(); } catch { return false; }
+  };
+  if ((env.PATH ?? '').split(delimiter).some((dir) => executable(join(dir || '.', 'codex')))) return command;
+  const local = join(home, '.local', 'bin', 'codex');
+  return executable(local) ? local : command;
+}
+
 /** A short-lived, read-only app-server session. No model turns or tools are requested. */
 export function readCodexRpc(command = config.orgCodexCommand ?? 'codex', now = new Date(), timeoutMs = TIMEOUT_MS): Promise<SubscriptionUsage> {
   return new Promise((resolve) => {
@@ -66,7 +81,7 @@ export function readCodexRpc(command = config.orgCodexCommand ?? 'codex', now = 
     const unavailable = (message: string): SubscriptionUsage => ({ provider: 'codex', label: 'Codex', status: 'unavailable',
       observed_at: null, source: 'codex app-server', message, stale: false, windows: [] });
     try {
-      child = spawn(command, ['app-server'], { env: subscriptionEnv(process.env), stdio: ['pipe', 'pipe', 'ignore'],
+      child = spawn(resolveCodexCommand(command), ['app-server'], { env: subscriptionEnv(process.env), stdio: ['pipe', 'pipe', 'ignore'],
         detached: process.platform !== 'win32' });
     } catch { resolve(unavailable('Codex CLI unavailable')); return; }
     let done = false;
@@ -153,9 +168,15 @@ export async function codexSubscription(now = new Date(), reader = readCodexRpc)
 }
 
 export async function claudeSubscription(now = new Date()): Promise<SubscriptionUsage> {
-  const { rows } = await query<{ window: string; used_pct: number; resets_at: Date | null; observed_at: Date }>(
+  const { rows } = await query<ClaudeSnapshot>(
     `SELECT DISTINCT ON ("window") "window", used_pct, resets_at, observed_at
      FROM plan_usage_snapshots ORDER BY "window", observed_at DESC`);
+  return claudeUsageFromSnapshots(rows, now);
+}
+
+interface ClaudeSnapshot { window: string; used_pct: number; resets_at: Date | null; observed_at: Date }
+
+export function claudeUsageFromSnapshots(rows: ClaudeSnapshot[], now = new Date()): SubscriptionUsage {
   const windows = rows.flatMap((r): QuotaWindow[] => {
     const duration = r.window === 'five_hour' ? 300 : r.window === 'seven_day' ? 10080 : null;
     if (!duration) return [];
@@ -165,7 +186,17 @@ export async function claudeSubscription(now = new Date()): Promise<Subscription
       used_pct: expired ? null : r.used_pct, left_pct: expired ? null : Math.round((100 - r.used_pct) * 10) / 10,
       resets_at: resets, observed_at: r.observed_at.toISOString(), reset_since_reading: expired, last_pct: r.used_pct }];
   });
-  return { provider: 'claude-code', label: 'Claude Code', status: rows.length ? 'ok' : 'unavailable',
-    observed_at: rows.length ? new Date(Math.max(...rows.map((r) => r.observed_at.getTime()))).toISOString() : null,
-    source: 'plan_usage_snapshots', message: windows.length ? null : 'No quota windows recorded', stale: false, windows };
+  const unexpired = windows.filter((w) => !w.reset_since_reading);
+  const old = unexpired.some((w) => now.getTime() - Date.parse(w.observed_at!) > CLAUDE_FRESH_MS);
+  const expired = windows.length > 0 && unexpired.length === 0;
+  const guidance = 'Check the Claude Code statusline wrapper and usage collector.';
+  const missing = [[300, '5-hour'], [10080, 'Weekly']] as const;
+  const unreported = missing.filter(([minutes]) => !windows.some((w) => w.window_minutes === minutes)).map(([, label]) => label);
+  const message = !windows.length ? `No quota windows recorded. ${guidance}`
+    : expired ? `All recorded quota windows have expired; awaiting a new reading. ${guidance}`
+      : old ? `Quota readings are over 30 minutes old. ${guidance}`
+        : unreported.length ? `${unreported.join(' and ')} quota window not recorded. ${guidance}` : null;
+  return { provider: 'claude-code', label: 'Claude Code', status: unexpired.length ? 'ok' : 'unavailable',
+    observed_at: windows.length ? new Date(Math.max(...windows.map((w) => Date.parse(w.observed_at!)))).toISOString() : null,
+    source: 'plan_usage_snapshots', message, stale: expired || old, windows };
 }
