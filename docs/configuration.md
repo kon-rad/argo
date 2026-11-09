@@ -296,3 +296,16 @@ The opt-in Mac usage installer accepts `CODEX_HOME` (default `~/.codex`),
 destination), and `USAGE_PUSH_STATE` (default `~/.local/share/secondbrain`).
 It persists them in the LaunchAgent. See [native conversation setup](modules.md#native-codex-conversation-usage).
 `USAGE_PUSH_MAX_BYTES` remains a soft budget for whole Codex session replay.
+
+### Codex quotas in a hardened server service
+
+The systemd app service keeps `ProtectHome=read-only`. The Codex CLI still needs writable local state for a read-only quota request, so the template permits only the app user's optional `~/.codex` directory in addition to the vault and app data. The leading `-` on this `ReadWritePaths` entry lets services without a Codex installation start normally. It does not create a login or copy credentials.
+
+If `CODEX_HOME` names another absolute directory, add that exact directory to the service's writable paths with `sudo systemctl edit secondbrain`:
+
+```ini
+[Service]
+ReadWritePaths=-/srv/codex-state
+```
+
+Replace the example path with the selected `CODEX_HOME`, keep its ownership with the app user, and restart the app after `sudo systemctl daemon-reload`. Leave `ProtectHome=read-only` enabled. Verify quota retrieval through the running app's authenticated `/api/usage/subscriptions` endpoint; a successful shell probe does not verify the systemd sandbox.
