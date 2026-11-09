@@ -30,4 +30,3 @@ export function SessionReferences({ text }: { text: string }) {
   out.push(text.slice(last));
   return <>{out}</>;
 }
-
