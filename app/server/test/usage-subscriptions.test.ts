@@ -1,12 +1,12 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { query } from '../src/db.js';
 import { parseSettings, resetSettings } from '../src/settings.js';
-import { codexSubscription, parseCodexRateLimits, readCodexRpc, resetCodexQuotaCache } from '../src/usage/subscriptions.js';
+import { claudeUsageFromSnapshots, codexSubscription, parseCodexRateLimits, readCodexRpc, resetCodexQuotaCache, resolveCodexCommand } from '../src/usage/subscriptions.js';
 import type { SubscriptionUsage } from '../src/usage/subscriptions.js';
 import { ALL_MODULES, truncateAll } from './helpers.js';
 
@@ -65,7 +65,68 @@ process.stdin.on('data', chunk => {
 `);
 chmodSync(fakeCli, 0o755);
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
-afterEach(() => { delete process.env.CODEX_FAKE_MODE; resetCodexQuotaCache(); resetSettings(); delete process.env.SECONDBRAIN_SETTINGS; });
+afterEach(() => { vi.unstubAllEnvs(); delete process.env.CODEX_FAKE_MODE; resetCodexQuotaCache(); resetSettings(); delete process.env.SECONDBRAIN_SETTINGS; });
+
+describe('Codex executable discovery', () => {
+  it('uses an executable on PATH ahead of the user-local fallback', () => {
+    const bin = join(dir, 'path-bin');
+    const home = join(dir, 'path-home');
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(join(home, '.local', 'bin'), { recursive: true });
+    writeFileSync(join(home, '.local', 'bin', 'codex'), '#!/bin/sh\nexit 1\n');
+    chmodSync(join(home, '.local', 'bin', 'codex'), 0o755);
+    writeFileSync(join(bin, 'codex'), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(bin, 'codex'), 0o755);
+    expect(resolveCodexCommand('codex', { PATH: bin }, home)).toBe('codex');
+  });
+
+  it('finds the user-local installation under a minimal service PATH', async () => {
+    const home = join(dir, 'home');
+    const bin = join(home, '.local', 'bin');
+    mkdirSync(bin, { recursive: true });
+    const local = join(bin, 'codex');
+    writeFileSync(local, `#!${process.execPath}\n` + readFileSync(fakeCli, 'utf8').split('\n').slice(1).join('\n'));
+    chmodSync(local, 0o755);
+    expect(resolveCodexCommand('codex', { PATH: '/usr/bin:/bin' }, home)).toBe(local);
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('PATH', '/usr/bin:/bin');
+    expect(await readCodexRpc('codex', then)).toMatchObject({ status: 'ok', windows: [{ used_pct: 52 }] });
+  });
+
+  it('does not replace custom commands or non-executable files', () => {
+    const home = join(dir, 'not-executable');
+    mkdirSync(join(home, '.local', 'bin'), { recursive: true });
+    writeFileSync(join(home, '.local', 'bin', 'codex'), 'not executable');
+    expect(resolveCodexCommand('codex', { PATH: '' }, home)).toBe('codex');
+    expect(resolveCodexCommand('/missing/custom-codex', { PATH: '' }, dir)).toBe('/missing/custom-codex');
+  });
+});
+
+describe('Claude quota freshness', () => {
+  const snapshot = (window: string, observedAt = at, resetsAt = '2026-11-09T10:00:00.000Z') => ({
+    window, used_pct: 40, observed_at: new Date(observedAt), resets_at: new Date(resetsAt),
+  });
+  it('reports fresh windows and explicitly identifies missing weekly data', () => {
+    expect(claudeUsageFromSnapshots([snapshot('five_hour'), snapshot('seven_day')], then))
+      .toMatchObject({ status: 'ok', stale: false, message: null });
+    expect(claudeUsageFromSnapshots([snapshot('five_hour')], then).message).toMatch(/Weekly.*not recorded/);
+  });
+  it('keeps old nonexpired readings visibly stale with collector guidance', () => {
+    expect(claudeUsageFromSnapshots([snapshot('seven_day', '2026-11-08T08:00:00.000Z')], then))
+      .toMatchObject({ status: 'ok', stale: true, message: expect.stringMatching(/statusline.*collector/i), windows: [{ used_pct: 40 }] });
+  });
+  it('marks fully expired data unavailable without inventing current percentages', () => {
+    expect(claudeUsageFromSnapshots([snapshot('seven_day', '2026-11-07T10:00:00.000Z', '2026-11-08T09:00:00.000Z')], then))
+      .toMatchObject({ status: 'unavailable', stale: true, message: expect.stringMatching(/expired/i), windows: [{ used_pct: null, left_pct: null, last_pct: 40 }] });
+  });
+  it('does not let an expired five-hour reading hide a fresh weekly reading', () => {
+    expect(claudeUsageFromSnapshots([snapshot('five_hour', '2026-11-07T10:00:00.000Z', '2026-11-08T09:00:00.000Z'), snapshot('seven_day')], then))
+      .toMatchObject({ status: 'ok', stale: false, windows: [{ used_pct: null }, { used_pct: 40 }] });
+  });
+  it('explains missing snapshots instead of marking them healthy', () => {
+    expect(claudeUsageFromSnapshots([], then)).toMatchObject({ status: 'unavailable', stale: false, message: expect.stringMatching(/statusline.*collector/i), windows: [] });
+  });
+});
 
 describe('Codex quota reader and cache', () => {
   it('returns unavailable for missing CLI, API auth, timeout and output limit', async () => {
