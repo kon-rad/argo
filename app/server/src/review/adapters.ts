@@ -99,18 +99,19 @@ export class GitHub {
       await this.gh(['pr','comment',String(pr),'--repo',this.repo.github,'--body-file',file]);
     } finally { await rm(dir,{ recursive:true, force:true }); }
   }
+  async confirmMerge(card:string,s:Snapshot,revision:string):Promise<void> {
+    const p=await this.pr(card,s.pr);
+    if(p.state!=='MERGED' || p.mergeCommit?.oid!==revision || p.headRefOid!==s.head)throw new Error('GitHub merge receipt not confirmed');
+    await this.git(['fetch','--no-tags',`https://github.com/${this.repo.github}.git`,revision]);
+    const parents=(await this.git(['show','-s','--format=%P',revision])).trim().split(' ');
+    if(parents.length!==2 || parents[0]!==s.base || parents[1]!==s.head)throw new Error('Actual merge has different parents; deployment blocked for reconciliation');
+  }
   /** Normal GitHub PR merge, with server-enforced strict checks and an exact head SHA. Never push a protected ref. */
   async merge(card: string, s: Snapshot): Promise<string> {
     const p = await this.pr(card,s.pr);
     if (p.headRefOid !== s.head) throw new Error('PR head changed');
     const remote = `https://github.com/${this.repo.github}.git`;
-    const verify = async (revision: string) => {
-      await this.git(['fetch','--no-tags',remote,revision]);
-      const parents=(await this.git(['show','-s','--format=%P',revision])).trim().split(' ');
-      if(parents.length!==2 || parents[0]!==s.base || parents[1]!==s.head) throw new Error('Merge receipt has unreviewed parents; deployment blocked');
-      return revision;
-    };
-    if(p.state==='MERGED' && p.mergeCommit) return verify(p.mergeCommit.oid);
+    if(p.state==='MERGED' && p.mergeCommit) return p.mergeCommit.oid;
     if(p.isDraft || p.reviewDecision==='CHANGES_REQUESTED') throw new Error('PR is incomplete or has outstanding changes requested');
     if(p.baseRefOid!==s.base) throw new Error('Base changed; new review required');
     const protection=JSON.parse(await this.gh(['api',`repos/${this.repo.github}/branches/${encodeURIComponent(this.repo.base)}/protection`]));
@@ -120,13 +121,13 @@ export class GitHub {
     if(protection.required_status_checks?.strict!==true || protection.allow_force_pushes?.enabled===true || principal.permissions.admin && protection.enforce_admins?.enabled!==true || this.repo.checks.some(c=>!required.has(c))) {
       throw new Error('Owner must enforce strict required checks, disabled force pushes, and administrator enforcement when the worker is an administrator before automatic merge');
     }
-    // Re-read immediately before the server operation. Strict required checks reject a concurrent base advance.
+    // Strict checks reject ordinary base advances that make the PR behind. Exact parents are independently confirmed before deployment.
     const current=await this.pr(card,s.pr);
     if(current.headRefOid!==s.head || current.baseRefOid!==s.base) throw new Error('PR head or base changed before merge');
     await this.gh(['pr','merge',String(s.pr),'--repo',this.repo.github,'--merge','--match-head-commit',s.head]);
     const result=await this.pr(card,s.pr);
     if(result.state!=='MERGED' || !result.mergeCommit) throw new Error('GitHub has not confirmed a merge');
-    return verify(result.mergeCommit.oid);
+    return result.mergeCommit.oid;
   }
 
 }

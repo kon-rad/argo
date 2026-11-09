@@ -18,6 +18,7 @@ export async function runFixture(): Promise<unknown> {
       merge:async () => { events.push(`merge-exact:${head}`);return revision; },
       deploy:async sha => { events.push(`deploy:${sha}`);return sha; },
       health:async sha => { events.push(`health:${sha}`);return true; },
+      verifyMerge:async()=>{},
       complete:async () => { events.push('release-dependencies'); },
     });
     traces.push({scenario:reject?'reject':'accept',state:job.state,events});

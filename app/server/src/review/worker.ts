@@ -18,7 +18,6 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
       const fresh = (await client.query('SELECT * FROM review_jobs WHERE id=$1',[job.id])).rows[0];
       Object.assign(job,fresh);
       if (job.state === 'done' || job.state === 'rejected') continue;
-      contentHeld = await acquire(`review-content:${job.card}`); if (!contentHeld) continue;
       const initialContext=(await client.query('SELECT review_context($1) AS context',[job.id])).rows[0]!.context;
       const repoKey=repositoryKey(initialContext.ticket,host.repositories);
       const configuredTarget = host.repositories[repoKey]?.target ?? '';
@@ -78,6 +77,8 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
       };
       await runReview(job,repo.checks,{
         gather,
+        beforeShip:async()=>{if(!contentHeld){contentHeld=await acquire(`review-content:${job.card}`);if(!contentHeld)throw new Error('Ticket evidence is changing; retry shipping');}},
+        verifyMerge:(s,revision)=>github.confirmMerge(job.card,s,revision),
         mayShip:async()=>{const p=(await client.query('SELECT * FROM review_policy')).rows[0];return p?.enabled===true && p.shipping_enabled===true;},
         review:(s,e) => codexReview(host,job.reviewer,s,e),save,
         reject:async text => { await github.reject(job.snapshot!.pr,job.id,text); },

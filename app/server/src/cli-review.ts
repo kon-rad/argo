@@ -24,7 +24,7 @@ async function main(): Promise<void> {
   client.on('error',() => process.exit(1));
   try {
     if(action==='retries'){console.log(JSON.stringify((await client.query('SELECT review_builder_retries() AS cards')).rows[0].cards));return;}
-    if(action==='stage'){let raw='';for await(const part of process.stdin){raw+=String(part);if(Buffer.byteLength(raw)>160000)throw new Error('Evidence upload too large');}console.log(JSON.stringify(await stage(client,host.evidenceRoot,JSON.parse(raw))));return;}
+    if(action==='stage'){let raw='';for await(const part of process.stdin){raw+=String(part);if(Buffer.byteLength(raw)>600000)throw new Error('Evidence upload too large');}console.log(JSON.stringify(await stage(client,host.evidenceRoot,JSON.parse(raw))));return;}
     const result=await tick(client,host); const job=result.job; console.log(JSON.stringify({claimed:result.claimed,id:job?.id,state:job?.state,merged:job?.merged,deployed:job?.deployed,error:job?.error})); } finally { await client.end(); }
 }
 main().catch(error => { console.error(error instanceof Error ? error.message : 'Review worker failed'); process.exitCode=1; });

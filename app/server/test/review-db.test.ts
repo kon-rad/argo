@@ -105,6 +105,8 @@ it('freezes host evidence at the actual revision and refuses replacement during 
   await as(workerName,'SELECT review_save($1,$2)',[j.id,{state:'approved',snapshot:{head:a.head}}]);
   expect((await stage(client,dir,a)).staged).toBe(true);
   expect((await stage(client,dir,{...a,log:'Changed evidence'})).staged).toBe(false);
+  await as(workerName,'SELECT review_save($1,$2)',[j.id,{state:'blocked',snapshot:null,verdict:null,error:'Stale head invalidated'}]);
+  expect((await stage(client,dir,{...a,head:'b'.repeat(40),log:'New revision evidence'})).staged).toBe(true);
  }finally{await client.end();await rm(dir,{recursive:true,force:true});}
 });
 
@@ -120,4 +122,17 @@ it('escalates exhausted correction rounds without approving or releasing work',a
  await as(workerName,'SELECT review_save($1,$2)',[j.id,{state:'rejected',verdict:{reviewer:'auditor',decision:'reject',head:'a'.repeat(40),evidence:'b'.repeat(64),findings:[{fix:'Fix authorization',verification:'Denial test'}]}}]);
  expect((await getCard(c.id)).card).toMatchObject({status:'blocked',block_kind:'review-changes'});
  expect((await as(workerName,'SELECT review_builder_retries() AS cards')).rows[0].cards).toEqual([]);
+});
+
+it.each([false,true])('a builder cannot escape review by changing repository and classification before submitting (%s)',async reclassify=>{
+ await query("UPDATE review_policy SET repositories=ARRAY['engine']");const c=await card();const dependant=await createCard('owner',{title:'Wait for acceptance',assignee:'builder',deps:[c.id]});
+ const change=as('sb_org',"SELECT board_card_assign('builder',$1,'builder',NULL,NULL,$2,NULL,'other')",[c.id,reclassify?'writing':null]);
+ if(reclassify)await expect(change).rejects.toThrow(/classification cannot bypass/);else await change;
+ await as('sb_org',"SELECT board_card_finish('builder',$1,'done','tests pass',NULL,NULL,NULL,NULL,NULL)",[c.id]);
+ expect((await getCard(c.id)).card.status).toBe('review');expect((await getCard(dependant.id)).card.status).toBe('todo');expect(await job(c.id)).toBeDefined();
+});
+it('does not retroactively submit historical completed cards on metadata updates',async()=>{
+ await query('UPDATE review_policy SET enabled=false');const c=await card();await finishCard('builder',c.id,{outcome:'done'});
+ await query('UPDATE review_policy SET enabled=true');await query("UPDATE cards SET result='Historical clarification' WHERE id=$1",[c.id]);
+ expect((await getCard(c.id)).card.status).toBe('done');expect((await query('SELECT * FROM review_jobs WHERE card=$1',[c.id])).rows).toHaveLength(0);
 });

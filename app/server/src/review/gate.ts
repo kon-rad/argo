@@ -32,13 +32,16 @@ export interface GateIO {
   deploy(revision: string): Promise<string>;
   health(revision: string): Promise<boolean>;
   complete(): Promise<void>;
+  verifyMerge(snapshot:Snapshot,revision:string):Promise<void>;
+  beforeShip?():Promise<void>;
   /** Owner-controlled switch, checked again immediately before each external write. */
   mayShip?(): Promise<boolean>;
 }
 export function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 export function evidence(s: Snapshot): string { return digest({ ...s, merged: null }); }
 function ready(s: Snapshot, checks: string[]): void {
-  if (!s.sources.length || s.sources.some(x => x.essential && (x.missing || x.truncated || !x.text.trim()))) throw new Error('Essential context missing or truncated');
+  const unavailable=s.sources.filter(x=>x.essential && (x.missing || x.truncated || !x.text.trim()));
+  if(!s.sources.length || unavailable.length)throw new Error('Essential context missing or truncated: '+unavailable.slice(0,5).map(x=>x.ref).join(', '));
   if (!checks.length || checks.some(name => !s.checks.some(c => c.name === name) || s.checks.some(c => c.name === name && c.state !== 'pass'))) throw new Error('Required CI missing, failed or pending');
 }
 function preflightFindings(s: Snapshot, checks: string[]): Verdict['findings'] {
@@ -57,9 +60,19 @@ export function findingsText(v: Verdict): string {
 export async function runReview(job: Job, checks: string[], io: GateIO): Promise<void> {
   if (job.state === 'done' || job.state === 'rejected') return;
   const save = async (patch: Partial<Job>) => { await io.save(patch); Object.assign(job, patch); };
+  let observedMerge:string|null=null;
   try {
     if (job.builder === job.reviewer || !job.target) throw new Error('Independent reviewer and registered target required');
     let s = Snapshot.parse(await io.gather());
+    observedMerge=s.merged;
+    if(!job.merged && job.snapshot && evidence(s)!==evidence(job.snapshot)){await save({snapshot:null,verdict:null});}
+    if (job.merged) {
+      if(!job.snapshot || !job.verdict || job.verdict.decision!=='accept')throw new Error('Merged revision has no accepted review; reconciliation required');
+      await io.beforeShip?.();
+      s=Snapshot.parse(await io.gather());
+      if(evidence(s)!==evidence(job.snapshot))throw new Error('Approval evidence changed after merge; deployment blocked');
+      ready(s,checks);
+    }
     if (!job.merged) {
       const problems = !s.merged ? preflightFindings(s,checks) : [];
       if (problems.length && !job.verdict) {
@@ -85,6 +98,7 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
         await save({ state: 'rejected' }); return;
       }
       if (io.mayShip && !(await io.mayShip())) { await save({state:'approved',error:'Review accepted; owner has shipping disabled'}); return; }
+      await io.beforeShip?.();
       const current = Snapshot.parse(await io.gather());
       if (!current.merged) {
         ready(current, checks);
@@ -97,6 +111,7 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
       await save({ state: 'merged', merged: revision });
       s = current;
     }
+    await io.verifyMerge(job.snapshot!,job.merged!);
     if (!job.deployed) {
       if (io.mayShip && !(await io.mayShip())) { await save({state:'merged',error:'Merge recorded; owner has deployment paused'}); return; }
       await save({ state: 'deploying' });
@@ -109,6 +124,6 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
     await io.complete();
     await save({ state: 'done', error: null });
   } catch (error) {
-    await save({ state: 'blocked', error: error instanceof Error ? error.message : 'Review failed' });
+    await save({ state: 'blocked', ...(job.merged || observedMerge ? {merged:job.merged ?? observedMerge}:{}), error: error instanceof Error ? error.message : 'Review failed' });
   }
 }

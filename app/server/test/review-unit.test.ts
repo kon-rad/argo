@@ -19,6 +19,7 @@ function fixture() {
     async merge(s) { if (current.merged) return current.merged; merges++; current.merged = merged; return merged; },
     async deploy(revision) { deploys++; return revision; },
     async health(revision) { return revision === merged; },
+    async verifyMerge(s,revision){if(current.merged!==revision)throw new Error('Unconfirmed merge');},
     async complete() { completions++; },
   };
   return { job, io, events, setCurrent(s: Snapshot) { current = s; }, counts: () => ({ reviews, merges, deploys, completions }) };
@@ -126,6 +127,7 @@ describe('bounded context and concrete adapters',()=>{
       return '';
     };
     expect(await github.merge('t_123abc',snapshot())).toBe(merged);
+    await github.confirmMerge('t_123abc',snapshot(),merged);
     expect(calls.some(c=>c[0]==='push')).toBe(false);
     expect(ghCalls.find(c=>c[1]==='merge')).toContain('--match-head-commit');
     expect(ghCalls.flat().some(v=>v.startsWith('--force'))).toBe(false);
@@ -182,4 +184,22 @@ it('resolves unambiguous sibling links only beneath owner-selected roots',async(
   expect((await linkedNote(dir,'sibling',[],[],[])).missing).toBe(true);
   expect((await linkedNote(dir,'../escape',[],['project'],[])).missing).toBe(true);
  }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+it('blocks stale approval evidence before any resumed deployment while retaining the actual merge receipt',async()=>{
+ const f=fixture();f.io.mayShip=async()=>false;await runReview(f.job,['test'],f.io);
+ f.job.merged=merged;f.job.state='merged';const s=snapshot();s.merged=merged;s.sources[0]!.revision='changed-ticket';f.setCurrent(s);
+ f.io.mayShip=async()=>true;await runReview(f.job,['test'],f.io);
+ expect(f.job.state).toBe('blocked');expect(f.job.merged).toBe(merged);expect(f.counts().deploys).toBe(0);
+});
+it('invalidates old approval before checking missing new-head evidence, then permits a fresh review',async()=>{
+ const f=fixture();f.io.mayShip=async()=>false;await runReview(f.job,['test'],f.io);
+ const s=snapshot();s.head='d'.repeat(40);s.sources[0]!.missing=true;f.setCurrent(s);
+ await runReview(f.job,['test'],f.io);expect(f.job.snapshot).toBeNull();expect(f.job.verdict).toBeNull();
+ s.sources[0]!.missing=false;f.setCurrent(s);f.io.review=async(current,hash)=>({...verdict(),head:current.head,evidence:hash});
+ await runReview(f.job,['test'],f.io);expect(f.job.state).toBe('approved');expect(f.job.snapshot?.head).toBe(s.head);
+});
+it('retains a confirmed external merge but never deploys it when parent validation fails',async()=>{
+ const f=fixture();f.io.verifyMerge=async()=>{throw new Error('Different parents');};await runReview(f.job,['test'],f.io);
+ expect(f.job.merged).toBe(merged);expect(f.job.state).toBe('blocked');expect(f.counts().deploys).toBe(0);
 });
