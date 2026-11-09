@@ -90,6 +90,9 @@ describe('UsageSession', () => {
     expect(screen.getByText('Build the usage board').closest('article')?.getAttribute('aria-label')).toBe('User message');
     expect(screen.getByText('sub says hi').closest('article')?.getAttribute('aria-label')).toBe('Assistant message');
     expect(screen.getByText('Session metadata').closest('details')?.open).toBe(false);
+    expect(screen.getByText('git status').closest('details')?.open).toBe(false);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Expand tool results' }));
+    expect(screen.getByText('git status').closest('details')?.open).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: /show full text/i }));
     await waitFor(() => expect(screen.getByText('FULL TEXT HERE')).toBeTruthy());
     expect(String(fetchMock.mock.calls[0]![0])).toContain('/usage/agent-sessions/mac/s1');

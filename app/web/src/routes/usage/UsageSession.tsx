@@ -82,7 +82,7 @@ function ToolCard({ pair, show }: { pair: ToolPair; show: Show }) {
   const failed = result?.isError === true;
   const { text: _text, ...metadata } = call;
   return (
-    <details className={`my-2 rounded-lg border p-3 ${failed ? 'border-red-600' : 'border-[var(--rule)]'} ${call.subagent ? 'ml-6' : ''}`}>
+    <details open={show.results} className={`my-2 rounded-lg border p-3 ${failed ? 'border-red-600' : 'border-[var(--rule)]'} ${call.subagent ? 'ml-6' : ''}`}>
       <summary className="cursor-pointer space-x-2 text-xs text-[var(--ink-dim)]">
         <span className="font-semibold text-[var(--ink)]">{call.toolName ?? 'tool'}</span>
         <span>{time(call.ts)}</span>
