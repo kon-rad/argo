@@ -168,7 +168,7 @@ it.each(['draft','unresolved','changesRequested'] as const)('returns incomplete 
   await runReview(f.job,['test'],f.io);expect(f.job.state).toBe('rejected');expect(f.counts().merges).toBe(0);expect(f.events.join(' ')).toContain('Required fix');
 });
 
-import {hasAcceptance,repositoryKey,linkedNote} from '../src/review/context.js';
+import {hasAcceptance,repositoryKey,linkedNote,builderIsReviewer} from '../src/review/context.js';
 it('uses runner body criteria and registered repo headers without accepting unknown repositories',()=>{
  expect(hasAcceptance({body:'Repo: engine\nDone when: all checks pass',contract:{}})).toBe(true);
  expect(hasAcceptance({body:'Please implement it',contract:{}})).toBe(false);
@@ -202,4 +202,10 @@ it('invalidates old approval before checking missing new-head evidence, then per
 it('retains a confirmed external merge but never deploys it when parent validation fails',async()=>{
  const f=fixture();f.io.verifyMerge=async()=>{throw new Error('Different parents');};await runReview(f.job,['test'],f.io);
  expect(f.job.merged).toBe(merged);expect(f.job.state).toBe('blocked');expect(f.counts().deploys).toBe(0);
+});
+
+it('does not permit a reviewer persona to self-approve through a machine-session assignee',()=>{
+ expect(builderIsReviewer({assignee:'machine',body:'Persona: auditor'},'auditor')).toBe(true);
+ expect(builderIsReviewer({assignee:'machine',body:'Persona: coder'},'auditor','Builder persona: auditor')).toBe(true);
+ expect(builderIsReviewer({assignee:'machine',body:'Persona: coder'},'auditor','Builder persona: coder')).toBe(false);
 });

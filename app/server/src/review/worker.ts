@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { evidence, runReview, type Job, type Snapshot, type Source } from './gate.js';
 import { GitHub, codexReview, deploy, type HostConfig } from './adapters.js';
-import { note, source, linkedNote, hasAcceptance, repositoryKey } from './context.js';
+import { note, source, linkedNote, hasAcceptance, repositoryKey, builderIsReviewer } from './context.js';
 
 export async function tick(client: pg.Client, host: HostConfig): Promise<{ claimed: boolean; job?: Job }> {
   const candidates = await client.query(`SELECT * FROM review_jobs WHERE state NOT IN ('done','rejected') AND (state<>'blocked' OR updated_at<now()-interval '5 minutes') ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END, updated_at, id LIMIT 100`);
@@ -63,6 +63,7 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
         // Host materializes run files under a fixed card directory, never follows a PR-provided path.
         sources.push(await note(host.evidenceRoot,`${job.card}/RESULT.md`,host.exclude));
         sources.push(await note(host.evidenceRoot,`${job.card}/run.log`,host.exclude));
+        if(builderIsReviewer(ticket,job.reviewer,sources.find(s=>s.ref.endsWith('/RESULT.md'))?.text))throw new Error('Independent review required: the reviewer authored this work');
         const p = await github.pr(job.card,pinned);
         pinned = p.number;
         if(sources.filter(s=>s.ref.startsWith('note:'+job.card+'/')).some(s=>!s.text.startsWith('Builder revision: '+p.headRefOid+'\n')))sources.push(source('missing:evidence-for-current-head',''));

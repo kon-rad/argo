@@ -63,3 +63,11 @@ export async function linkedNote(root:string,link:string,registered:string[],pre
   if(limited || candidates.size!==1)return {...missing,truncated:limited};
   return note(root,[...candidates][0]!,exclusions);
 }
+
+/** Machine-session cards still retain the actual coder persona for independence checks. */
+export function builderIsReviewer(ticket:Record<string,unknown>,reviewer:string,result=''):boolean {
+ const body=typeof ticket.body==='string'?ticket.body:'';
+ const declared=/^\s*Persona:\s*([a-z0-9_.-]+)/im.exec(body)?.[1];
+ const attested=/^Builder persona:\s*([a-z0-9_.-]+)/im.exec(result)?.[1];
+ return [ticket.assignee,declared,attested].some(x=>typeof x==='string' && x.toLowerCase()===reviewer.toLowerCase());
+}
