@@ -86,6 +86,9 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
        FROM fam f JOIN usage_calls u ON u.host = f.host AND u.session_external_id = f.external_id AND f.source IN ('claude-code', 'codex') AND u.source = f.source
        GROUP BY f.root)
      SELECT p.id, p.source, p.harness, p.profile, p.provider, p.host, p.external_id, p.parent_external_id, p.project, p.title,
+            coalesce((SELECT array_agg(DISTINCT r.task_id ORDER BY r.task_id) FROM usage_runs r
+              WHERE r.host = p.host AND r.session_id = p.external_id AND r.task_id IS NOT NULL
+                AND coalesce(r.runtime, 'claude-code') = p.harness AND p.source = p.harness), '{}'::text[]) AS task_ids,
             p.channel, p.meta ->> 'channel_bot' AS channel_bot,
             (SELECT left(m.content_text, 160) FROM archive_messages m WHERE m.session_id = p.id AND m.step = 'prompt'
                AND m.content_text <> '' ORDER BY m.seq LIMIT 1) AS first_prompt,
@@ -245,7 +248,7 @@ export function agentSessionsRouter(): Router {
     }
     const runs = await query(
       `SELECT run_id, agent_name, task_id, lane, started_at, num_turns, subtype, verify_name, verify_passed, verify_metric, verify_output
-       FROM usage_runs WHERE host = $1 AND session_id = $2 ORDER BY started_at`, [host, sid]);
+       FROM usage_runs WHERE host = $1 AND session_id = $2 AND coalesce(runtime, 'claude-code') = $3 AND $4 = $3 ORDER BY started_at`, [host, sid, session.harness, session.source]);
     const red = redactor();
     for (const r of runs.rows as Array<{ verify_output: string | null }>) if (r.verify_output) r.verify_output = red.text(r.verify_output);
     res.json({ session, runs: runs.rows, steps, next: more ? q.offset + q.limit : null });

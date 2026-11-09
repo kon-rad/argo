@@ -38,6 +38,7 @@ function Row({ s, tz }: { s: AgentSessionRow; tz: string }) {
         {s.channel ? <span className="ml-1 rounded border border-[var(--rule)] px-1 text-xs text-[var(--ink-dim)]" title={s.channel === 'telegram' ? 'a Telegram chat' : `via ${s.channel}`}>{s.channel}{s.channel_bot ? ` · ${s.channel_bot}` : ''}</span> : null}</td>
       <td className="max-w-[28rem]"><Link className="underline" to={sessionLink(s)}>{title}</Link>
         {s.parent_external_id ? <span className="text-xs text-[var(--ink-dim)]"> ({s.harness === 'claude-code' ? 'subagent' : 'continued'})</span> : null}</td>
+      <td>{s.task_ids?.length ? s.task_ids.map((id) => <Link key={id} to={`/board/${encodeURIComponent(id)}`} className="block whitespace-nowrap text-xs underline">{id}</Link>) : <span className="text-[var(--ink-faint)]">-</span>}</td>
       <td className="text-xs">{s.models.join(', ')}{s.provider ? <div className="text-[var(--ink-dim)]">{s.provider}</div> : null}</td>
       <td className="text-right">{s.steps}</td>
       <td className="text-right">{s.tool_calls}{s.errors ? <span className="text-red-600" title="tool calls that failed"> ✗{s.errors}</span> : null}</td>
@@ -98,12 +99,12 @@ export default function AgentSessions({ from, to, tz }: { from: string; to: stri
       </div>
       <div className="overflow-x-auto"><table className="w-full text-sm">
         <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
-          <th>Started</th><th>Machine</th><th>Agent</th><th>Session</th><th>Model</th><th className="text-right">Steps</th>
+          <th>Started</th><th>Machine</th><th>Agent</th><th>Session</th><th>Ticket</th><th>Model</th><th className="text-right">Steps</th>
           <th className="text-right">Tool calls</th><th className="text-right">Tokens in / out</th><th className="text-right">USD (Hermes)</th><th className="text-right">Subagents</th>
         </tr></thead>
         <tbody>
           {(list.data?.sessions ?? []).map((s) => <Row key={s.id} s={s} tz={tz} />)}
-          {list.data && total === 0 && <tr><td colSpan={10} className="py-2 text-xs text-[var(--ink-faint)]">No sessions in this range.</td></tr>}
+          {list.data && total === 0 && <tr><td colSpan={11} className="py-2 text-xs text-[var(--ink-faint)]">No sessions in this range.</td></tr>}
         </tbody>
       </table></div>
       {list.isError && <p className="text-xs text-red-600">Could not load sessions: {(list.error as Error).message}</p>}
