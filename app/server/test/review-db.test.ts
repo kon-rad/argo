@@ -136,3 +136,9 @@ it('does not retroactively submit historical completed cards on metadata updates
  await query('UPDATE review_policy SET enabled=true');await query("UPDATE cards SET result='Historical clarification' WHERE id=$1",[c.id]);
  expect((await getCard(c.id)).card.status).toBe('done');expect((await query('SELECT * FROM review_jobs WHERE card=$1',[c.id])).rows).toHaveLength(0);
 });
+
+it('does not recursively review review-only cards from the existing work graph',async()=>{
+ const c=await createCard('owner',{title:'Review the build',assignee:'auditor',work:'coding',needs:'review',kind:'review',repo:'engine'});
+ await finishCard('auditor',c.id,{outcome:'done'});expect((await getCard(c.id)).card.status).toBe('done');
+ expect((await query('SELECT * FROM review_jobs WHERE card=$1',[c.id])).rows).toHaveLength(0);
+});

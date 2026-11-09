@@ -63,18 +63,22 @@ CREATE FUNCTION review_applies(p_repo text,p_body text,p_board text) RETURNS boo
 $$;
 REVOKE ALL ON FUNCTION review_applies(text,text,text) FROM PUBLIC;
 
+CREATE FUNCTION review_is_code(p_work text,p_needs text,p_kind text) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+ SELECT coalesce(p_needs='code' OR (p_work='coding' AND p_needs IS DISTINCT FROM 'review' AND p_kind IS DISTINCT FROM 'review'),false)
+$$;
+
 -- Once code work enters scope, mutable ticket labels cannot remove the gate.
 ALTER TABLE cards ADD COLUMN review_enforced boolean NOT NULL DEFAULT false;
 CREATE FUNCTION review_mark_card() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 BEGIN
  IF TG_OP='INSERT' THEN
-   NEW.review_enforced := NEW.status NOT IN ('done','archived') AND review_applies(NEW.repo,NEW.body,NEW.board_slug) AND coalesce(NEW.work_type='coding' OR NEW.needs='code',false);
+   NEW.review_enforced := NEW.status NOT IN ('done','archived') AND review_applies(NEW.repo,NEW.body,NEW.board_slug) AND review_is_code(NEW.work_type,NEW.needs,NEW.kind);
  ELSIF NOT OLD.review_enforced AND OLD.status IN ('done','archived') AND NEW.status=OLD.status THEN
    NEW.review_enforced := false;
  ELSE
    NEW.review_enforced := OLD.review_enforced
-    OR (review_applies(OLD.repo,OLD.body,OLD.board_slug) AND coalesce(OLD.work_type='coding' OR OLD.needs='code',false))
-    OR (review_applies(NEW.repo,NEW.body,NEW.board_slug) AND coalesce(NEW.work_type='coding' OR NEW.needs='code',false));
+    OR (review_applies(OLD.repo,OLD.body,OLD.board_slug) AND review_is_code(OLD.work_type,OLD.needs,OLD.kind))
+    OR (review_applies(NEW.repo,NEW.body,NEW.board_slug) AND review_is_code(NEW.work_type,NEW.needs,NEW.kind));
  END IF;
  RETURN NEW;
 END $$;
@@ -90,14 +94,14 @@ BEGIN
   SELECT * INTO j FROM review_jobs WHERE card = NEW.id ORDER BY round DESC LIMIT 1;
   IF j.id IS NULL AND NOT OLD.review_enforced AND OLD.status IN ('done','archived') AND NEW.status=OLD.status THEN RETURN NEW; END IF;
   gated := j.id IS NOT NULL OR OLD.review_enforced
-    OR (review_applies(OLD.repo,OLD.body,OLD.board_slug) AND coalesce(OLD.work_type='coding' OR OLD.needs='code',false))
-    OR (review_applies(NEW.repo,NEW.body,NEW.board_slug) AND coalesce(NEW.work_type='coding' OR NEW.needs='code',false));
+    OR (review_applies(OLD.repo,OLD.body,OLD.board_slug) AND review_is_code(OLD.work_type,OLD.needs,OLD.kind))
+    OR (review_applies(NEW.repo,NEW.body,NEW.board_slug) AND review_is_code(NEW.work_type,NEW.needs,NEW.kind));
   IF NOT gated THEN RETURN NEW; END IF;
   IF j.id IS NOT NULL AND
      (NEW.repo IS DISTINCT FROM OLD.repo OR NEW.work_type IS DISTINCT FROM OLD.work_type OR NEW.assignee IS DISTINCT FROM OLD.assignee OR NEW.board_slug IS DISTINCT FROM OLD.board_slug) THEN
     RAISE EXCEPTION 'review: preserve original builder, repository and work type';
   END IF;
-  IF p.enabled AND (OLD.work_type='coding' OR OLD.needs='code') AND NOT (coalesce(NEW.work_type,'')='coding' OR coalesce(NEW.needs,'')='code') THEN
+  IF p.enabled AND review_is_code(OLD.work_type,OLD.needs,OLD.kind) AND NOT review_is_code(NEW.work_type,NEW.needs,NEW.kind) THEN
     RAISE EXCEPTION 'review: coding classification cannot bypass policy';
   END IF;
   IF NEW.status IN ('done','archived') AND j.state = 'done' THEN
@@ -219,7 +223,7 @@ BEGIN
   IF card.id IS NULL THEN RAISE EXCEPTION 'no card %', p_card; END IF;
   IF c.runtime <> 'human' AND NOT ('dispatch' = ANY (c.capabilities)) THEN
     IF card.assignee IS DISTINCT FROM c.name THEN RAISE EXCEPTION '% can''t move %''s card', c.name, card.assignee; END IF;
-    IF p_status = 'archived' OR (p_status = 'done' AND NOT (card.review_enforced OR (review_applies(card.repo,card.body,card.board_slug) AND (card.work_type='coding' OR card.needs='code')))) THEN RAISE EXCEPTION 'finish the card (cli-board finish) instead of moving it to %', p_status; END IF;
+    IF p_status = 'archived' OR (p_status = 'done' AND NOT (card.review_enforced OR (review_applies(card.repo,card.body,card.board_slug) AND review_is_code(card.work_type,card.needs,card.kind)))) THEN RAISE EXCEPTION 'finish the card (cli-board finish) instead of moving it to %', p_status; END IF;
   END IF;
   IF card.status = 'running' AND p_status <> 'running' AND EXISTS (SELECT 1 FROM card_runs WHERE card_id = p_card AND finished_at IS NULL) THEN
     UPDATE card_runs SET finished_at = now(), outcome = 'partial' WHERE card_id = p_card AND finished_at IS NULL;
@@ -244,7 +248,7 @@ $$;
 -- Existing shipping wrappers must not let a ship-now approval bypass this gate.
 CREATE FUNCTION review_required(p_card text) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT EXISTS (SELECT 1 FROM review_jobs WHERE card=p_card) OR EXISTS
-    (SELECT 1 FROM cards WHERE cards.id=p_card AND (review_enforced OR (review_applies(repo,body,board_slug) AND (work_type='coding' OR needs='code'))))
+    (SELECT 1 FROM cards WHERE cards.id=p_card AND (review_enforced OR (review_applies(repo,body,board_slug) AND review_is_code(work_type,needs,kind))))
 $$;
 REVOKE ALL ON FUNCTION review_required(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION review_required(text) TO sb_org;
