@@ -52,11 +52,16 @@ mkdir my-vault && cd my-vault && git init
 git submodule add https://github.com/kon-rad/argo.git .secondbrain
 .secondbrain/bin/secondbrain-vault init .
 cp .env.example .env
+printf '{}\n' > secondbrain.json
 git add -A && git commit -m "new vault"
 
 .secondbrain/app/bin/secondbrain        # installs, migrates, builds, starts, opens the browser
 .secondbrain/app/bin/secondbrain scan   # build the index
 ```
+
+`secondbrain.json` is your **instance configuration**: non-secret settings for this vault. The command above starts it with `{}`, which uses the defaults. `init` supplies `secondbrain.example.json` as a reference; copy only the sections you need and replace its example values. Keys stay in `.env`, never in this file. See [Configuration and secrets](docs/onboarding/08-config-and-secrets.md) and the [instance configuration reference](docs/configuration.md#secondbrainjson).
+
+The engine also contains **feature manifests** (`manifest.ts`, or `manifest.json` for external addons). Those describe how engine features are registered; they are developer code, not your instance settings. Users configure an installation through `secondbrain.json` and `.env`, without editing feature manifests. See [Addons](docs/addons.md#instance-configuration-and-feature-manifests).
 
 The app runs on `http://127.0.0.1:5123` with no login. Optional next steps, each a few lines in the docs:
 
@@ -79,7 +84,7 @@ my-vault/                      private
 ├── CLAUDE.md                  @AGENTS.md
 ├── .agents/skills/            your skills + links to the shared ones
 ├── .agents/guard.local.json   your extra guard rules
-├── secondbrain.json           optional: metrics, map folders, channels
+├── secondbrain.json           instance configuration: addons and non-secret settings
 ├── .env                       your settings and keys (gitignored)
 └── Projects/ Areas/ Research/ Archives/
 ```

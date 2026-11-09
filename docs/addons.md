@@ -10,7 +10,13 @@ The core features (`projects`, `memory`, `org`, `board`, `usage`, `summaries`) s
 
 `MODULES=map,voice` in `.env` still works and means the same thing; `addons` in `secondbrain.json` is the newer home.
 
-Each addon has one place it is wired, a manifest at `app/server/src/addons/<name>/manifest.ts`, the same shape as a core feature's (`app/server/src/features/<name>/manifest.ts`): the CLI commands, the timers, the PATH wrappers, the env keys and the doc page. `secondbrain features list` prints the core features and the addons with their state; `secondbrain plan|apply` and `deploy.sh` read the same manifests for the units and the env, so an addon's timer installs only when the addon is on and off means nothing mounts, links or runs.
+## Instance configuration and feature manifests
+
+`<vault>/secondbrain.json` is the **instance configuration**, edited by the instance owner. The `addons` list above chooses which existing addons this installation enables. It does not define a new addon or contain credentials. See the [configuration reference](configuration.md#secondbrainjson) and [new-vault setup](onboarding/02-set-up-your-vault.md#step-2-create-the-vault).
+
+A **feature manifest** is an engine registration file, maintained by contributors. It describes what a feature supplies; the instance configuration selects whether an addon is enabled and provides its supported options. You do not edit engine manifests to personalize an installation.
+
+Each addon has one place it is wired, an addon manifest at `app/server/src/addons/<name>/manifest.ts`, the same shape as a core feature's (`app/server/src/features/<name>/manifest.ts`): the CLI commands, the timers, the PATH wrappers, the env keys and the doc page. `secondbrain features list` prints the core features and the addons with their state; `secondbrain plan|apply` and `deploy.sh` read the same manifests for the units and the env, so an addon's timer installs only when the addon is on and off means nothing mounts, links or runs.
 
 | Addon | One line | CLI | Timers (server) |
 |---|---|---|---|

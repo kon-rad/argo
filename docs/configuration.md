@@ -12,6 +12,21 @@ Three places, each for one kind of value. Nothing personal is ever compiled into
 
 The app reads `<vault>/.env` at start (`app/server/src/config.ts`), validates every value, and refuses to start with a clear message if one is invalid. A value already in the process environment wins over the file.
 
+## Instance configuration and feature manifests
+
+These names refer to different layers:
+
+| Term | Location | Who edits it | Purpose |
+|---|---|---|---|
+| **Instance configuration** | `<vault>/secondbrain.json` (or `SECONDBRAIN_SETTINGS`) | The instance owner | Non-secret choices for this installation, such as enabled addons and Usage panels |
+| **Example instance configuration** | `<vault>/secondbrain.example.json`, copied from the engine's `vault-template/` | Read it as a reference | Examples of supported settings; the app does not load this file automatically |
+| **Feature manifest** | Engine `app/server/src/features/<name>/manifest.ts` or `app/server/src/addons/<name>/manifest.ts` | Engine contributors | Registration and lifecycle wiring for a feature: commands, routes, units and configuration metadata |
+| **External addon manifest** | Engine `addons/<name>/manifest.json` for external addons such as the kiosk and Telegram bridge | Engine contributors | Describes an addon that runs outside the app |
+
+Use **instance configuration** for the user's JSON file and **feature manifest** or **addon manifest** for the engine registration files. If another page calls `secondbrain.json` a "vault manifest", it means the instance configuration, not a feature manifest. Enabling an existing addon changes instance configuration; implementing a new addon changes engine code. See [Addons](addons.md#instance-configuration-and-feature-manifests).
+
+For a fresh instance, follow [Set up your vault](onboarding/02-set-up-your-vault.md#step-2-create-the-vault). No engine source edit is needed to set instance options. Secrets and per-machine environment values stay in `.env` or the server environment file.
+
 ## Core settings
 
 | Variable | Default | Purpose |
@@ -166,7 +181,13 @@ Per-machine settings for `secondbrain-vault sync` ([sync.md](sync.md)); the shar
 
 ## `secondbrain.json`
 
-Settings that don't fit on one env line. Every section is optional; a file that doesn't parse is reported and ignored, and the app uses empty defaults. `vault-template/secondbrain.example.json` has one of each.
+The **instance configuration** holds settings that do not fit on one env line. Every section is optional. A missing file uses defaults; an unparsable or invalid file is reported and ignored, and the app uses defaults. `init` copies `vault-template/secondbrain.example.json` into a new vault as a reference, not as the active file.
+
+Start with `secondbrain.json` containing `{}` and add only the sections you need. Alternatively, copy `secondbrain.example.json` to `secondbrain.json`, then remove unwanted sections and replace placeholder paths, handles and models before starting the app. Do not overwrite an existing instance configuration when following setup instructions again.
+
+The app loads `<vault>/secondbrain.json` once per server process. `SECONDBRAIN_SETTINGS` selects another file; a relative value is resolved against the vault root. Restart the app after edits. Commit non-secret instance settings to your private vault and sync them to other machines; keep credentials out of this file. For server provisioning, [plan and apply](#generated-config-plan-apply-upgrade) use the `server` block together with the engine's feature manifests. They do not create subscription logins or provider credentials.
+
+The reference below lists shipped settings. It is not a generic registry for arbitrary subscription accounts or harnesses; a new integration still needs engine support.
 
 | Key | Module | Holds |
 |---|---|---|
@@ -241,7 +262,7 @@ Unset, nothing falls back: the wake fails the way it did before, and the card go
 
 ### Usage page providers and sections
 
-The Usage page owns subscription quotas, prepaid balances and run/session accounting. The navigation header and agent profile link to Usage instead of polling duplicate quota or token summaries. Select the providers and sections this installation uses in its manifest, `<vault>/secondbrain.json`:
+The Usage page owns subscription quotas, prepaid balances and run/session accounting. The navigation header and agent profile link to Usage instead of polling duplicate quota or token summaries. Select the providers and sections this installation uses in its instance configuration, `<vault>/secondbrain.json`:
 
 ```json
 {
@@ -253,7 +274,7 @@ The Usage page owns subscription quotas, prepaid balances and run/session accoun
 }
 ```
 
-Restart the app after changing the manifest; settings are read once per server process.
+Restart the app after changing instance configuration; settings are read once per server process.
 
 Subscriptions and credits default to empty lists. Listing a provider enables its panel; it does not create credentials, purchase a plan, or change a provider's limits. Array order determines panel order. An explicit empty `sections` list hides all four optional page sections, while subscription/credit panels are controlled separately. Disabled sections do not start their UI polling. The Usage core feature and its navigation remain available.
 
