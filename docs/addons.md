@@ -37,7 +37,7 @@ Each addon has one place it is wired, an addon manifest at `app/server/src/addon
 | [`dispatch`](modules.md) | The zen-agent and Codex dispatcher: one run per bot with open wakeups | `dispatch` | `dispatch` |
 | [`improve`](modules.md) | The self-improvement loop (proposal) | - | - |
 
-Two addons run outside the app and so keep a `manifest.json` at the repo root instead of a TypeScript manifest: `addons/tv-kiosk/` (a Raspberry Pi that shows the app on a TV) and `addons/telegram-bridge/` (a Python bridge with its own unit and env). `deploy`, `doctor` and this index read both shapes.
+The [kiosk](https://github.com/kon-rad/argo/blob/main/addons/tv-kiosk/README.md) and [Telegram bridge](https://github.com/kon-rad/argo/blob/main/addons/telegram-bridge/README.md) run outside the app. Follow their own README setup instructions.
 
 ## Pilot and proposal addons
 

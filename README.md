@@ -61,7 +61,7 @@ git add -A && git commit -m "new vault"
 
 `secondbrain.json` is your **instance configuration**: non-secret settings for this vault. The command above starts it with `{}`, which uses the defaults. `init` supplies `secondbrain.example.json` as a reference; copy only the sections you need and replace its example values. Keys stay in `.env`, never in this file. See [Configuration and secrets](docs/onboarding/08-config-and-secrets.md) and the [instance configuration reference](docs/configuration.md#secondbrainjson).
 
-The engine also contains **feature manifests** (`manifest.ts`, or `manifest.json` for external addons). Those describe how engine features are registered; they are developer code, not your instance settings. Users configure an installation through `secondbrain.json` and `.env`, without editing feature manifests. See [Addons](docs/addons.md#instance-configuration-and-feature-manifests).
+The engine also contains **feature manifests** (`manifest.ts`). Those describe how engine features are registered; they are developer code, not your instance settings. Users configure an installation through `secondbrain.json` and `.env`, without editing feature manifests. See [Addons](docs/addons.md#instance-configuration-and-feature-manifests).
 
 The app runs on `http://127.0.0.1:5123` with no login. Optional next steps, each a few lines in the docs:
 

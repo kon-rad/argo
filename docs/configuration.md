@@ -21,7 +21,6 @@ These names refer to different layers:
 | **Instance configuration** | `<vault>/secondbrain.json` (or `SECONDBRAIN_SETTINGS`) | The instance owner | Non-secret choices for this installation, such as enabled addons and Usage panels |
 | **Example instance configuration** | `<vault>/secondbrain.example.json`, copied from the engine's `vault-template/` | Read it as a reference | Examples of supported settings; the app does not load this file automatically |
 | **Feature manifest** | Engine `app/server/src/features/<name>/manifest.ts` or `app/server/src/addons/<name>/manifest.ts` | Engine contributors | Registration and lifecycle wiring for a feature: commands, routes, units and configuration metadata |
-| **External addon manifest** | Engine `addons/<name>/manifest.json` for external addons such as the kiosk and Telegram bridge | Engine contributors | Describes an addon that runs outside the app |
 
 Use **instance configuration** for the user's JSON file and **feature manifest** or **addon manifest** for the engine registration files. If another page calls `secondbrain.json` a "vault manifest", it means the instance configuration, not a feature manifest. Enabling an existing addon changes instance configuration; implementing a new addon changes engine code. See [Addons](addons.md#instance-configuration-and-feature-manifests).
 
