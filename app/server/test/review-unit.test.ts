@@ -163,6 +163,18 @@ it('keeps accepted reviews non-shipping until the owner enables shipping',async(
   await runReview(f.job,['test'],f.io);expect(f.job.state).toBe('approved');expect(f.counts().merges).toBe(0);
   f.io.mayShip=async()=>true;await runReview(f.job,['test'],f.io);expect(f.job.state).toBe('done');expect(f.counts().reviews).toBe(1);
 });
+it('retains one validated approval across repeated shipping pauses and resumes once',async()=>{
+  const f=fixture();let enabled=false;f.io.mayShip=async()=>enabled;
+  await runReview(f.job,['test'],f.io);
+  const accepted=structuredClone(f.job.verdict),reviewed=structuredClone(f.job.snapshot);
+  for(let tick=0;tick<3;tick++)await runReview(f.job,['test'],f.io);
+  expect(f.job.state).toBe('approved');
+  expect(f.job.verdict).toEqual(accepted);expect(f.job.snapshot).toEqual(reviewed);
+  expect(f.counts()).toEqual({reviews:1,merges:0,deploys:0,completions:0});
+  enabled=true;await runReview(f.job,['test'],f.io);await runReview(f.job,['test'],f.io);
+  expect(f.job.state).toBe('done');
+  expect(f.counts()).toEqual({reviews:1,merges:1,deploys:1,completions:1});
+});
 it.each(['draft','unresolved','changesRequested'] as const)('returns incomplete PR %s to its builder with specific fixes',async key=>{
   const f=fixture(),s=snapshot();if(key==='unresolved')s.unresolved=1;else s[key]=true;f.setCurrent(s);
   await runReview(f.job,['test'],f.io);expect(f.job.state).toBe('rejected');expect(f.counts().merges).toBe(0);expect(f.events.join(' ')).toContain('Required fix');
