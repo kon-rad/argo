@@ -120,7 +120,7 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
       await save({ state: 'deployed', deployed: revision });
     }
     if (!(await io.health(job.merged!))) throw new Error('Health does not attest merged revision');
-    await save({ health:job.merged });
+    await save({ health:job.merged, ...(job.state==='deployed' ? {} : {state:'deployed' as const}) });
     await io.complete();
     await save({ state: 'done', error: null });
   } catch (error) {

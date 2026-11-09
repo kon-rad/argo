@@ -239,3 +239,12 @@ it('reuses the accepted review after a PostgreSQL JSONB worker restart',async()=
   f.io.mayShip=async()=>true;await runReview(f.job,['test'],f.io);
   expect(f.job.state).toBe('done');expect(f.counts()).toEqual({reviews:1,merges:1,deploys:1,completions:1});
 });
+it('restores deployed state after health failure before SQL completion without repeating effects',async()=>{
+  const f=fixture(),health=f.io.health,complete=f.io.complete;
+  f.io.health=async()=>false;
+  f.io.complete=async()=>{if(f.job.state!=='deployed')throw new Error('SQL requires deployed state');await complete();};
+  await runReview(f.job,['test'],f.io);
+  expect(f.job.state).toBe('blocked');expect(f.job.deployed).toBe(merged);
+  f.io.health=health;await runReview(f.job,['test'],f.io);
+  expect(f.job.state).toBe('done');expect(f.counts()).toEqual({reviews:1,merges:1,deploys:1,completions:1});
+});
