@@ -115,7 +115,7 @@ describe('bounded context and concrete adapters',()=>{
   it('requires a unique known PR and uses normal exact-head PR merge under strict branch protection',async()=>{
     const repo={github:'example/engine',gitDir:'/tmp/fixture.git',base:'main',target:'fixture',checks:['test'],notes:['design.md']};
     const github=new GitHub({home:'/tmp'} as HostConfig,repo), calls:string[][]=[], ghCalls:string[][]=[];
-    const metadata={number:7,body:'t_123abc',headRefOid:sha,baseRefOid:base,baseRefName:'main',headRefName:'card/t_123abc',isCrossRepository:false,isDraft:false,reviewDecision:null,state:'OPEN',mergeCommit:null as null|{oid:string},statusCheckRollup:[]};
+    const metadata={number:7,body:'t_123abc',headRefOid:sha,baseRefOid:base,baseRefName:'main',headRefName:'card/t_123abc',isCrossRepository:false,isDraft:false,mergeStateStatus:'CLEAN',mergeable:'MERGEABLE',reviewDecision:null,state:'OPEN',mergeCommit:null as null|{oid:string},statusCheckRollup:[]};
     github.gh=async args=> {ghCalls.push(args);if(args[1]==='list')return '[]';if(args[0]==='api' && !args[1]?.endsWith('/protection'))return JSON.stringify({permissions:{admin:false}});if(args[0]==='api')return JSON.stringify({required_status_checks:{strict:true,contexts:['test']},allow_force_pushes:{enabled:false},enforce_admins:{enabled:true}});if(args[1]==='merge'){metadata.state='MERGED';metadata.mergeCommit={oid:merged};return '';}return JSON.stringify(metadata);};
     await expect(github.pr('t_123abc')).rejects.toThrow(/Unknown/);
     github.git=async args=>{
