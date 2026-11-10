@@ -46,7 +46,7 @@ describe('channel label from the collectors', () => {
     const paths = { claudeProjectsDir: join(root, 'projects'), runsDir: null, statuslineLog: null };
     await syncUsage(paths, 'droplet');
     const row = async () => (await query(`SELECT channel, meta, title FROM archive_sessions WHERE external_id = 'tg-1'`)).rows[0]!;
-    expect(await row()).toMatchObject({ channel: 'telegram', meta: { channel: 'telegram', channel_handle: '@someone', channel_bot: 'claude' } });
+    expect(await row()).toMatchObject({ channel: 'telegram', meta: { channel: 'telegram', channel_handle: '@someone', channel_bot: 'claude', entrypoint: 'cli' } });
     expect(JSON.stringify((await row()).meta)).not.toContain('12345');
     // The next chunk has no tag: the label stays.
     writeFileSync(file, readFileSync(file, 'utf8') + user('u3', '2026-10-30T19:06:00Z', `${TAG}\nthanks\n</channel>`) + assistant('a2', 'msg_2', '2026-10-30T19:06:05Z'));
@@ -57,13 +57,47 @@ describe('channel label from the collectors', () => {
     expect(steps[1]!.content_text).toBe('file a ticket please');
     // The page: the /clear record is not the title, the chip says telegram, the facet counts it.
     const list = await request(app).get('/api/usage/agent-sessions?from=2026-10-30T00:00:00Z&to=2026-10-31T00:00:00Z').expect(200);
-    expect(list.body.sessions[0]).toMatchObject({ channel: 'telegram', channel_bot: 'claude', first_prompt: 'file a ticket please' });
+    expect(list.body.sessions[0]).toMatchObject({ channel: 'telegram', channel_bot: 'claude', first_prompt: 'file a ticket please',
+      session_type: 'telegram', persona: 'claude', display_title: 'file a ticket please', title_source: 'prompt', context_tokens: 5 });
     const facets = await request(app).get('/api/usage/agent-sessions/facets?from=2026-10-30T00:00:00Z&to=2026-10-31T00:00:00Z').expect(200);
     expect(facets.body.facets.channel).toEqual([{ value: 'telegram', n: 1 }]);
     const none = await request(app).get('/api/usage/agent-sessions?from=2026-10-30T00:00:00Z&to=2026-10-31T00:00:00Z&channel=none').expect(200);
     expect(none.body.total).toBe(0);
     // usage_facts carries it to the token charts.
     expect((await query(`SELECT channel, count(*)::int n FROM usage_facts GROUP BY 1`)).rows).toEqual([{ channel: 'telegram', n: 2 }]);
+  });
+
+  it('never guesses between same-agent bots and honors only recorded matching identities', async () => {
+    writeFileSync(join(root, 'secondbrain.json'), JSON.stringify({ telegram: { bots: [
+      { name: 'first', agent: 'claude-code', username: 'firstbot', persona: 'first-persona' },
+      { name: 'second', agent: 'claude-code', username: 'secondbot', persona: 'second-persona' },
+      { name: 'other-runtime', agent: 'hermes', persona: 'other-persona' },
+    ] } }));
+    resetSettings();
+    const dir = join(root, 'projects', '-srv-example');
+    mkdirSync(dir, { recursive: true });
+    const cases = [['ambiguous', ''], ['named', ' bot="second"'], ['username', ' bot="@secondbot"'],
+      ['unknown', ' bot="not-configured"'], ['wrong-runtime', ' bot="other-runtime"']];
+    for (const [id, hint] of cases) writeFileSync(join(dir, `${id}.jsonl`), line({ type: 'user', uuid: id, sessionId: id,
+      timestamp: '2026-10-30T19:05:31Z', entrypoint: 'cli', message: { content: `<channel source="plugin:telegram:telegram"${hint}>\nInspect a synthetic deployment\n</channel>` } }));
+    await syncUsage({ claudeProjectsDir: join(root, 'projects'), runsDir: null, statuslineLog: null }, 'mac');
+    // Repair a formerly guessed identity when the next increment has no recorded bot hint.
+    await query(`UPDATE archive_sessions SET meta = meta || '{"channel_bot":"first","channel_persona":"first-persona"}'::jsonb WHERE external_id='ambiguous'`);
+    const ambiguous = join(dir, 'ambiguous.jsonl');
+    writeFileSync(ambiguous, readFileSync(ambiguous, 'utf8') + line({ type: 'user', uuid: 'next', sessionId: 'ambiguous',
+      timestamp: '2026-10-30T19:06:31Z', entrypoint: 'cli', message: { content: '<channel source="plugin:telegram:telegram">\nInspect again\n</channel>' } }));
+    await syncUsage({ claudeProjectsDir: join(root, 'projects'), runsDir: null, statuslineLog: null }, 'mac');
+    const rows = (await query(`SELECT external_id, meta ->> 'channel_bot' bot, meta ->> 'channel_persona' persona FROM archive_sessions ORDER BY external_id`)).rows;
+    expect(rows).toEqual([
+      { external_id: 'ambiguous', bot: null, persona: null },
+      { external_id: 'named', bot: 'second', persona: 'second-persona' },
+      { external_id: 'unknown', bot: null, persona: null },
+      { external_id: 'username', bot: 'second', persona: 'second-persona' },
+      { external_id: 'wrong-runtime', bot: null, persona: null },
+    ]);
+    const list = await request(app).get('/api/usage/agent-sessions').query({ from: '2026-10-30T00:00:00Z', to: '2026-10-31T00:00:00Z', type: 'telegram' }).expect(200);
+    expect(list.body.sessions.find((r: { external_id: string }) => r.external_id === 'ambiguous')).toMatchObject({ channel_bot: null, persona: null });
+    expect(list.body.sessions.find((r: { external_id: string }) => r.external_id === 'named')).toMatchObject({ channel_bot: 'second', persona: 'second-persona' });
   });
 
   it('labels a zen-agent run from the meta line a resumed run appended', async () => {
@@ -79,7 +113,8 @@ describe('channel label from the collectors', () => {
       line({ type: 'message', at: '2026-10-28T08:41:58.000Z', message: { role: 'user', content: 'and the reel skill', timestamp: '2026-10-28T08:41:58.000Z' } }) +
       line({ type: 'end', at: '2026-10-28T08:42:30.000Z', stopped: 'done', turns: 1 }));
     await syncUsage({ claudeProjectsDir: join(root, 'none'), runsDir: null, statuslineLog: null, zenSessionsDir: zen }, 'droplet');
-    expect((await query(`SELECT channel, meta ->> 'channel_bot' bot FROM archive_sessions`)).rows).toEqual([{ channel: 'telegram', bot: 'zen' }]);
+    expect((await query(`SELECT channel, meta ->> 'channel_bot' bot, meta ->> 'channel_persona' persona FROM archive_sessions`)).rows)
+      .toEqual([{ channel: 'telegram', bot: 'zen', persona: 'sol' }]);
     expect((await query(`SELECT work_type, reasons FROM usage_runs`)).rows[0]).toMatchObject({ work_type: 'telegram', reasons: [{ reason: 'telegram', ref: '9' }] });
   });
 

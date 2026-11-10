@@ -48,6 +48,11 @@ describe('parseClaudeJsonl', () => {
     expect(c.linesConsumed).toBe(4);
   });
 
+  it('reads how Claude Code was started from the first record that says, and null when none does', () => {
+    expect(parseClaudeJsonl(Buffer.from(L(user) + L({ ...asst, entrypoint: 'sdk-cli' }) + L({ ...asst, uuid: 'a2', entrypoint: 'cli' })), 0).entrypoint).toBe('sdk-cli');
+    expect(parseClaudeJsonl(Buffer.from(L(title)), 0).entrypoint).toBeNull();
+  });
+
   it('stops at the last complete line', () => {
     const full = L(user);
     const buf = Buffer.from(full + '{"type":"assistant","uu');
