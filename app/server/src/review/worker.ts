@@ -2,6 +2,7 @@ import type pg from 'pg';
 import { evidence, runReview, type Job, type Snapshot, type Source } from './gate.js';
 import { GitHub, codexReview, deploy, type HostConfig } from './adapters.js';
 import { note, source, linkedNote, hasAcceptance, repositoryKey, builderIsReviewer } from './context.js';
+import { POLICY, evaluate, requireCapacity, scopeObservation } from './policy.js';
 
 export async function tick(client: pg.Client, host: HostConfig): Promise<{ claimed: boolean; job?: Job }> {
   const candidates = await client.query(`SELECT * FROM review_jobs WHERE state NOT IN ('done','rejected') AND (state<>'blocked' OR updated_at<now()-interval '5 minutes') ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END, updated_at, id LIMIT 100`);
@@ -69,9 +70,10 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
         if(sources.filter(s=>s.ref.startsWith('note:'+job.card+'/')).some(s=>!s.text.startsWith('Builder revision: '+p.headRefOid+'\n')))sources.push(source('missing:evidence-for-current-head',''));
         const threads=await github.threads(p.number);
         sources.push(source(`github:${repo.github}/pull/${p.number}`,{body:p.body,headRefName:p.headRefName,baseRefName:p.baseRefName,isDraft:p.isDraft,reviewDecision:p.reviewDecision,statusCheckRollup:p.statusCheckRollup,threads}));
-        sources.push(source(`github:diff:${p.headRefOid}`,await github.diff(p.number),true,250_000));
-        for(const code of await github.code(p))sources.push(source(code.ref,code.text));
-        if (sources.reduce((n,s) => n+s.text.length,0)>500_000) sources.push({ ...source('context-budget',''),truncated:true });
+        const diff=await github.diff(p.number), code=await github.code(p);
+        requireCapacity(evaluate(scopeObservation([],code,diff,0,sources.reduce((n,s)=>n+s.text.length,0)),'actual'));
+        sources.push(source(`github:diff:${p.headRefOid}`,diff,true,POLICY.diffChars));
+        for(const item of code)sources.push(source(item.ref,item.text));
         return { repo:repo.github,pr:p.number,head:p.headRefOid,behind:p.state==='OPEN' && p.mergeStateStatus==='BEHIND',conflicting:p.state==='OPEN' && (p.mergeStateStatus==='DIRTY' || p.mergeable==='CONFLICTING'),draft:p.isDraft,unresolved:threads.filter(t=>!t.isResolved).length,changesRequested:p.reviewDecision==='CHANGES_REQUESTED',
           base:p.mergeCommit && job.snapshot ? job.snapshot.base : p.baseRefOid,branch:p.baseRefName,merged:p.mergeCommit?.oid ?? null,
           checks:p.statusCheckRollup.map(c => ({ name:c.name ?? c.context ?? '',state: c.status === 'COMPLETED' && c.conclusion === 'SUCCESS' || c.state === 'SUCCESS' ? 'pass' : c.status==='COMPLETED' || ['FAILURE','ERROR'].includes(c.state ?? '') ? 'fail' : 'pending' })),sources };
