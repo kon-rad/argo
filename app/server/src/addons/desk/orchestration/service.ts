@@ -1,6 +1,7 @@
 import { validateWalletIntent, walletTransaction, walletHash, type ProviderWalletIntent, type WalletSubmission } from '@secondbrain/desk-contracts/desk';
 import { randomUUID } from 'node:crypto';
 import { artifactDigest, assertProductionAdapters, checkMutation, checkRelease, checkWorkerSpec, dispatchEligibility, reducePublicState, type Adapter, type Approval, type DeskIdentity, type DeskOperatorApi, type DeskPublicStore, type DeskPublisher, type DeskRunner, type DeskSettlement, type EntityRef, type Mutation, type Observation, type OperatorJob, type Provider, type PublicState, type ReleaseRequest, type Result, type WorkerResult, type WorkerSpec } from '@secondbrain/desk-contracts/desk';
+import { config } from '../../../config.js';
 import { DeskStoreError, type AssignmentRecord, type DeskPersistence } from '../persistence/store.js';
 
 export interface DeskSnapshots extends Adapter { snapshot(jobRef: EntityRef): Promise<Result<Observation[]>> }
@@ -35,7 +36,7 @@ export class DeskOrchestrator implements DeskOperatorApi {
   readonly mode: 'live' | 'fixture';
   constructor(private readonly o: DeskServiceOptions) {
     const adapters = [o.snapshots, o.publicStore, o.identity, o.runner, o.publisher, o.settlement, o.providerTransactions, o.capabilities];
-    assertProductionAdapters(process.env.NODE_ENV ?? 'development', adapters);
+    assertProductionAdapters(config.env.NODE_ENV, adapters);
     this.mode = adapters.every(a => a.mode === 'live') ? 'live' : 'fixture';
   }
   async inbox(): Promise<Result<OperatorJob[]>> { const r = await this.jobs(); return r.kind === 'ok' ? ok(r.value.filter(j => j.execution === 'awaiting_operator' && Boolean(j.publicState.acceptance))) : r; }

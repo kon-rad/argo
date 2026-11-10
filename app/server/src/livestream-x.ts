@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { config } from './config.js';
 import { query } from './db.js';
 import { recordObservation } from './livestream.js';
 
@@ -147,7 +148,7 @@ export async function pollX(now = new Date(), f: Fetch = fetch): Promise<{ lines
 export type Notify = (text: string) => Promise<void>;
 
 /** Sends through the Hermes bot to its home channel. Reads only the two keys it needs from Hermes's env file. */
-export function hermesTelegram(envFile = process.env.HERMES_ENV_FILE ?? join(process.env.HERMES_HOME ?? join(homedir(), '.hermes'), '.env')): Notify {
+export function hermesTelegram(envFile = config.env.HERMES_ENV_FILE ?? join(config.env.HERMES_HOME ?? join(homedir(), '.hermes'), '.env')): Notify {
   return async (text) => {
     const env: Record<string, string> = {};
     for (const line of readFileSync(envFile, 'utf8').split('\n')) {

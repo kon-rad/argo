@@ -21,14 +21,14 @@ const argv = process.argv.slice(2);
 const sub = argv[0] ?? 'plan';
 const yes = argv.includes('--yes');
 
-const unitDir = process.env.SB_UNIT_DIR ?? '/etc/systemd/system';
+const unitDir = config.env.SB_UNIT_DIR ?? '/etc/systemd/system';
 
 const io: ConfigIo = {
   server: settings().server,
   modules: config.modules,
   templateDir: join(config.appRoot, 'deploy'),
   unitDir,
-  envPath: process.env.SB_ENV_FILE ?? '/etc/secondbrain/env',
+  envPath: config.env.SB_ENV_FILE ?? '/etc/secondbrain/env',
   values: process.env,
   read: (path) => {
     try {

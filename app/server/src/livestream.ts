@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { config } from './config.js';
 import { query, withTransaction } from './db.js';
 import { settings } from './settings.js';
 
@@ -24,9 +25,9 @@ import { settings } from './settings.js';
 export function channels(): { youtube?: string; twitch?: string; kick?: string } {
   const s = settings().livestream;
   return {
-    youtube: process.env.LIVESTREAM_YOUTUBE || s.youtube,
-    twitch: process.env.LIVESTREAM_TWITCH || s.twitch,
-    kick: process.env.LIVESTREAM_KICK || s.kick,
+    youtube: config.env.LIVESTREAM_YOUTUBE || s.youtube,
+    twitch: config.env.LIVESTREAM_TWITCH || s.twitch,
+    kick: config.env.LIVESTREAM_KICK || s.kick,
   };
 }
 

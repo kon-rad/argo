@@ -271,10 +271,10 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
   const [cmd, ...rest] = argv;
   const { pos, opts } = parseArgs(rest);
   const json = opts.json === true;
-  const run = process.env.ORG_RUN;
+  const run = config.env.ORG_RUN;
   // recall searches the vault on the app's own connection first (sb_org can't read the vault index), then switches.
   const vaultHits = cmd === 'recall' && pos[0] ? await recallVault(pos[0], num(opts.limit, 'limit') ?? 8) : null;
-  if (process.env.ORG_AGENT?.trim() && process.env.SB_ORG_DB_URL) setDatabaseUrl(agentDatabaseUrl(process.env.SB_ORG_DB_URL, identityName()));
+  if (config.env.ORG_AGENT?.trim() && config.env.SB_ORG_DB_URL) setDatabaseUrl(agentDatabaseUrl(config.env.SB_ORG_DB_URL, identityName()));
   const me = async (): Promise<Agent> => getAgent(identityName());
   const print = (ms: Message[], empty: string): void => {
     if (json) out(JSON.stringify(ms, null, 2));
@@ -644,7 +644,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       if (!subject || !claim || !source) throw new OrgError('remember "<subject>" "<claim>" --source <path|#msg|t_card|url> [--project p] [--inferred] [--supersedes id]');
       const f = await remember(await me(), {
         subject, claim, source, project: str(opts.project), inferred: opts.inferred === true, supersedes: num(opts.supersedes, 'supersedes'),
-        via: str(opts.via) ?? process.env.ORG_VIA,
+        via: str(opts.via) ?? config.env.ORG_VIA,
       });
       out(json ? JSON.stringify(f) : `fact #${f.id} saved${f.supersedes ? ` (closes #${f.supersedes})` : ''}`);
       return 0;
@@ -667,7 +667,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
     case 'route': {
       const [sub] = pos;
       if (sub === 'decide') {
-        const file = str(opts.config) ?? process.env.ORG_ROUTING_JSON ?? resolve('.agents/org/routing.json');
+        const file = str(opts.config) ?? config.env.ORG_ROUTING_JSON ?? resolve('.agents/org/routing.json');
         if (!existsSync(file)) throw new OrgError(`no routing config at ${file}; run compile.py routing or pass --config`);
         const cfg = JSON.parse(readFileSync(file, 'utf8')) as RoutingConfig;
         const tiers = (str(opts.tiers) ?? '').split(',').map((t) => t.trim()).filter(Boolean) as Tier[];
@@ -753,7 +753,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       if (!pos[0]) throw new OrgError('apply <org.json> [--prune] [--sha <git sha>] [--by <name>] [--json]');
       const str = (k: string): string | undefined => (typeof opts[k] === 'string' ? (opts[k] as string) : undefined);
       const r = await applyOrg(JSON.parse(readFileSync(pos[0], 'utf8')), {
-        prune: opts.prune === true, sha: str('sha'), by: str('by') ?? (process.env.ORG_AGENT?.trim() || undefined),
+        prune: opts.prune === true, sha: str('sha'), by: str('by') ?? (config.env.ORG_AGENT?.trim() || undefined),
       });
       out(json ? JSON.stringify(r, null, 2) : formatApply(r));
       return 0;
