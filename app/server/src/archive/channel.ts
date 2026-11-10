@@ -9,7 +9,7 @@
  */
 export type Channel = 'telegram' | 'web' | 'remote-control';
 
-export interface ChannelTag { channel: Channel; handle: string | null }
+export interface ChannelTag { channel: Channel; handle: string | null; bot?: string | null }
 
 /** Session meta keys the channel label uses, written by every collector the same way. */
 export interface ChannelMeta { channel: Channel; channel_handle?: string | null; channel_bot?: string | null; channel_persona?: string | null }
@@ -32,7 +32,7 @@ export function parseChannelTag(text: string): ChannelTag | null {
   // plugin:<plugin name>:<channel name>; the plugin name is enough when the two match.
   const name = source[2] ?? source[1] ?? '';
   if (name !== 'telegram') return null;
-  return { channel: 'telegram', handle: a.user ? `@${a.user.replace(/^@/, '')}` : null };
+  return { channel: 'telegram', handle: a.user ? `@${a.user.replace(/^@/, '')}` : null, ...(a.bot ? { bot: a.bot } : {}) };
 }
 
 /** The prompt as the person wrote it: the `<channel …>` wrapper removed. */
