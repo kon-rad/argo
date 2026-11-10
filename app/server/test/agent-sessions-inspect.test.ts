@@ -178,3 +178,25 @@ describe('native Codex context provenance', () => {
     expect((await byId())['codex-context']).toMatchObject({ context_tokens: null, context_at: null });
   });
 });
+
+describe('native Codex identity before token counters arrive', () => {
+  it('uses recorded native start mode in list, detail and facets without usage calls', async () => {
+    const baseline = (await request(app).get('/api/usage/agent-sessions/facets').query(RANGE).expect(200)).body.facets.type;
+    for (const nativeSource of ['cli', 'vscode', 'desktop', 'unsupported-source']) {
+      const parsed = parseCodex([{ timestamp: T0, type: 'session_meta', payload: {
+        id: `native-no-tokens-${nativeSource}`, source: nativeSource, model: 'example-model',
+      } }], 'mac');
+      await withTransaction(tx => archive.upsertSession(tx, parsed.session));
+      const expected = nativeSource === 'unsupported-source' ? 'unknown' : 'cli';
+      const rows = await list({ harness: 'codex', type: expected });
+      expect(rows.find(r => r.external_id === parsed.session.externalId)?.session_type).toBe(expected);
+      const detail = await request(app).get(`/api/usage/agent-sessions/mac/${parsed.session.externalId}`).query({ source: 'codex' }).expect(200);
+      expect(detail.body.session.session_type).toBe(expected);
+    }
+    const facets = await request(app).get('/api/usage/agent-sessions/facets').query({ ...RANGE, harness: 'codex' }).expect(200);
+    for (const [value, added] of [['cli', 3], ['unknown', 1]] as const) {
+      const previous = baseline.find((f: { value: string }) => f.value === value)?.n ?? 0;
+      expect(facets.body.facets.type.find((f: { value: string }) => f.value === value)?.n).toBe(previous + added);
+    }
+  });
+});

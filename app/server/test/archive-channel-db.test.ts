@@ -67,6 +67,39 @@ describe('channel label from the collectors', () => {
     expect((await query(`SELECT channel, count(*)::int n FROM usage_facts GROUP BY 1`)).rows).toEqual([{ channel: 'telegram', n: 2 }]);
   });
 
+  it('never guesses between same-agent bots and honors only recorded matching identities', async () => {
+    writeFileSync(join(root, 'secondbrain.json'), JSON.stringify({ telegram: { bots: [
+      { name: 'first', agent: 'claude-code', username: 'firstbot', persona: 'first-persona' },
+      { name: 'second', agent: 'claude-code', username: 'secondbot', persona: 'second-persona' },
+      { name: 'other-runtime', agent: 'hermes', persona: 'other-persona' },
+    ] } }));
+    resetSettings();
+    const dir = join(root, 'projects', '-srv-example');
+    mkdirSync(dir, { recursive: true });
+    const cases = [['ambiguous', ''], ['named', ' bot="second"'], ['username', ' bot="@secondbot"'],
+      ['unknown', ' bot="not-configured"'], ['wrong-runtime', ' bot="other-runtime"']];
+    for (const [id, hint] of cases) writeFileSync(join(dir, `${id}.jsonl`), line({ type: 'user', uuid: id, sessionId: id,
+      timestamp: '2026-10-30T19:05:31Z', entrypoint: 'cli', message: { content: `<channel source="plugin:telegram:telegram"${hint}>\nInspect a synthetic deployment\n</channel>` } }));
+    await syncUsage({ claudeProjectsDir: join(root, 'projects'), runsDir: null, statuslineLog: null }, 'mac');
+    // Repair a formerly guessed identity when the next increment has no recorded bot hint.
+    await query(`UPDATE archive_sessions SET meta = meta || '{"channel_bot":"first","channel_persona":"first-persona"}'::jsonb WHERE external_id='ambiguous'`);
+    const ambiguous = join(dir, 'ambiguous.jsonl');
+    writeFileSync(ambiguous, readFileSync(ambiguous, 'utf8') + line({ type: 'user', uuid: 'next', sessionId: 'ambiguous',
+      timestamp: '2026-10-30T19:06:31Z', entrypoint: 'cli', message: { content: '<channel source="plugin:telegram:telegram">\nInspect again\n</channel>' } }));
+    await syncUsage({ claudeProjectsDir: join(root, 'projects'), runsDir: null, statuslineLog: null }, 'mac');
+    const rows = (await query(`SELECT external_id, meta ->> 'channel_bot' bot, meta ->> 'channel_persona' persona FROM archive_sessions ORDER BY external_id`)).rows;
+    expect(rows).toEqual([
+      { external_id: 'ambiguous', bot: null, persona: null },
+      { external_id: 'named', bot: 'second', persona: 'second-persona' },
+      { external_id: 'unknown', bot: null, persona: null },
+      { external_id: 'username', bot: 'second', persona: 'second-persona' },
+      { external_id: 'wrong-runtime', bot: null, persona: null },
+    ]);
+    const list = await request(app).get('/api/usage/agent-sessions').query({ from: '2026-10-30T00:00:00Z', to: '2026-10-31T00:00:00Z', type: 'telegram' }).expect(200);
+    expect(list.body.sessions.find((r: { external_id: string }) => r.external_id === 'ambiguous')).toMatchObject({ channel_bot: null, persona: null });
+    expect(list.body.sessions.find((r: { external_id: string }) => r.external_id === 'named')).toMatchObject({ channel_bot: 'second', persona: 'second-persona' });
+  });
+
   it('labels a zen-agent run from the meta line a resumed run appended', async () => {
     const zen = join(root, 'zen');
     mkdirSync(zen);
