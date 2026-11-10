@@ -115,7 +115,7 @@ export async function runWake(o: WakeRun): Promise<WakeResult> {
   const persona = o.persona ? loadPersona(o.cfg, o.persona) : null;
   const budget = { ...cardBudget(card.task.body), ...o.budget };
   const ctx = await wakeContext({ cfg: o.cfg, card, persona, env: o.env, exec: o.exec, thread: o.thread, fetchers: o.fetchers });
-  const zen = new ZenAgent({ config: o.cfg, persona, budget, task: o.task, handoff: o.handoff, toolSets: o.toolSets, thinking: o.thinking, model: o.model, dispatch: o.dispatch, entrypoint: 'wake', parts: ctx.parts, fetchers: ctx.fetchers, env: o.env, models: o.models, onEvent: o.onEvent });
+  const zen = new ZenAgent({ config: o.cfg, persona, budget, task: o.task, handoff: o.handoff, toolSets: o.toolSets, thinking: o.thinking, model: o.model, dispatch: o.dispatch, parts: ctx.parts, fetchers: ctx.fetchers, env: o.env, models: o.models, onEvent: o.onEvent });
   const r = await zen.run(wakePrompt({ card, persona: persona?.name ?? null, canComplete: o.canComplete ?? Boolean(o.kb.complete) }));
   return { ...r, card, fetchers: ctx.fetchers };
 }

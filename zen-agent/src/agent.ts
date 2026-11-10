@@ -55,12 +55,6 @@ export interface ZenAgentOptions {
   thinking?: ThinkingLevel;
   /** A dispatcher's labels (run id, wake reasons, card, tier, ...), written into the trace's meta line as `dispatch`. */
   dispatch?: Record<string, unknown>;
-  /**
-   * How this run was started, written into the trace's meta line as `entrypoint`: `chat` (a person at the terminal),
-   * `run` (one prompt), `wake` (a card wake or lane), `serve` (the chat host), `subagent`. Lets a reader tell an
-   * interactive session from a headless one without guessing from the machine.
-   */
-  entrypoint?: 'chat' | 'run' | 'wake' | 'serve' | 'subagent';
   /** Fetched prompt parts (a thread, the tracker row, PR status, recall hits), built by `wakeContext` before the run. */
   parts?: Part[];
   /** What each fetcher did, for the trace; the parts' sizes land in `parts` like every other part. */
@@ -270,9 +264,6 @@ export class ZenAgent {
       resumed: opts.resume ?? null,
       workdir: cfg.workdir,
       dispatch: opts.dispatch ?? {},
-      entrypoint: opts.entrypoint ?? null,
-      // The model's context window as the catalogue knows it, so a reader can show capacity without a model table.
-      context_window: Number.isFinite(this.model.contextWindow) && this.model.contextWindow > 0 ? this.model.contextWindow : null,
     });
   }
 
@@ -353,7 +344,6 @@ export class ZenAgent {
       task: undefined,
       handoff: undefined,
       dispatch: undefined,
-      entrypoint: 'subagent',
       parts: undefined,
       fetchers: undefined,
       resume: undefined,
