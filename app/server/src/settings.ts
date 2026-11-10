@@ -78,7 +78,11 @@ const SocialMetrics = z
           ...SocialAccountBase,
           /** The account's username; checked against the token's account before anything is written. */
           username: z.string().regex(/^[A-Za-z0-9_.]{1,30}$/),
-          /** Env var holding a long-lived token to seed the encrypted store with (optional; `metrics social token` also seeds it). */
+          /** Defaults to Instagram Login; Unified credentials use a different endpoint and never legacy refresh. */
+          login: z.enum(['instagram', 'unified']).default('instagram'),
+          /** Intended Instagram Professional account ID, required to connect Unified Login. */
+          assetId: z.string().regex(/^[0-9]+$/).optional(),
+          /** Legacy Instagram Login env token, used only to seed its encrypted store. */
           tokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),
           posts: z.boolean().default(true),
         }),

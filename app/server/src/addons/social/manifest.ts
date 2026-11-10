@@ -14,6 +14,6 @@ export default defineFeature({
   ],
   timers: [{ unit: 'secondbrain-social', summary: 'publish due posts, check relayed ones, and the reauth check' }],
   wrappers: ['cli-social'],
-  env: ['LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET', 'SOCIAL_REDIRECT_BASE_URL', 'SOCIAL_TOKEN_ENC_KEY', 'BUFFER_API_KEY', 'SOCIAL_MEDIA_BASE_URL', 'SOCIAL_X_MAX_CHARS'],
+  env: ['FACEBOOK_APP_ID', 'FACEBOOK_APP_SECRET', 'FACEBOOK_LOGIN_CONFIG_ID', 'LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET', 'SOCIAL_REDIRECT_BASE_URL', 'SOCIAL_TOKEN_ENC_KEY', 'BUFFER_API_KEY', 'SOCIAL_MEDIA_BASE_URL', 'SOCIAL_X_MAX_CHARS'],
   docs: 'docs/modules.md#social',
 });

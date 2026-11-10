@@ -21,6 +21,7 @@ import { rawRouter } from './routes/raw.js';
 import type { RingRouterOptions } from './routes/ring.js';
 import { runsRouter } from './routes/runs.js';
 import { searchRouter, type ProviderFactory } from './routes/search.js';
+import type { InstagramUnifiedOptions } from './metrics/social/unified.js';
 import type { SocialOptions } from './routes/social.js';
 import { sourcesRouter } from './routes/sources.js';
 import { systemRouter } from './routes/system.js';
@@ -80,6 +81,7 @@ export interface AppOptions {
   voice?: Partial<VoiceOptions>;
   /** Overridden in tests with fake providers and a fixed encryption key. */
   social?: Partial<SocialOptions>;
+  instagramUnified?: Partial<InstagramUnifiedOptions>;
   /** Overridden in tests with a fake chat model and a fixed provider catalog. */
   chat?: Partial<ChatOptions>;
 }

@@ -22,7 +22,7 @@ const DAY = 86_400_000;
 
 type InstagramAccount = Extract<SocialAccount, { platform: 'instagram' }>;
 
-interface Me { user_id?: string; username?: string; followers_count?: number; media_count?: number }
+interface Me { id?: string; user_id?: string; username?: string; followers_count?: number; media_count?: number }
 interface Media {
   id: string; media_type?: string; media_product_type?: string; permalink?: string; timestamp?: string;
   like_count?: number; comments_count?: number;
@@ -38,6 +38,14 @@ function recovery(username: string): string {
 /** The token to use now, refreshing and storing it when due. Throws an actionable error when there is none. */
 async function resolveToken(a: InstagramAccount, deps: SocialDeps, r: SocialResult): Promise<string> {
   const username = a.account;
+  const unified = a.cfg.login === 'unified';
+  if (unified) {
+    if (!deps.encKey) throw new Error('SOCIAL_TOKEN_ENC_KEY is required for Unified Login');
+    const stored = await loadToken('instagram', username, deps.encKey);
+    if (!stored || stored.tokenKind !== 'facebook-user' || !a.cfg.assetId || stored.assetId !== a.cfg.assetId) throw new Error('Unified credential missing or asset changed; reconnect from the authenticated app');
+    if (!stored.expiresAt || stored.expiresAt.getTime() <= deps.now.getTime()) throw new Error('Unified credential expired; reconnect from the authenticated app');
+    return stored.token;
+  }
   const envName = a.cfg.tokenEnv;
   const envToken = envName ? deps.env[envName] || undefined : undefined;
   const missing = () => new Error(`no Instagram token for @${username}: ${envName ? `set ${envName} in the env file, or ` : ''}${recovery(username)}`);
@@ -60,6 +68,7 @@ async function resolveToken(a: InstagramAccount, deps: SocialDeps, r: SocialResu
     stored = await loadToken('instagram', username, deps.encKey);
   }
   const t = stored!;
+  if (t.tokenKind !== 'instagram-login') throw new Error('stored token uses Unified Login; configure login=unified and its assetId or explicitly reseed an Instagram Login token');
   const now = deps.now.getTime();
   if (t.expiresAt && t.expiresAt.getTime() <= now) {
     throw new Error(`the stored Instagram token for @${username} expired on ${t.expiresAt.toISOString().slice(0, 10)}: ${recovery(username)}`);
@@ -87,13 +96,16 @@ export async function collectInstagram(a: InstagramAccount, s: SocialMetricsSett
   try {
     token = await resolveToken(a, deps, r);
     const tok = token;
-    const base = `${HOST}/${s.instagramApiVersion}`;
-    const call = <T>(url: string, what: string) => getJson<T>(deps.get, url, what, [tok]);
-    const auth = `access_token=${encodeURIComponent(tok)}`;
+    const unified = a.cfg.login === 'unified';
+    const host = unified ? 'https://graph.facebook.com' : HOST;
+    const base = `${host}/${s.instagramApiVersion}`;
+    const node = unified ? a.cfg.assetId! : 'me';
+    const call = <T>(url: string, what: string) => getJson<T>(deps.get, url, what, [tok], unified ? { Authorization: `Bearer ${tok}` } : {});
+    const auth = unified ? '' : `access_token=${encodeURIComponent(tok)}`;
 
-    const me = await call<Me>(`${base}/me?fields=user_id,username,followers_count,media_count&${auth}`, 'Instagram /me');
+    const me = await call<Me>(`${base}/${node}?fields=${unified ? 'id' : 'user_id'},username,followers_count,media_count&${auth}`, 'Instagram /me');
     const actual = (me.username ?? '').toLowerCase();
-    if (actual !== a.account) {
+    if ((unified && me.id !== a.cfg.assetId) || actual !== a.account) {
       // Never file one account's numbers under another's key.
       throw new Error(`the Instagram token belongs to @${actual || '?'}, not @${a.account}; nothing written. Fix username in socialMetrics.instagram (a new handle gets a new metric key, so the old account's history stays as it was) or store the right account's token`);
     }
@@ -105,9 +117,16 @@ export async function collectInstagram(a: InstagramAccount, s: SocialMetricsSett
 
     const cutoff = deps.now.getTime() - s.postDays * DAY;
     const items: Media[] = [];
-    let url: string | undefined = `${base}/me/media?fields=id,media_type,media_product_type,permalink,timestamp,like_count,comments_count&limit=50&${auth}`;
+    let url: string | undefined = `${base}/${node}/media?fields=id,media_type,media_product_type,permalink,timestamp,like_count,comments_count&limit=50&${auth}`;
+    const seen = new Set<string>();
     paging: while (url) {
+      const next = new URL(url);
+      const paths = [`${new URL(base).pathname}/${node}/media`];
+      if (!unified && me.user_id) paths.push(`${new URL(base).pathname}/${me.user_id}/media`);
+      if (next.origin !== host || !paths.includes(next.pathname) || seen.has(url) || seen.size >= s.maxPosts) throw new Error('unsafe Instagram media paging URL');
+      seen.add(url);
       const page: { data?: Media[]; paging?: { next?: string } } = await call(url, 'Instagram /me/media');
+      if (unified && !Array.isArray(page.data)) throw new Error('invalid Facebook media response');
       for (const m of page.data ?? []) {
         if ((m.timestamp && Date.parse(m.timestamp) <= cutoff) || items.length >= s.maxPosts) break paging;
         items.push(m);
@@ -130,7 +149,7 @@ export async function collectInstagram(a: InstagramAccount, s: SocialMetricsSett
     }
     if (failed) {
       const msg = `insights failed for ${failed} of ${items.length} posts (first: ${firstFailure}); their views, reach, shares and saves are left empty`;
-      if (failed === items.length) r.error = `${msg}. Does the token have instagram_business_manage_insights?`;
+      if (failed === items.length) r.error = `${msg}. Does the token have ${unified ? 'instagram_manage_insights' : 'instagram_business_manage_insights'}?`;
       else r.warnings.push(msg);
     }
   } catch (err) {
@@ -146,6 +165,7 @@ export async function collectInstagram(a: InstagramAccount, s: SocialMetricsSett
  */
 export async function seedInstagramToken(s: SocialMetricsSettings, username: string, token: string, deps: SocialDeps): Promise<{ username: string; followers: number | null }> {
   const a = s.instagram.find((c) => c.username.toLowerCase() === username.toLowerCase());
+  if (a?.login === 'unified') throw new Error('Unified accounts must connect through the authenticated app; legacy token seeding refused');
   if (!a) throw new Error(`@${username} is not in socialMetrics.instagram in secondbrain.json; add it first`);
   if (!deps.encKey) throw new Error('SOCIAL_TOKEN_ENC_KEY is not set: tokens are stored encrypted. Generate one with `node -e "console.log(require(\'node:crypto\').randomBytes(32).toString(\'hex\'))"` and add it to the env file');
   const t = token.trim();
