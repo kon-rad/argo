@@ -372,6 +372,12 @@ cmd_telegram() {
   ensure_deps; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-telegram.js" "$@"
 }
+cmd_timezone() {
+  # The vault's current time zone (secondbrain.json "timezone"), used by every time the web app shows (docs/timezone.md).
+  # show | set <Area/City> | clear. An agent runs `secondbrain timezone set Asia/Singapore` when the owner travels.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-timezone.js" "$@"
+}
 cmd_summarize() {
   # One summary per finished agent session (agent_summaries). Server only: it reads the archive.
   # --digest [HOURS] prints the stand-up's markdown instead. Providers and fallbacks: docs/summaries.md.
@@ -469,6 +475,7 @@ secondbrain archive  archive Claude Code + Hermes conversations to B2 and Postgr
 secondbrain ledger   this machine's agent ledger: run | status | install --server URL --token T --host SLUG
 secondbrain archive-steps  fill step columns of old archive rows (--redact: remove stored keys; --relabel: channel labels; --dry-run)
 secondbrain telegram   connect a Telegram bot to an agent: add --agent claude-code|hermes|zen-agent --name X --allow <id> | status | allow | remove
+secondbrain timezone   the vault's current time zone for the app: show | set <Area/City> | clear (e.g. set Asia/Singapore)
 secondbrain summarize  summarize finished agent sessions with a local model, fallbacks in config (--digest for the stand-up)
 secondbrain summarize-eval  grade summaries against transcripts: --golden | --references | --sample N [--judge]
 secondbrain agents-sync  copy Hermes chats and cron history into Postgres
@@ -506,6 +513,7 @@ case "${1:-start}" in
   ledger)        cmd_ledger "${@:2}" ;;
   archive-steps) cmd_archive_steps "${@:2}" ;;
   telegram)      cmd_telegram "${@:2}" ;;
+  timezone)      cmd_timezone "${@:2}" ;;
   summarize)     cmd_summarize "${@:2}" ;;
   summarize-eval) cmd_summarize_eval "${@:2}" ;;
   inventory)     cmd_inventory "${@:2}" ;;
