@@ -8,9 +8,11 @@ import { join } from 'node:path';
 import { setPrivateLog } from './review/process.js';
 import { stage } from './review/stage.js';
 import { runFixture } from './review/fixture.js';
+import { scopeMain } from './review/preflight.js';
 
 async function main(): Promise<void> {
   const [action,path] = process.argv.slice(2);
+  if (action === 'scope') { process.exitCode = await scopeMain(process.argv.slice(3)); return; }
   if (action === 'fixture') { console.log(JSON.stringify(await runFixture(),null,2)); return; }
   if (!['tick','stage','retries'].includes(action ?? '') || !path) throw new Error('Usage: cli-review fixture | tick|stage|retries /absolute/owner-policy.json');
   const info = await stat(path);

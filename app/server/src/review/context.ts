@@ -1,9 +1,10 @@
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep, basename, join } from 'node:path';
 import { digest, type Source } from './gate.js';
+import { POLICY } from './policy.js';
 
 const SECRET = /(?:\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{12,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:password|token|secret|api[_-]?key)\s*[:=]\s*["']?[^\s"',}]{6,})/gi;
-export function source(ref: string, raw: unknown, essential = true, limit = 80_000): Source {
+export function source(ref: string, raw: unknown, essential = true, limit: number = POLICY.sourceChars): Source {
   const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
   const redacted = text.replace(SECRET, match => /[:=]\s*(?:z\.|process\.env\.|secrets\.|cfg\.|config\.|\$\{|\{\{)/i.test(match) ? match : '[REDACTED]');
   return { ref, revision: digest(text), text: redacted.slice(0, limit), essential,
@@ -22,7 +23,7 @@ export async function note(root: string, path: string, exclusions: string[]): Pr
     const base = await realpath(root), file = await realpath(resolve(base, path));
     const rel = relative(base, file);
     if (rel.startsWith(`..${sep}`) || rel === '..' || isAbsolute(rel) || excluded(rel, exclusions)) return missing;
-    if ((await stat(file)).size > 80_000) return { ...missing, truncated: true };
+    if ((await stat(file)).size > POLICY.sourceChars) return { ...missing, truncated: true };
     return source(missing.ref, await readFile(file, 'utf8'));
   } catch { return missing; }
 }

@@ -197,3 +197,10 @@ it('retains the stricter credential-name exclusion for immediate imports', async
   const p=plan(); p.files[0]!.imports=[{path:'load-credentials.ts',sourceChars:10}] as never[];
   expect(validatePlan(p).status).toBe('invalid');
 });
+
+it('includes forecast non-code sources in per-source and aggregate budgets', () => {
+  const p = {...plan(),contextSources:[{ref:'ticket',chars:80001}]};
+  expect(validatePlan(p).reasons.some(r=>r.code==='sourceChars')).toBe(true);
+  p.contextSources=Array.from({length:7},(_,i)=>({ref:String(i),chars:75000}));
+  expect(validatePlan(p).reasons.some(r=>r.code==='combinedChars')).toBe(true);
+});

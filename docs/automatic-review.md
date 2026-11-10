@@ -159,3 +159,67 @@ Approval fingerprints normalize snapshots through the strict schema, so PostgreS
 Completion attests that the accepted merge was deployed and passed exact-revision health, not that it is still the currently active release. If final bookkeeping fails after both matching deployment and health receipts were durably recorded, a retry revalidates accepted context and merge identity and completes without replaying those effects. Missing or mismatched health receipts still require a successful live check. A newer release does not erase an older release's verified history.
 
 Behind or conflicting open PRs are readiness rejections, not endless tool-error retries. Findings instruct the original builder to update the same branch and rerun checks. These flags are false for merged PRs; legacy snapshots normalize absent flags to false. A branch falling behind invalidates a paused approval before merge.
+
+## Scope checkpoints before building and submitting
+
+The public `review scope` contract implements catalog card `t_45a48733`. A coordinator can use it before launching a builder and after committing the complete intended change. It shares file selection, immediate import resolution and capacity evaluation with the review adapter. It does not launch agents, execute plan commands, register jobs, grant approval or install anything.
+
+After `cd app && npm ci && npm run build`, these commands work in a standalone checkout:
+
+```sh
+node server/dist/cli-review.js scope policy
+node server/dist/cli-review.js scope schema
+node server/dist/cli-review.js scope forecast /tmp/request.json /tmp/owner-scope.json
+node server/dist/cli-review.js scope actual /tmp/request.json /tmp/owner-scope.json
+```
+
+When the board module is enabled, `secondbrain review scope ...` reaches the same entry point. With `MODULES` empty or board off, that launcher command is unavailable and no board routes, navigation or timers are enabled. The direct Node commands remain available offline without a database, host policy, GitHub credentials or vault settings. They read explicit JSON and local Git objects only, with hooks, external diff/text conversion, inherited Git configuration and filesystem monitoring disabled. They never fetch, check out a revision or write repository files.
+
+Copy [review-scope.example.json](../app/deploy/review-scope.example.json) to an owner-controlled location. Omit the optional config argument to use `{"softTarget":24,"exclude":[]}`. `exclude` is an owner-maintained list of repository-relative private path prefixes, shared with the host review policy's exclusions. The coordinator must supply the same exclusions at both checkpoints and to the registered reviewer. Keep this configuration outside planner control. Only `softTarget` (1 through 30) and `exclude` are configurable; plans cannot supply hard caps or override policy. Scope config is separate from application environment settings and the privileged worker host policy.
+
+Hard defaults remain 100 changed files, 30 changed reviewable files, 80 gathered code sources including immediate local imports, 80,000 characters per source, 250,000 diff characters and 500,000 combined evidence characters. Equality passes. Forecasts also use the default soft target of 24 changed reviewable files, leaving six files below the reviewer hard limit. Tests, docs, fixtures, configuration and deletions count by the existing reviewer extension rules. A rename counts once under its destination; both paths are validated. Lock files and binary files count toward 100 and contribute to diff size, but are not selected as code sources. Imports are deduplicated, resolved against tracked head paths, and collected one level from changed head sources. Deletions use base contents without collecting their imports.
+
+`scope policy` returns the policy version, SHA-256 policy hash, hard/default limits and default scope configuration. `scope schema` returns the authoritative JSON Schema for the strict version 1 plan. Pin both version and hash; regenerate a plan when policy changes. Request JSON has this envelope:
+
+```json
+{
+  "repository": "/srv/engine",
+  "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "contextSources": [{"ref":"ticket-and-evidence","chars":2000}],
+  "plan": {
+    "version": 1,
+    "policyHash": "COPY_FROM_SCOPE_POLICY",
+    "card": "example-task",
+    "repository": "example/engine",
+    "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requirements": [{"id":"r1","description":"A testable acceptance requirement","tasks":["t1"],"tests":["check"]}],
+    "tasks": [{"id":"t1","requirements":["r1"],"paths":["src/example.ts","test/example.test.ts"],"tests":["check"],"dependencies":[]}],
+    "tests": [{"id":"check","requirements":["r1"],"paths":["test/example.test.ts"],"command":"npm test"}],
+    "dependencies": [],
+    "files": [
+      {"path":"src/example.ts","status":"modified","sourceChars":3000,"imports":[]},
+      {"path":"test/example.test.ts","status":"added","sourceChars":2000,"imports":[]}
+    ],
+    "diffChars": 5000,
+    "otherContextChars": 2000,
+    "contextSources": [{"ref":"ticket-and-evidence","chars":2000}],
+    "confidence": "medium",
+    "uncertainty": {"reviewableFiles":2,"sourceChars":2000,"diffChars":2000,"combinedChars":5000,"unknowns":["New local imports may be required"]},
+    "verification": ["npm test","npm run build"],
+    "decomposition": []
+  }
+}
+```
+
+This is an illustrative envelope: replace revisions, repository, hash, paths and estimates. No sample hash grants admission. Plans list all expected source/test/doc/migration/config paths with Git status and, for a rename/copy, `previousPath`. Map every requirement to declared tasks and tests in both directions, every changed path to a task, and every task to tests covering its requirements. External dependencies declare `id`, full `revision` and `verification`; task dependencies reference task or external dependency IDs and must form an acyclic graph. Verification strings are evidence for the coordinator, never commands the validator executes.
+
+A forecast checks paths and existing contents/imports at the declared base without reading working-tree source files. Newly introduced imports must be forecast in each file's `imports` list (`path`, `sourceChars`). Existing sources and immediate imports establish minimum size estimates. Listed tests must exist at base or be planned additions. Include future content estimates for every reviewable path. The optional plan `contextSources` list forecasts individual non-code sources (default empty); its sum establishes a minimum for `otherContextChars`, and individual sizes participate in the per-source limit. The coordinator remains responsible for forecasting complete evidence. Low/medium confidence or declared unknowns require positive quantified file, source, diff and combined margins. Observations are conservative upper bounds: the file reserve increases changed/reviewable/source counts; the source reserve increases the largest source; combined evidence includes the diff/source reserves plus the aggregate reserve. A forecast is an estimate, not evidence of actual verification.
+
+An actual check requires full existing base/head commit IDs, base ancestry, current HEAD matching the supplied head, and a clean worktree including untracked files. Commit a checkpoint before invoking it; keep request/config files outside the worktree. It measures complete Git name/status and patch evidence, base contents of deletions and exact head source/import contents. `contextSources` is mandatory in actual requests, including an explicit empty list when appropriate. The trusted coordinator supplies current character counts of every non-code evidence source it will submit (ticket, conversations, notes, logs and receipts); these are included in combined and per-source checks. The CLI cannot attest external evidence that it has not gathered. The reviewer independently evaluates its own gathered evidence with the same policy. Never reuse forecast context estimates as actual measurements.
+
+Every result has `status` (`pass`, `decompose`, `invalid`), `phase`, policy version/hash, effective limits, observations, actionable reasons and base/head/plan-hash binding. Exit codes are respectively 0, 2 and 1. Missing or malformed request/plan/config is structured `invalid`, never pass. Traversal, absolute scope paths, private/secret paths and excluded imports are refused before their contents are read; public env examples are allowed. No context is silently truncated to obtain a pass. A hard collection boundary stops further reads and reports `collection-stopped`; remaining source sizes are explicitly unmeasured. If actual paths/statuses differ from the admitted plan or a planned path is missing, revise the complete plan and repeat both checkpoints. A prior forecast pass cannot authorize an oversized actual diff.
+
+For decomposition, retain every original requirement and planned path in proposed slices. Each slice declares `id`, `requirements`, `paths`, full `base`, `dependencies`, `diffChars`, `otherContextChars` and nonempty `verification`. The validator checks coverage, dependency references/cycles and estimated slice capacities. This is a proposal: admit each child with its own complete plan, margins and independent checks, preserve migration order, then verify parent integration acceptance. Do not remove tests/docs or narrow acceptance to fit a cap.
+
+Private coordinator integration, runtime installation, scheduled repair, correction feedback/state changes and reusable lessons are separate phases. Passing scope tests proves none of those are installed or running. Existing independent exact-revision review and registered shipping authority remain required.
