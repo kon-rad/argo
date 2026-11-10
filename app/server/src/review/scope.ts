@@ -31,13 +31,14 @@ export function checkPaths(files: ChangedFile[], exclude: string[] = []): void {
     if (problem) throw new PathError(path, problem);
   }
 }
-export function immediateImports(path: string, text: string, tracked: Set<string>): string[] {
+export function immediateImports(path: string, text: string, tracked: Set<string>, unresolved?: (path: string) => void): string[] {
   const found = new Set<string>();
   for (const m of text.matchAll(/(?:from\s*|import\s*|require\()\s*['"](\.[^'"]+)['"]/g)) {
     const stem = posix.normalize(posix.join(posix.dirname(path), m[1]!));
-    if (stem.startsWith('../')) continue;
+    if (stem.startsWith('../')) { unresolved?.(stem); continue; }
     const match = [stem, stem.replace(/\.js$/, '.ts'), stem + '.ts', stem + '.tsx', stem + '.js', stem + '/index.ts', stem + '/index.js'].find(p => tracked.has(p));
     if (match) found.add(match);
+    else unresolved?.(stem);
   }
   return [...found];
 }

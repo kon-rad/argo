@@ -36,8 +36,18 @@ async function inspect(input: PreflightInput): Promise<ScopeResult> {
         const text = await git(['show', `${input.base}:${oldPath}`]);
         file.sourceChars = Math.max(file.sourceChars, text.length);
         if (file.status === 'removed') continue;
-        for (const path of immediateImports(oldPath, text, tracked)) {
+        // Read base content at its origin, but relative imports belong to the planned destination.
+        // Explicit estimates can cover destination dependencies that do not exist at base yet.
+        const candidates = new Set([...tracked, ...file.imports.map(i => i.path)]);
+        const unresolved: string[] = [];
+        const imports = immediateImports(file.path, text, candidates, path => unresolved.push(path));
+        if (file.previousPath && unresolved.length) return invalidPlan('forecast', unresolved.map(path => ({
+          code: 'unresolved-import', path,
+          action: `Resolve the local import at the planned destination of ${file.path}; declare its destination path and sourceChars in imports if it does not exist at base.`,
+        })), config);
+        for (const path of imports) {
           checkImport(path, config.exclude);
+          if (!tracked.has(path)) continue;
           const sourceChars = (await git(['show', `${input.base}:${path}`])).length;
           const declared = file.imports.find(i => i.path === path);
           if (declared) declared.sourceChars = Math.max(sourceChars, declared.sourceChars);
