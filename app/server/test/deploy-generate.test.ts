@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { runConfig, type ConfigIo } from '../src/deploy/config-commands.js';
-import { applyDeploy, envKeys, planDeploy, unitStems } from '../src/deploy/generate.js';
+import { ALL_GENERATED_UNITS, BASE_UNITS, applyDeploy, envKeys, planDeploy, renderGeneratedUnit, unitStems } from '../src/deploy/generate.js';
 import { parseSettings, type ServerSettings } from '../src/settings.js';
 
 /**
@@ -64,6 +64,45 @@ describe('env and unit generation (pure)', () => {
     expect(unitStems(new Set(['board']))).toEqual(['secondbrain', 'secondbrain-board-reclaim']);
   });
 
+  it('renders every former deploy unit pair from manifests or the base table', () => {
+    expect(ALL_GENERATED_UNITS.map((u) => u.unit)).toEqual([
+      'secondbrain-projects-render',
+      'secondbrain-memory-capture',
+      'secondbrain-board-reclaim',
+      'secondbrain-usage-sync',
+      'secondbrain-credits-sync',
+      'secondbrain-summarize',
+      'secondbrain-agents-sync',
+      'secondbrain-map-build',
+      'secondbrain-metrics',
+      'secondbrain-livestream',
+      'secondbrain-social',
+      'secondbrain-garden',
+      'secondbrain-routing-report',
+      'secondbrain-dispatch',
+      'secondbrain-db-backup',
+      'secondbrain-vault-sync',
+      'secondbrain-embed',
+    ]);
+    expect(BASE_UNITS.map((u) => u.unit)).toEqual(['secondbrain-db-backup', 'secondbrain-vault-sync', 'secondbrain-embed']);
+    for (const unit of ALL_GENERATED_UNITS) {
+      const service = renderGeneratedUnit(unit, 'service');
+      const timer = renderGeneratedUnit(unit, 'timer');
+      expect(service, unit.unit).toContain('ExecStart=');
+      expect(service, unit.unit).toContain('User=@APP_USER@');
+      expect(service, unit.unit).toContain('EnvironmentFile=/etc/secondbrain/env');
+      expect(timer, unit.unit).toContain('OnCalendar=');
+    }
+  });
+
+  it.each(['secondbrain-board-reclaim', 'secondbrain-map-build', 'secondbrain-garden'])('%s stays byte-compatible with its former files', (stem) => {
+    const unit = ALL_GENERATED_UNITS.find((candidate) => candidate.unit === stem)!;
+    for (const ext of ['service', 'timer'] as const) {
+      const golden = readFileSync(resolve(here, 'fixtures/deploy-units', `${stem}.${ext}`), 'utf8');
+      expect(renderGeneratedUnit(unit, ext)).toBe(golden);
+    }
+  });
+
   it('lists the server keys and the enabled feature env keys, each once', () => {
     const keys = envKeys(new Set(['board']));
     for (const k of ['DEPLOYMENT', 'PUBLIC_ORIGIN', 'VAULT_ROOT', 'MODULES', 'AUTH_PASSWORD_HASH', 'BOARD_URL']) {
@@ -81,6 +120,20 @@ describe('env and unit generation (pure)', () => {
     expect(plan.files.every((f) => f.status === 'create')).toBe(true);
     expect(plan.changed.length).toBe(plan.files.length);
     expect(fs.writes).toEqual([]);
+  });
+
+  it('selects base jobs explicitly and can leave an existing env file alone', () => {
+    const fs = memFs();
+    const plan = planDeploy({
+      ...io(fs),
+      installed: [],
+      baseUnits: new Set(['secondbrain-embed']),
+      unitsOnly: true,
+    });
+    expect(plan.files.some((file) => file.path === envPath)).toBe(false);
+    expect(plan.files.map((file) => file.path)).toContain('/etc/systemd/system/secondbrain-embed.service');
+    expect(plan.files.map((file) => file.path)).toContain('/etc/systemd/system/secondbrain-embed.timer');
+    expect(plan.files.map((file) => file.path)).not.toContain('/etc/systemd/system/secondbrain-db-backup.timer');
   });
 
   it('renders the server block into the units, leaving no @placeholder@', () => {

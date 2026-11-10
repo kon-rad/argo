@@ -32,9 +32,30 @@ export interface FeatureCli {
 }
 
 export interface FeatureTimer {
-  /** The unit stem under app/deploy: `<unit>.service` and `<unit>.timer` both exist. */
+  /** The generated systemd unit stem. */
   unit: string;
   summary: string;
+  /** systemd OnCalendar expression. */
+  calendar: string;
+  /** The `secondbrain <command> ...` tail. The generator resolves its manifest CLI entry. */
+  command: string;
+  /** Description= for the service. */
+  description: string;
+  /** Description= for the timer; defaults to `summary`. */
+  timerDescription?: string;
+  persistent?: boolean;
+  randomizedDelaySec?: string | number;
+  accuracySec?: string;
+  /** Extra Environment= values, with manifest placeholders left for the generator. */
+  environment?: string[];
+  /** Unit dependencies and less common service directives that must survive generation. */
+  service?: {
+    after?: string[];
+    wants?: string[];
+    requires?: string[];
+    workingDirectory?: string | false;
+    directives?: string[];
+  };
 }
 
 /**
