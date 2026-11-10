@@ -45,9 +45,11 @@ const RUNS_OF = (a: string) => `FROM usage_runs r WHERE r.host = ${a}.host AND r
  * meta or, for rows stored before meta carried it, from its calls; zen-agent's trace `entrypoint`; Codex's call
  * entrypoint. zen-agent's calls all say `zen-agent` and Hermes's say the platform, so neither is read here.
  */
-const ENTRY = (a: string) => `coalesce(nullif(${a}.meta ->> 'entrypoint', ''), (SELECT u.entrypoint FROM usage_calls u
+const ENTRY = (a: string) => `CASE WHEN ${a}.harness = 'codex' AND ${a}.meta ->> 'native_source' IS NOT NULL THEN
+  CASE ${a}.meta ->> 'native_source' WHEN 'cli' THEN 'cli' WHEN 'vscode' THEN 'cli' WHEN 'desktop' THEN 'cli' WHEN 'exec' THEN 'exec' WHEN 'subagent' THEN 'subagent' END
+  ELSE coalesce(nullif(${a}.meta ->> 'entrypoint', ''), (SELECT u.entrypoint FROM usage_calls u
   WHERE u.host = ${a}.host AND u.source = ${a}.source AND u.session_external_id = ${a}.external_id AND ${a}.harness IN ('claude-code', 'codex')
-    AND u.entrypoint IS NOT NULL ORDER BY u.ts LIMIT 1))`;
+    AND u.entrypoint IS NOT NULL ORDER BY u.ts LIMIT 1)) END`;
 
 /**
  * The session's type: `telegram`, `cli` (a person at a terminal) or `headless` (`claude -p`, a card wake, a cron job),
