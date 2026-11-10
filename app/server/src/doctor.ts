@@ -14,6 +14,8 @@ import { join } from 'node:path';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { enabledManifests } from './features/registry.js';
+import { loadSettingsFile } from './settings-file.js';
+import { settingsReport } from './settings.js';
 
 export interface Check {
   /** A short stable key, e.g. `database`. */
@@ -92,7 +94,7 @@ async function checkMigrations(connected: boolean): Promise<Check> {
 
 /** A module token MODULES does not know is dropped silently by config.parseModules; say so. */
 function checkModules(modules: ReadonlySet<string>): Check {
-  const raw = (process.env.MODULES ?? '').split(',').map((m) => m.trim()).filter(Boolean);
+  const raw = (config.env.MODULES ?? '').split(',').map((m) => m.trim()).filter(Boolean);
   const known = new Set(enabledManifests(modules).map((m) => m.name));
   const enabled = [...modules];
   if (enabled.length === 0) return pass('modules', 'core features off (MODULES is empty)');
@@ -115,15 +117,19 @@ function checkVault(): Check {
 }
 
 /** secondbrain.json is optional; a file that fails to parse is ignored at runtime, so flag it here. */
-function checkSettings(): Check {
-  const path = process.env.SECONDBRAIN_SETTINGS ?? join(config.vaultRoot, 'secondbrain.json');
-  if (!existsSync(path)) return skip('settings', 'no secondbrain.json (fine: every section is optional)');
-  try {
-    JSON.parse(readFileSync(path, 'utf8'));
-    return pass('settings', `${path} parses`);
-  } catch (err) {
-    return fail('settings', `${path} is not valid JSON: ${err instanceof Error ? err.message.split('\n')[0]! : String(err)}`, 'fix the JSON; the app ignores the file until it parses', false);
+export function checkSettings(vaultRoot = config.vaultRoot): Check {
+  const loaded = loadSettingsFile(vaultRoot);
+  if (loaded.raw === null && loaded.error === null) return skip('settings', `no settings file at ${loaded.path} (fine: every section is optional)`);
+  if (loaded.error) {
+    const problem = loaded.error.kind === 'json' ? 'is not valid JSON' : 'could not be read';
+    return fail('settings', `${loaded.path} ${problem}`, 'fix the file; the app uses defaults until it is valid');
   }
+  const report = settingsReport(loaded.raw);
+  if (report.errors.length > 0) {
+    const fields = report.errors.map((error) => `${error.path.map(String).join('.')}: ${error.message}`).join('; ');
+    return fail('settings', `${loaded.path} has invalid settings: ${fields}`, 'fix the named fields; only their sections use defaults');
+  }
+  return pass('settings', `${loaded.path} parses and matches the schema`);
 }
 
 function checkSync(): Check {

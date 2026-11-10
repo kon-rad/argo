@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { loadSettingsFile } from '../settings-file.js';
 
 /**
  * The vault's `secondbrain.json` `addons` list, e.g. `["map", "voice"]`, read without
@@ -11,15 +10,9 @@ import { resolve } from 'node:path';
  * `secondbrain.json` at all and must still boot.
  */
 export function readAddonList(vaultRoot: string): string[] {
-  const file = resolve(vaultRoot, 'secondbrain.json');
-  if (!existsSync(file)) return [];
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
-    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { addons?: unknown }).addons)) {
-      return (parsed as { addons: unknown[] }).addons.filter((a): a is string => typeof a === 'string');
-    }
-    return [];
-  } catch {
+  const { raw, error } = loadSettingsFile(vaultRoot);
+  if (error || !raw || typeof raw !== 'object' || !Array.isArray((raw as { addons?: unknown }).addons)) {
     return [];
   }
+  return (raw as { addons: unknown[] }).addons.filter((addon): addon is string => typeof addon === 'string');
 }
