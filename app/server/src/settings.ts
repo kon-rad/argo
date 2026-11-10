@@ -335,8 +335,22 @@ const Server = z
   })
   .prefault({});
 
+/** An IANA zone name the runtime knows; a typo is dropped (no zone set) rather than discarding the whole file. */
+const TimeZone = z
+  .string()
+  .refine((tz) => {
+    try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return /^[A-Za-z]/.test(tz); } catch { return false; }
+  })
+  .optional()
+  .catch(undefined);
+
 const Settings = z.object({
   server: Server,
+  /**
+   * The owner's current time zone (IANA, e.g. `Asia/Singapore`): every time the web app shows and the Usage
+   * buckets use it. Unset: each browser's own zone. Change it when travelling: `secondbrain timezone set <zone>`.
+   */
+  timezone: TimeZone,
   /** Providers and panels shown on the Usage page. Empty provider lists do no polling. */
   usage: z.object({
     subscriptions: z.array(z.enum(['codex', 'claude-code'])).default([]),
