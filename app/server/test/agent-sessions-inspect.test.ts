@@ -31,7 +31,7 @@ const call = (over: Partial<UsageCall>): UsageCall => ({
 });
 
 const REMINDER = '<system-reminder>\nContents of /home/someone/AGENTS.md (project instructions):\n# AGENTS.md\nrules\n</system-reminder>';
-const SKILL = '<command-message>argo-daily-update is running…</command-message>\n<command-name>/argo-daily-update</command-name>';
+const SKILL = '<command-message>daily-update is running…</command-message>\n<command-name>/daily-update</command-name>';
 
 async function seed(): Promise<void> {
   await withTransaction(async (tx) => {
@@ -149,7 +149,7 @@ describe('session titles', () => {
   it('is one line under 100 characters from the card, the skill, the title or the first real request', async () => {
     const s = await byId();
     expect(s['card-run']).toMatchObject({ display_title: 'Usage sessions: Telegram inspection', title_source: 'task' });
-    expect(s.skill).toMatchObject({ display_title: 'argo-daily-update', title_source: 'skill' });
+    expect(s.skill).toMatchObject({ display_title: 'daily-update', title_source: 'skill' });
     expect(s.typed).toMatchObject({ display_title: 'Make the sessions page faster', title_source: 'prompt' });
     expect(s['h-cron']).toMatchObject({ display_title: 'Morning brief', title_source: 'title' });
     for (const r of Object.values(s)) {

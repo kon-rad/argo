@@ -54,8 +54,8 @@ describe('time helpers in the shared zone', () => {
 
 describe('session cells', () => {
   it('names a skill run with its start time, every name one line under 100 characters', () => {
-    expect(sessionName({ display_title: 'argo-daily-update', title_source: 'skill', started_at: '2026-11-10T07:13:00Z' }, 'UTC'))
-      .toBe('argo-daily-update · Nov 10 07:13');
+    expect(sessionName({ display_title: 'daily-update', title_source: 'skill', started_at: '2026-11-10T07:13:00Z' }, 'UTC'))
+      .toBe('daily-update · Nov 10 07:13');
     expect(shortStamp('2026-11-09T23:30:00Z', 'Asia/Singapore')).toBe('Nov 10 07:30');
     expect(sessionName({ display_title: 'Fix the page', title_source: 'prompt', started_at: '2026-11-10T07:13:00Z' }, 'UTC')).toBe('Fix the page');
     const long = sessionName({ display_title: 's'.repeat(98), title_source: 'skill', started_at: '2026-11-10T07:13:00Z' }, 'UTC')!;
@@ -82,7 +82,7 @@ const SESSIONS = { total: 2, sessions: [
   row({ id: 1, external_id: 'tg', channel: 'telegram', channel_bot: 'claude', session_type: 'telegram', persona: 'claude',
     display_title: 'what is on the board?', title_source: 'prompt', started_at: '2026-11-09T23:30:00Z', ended_at: '2026-11-10T00:00:00Z',
     models: ['claude-opus-5-5'], calls: 2, input: 1055, cache_read: 59000, output: 30, context_tokens: 30150, context_at: '2026-11-10T00:00:00Z' }),
-  row({ id: 2, external_id: 'daily', host: 'mac', session_type: 'headless', display_title: 'argo-daily-update', title_source: 'skill',
+  row({ id: 2, external_id: 'daily', host: 'mac', session_type: 'headless', display_title: 'daily-update', title_source: 'skill',
     started_at: '2026-11-09T23:13:00Z', ended_at: null }),
 ] };
 const FACETS = { facets: { harness: [{ value: 'claude-code', n: 2 }], host: [{ value: 'droplet', n: 1 }, { value: 'mac', n: 1 }], profile: [], provider: [], channel: [],
@@ -118,8 +118,8 @@ describe('Sessions list', () => {
     expect(within(tr).getByText('30.1k / ?')).toBeTruthy();       // latest call over an unknown window
     expect(within(tr).getByText('1055 / 30')).toBeTruthy();       // totals stay their own column
     // The skill run carries its local start; no end means no duration, said with a dash.
-    expect(screen.getByRole('link', { name: 'argo-daily-update · Nov 10 07:13' })).toBeTruthy();
-    const daily = screen.getByRole('link', { name: 'argo-daily-update · Nov 10 07:13' }).closest('tr')!;
+    expect(screen.getByRole('link', { name: 'daily-update · Nov 10 07:13' })).toBeTruthy();
+    const daily = screen.getByRole('link', { name: 'daily-update · Nov 10 07:13' }).closest('tr')!;
     expect(within(daily).getByText('unknown')).toBeTruthy(); // persona not recorded
     expect(within(daily).getAllByText('-').length).toBeGreaterThan(0);
   });

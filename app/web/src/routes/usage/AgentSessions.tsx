@@ -31,7 +31,7 @@ export function sessionLink(s: Pick<AgentSessionRow, 'host' | 'external_id' | 's
 
 /**
  * The Session cell: one line under 100 characters. A skill run is named after the skill and the time it started
- * ("argo-daily-update · Nov 10 07:13"), since every day's run has the same name. Null when nothing usable was found.
+ * ("daily-update · Nov 10 07:13"), since every day's run has the same name. Null when nothing usable was found.
  */
 export function sessionName(s: Pick<AgentSessionRow, 'display_title' | 'title_source' | 'started_at'>, tz: string): string | null {
   if (!s.display_title) return null;

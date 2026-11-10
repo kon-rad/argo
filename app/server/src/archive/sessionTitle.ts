@@ -4,7 +4,7 @@
  *
  * Preference, most trusted first:
  *   1. the board card's title when the session was a run for a card (`task`),
- *   2. the skill or slash command the session was started with, e.g. `argo-daily-update` (`skill`),
+ *   2. the skill or slash command the session was started with, e.g. `daily-update` (`skill`),
  *   3. the harness's own title (Claude Code's ai-title, Hermes's title) when it is not boilerplate (`title`),
  *   4. the first substantive line a person wrote (`prompt`).
  * Instruction blocks (AGENTS.md, system reminders, environment context), local commands such as /clear,
