@@ -4,7 +4,8 @@
  * `secondbrain timezone set <Area/City>`. Unset: each browser uses its own zone. Never inferred from the server's
  * zone, which says where the machine is, not where its owner is.
  */
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { settingsPath } from './settings.js';
 
 /** A real IANA zone name the runtime knows (`Asia/Singapore`, `UTC`); not an offset or an abbreviation. */
@@ -70,8 +71,17 @@ export function saveTimezone(tz: string | null, path = settingsPath()): string |
   const name = tz === null ? null : canonicalTimeZone(tz);
   if (tz !== null && !name) throw new Error(`not an IANA time zone: ${tz} (use a name like America/Los_Angeles or Asia/Singapore)`);
   const next = withTimezone(readText(path), name);
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, next);
-  renameSync(tmp, path);
+  let mode = 0o600;
+  try { mode = statSync(path).mode & 0o777; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  // A private sibling directory prevents following a pre-existing temporary-file symlink.
+  // Keep the rename on the same filesystem, and restore the original mode despite umask.
+  const directory = mkdtempSync(join(dirname(path), '.timezone-'));
+  const tmp = join(directory, 'settings');
+  try {
+    writeFileSync(tmp, next, { mode, flag: 'wx' });
+    chmodSync(tmp, mode);
+    renameSync(tmp, path);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
   return name;
 }
