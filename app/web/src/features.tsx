@@ -8,7 +8,7 @@ import LiveAgents from './routes/usage/LiveAgents.js';
 import Usage from './routes/usage/Usage.js';
 import UsageSession from './routes/usage/UsageSession.js';
 
-const Desk = lazy(() => import('./routes/desk/Desk.js'));
+const Desk = lazy(() => import('./routes/Desk.js'));
 
 /**
  * The page routes of each core feature, by module name. The server's manifest
