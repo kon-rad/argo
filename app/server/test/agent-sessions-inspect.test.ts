@@ -6,6 +6,7 @@ import * as archive from '../src/archive/store.js';
 import type { ParsedMessage, SessionInput } from '../src/archive/types.js';
 import { query, withTransaction } from '../src/db.js';
 import * as usage from '../src/usage/store.js';
+import { parseCodex } from '../src/usage/codex.js';
 import type { UsageCall } from '../src/usage/types.js';
 import { ALL_MODULES, truncateAll } from './helpers.js';
 
@@ -56,7 +57,7 @@ async function seed(): Promise<void> {
     // zen-agent: an interactive chat with a recorded context window, and an old trace that says nothing.
     await add({ source: 'zen-agent', externalId: 'z-chat', host: 'droplet', meta: { persona: 'sol', entrypoint: 'chat', context_window: 128000, dispatch: {} } },
       ['draft the stand-up']);
-    await add({ source: 'zen-agent', externalId: 'z-old', host: 'droplet', meta: { persona: 'sol', dispatch: {} } }, ['hello']);
+    await add({ source: 'zen-agent', externalId: 'z-old', host: 'droplet', meta: { persona: 'sol', dispatch: { runtime: 'codex' } } }, ['hello']);
     await usage.upsertCalls(tx, [
       // Two calls on the Telegram session: the latest one is the context, not the sum.
       call({ host: 'droplet', sessionExternalId: 'tg', ts: new Date('2026-11-10T07:14:00Z'), inputTokens: 1000, cacheReadTokens: 20000, cacheWriteTokens: 500, outputTokens: 10 }),
@@ -156,5 +157,24 @@ describe('session titles', () => {
       const t = r.display_title as string | null;
       if (t !== null) { expect(t.length).toBeLessThan(100); expect(t).not.toMatch(/\n|AGENTS\.md|system-reminder|command-name/); }
     }
+  });
+});
+
+// Native counters are cumulative snapshots converted to increments, not prompt occupancy.
+describe('native Codex context provenance', () => {
+  it('keeps multi-turn cumulative deltas out of current context occupancy', async () => {
+    const row = (type: string, payload: unknown) => ({ timestamp: T0, type, payload });
+    const counter = (input: number) => row('event_msg', { type: 'token_count', info: {
+      total_token_usage: { input_tokens: input, cached_input_tokens: input / 2, output_tokens: input / 5, reasoning_output_tokens: 0 },
+    } });
+    const parsed = parseCodex([row('session_meta', { id: 'codex-context', source: 'cli', model: 'example-model' }),
+      row('turn_context', { model: 'example-model' }), counter(100), counter(100), counter(180)], 'mac');
+    expect(parsed.calls).toHaveLength(2);
+    expect(parsed.calls.map(c => c.inputTokens + c.cacheReadTokens)).toEqual([100, 80]);
+    await withTransaction(async tx => {
+      await archive.upsertSession(tx, parsed.session);
+      await usage.upsertCalls(tx, parsed.calls);
+    });
+    expect((await byId())['codex-context']).toMatchObject({ context_tokens: null, context_at: null });
   });
 });

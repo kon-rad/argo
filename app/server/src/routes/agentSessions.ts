@@ -60,7 +60,7 @@ export const TYPE_SQL = (a: string) => `CASE
   WHEN ${a}.harness = 'hermes' THEN CASE coalesce(nullif(${a}.meta ->> 'source', ''), 'unknown')
     WHEN 'cli' THEN 'cli' WHEN 'cron' THEN 'headless' WHEN 'api_server' THEN 'web' ELSE coalesce(nullif(${a}.meta ->> 'source', ''), 'unknown') END
   WHEN ${a}.harness = 'zen-agent' AND ${a}.meta ->> 'entrypoint' IS NULL
-    THEN CASE WHEN jsonb_typeof(${a}.meta -> 'dispatch') = 'object' AND ${a}.meta -> 'dispatch' <> '{}'::jsonb THEN 'headless' ELSE 'unknown' END
+    THEN 'unknown'
   ELSE (SELECT CASE WHEN e IS NULL THEN 'unknown' WHEN e IN ('cli', 'chat') THEN 'cli'
       WHEN e LIKE 'sdk%' OR e IN ('run', 'wake', 'subagent', 'exec') THEN 'headless' WHEN e = 'serve' THEN 'web' ELSE e END
     FROM (SELECT ${ENTRY(a)} AS e) x)
@@ -135,7 +135,7 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
        SELECT DISTINCT ON (p.id) p.id AS root, u.ts, u.model,
               (coalesce(u.input_tokens, 0) + coalesce(u.cache_write_tokens, 0) + coalesce(u.cache_read_tokens, 0))::bigint AS tokens
        FROM page p JOIN usage_calls u ON u.host = p.host AND u.source = p.source AND u.session_external_id = p.external_id
-       WHERE NOT coalesce(u.is_sidechain, false) AND coalesce(u.entrypoint, '') NOT LIKE 'aux:%'
+       WHERE u.source = 'claude-code' AND NOT coalesce(u.is_sidechain, false) AND coalesce(u.entrypoint, '') NOT LIKE 'aux:%'
        ORDER BY p.id, u.ts DESC, u.id DESC)
      SELECT p.id, p.source, p.harness, p.profile, p.provider, p.host, p.external_id, p.parent_external_id, p.project, p.title,
             coalesce((SELECT array_agg(DISTINCT r.task_id ORDER BY r.task_id) FROM usage_runs r
