@@ -3,7 +3,7 @@ import { afterAll, beforeEach, expect, it } from 'vitest';
 import { query } from '../src/db.js';
 import { createCard, finishCard, getCard } from '../src/board.js';
 import { importOrg } from '../src/org.js';
-import { acknowledgeCorrection, cancelCorrection, claimCorrection, finishCorrection, registerLaunch, retryCorrection } from '../src/review/corrections.js';
+import { acknowledgeCorrection, cancelCorrection, claimCorrection, finishCorrection, prepareCorrection, registerLaunch, retryCorrection } from '../src/review/corrections.js';
 import { truncateAll } from './helpers.js';
 
 const workerName = 'sb_review_correction_fixture';
@@ -47,6 +47,8 @@ it('proves ready -> claimed -> acknowledged running -> review without double cla
   try {
     const claimed = await claimCorrection(first,'worker-a',60); expect(claimed?.builder).toBe('builder');
     expect(await claimCorrection(second,'worker-a',60)).toBeNull();
+    expect((await prepareCorrection(first,claimed!.id,claimed!.leaseToken,'run-correction-1',claimed!.head)).state).toBe('starting');
+    expect((await prepareCorrection(first,claimed!.id,claimed!.leaseToken,'run-correction-1',claimed!.head)).state).toBe('starting');
     const running = await acknowledgeCorrection(first,claimed!.id,claimed!.leaseToken,'run-correction-1','process-1',claimed!.head);
     expect(running.state).toBe('running'); expect((await getCard(card.id)).card.status).toBe('running');
     expect((await acknowledgeCorrection(first,claimed!.id,claimed!.leaseToken,'run-correction-1','process-1',claimed!.head)).state).toBe('running');
@@ -56,6 +58,69 @@ it('proves ready -> claimed -> acknowledged running -> review without double cla
   } finally { await first.end(); await second.end(); }
 });
 
+it('recovers an expired proven no-start claim once and escalates an ambiguous prepared launch', async () => {
+  const {card,job} = await submitted(); await save(Number(job.id), rejection(job));
+  const crashed = await client();
+  const abandoned = await claimCorrection(crashed,'worker-a',60);
+  await crashed.end();
+  await query("UPDATE review_corrections SET lease_until=now()-interval '1 second' WHERE id=$1",[abandoned!.id]);
+  const restarted = await client();
+  try {
+    const recovered = await claimCorrection(restarted,'worker-a',60);
+    expect(recovered).toMatchObject({id:abandoned!.id,fence:abandoned!.fence+1,transientAttempts:1});
+    expect((await getCard(card.id)).card.rounds).toBe(1);
+
+    await prepareCorrection(restarted,recovered!.id,recovered!.leaseToken,'run-maybe-started',recovered!.head);
+    await query("UPDATE review_corrections SET lease_until=now()-interval '1 second' WHERE id=$1",[recovered!.id]);
+    expect(await claimCorrection(restarted,'worker-a',60)).toBeNull();
+    expect(await claimCorrection(restarted,'worker-a',60)).toBeNull();
+    expect((await query('SELECT state,run_id,transient_attempts FROM review_corrections WHERE id=$1',[recovered!.id])).rows[0]).toMatchObject({state:'blocked',run_id:'run-maybe-started',transient_attempts:1});
+    expect((await getCard(card.id)).card).toMatchObject({status:'blocked',rounds:1,block_kind:'tool-error'});
+  } finally { await restarted.end(); }
+});
+
+it('retains distinct findings with the same code and impact while replay stays idempotent', async () => {
+  const {job} = await submitted();
+  const patch = rejection(job);
+  patch.verdict.findings.push({code:'code-finding',severity:'high',location:'worker.ts:24',evidence:'missing fence',impact:'incorrect result',fix:'Check the fence',verification:'Run lease test'});
+  await save(Number(job.id),patch); await save(Number(job.id),patch);
+  const feedback = (await query('SELECT evidence, required_fix FROM review_feedback WHERE job=$1 ORDER BY id',[job.id])).rows;
+  expect(feedback).toEqual(expect.arrayContaining([
+    expect.objectContaining({evidence:'unsafe query',required_fix:'Bind the value'}),
+    expect.objectContaining({evidence:'missing fence',required_fix:'Check the fence'}),
+  ]));
+  expect(feedback).toHaveLength(2);
+  expect((await query('SELECT count(*)::int n FROM review_corrections WHERE card=(SELECT card FROM review_jobs WHERE id=$1)',[job.id])).rows[0]!.n).toBe(1);
+});
+
+it('cancels only its bound attempt and cannot regress a newer accepted review', async () => {
+  const {card,job} = await submitted(); await save(Number(job.id), rejection(job));
+  const correction = (await query('SELECT id FROM review_corrections WHERE card=$1',[card.id])).rows[0]!;
+  await finishCard('builder',card.id,{outcome:'done'});
+  const newer = (await query('SELECT * FROM review_jobs WHERE card=$1 ORDER BY id DESC LIMIT 1',[card.id])).rows[0]!;
+  await save(Number(newer.id),{state:'approved',snapshot:{repo:'example/engine',pr:7,base:'a'.repeat(40),head:'d'.repeat(40)},verdict:{reviewer:'auditor',decision:'accept',head:'d'.repeat(40),evidence:'e'.repeat(64),findings:[]}});
+  const c = await client();
+  try { await cancelCorrection(c,Number(correction.id),'Stale rejected head'); }
+  finally { await c.end(); }
+  expect((await getCard(card.id)).card).toMatchObject({status:'review',block_kind:null,block_reason:null});
+  expect((await query('SELECT state FROM review_corrections WHERE id=$1',[correction.id])).rows[0]!.state).toBe('cancelled');
+});
+
+it('closes only the cancelled correction run, not another run on the card', async () => {
+  const {card,job} = await submitted(); await save(Number(job.id), rejection(job)); const c = await client();
+  try {
+    const claimed = await claimCorrection(c,'worker-a',60);
+    await prepareCorrection(c,claimed!.id,claimed!.leaseToken,'run-old',claimed!.head);
+    await acknowledgeCorrection(c,claimed!.id,claimed!.leaseToken,'run-old','process-old',claimed!.head);
+    await query("UPDATE card_runs SET finished_at=now(),outcome='partial' WHERE card_id=$1 AND run_id='run-old'",[card.id]);
+    await query("INSERT INTO card_runs(card_id,agent_name,runtime,run_id,lease_until) VALUES($1,'builder','codex','run-new',now()+interval '1 hour')",[card.id]);
+    await cancelCorrection(c,claimed!.id,'Old correction cancelled');
+    const runs = (await query('SELECT run_id,finished_at FROM card_runs WHERE card_id=$1 ORDER BY run_id',[card.id])).rows;
+    expect(runs.find(r=>r.run_id==='run-old')!.finished_at).not.toBeNull();
+    expect(runs.find(r=>r.run_id==='run-new')!.finished_at).toBeNull();
+  } finally { await c.end(); }
+});
+
 it('separates transient host backoff from code rounds and rejects stale acknowledgement', async () => {
   const {card,job} = await submitted(); await save(Number(job.id), rejection(job)); const c = await client();
   try {
@@ -63,6 +128,7 @@ it('separates transient host backoff from code rounds and rejects stale acknowle
     expect((await getCard(card.id)).card.rounds).toBe(1);
     await query("UPDATE review_corrections SET available_at=now()-interval '1 second' WHERE id=$1",[claimed!.id]);
     const retry = await claimCorrection(c,'worker-a',60); expect(retry!.transientAttempts).toBe(1);
+    await prepareCorrection(c,retry!.id,retry!.leaseToken,'run-stale',retry!.head);
     await expect(acknowledgeCorrection(c,retry!.id,retry!.leaseToken,'run-stale','process-stale','d'.repeat(40))).rejects.toThrow(/stale/);
     await cancelCorrection(c,retry!.id,'PR head changed');
     expect((await getCard(card.id)).card.status).toBe('blocked');

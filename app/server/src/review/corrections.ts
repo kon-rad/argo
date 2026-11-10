@@ -16,6 +16,9 @@ function claimed(row:Record<string,unknown>|undefined):ClaimedCorrection|null {
 export async function claimCorrection(client:pg.Client,host:string,ttlSeconds=300):Promise<ClaimedCorrection|null>{
  const result=await client.query('SELECT * FROM review_correction_claim($1,$2)',[host,ttlSeconds]);return claimed(result.rows[0]);
 }
+export async function prepareCorrection(client:pg.Client,id:number,token:string,runId:string,head:string):Promise<{state:string}>{
+ return (await client.query('SELECT * FROM review_correction_prepare($1,$2,$3,$4)',[id,token,runId,head])).rows[0];
+}
 export async function acknowledgeCorrection(client:pg.Client,id:number,token:string,runId:string,processId:string,head:string):Promise<{state:string}>{
  return (await client.query('SELECT * FROM review_correction_ack($1,$2,$3,$4,$5)',[id,token,runId,processId,head])).rows[0];
 }

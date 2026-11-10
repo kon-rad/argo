@@ -154,7 +154,7 @@ The importer uses the same per-card content lock, stamps both sources with the a
 
 ### Typed feedback and the optional correction queue
 
-`corrections_enabled` is independently disabled by default. When it is false, rejection keeps the existing ready transition and wake. When it is true, `review_save` stores immutable revision-bound feedback, preserves the original assignee, increments the existing bounded correction round once, and creates one correction item in the same transaction. Scope/context capacity failures and terminal failed CI use the same finding fields as reviewer findings. A capacity rejection explicitly records that full model review did not run. Missing or pending CI waits. Missing essential or private-excluded context, unknown identity, exhausted rounds, authentication uncertainty, and uncertain merge/deploy effects block instead of being treated as code fixes.
+`corrections_enabled` is independently disabled by default. When it is false, rejection keeps the existing ready transition and wake. When it is true, `review_save` stores immutable revision-bound feedback, preserves the original assignee, increments the existing bounded correction round once, and creates one correction item in the same transaction. Each feedback ID includes a deterministic digest of the complete normalized finding, so exact replay is idempotent while different locations, evidence, fixes, or verification remain distinct. Scope/context capacity failures and terminal failed CI use the same finding fields as reviewer findings. A capacity rejection explicitly records that full model review did not run. Missing or pending CI waits. Missing essential or private-excluded context, unknown identity, exhausted rounds, authentication uncertainty, and uncertain merge/deploy effects block instead of being treated as code fixes.
 
 Before the first submission, a trusted coordinator registers the original launch by sending strict JSON on stdin. Values below are generic examples; paths and identities are owner configuration:
 
@@ -170,6 +170,7 @@ The host loop uses the same owner-owned policy file:
 
 ```sh
 node server/dist/cli-review.js claim  /etc/secondbrain/review-host.json worker-a
+node server/dist/cli-review.js prepare /etc/secondbrain/review-host.json < prepare.json
 node server/dist/cli-review.js ack    /etc/secondbrain/review-host.json < acknowledgement.json
 node server/dist/cli-review.js retry  /etc/secondbrain/review-host.json < retry.json
 node server/dist/cli-review.js finish /etc/secondbrain/review-host.json < finish.json
@@ -177,7 +178,9 @@ node server/dist/cli-review.js cancel /etc/secondbrain/review-host.json < cancel
 node server/dist/cli-review.js status /etc/secondbrain/review-host.json
 ```
 
-`claim` leases one item with `FOR UPDATE SKIP LOCKED` and a fencing token. It does not move the card to running. After starting a real process, `ack` binds the unique run/process ID and revalidates the live PR/card/base/head before the database moves the card to running. Repeated acknowledgement and finish calls are idempotent. An expired unacknowledged claim is not blindly reclaimed because a process may have started; the coordinator must reconcile or cancel it. `retry` is only for a claimed item that has not started, records bounded host/offline backoff separately, and does not increment code rounds. `finish` returns the same card through the existing review submission gate. Closed, cancelled, or changed-head work is cancelled before acknowledgement. Merge, deployment, and exact-revision health receipts remain immutable review-job history.
+`claim` leases one item with `FOR UPDATE SKIP LOCKED` and a fencing token. It does not move the card to running. Before any process spawn, `prepare` reserves the real unique run ID and marks the lease `starting`; only then may the host launch it. `ack` binds that run ID to the real process ID, revalidates the live PR/card/base/head, and moves the card to running. Repeated prepare, acknowledgement, finish, and poll calls are idempotent.
+
+An expired plain `claimed` lease is a protocol-proven no-start and is returned to bounded transient retry without spending a code round. An expired `starting` lease may already have spawned, so it blocks for owner reconciliation and is never launched again automatically. `retry` is only for a claimed item that has not been prepared, records bounded host/offline backoff separately, and does not increment code rounds. `finish` returns the same card through the existing review submission gate. Cancellation closes only its bound run and compare-and-set blocks the card only while that rejected review is still current; a newer submission or accepted/completed card cannot regress. Closed, cancelled, or changed-head work is cancelled before acknowledgement. Merge, deployment, and exact-revision health receipts remain immutable review-job history.
 
 Enable only after a scratch-database round trip and a real non-shipping host canary:
 
