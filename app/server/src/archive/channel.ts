@@ -12,7 +12,7 @@ export type Channel = 'telegram' | 'web' | 'remote-control';
 export interface ChannelTag { channel: Channel; handle: string | null }
 
 /** Session meta keys the channel label uses, written by every collector the same way. */
-export interface ChannelMeta { channel: Channel; channel_handle?: string | null; channel_bot?: string | null }
+export interface ChannelMeta { channel: Channel; channel_handle?: string | null; channel_bot?: string | null; channel_persona?: string | null }
 
 const TAG_RE = /^\s*<channel\s([^>]*)>\s*\n?/;
 const CLOSE_RE = /\s*<\/channel>\s*$/;

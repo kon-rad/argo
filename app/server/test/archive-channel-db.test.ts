@@ -46,7 +46,7 @@ describe('channel label from the collectors', () => {
     const paths = { claudeProjectsDir: join(root, 'projects'), runsDir: null, statuslineLog: null };
     await syncUsage(paths, 'droplet');
     const row = async () => (await query(`SELECT channel, meta, title FROM archive_sessions WHERE external_id = 'tg-1'`)).rows[0]!;
-    expect(await row()).toMatchObject({ channel: 'telegram', meta: { channel: 'telegram', channel_handle: '@someone', channel_bot: 'claude' } });
+    expect(await row()).toMatchObject({ channel: 'telegram', meta: { channel: 'telegram', channel_handle: '@someone', channel_bot: 'claude', entrypoint: 'cli' } });
     expect(JSON.stringify((await row()).meta)).not.toContain('12345');
     // The next chunk has no tag: the label stays.
     writeFileSync(file, readFileSync(file, 'utf8') + user('u3', '2026-10-30T19:06:00Z', `${TAG}\nthanks\n</channel>`) + assistant('a2', 'msg_2', '2026-10-30T19:06:05Z'));
@@ -57,7 +57,8 @@ describe('channel label from the collectors', () => {
     expect(steps[1]!.content_text).toBe('file a ticket please');
     // The page: the /clear record is not the title, the chip says telegram, the facet counts it.
     const list = await request(app).get('/api/usage/agent-sessions?from=2026-10-30T00:00:00Z&to=2026-10-31T00:00:00Z').expect(200);
-    expect(list.body.sessions[0]).toMatchObject({ channel: 'telegram', channel_bot: 'claude', first_prompt: 'file a ticket please' });
+    expect(list.body.sessions[0]).toMatchObject({ channel: 'telegram', channel_bot: 'claude', first_prompt: 'file a ticket please',
+      session_type: 'telegram', persona: 'claude', display_title: 'file a ticket please', title_source: 'prompt', context_tokens: 5 });
     const facets = await request(app).get('/api/usage/agent-sessions/facets?from=2026-10-30T00:00:00Z&to=2026-10-31T00:00:00Z').expect(200);
     expect(facets.body.facets.channel).toEqual([{ value: 'telegram', n: 1 }]);
     const none = await request(app).get('/api/usage/agent-sessions?from=2026-10-30T00:00:00Z&to=2026-10-31T00:00:00Z&channel=none').expect(200);
@@ -79,7 +80,8 @@ describe('channel label from the collectors', () => {
       line({ type: 'message', at: '2026-10-28T08:41:58.000Z', message: { role: 'user', content: 'and the reel skill', timestamp: '2026-10-28T08:41:58.000Z' } }) +
       line({ type: 'end', at: '2026-10-28T08:42:30.000Z', stopped: 'done', turns: 1 }));
     await syncUsage({ claudeProjectsDir: join(root, 'none'), runsDir: null, statuslineLog: null, zenSessionsDir: zen }, 'droplet');
-    expect((await query(`SELECT channel, meta ->> 'channel_bot' bot FROM archive_sessions`)).rows).toEqual([{ channel: 'telegram', bot: 'zen' }]);
+    expect((await query(`SELECT channel, meta ->> 'channel_bot' bot, meta ->> 'channel_persona' persona FROM archive_sessions`)).rows)
+      .toEqual([{ channel: 'telegram', bot: 'zen', persona: 'sol' }]);
     expect((await query(`SELECT work_type, reasons FROM usage_runs`)).rows[0]).toMatchObject({ work_type: 'telegram', reasons: [{ reason: 'telegram', ref: '9' }] });
   });
 
