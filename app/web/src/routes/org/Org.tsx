@@ -67,7 +67,7 @@ function MessageCard({ m, teams, showChannel, big }: { m: OrgMessage; teams: Map
         <AuthorChip name={m.author} team={teams.get(m.author) ?? null} />
         <KindChip kind={m.kind} urgent={m.urgent} />
         {showChannel && <Link to={`/org?channel=${encodeURIComponent(m.channel_slug)}`} className="text-xs text-[var(--accent)]">{channelLabel(m.channel_slug)}</Link>}
-        <span className="text-xs text-[var(--ink-faint)]" title={zoned(m.created_at, 'Asia/Tokyo')}>{ago(m.created_at)}</span>
+        <span className="text-xs text-[var(--ink-faint)]" title={zoned(m.created_at)}>{ago(m.created_at)}</span>
         <span className="text-xs text-[var(--ink-faint)]">#{m.id}</span>
         {m.task_id && <Link to={`/board/${m.task_id}`} className="text-xs text-[var(--accent)]">task {m.task_id}</Link>}
         {m.project_slug && (

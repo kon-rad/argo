@@ -66,6 +66,18 @@ test('a run without dispatcher flags has an empty dispatch object, not a missing
   const meta = JSON.parse(readFileSync(r.sessionPath, 'utf8').split('\n')[0]!) as Record<string, unknown>;
   assert.deepEqual(meta['dispatch'], {});
   assert.equal(meta['version'], 1);
+  assert.equal(meta['entrypoint'], null); // not told how it was started: says so, never guesses
+});
+
+test('the trace meta line says how the run was started and the model context window', async () => {
+  const { cfg, faux, models } = setup();
+  faux.setResponses([fauxAssistantMessage([fauxText('ok')])]);
+  const zen = new ZenAgent({ config: cfg, models, env: {}, entrypoint: 'chat' });
+  const r = await zen.run('hi');
+  const meta = JSON.parse(readFileSync(r.sessionPath, 'utf8').split('\n')[0]!) as Record<string, unknown>;
+  assert.equal(meta['entrypoint'], 'chat');
+  assert.equal(meta['context_window'], zen.model.contextWindow);
+  assert.ok(typeof meta['context_window'] === 'number' && meta['context_window'] > 0);
 });
 
 test('the CLI parsers: --meta pairs over --meta-json, thinking levels, tool lists', () => {
