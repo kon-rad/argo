@@ -4,7 +4,7 @@
  * `secondbrain timezone set <Area/City>`. Unset: each browser uses its own zone. Never inferred from the server's
  * zone, which says where the machine is, not where its owner is.
  */
-import { chmodSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, fchmodSync, fchownSync, fstatSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { settingsPath } from './settings.js';
 
@@ -71,17 +71,34 @@ export function saveTimezone(tz: string | null, path = settingsPath()): string |
   const name = tz === null ? null : canonicalTimeZone(tz);
   if (tz !== null && !name) throw new Error(`not an IANA time zone: ${tz} (use a name like America/Los_Angeles or Asia/Singapore)`);
   const next = withTimezone(readText(path), name);
-  let mode = 0o600;
-  try { mode = statSync(path).mode & 0o777; }
+  let original: Stats | undefined;
+  try { original = statSync(path); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   // A private sibling directory prevents following a pre-existing temporary-file symlink.
   // Keep the rename on the same filesystem, and restore the original mode despite umask.
   const directory = mkdtempSync(join(dirname(path), '.timezone-'));
   const tmp = join(directory, 'settings');
+  let fd: number | undefined;
   try {
-    writeFileSync(tmp, next, { mode, flag: 'wx' });
-    chmodSync(tmp, mode);
+    fd = openSync(tmp, 'wx', 0o600);
+    writeFileSync(fd, next);
+    if (original) {
+      // A replacement owned by the CLI caller could revoke the service's access.
+      // Fail before rename if this caller cannot retain the original identity.
+      try { fchownSync(fd, original.uid, original.gid); }
+      catch (error) { throw new Error('cannot preserve settings ownership; original file unchanged', { cause: error }); }
+      // chown can clear permission bits, so restore them afterwards.
+      fchmodSync(fd, original.mode & 0o777);
+      const actual = fstatSync(fd);
+      if (actual.uid !== original.uid || actual.gid !== original.gid || (actual.mode & 0o777) !== (original.mode & 0o777)) {
+        throw new Error('cannot preserve settings identity and permissions; original file unchanged');
+      }
+    }
+    closeSync(fd); fd = undefined;
     renameSync(tmp, path);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+    rmSync(directory, { recursive: true, force: true });
+  }
   return name;
 }
