@@ -267,6 +267,8 @@ export interface AppMeta {
   devLogPath: string | null;
   docsPath: string | null;
   robot: boolean;
+  /** The vault's current IANA time zone (secondbrain.json `timezone`); null or absent: use the browser's. */
+  timezone?: string | null;
   /** The app's own version, from package.json, and the commit it was built from. */
   version: string;
   commit: string | null;
@@ -695,6 +697,16 @@ export interface AgentSessionRow {
   external_id: string; parent_external_id: string | null; project: string | null; title: string | null; first_prompt: string | null;
   /** Where the prompts came from when not a keyboard: 'telegram', 'web', 'remote-control'; the bot's configured name. */
   channel: string | null; channel_bot: string | null;
+  /** 'telegram', 'cli', 'headless', another channel's own name ('web', 'remote-control'), or 'unknown' when nothing recorded it. */
+  session_type?: string | null;
+  /** The persona that ran it (run agent, zen persona, bot's persona, else the bot); null: none recorded. */
+  persona?: string | null;
+  /** One line under 100 characters, and where it came from; null when nothing usable was found. */
+  display_title?: string | null; title_source?: 'task' | 'skill' | 'title' | 'prompt' | null;
+  /** The prompt size of the session's latest main call (what the context held then), and when; null: no call recorded. */
+  context_tokens?: number | null; context_at?: string | null;
+  /** The context window recorded with the session; null: unknown (never guessed from the model name). */
+  context_window?: number | null;
   started_at: string | null; ended_at: string | null; steps: number; tool_calls: number; errors: number; subagents: number;
   models: string[]; calls: number; input: number; cache_write: number; cache_read: number; output: number; reasoning: number;
   cost_usd?: number | null;
@@ -712,12 +724,13 @@ export interface AgentSessionRun {
 }
 export interface AgentSessionFilters {
   harness?: string[]; host?: string[]; profile?: string[]; provider?: string[]; channel?: string[]; tool?: string[];
+  type?: string[]; persona?: string[];
   q?: string; errors?: boolean; subagents?: boolean;
 }
-export type AgentSessionFacets = Record<'harness' | 'host' | 'profile' | 'provider' | 'channel' | 'tool', Array<{ value: string; n: number }>>;
+export type AgentSessionFacets = Record<'harness' | 'host' | 'profile' | 'provider' | 'channel' | 'type' | 'persona' | 'tool', Array<{ value: string; n: number }>>;
 const agentParams = (f: AgentSessionFilters): Params => ({
   harness: f.harness?.join(','), host: f.host?.join(','), profile: f.profile?.join(','), provider: f.provider?.join(','),
-  channel: f.channel?.join(','), tool: f.tool?.join(','), q: f.q, errors: f.errors ? '1' : undefined, subagents: f.subagents ? '1' : undefined,
+  channel: f.channel?.join(','), type: f.type?.join(','), persona: f.persona?.join(','), tool: f.tool?.join(','), q: f.q, errors: f.errors ? '1' : undefined, subagents: f.subagents ? '1' : undefined,
 });
 
 export interface UsageMessage {

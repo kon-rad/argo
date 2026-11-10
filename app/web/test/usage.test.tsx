@@ -19,10 +19,10 @@ const row = (o: Record<string, unknown>) => ({ id: 1, source: 'claude-code', har
   external_id: 'x', parent_external_id: null, project: null, title: null, first_prompt: null, started_at: null, ended_at: null,
   steps: 0, tool_calls: 0, errors: 0, subagents: 0, models: [], calls: 0, input: 0, cache_write: 0, cache_read: 0, output: 0, reasoning: 0, ...o });
 const SESSIONS = { total: 3, sessions: [
-  row({ id: 1, external_id: 'cc1', task_ids: ['t_1234abcd'], title: 'Fix dispatcher', started_at: '2026-10-14T01:00:00Z', ended_at: '2026-10-14T01:05:00Z',
+  row({ id: 1, external_id: 'cc1', task_ids: ['t_1234abcd'], title: 'Fix dispatcher', display_title: 'Fix dispatcher', title_source: 'title', started_at: '2026-10-14T01:00:00Z', ended_at: '2026-10-14T01:05:00Z',
     calls: 9, input: 10, cache_write: 100, cache_read: 1000, output: 50, steps: 12, tool_calls: 4, errors: 1, models: ['claude-opus-5-5'] }),
   row({ id: 2, host: 'mac', external_id: 'arch-only-session' }),
-  row({ id: 3, source: 'hermes', harness: 'hermes', profile: 'main', provider: 'openrouter', external_id: 'h1', title: 'Hermes chat',
+  row({ id: 3, source: 'hermes', harness: 'hermes', profile: 'main', provider: 'openrouter', external_id: 'h1', title: 'Hermes chat', display_title: 'Hermes chat', title_source: 'title',
     started_at: '2026-10-14T01:00:00Z', calls: 2, input: 5, output: 5, cost_usd: 0.42, models: ['deepseek-v4-flash'] })] };
 const AFACETS = { facets: { harness: [{ value: 'claude-code', n: 2 }, { value: 'hermes', n: 1 }], host: [{ value: 'droplet', n: 2 }, { value: 'mac', n: 1 }],
   profile: [], provider: [], tool: [{ value: 'Bash', n: 4 }] } };
