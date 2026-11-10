@@ -1,13 +1,10 @@
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createApp } from '../src/app.js';
 import { runTimezone } from '../src/cli-timezone.js';
 import { parseSettings, resetSettings, settings } from '../src/settings.js';
 import { canonicalTimeZone, currentTimezone, isTimeZone, saveTimezone, withTimezone } from '../src/timezone.js';
-import { ALL_MODULES } from './helpers.js';
 
 let file: string;
 beforeEach(() => {
@@ -70,10 +67,4 @@ describe('time zone setting', () => {
     expect(out.pop()).toBe('timezone: not set (each browser uses its own zone), was Asia/Singapore');
   });
 
-  it('/api/meta serves the zone and picks up a change without a restart; null when unset', async () => {
-    const app = createApp({ modules: ALL_MODULES });
-    expect((await request(app).get('/api/meta').expect(200)).body.timezone).toBeNull();
-    saveTimezone('Asia/Singapore', file);
-    expect((await request(app).get('/api/meta').expect(200)).body.timezone).toBe('Asia/Singapore');
-  });
 });

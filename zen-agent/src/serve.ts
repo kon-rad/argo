@@ -280,7 +280,6 @@ export class ChatHost {
     const r = live.record;
     return new ZenAgent({
       config: this.cfg,
-      entrypoint: 'serve',
       models: this.models,
       env: this.env,
       fetch: this.fetch,
