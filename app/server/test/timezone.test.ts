@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
@@ -38,6 +38,15 @@ describe('time zone setting', () => {
     saveTimezone(null, file);
     expect(JSON.parse(readFileSync(file, 'utf8'))).not.toHaveProperty('timezone');
     expect(withTimezone(null, 'UTC')).toBe('{\n  "timezone": "UTC"\n}\n');
+  });
+
+  it('preserves restrictive settings permissions across atomic updates and clearing', () => {
+    chmodSync(file, 0o600);
+    saveTimezone('Asia/Singapore', file);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(file, 'utf8')).usage).toEqual({ credits: ['fal'] });
+    saveTimezone(null, file);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 
   it('a typo in the file drops the zone, not the rest of the settings', () => {
