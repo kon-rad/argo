@@ -4,9 +4,9 @@ Status: **works**. One IANA time zone for the whole app, kept in your vault's `s
 
 ## What it does
 
-The shared time helpers, Usage charts and summaries use the configured zone. Usage charts bucket hours and days
-by it, so a day bar and the sessions it opens agree. Session inspection, TV and Org consumers are delivered in
-subsequent integration slices.
+Every time the web app shows (the Usage page, its Sessions list and session pages, summaries, the TV and Org pages)
+is written in one zone, and the Usage charts bucket hours and days by it, so a day bar, the sessions it opens and the
+times in them all agree. The Sessions list writes Started as `YYYYMMDD HH:mm` on a 24-hour clock in this zone.
 
 | Setting | Zone used |
 |---|---|
