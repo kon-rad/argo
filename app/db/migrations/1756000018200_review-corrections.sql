@@ -115,12 +115,12 @@ BEGIN
      UPDATE review_corrections SET state='blocked',error='Expired correction claim retry limit reached',updated_at=now() WHERE review_corrections.id=item.id;
      UPDATE cards SET status='blocked',block_kind='tool-error',block_reason='Correction worker repeatedly claimed without starting; owner reconciliation required' WHERE cards.id=item.card AND cards.status='ready' AND (SELECT max(j.id) FROM review_jobs j WHERE j.card=cards.id)=(SELECT f.job FROM review_feedback f WHERE f.id=item.feedback_id);
    ELSE
-     UPDATE review_corrections SET state='retry',lease_token=NULL,lease_until=NULL,transient_attempts=transient_attempts+1,available_at=now(),error='Expired claim reconciled as proven no-start',updated_at=now() WHERE review_corrections.id=item.id;
+     UPDATE review_corrections q SET state='retry',lease_token=NULL,lease_until=NULL,transient_attempts=q.transient_attempts+1,available_at=now(),error='Expired claim reconciled as proven no-start',updated_at=now() WHERE q.id=item.id;
    END IF;
  END LOOP;
  SELECT q.* INTO item FROM review_corrections q JOIN review_launches l ON l.card=q.launch_card JOIN cards c ON c.id=q.card WHERE q.state IN ('queued','retry') AND q.available_at<=now() AND l.host=p_host AND c.status='ready' ORDER BY q.created_at,q.id LIMIT 1 FOR UPDATE OF q SKIP LOCKED;
  IF item.id IS NULL THEN RETURN; END IF; token:=md5(random()::text||clock_timestamp()::text||item.id::text)||md5(session_user||item.id::text);
- UPDATE review_corrections q SET state='claimed',lease_token=token,lease_until=now()+make_interval(secs=>p_ttl),fence=fence+1,updated_at=now() WHERE q.id=item.id;
+ UPDATE review_corrections q SET state='claimed',lease_token=token,lease_until=now()+make_interval(secs=>p_ttl),fence=q.fence+1,updated_at=now() WHERE q.id=item.id;
  RETURN QUERY SELECT q.id,q.feedback_id,q.card,l.builder,l.persona,l.runtime,l.model,l.host,l.repo,l.branch,l.worktree,l.common_dir,l.original_run_id,q.head,q.base,q.pr,q.evidence_hash,q.lease_token,q.fence,q.transient_attempts FROM review_corrections q JOIN review_launches l ON l.card=q.launch_card WHERE q.id=item.id;
 END $$;
 REVOKE ALL ON FUNCTION review_correction_claim(text,integer) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_claim(text,integer) TO sb_review_worker;
