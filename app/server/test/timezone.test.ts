@@ -1,10 +1,18 @@
-import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, chownSync, fchownSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import request from 'supertest';
+import { createApp } from '../src/app.js';
+import { ALL_MODULES } from './helpers.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runTimezone } from '../src/cli-timezone.js';
 import { parseSettings, resetSettings, settings } from '../src/settings.js';
 import { canonicalTimeZone, currentTimezone, isTimeZone, saveTimezone, withTimezone } from '../src/timezone.js';
+
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return { ...fs, fchownSync: vi.fn(fs.fchownSync) };
+});
 
 let file: string;
 beforeEach(() => {
@@ -46,6 +54,38 @@ describe('time zone setting', () => {
     expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 
+  it('preserves owner, service group and 0640 access when setting and clearing', () => {
+    const groups = process.getgroups?.() ?? [];
+    const original = statSync(file);
+    const group = groups.find((gid) => gid !== original.gid) ?? original.gid;
+    chownSync(file, original.uid, group);
+    chmodSync(file, 0o640);
+    const identity = () => { const s = statSync(file); return { uid: s.uid, gid: s.gid, mode: s.mode & 0o777 }; };
+    const expected = { uid: original.uid, gid: group, mode: 0o640 };
+    saveTimezone('Asia/Singapore', file);
+    expect(identity()).toEqual(expected);
+    expect(currentTimezone(file)).toBe('Asia/Singapore');
+    saveTimezone(null, file);
+    expect(identity()).toEqual(expected);
+    expect(currentTimezone(file)).toBeNull();
+  });
+
+  it('leaves the original file untouched when ownership cannot be retained', () => {
+    chmodSync(file, 0o640);
+    const before = statSync(file);
+    const text = readFileSync(file, 'utf8');
+    const parent = join(file, '..');
+    vi.mocked(fchownSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    });
+    expect(() => saveTimezone('Asia/Singapore', file)).toThrow(/ownership|owner|identity/i);
+    expect(readFileSync(file, 'utf8')).toBe(text);
+    const after = statSync(file);
+    expect([after.ino, after.uid, after.gid, after.mode]).toEqual([before.ino, before.uid, before.gid, before.mode]);
+    expect(readdirSync(parent)).toEqual(['secondbrain.json']);
+    expect(currentTimezone(file)).toBeNull();
+  });
+
   it('a typo in the file drops the zone, not the rest of the settings', () => {
     const s = parseSettings({ timezone: 'Asia/Singapur', telegram: { bots: [{ name: 'claude', agent: 'claude-code' }] } });
     expect(s.timezone).toBeUndefined();
@@ -76,4 +116,12 @@ describe('time zone setting', () => {
     expect(out.pop()).toBe('timezone: not set (each browser uses its own zone), was Asia/Singapore');
   });
 
+  it('/api/meta serves the zone and picks up a change without a restart; null when unset', async () => {
+    const app = createApp({ modules: ALL_MODULES });
+    expect((await request(app).get('/api/meta').expect(200)).body.timezone).toBeNull();
+    saveTimezone('Asia/Singapore', file);
+    expect((await request(app).get('/api/meta').expect(200)).body.timezone).toBe('Asia/Singapore');
+    saveTimezone(null, file);
+    expect((await request(app).get('/api/meta').expect(200)).body.timezone).toBeNull();
+  });
 });
