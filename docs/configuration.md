@@ -318,3 +318,7 @@ ReadWritePaths=-/srv/codex-state
 ```
 
 Replace the example path with the selected `CODEX_HOME`, keep its ownership with the app user, and restart the app after `sudo systemctl daemon-reload`. Leave `ProtectHome=read-only` enabled. Verify quota retrieval through the running app's authenticated `/api/usage/subscriptions` endpoint; a successful shell probe does not verify the systemd sandbox.
+
+### Review scope CLI configuration
+
+The standalone `review scope` commands take an optional owner-controlled JSON configuration, separate from app env and worker host configuration. Defaults are `softTarget: 24` and `exclude: []`; the soft target accepts 1 through the unchanged hard limit of 30. There are no configurable hard-cap increases. Copy [review-scope.example.json](https://github.com/kon-rad/argo/blob/main/app/deploy/review-scope.example.json), keep private exclusion prefixes outside public source, and supply the same exclusions to the reviewer host. See [scope checkpoints](automatic-review.md#scope-checkpoints-before-building-and-submitting) for the versioned plan, request schema, exit codes and module-off direct Node command.
