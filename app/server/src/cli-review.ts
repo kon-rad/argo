@@ -37,7 +37,7 @@ async function main(): Promise<void> {
       const body=await stdin() as {id:number;leaseToken:string;runId:string;processId:string;head:string};
       const row=(await client.query('SELECT q.*,l.repo FROM review_corrections q JOIN review_launches l ON l.card=q.launch_card WHERE q.id=$1',[body.id])).rows[0];if(!row)throw new Error('Unknown correction');
       const repo=host.repositories[row.repo];if(!repo){await cancelCorrection(client,body.id,'Unknown registered repository');throw new Error('Unknown registered repository');}
-      try{const pr=await new GitHub(host,repo).pr(row.card,row.pr);if(pr.state!=='OPEN' || pr.headRefOid!==row.head || pr.baseRefOid!==row.base){await cancelCorrection(client,body.id,'PR binding changed before correction acknowledgement');throw new Error('Stale correction');}}
+      try{await new GitHub(host,repo).correction(row.card,row.pr,row.head,row.base);}
       catch(error){await cancelCorrection(client,body.id,'PR closed, cancelled or unavailable before correction acknowledgement');throw error;}
       console.log(JSON.stringify(await acknowledgeCorrection(client,body.id,body.leaseToken,body.runId,body.processId,body.head)));return;
     }

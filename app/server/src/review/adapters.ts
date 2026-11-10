@@ -41,6 +41,11 @@ export class GitHub {
     if (p.isCrossRepository || p.baseRefName !== this.repo.base || (!p.body.includes(card) && !p.headRefName.includes(card)) || p.state === 'CLOSED') throw new Error('PR is closed, unrelated or targets an unregistered base');
     return p;
   }
+  /** Revalidate a queued correction against the trusted live PR immediately before launch acknowledgement. */
+  async correction(card:string,number:number,head:string,base:string):Promise<void>{
+    const p=await this.pr(card,number);
+    if(p.state!=='OPEN' || p.headRefOid!==head || p.baseRefOid!==base)throw new Error('Correction PR binding changed or closed');
+  }
   async threads(pr:number):Promise<{id:string;isResolved:boolean;isOutdated:boolean}[]> {
     const [owner,name]=this.repo.github.split('/');
     const query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved isOutdated comments(first:20){nodes{body path line diffHunk author{login}} pageInfo{hasNextPage}}} pageInfo{hasNextPage}}}}}';
