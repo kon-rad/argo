@@ -136,3 +136,7 @@ The parser derives disjoint token deltas from cumulative high-water snapshots,
 with stable host/session/counter IDs. The forward migration includes Codex in
 `usage_facts`; archives remain the transcript store. No provider pricing is
 inferred. Recent Codex sessions are observations with a 20-minute stale window.
+
+### Instagram metrics authorization
+
+The optional social addon mounts an app-owned Unified Login connect page and a callback before SPA routing. A dedicated ten-minute Lax cookie bridges the cross-site return while the main auth cookie stays Strict. Hashed one-time state is tied to an existing auth session, intended account and fixed public callback; one atomic delete validates and consumes it before code exchange. Session revocation cascades to pending states. Typed encrypted metrics credentials separate Facebook USER tokens and asset IDs from legacy Instagram Login tokens and publishing credentials. Facebook collection uses asset-node endpoints and never legacy refresh. Other Unified business-integration token types fail closed pending a documented contract. See [social metrics](social-metrics.md#unified-login) for limitations and setup.

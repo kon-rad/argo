@@ -85,6 +85,36 @@ Alternatively name an env var in the account's `tokenEnv`; on the first run the 
 
 Per post, the collector reads `/me/media` (paged) and each post's insights. When insights fail for some posts (an unsupported metric for that media type, say), those posts keep the likes and comments from the media fields and leave views, reach, shares and saves empty; when they fail for every post, the account reports an error (usually the token lacks `instagram_business_manage_insights`).
 
+## Unified Login
+
+**Experimental, fixture contract only.** This implementation accepts Facebook `USER` tokens with a Page-linked Professional Instagram account. It rejects `SYSTEM_USER`, `PAGE`, non-expiring and unknown token types rather than guessing their asset-discovery or refresh behavior. The newer Unified Login business-integration configuration may issue another token type. Current Meta source documentation and a live authorization have not been verified for this implementation. Do not assume that a configuration ID alone makes an app compatible. Confirm the token type, permissions, asset-discovery shape and metrics endpoints for your configuration before activation. No fixtures in this repository establish Meta's current contract.
+
+1. Enable `social` in `MODULES` for onboarding. Enable `map` for the existing daily metrics timer. Both remain optional. Onboarding requires `DEPLOYMENT=server` and a real password/TOTP session; unauthenticated local mode cannot initiate a connection.
+2. Set `PUBLIC_ORIGIN` to your exact public HTTPS origin, without a path or trailing slash. Put `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `FACEBOOK_LOGIN_CONFIG_ID` and `SOCIAL_TOKEN_ENC_KEY` in the private env file. The configuration ID is sent as `config_id`, not as the app ID. All Facebook settings default to unset.
+3. In Meta register the exact redirect `https://brain.example.com/socials/ig/auth/callback`, substituting your configured `PUBLIC_ORIGIN`. This flow ignores `SOCIAL_REDIRECT_BASE_URL`: the same `PUBLIC_ORIGIN` plus fixed callback path is used for both authorization and server-side exchange. Request Host headers never supply the redirect.
+4. Configure each intended account in the private `secondbrain.json`:
+
+   ```json
+   "socialMetrics": {
+     "instagram": [
+       { "username": "example.one", "login": "unified", "assetId": "101" },
+       { "username": "example.two", "login": "unified", "assetId": "102" }
+     ]
+   }
+   ```
+
+   These IDs are fake. `assetId` is the Instagram Professional account ID, not a Page ID, app ID or username. Account lists default to empty. Existing entries without `login` retain Instagram Login behavior. Restart the server after changing settings.
+5. Log in to the app, then open the real connect page at `https://brain.example.com/socials/ig/auth` on your origin. Select one account. The page calls authenticated, same-origin `POST /api/social/instagram/connect` with `{"account":"example.one"}` and navigates to its returned URL. It starts at `https://www.facebook.com/dialog/oauth` with `client_id`, `config_id`, `override_default_response_type=true`, `response_type=code`, `display=popup`, the exact `redirect_uri`, `prompt=login` and a new random `state`. Never paste a literal `<STATE>` into a login URL.
+6. Authorize the selected asset in Meta. Connect each intended account separately. An attempt is valid for ten minutes, is bound to the initiating live authenticated session and a scoped HttpOnly, Secure, SameSite=Lax callback cookie, and is consumed once before exchange, including provider-denial returns. The main login cookie remains SameSite=Strict. Starting another attempt in the same browser replaces its callback cookie; finish one at a time. Logging out revokes pending attempts. The callback mounts ahead of SPA fallback and redirects to a clean static completion page. Click Continue there to restore the Strict session cookie on a fresh same-origin navigation.
+
+The server exchanges the code at Facebook Graph `/oauth/access_token`, then uses `/debug_token` to require a valid app-matching, expiring `USER` token with `instagram_basic`, `instagram_manage_insights`, `pages_show_list` and `pages_read_engagement`. `/me/accounts?fields=id,instagram_business_account` must show the configured asset through a managed Page. A direct asset lookup must match both its ID and configured username before storage. Unselected or unowned assets are refused, and no other credentials are stored from the response. Each account has its own encrypted row and asset association in `social_metric_tokens`; publishing credentials in `social_accounts` remain separate.
+
+For this supported fixture contract, collection uses `graph.facebook.com/<instagramApiVersion>/<assetId>` for `id,username,followers_count,media_count`, `/<assetId>/media` for posts, and `/<mediaId>/insights` for metrics. Profile/media objects, `data` arrays and insights `values[].value` are the expected shapes. The collector also accepts the existing `total_value.value` insight shape. Facebook tokens use bearer headers. Foreign pagination URLs are refused. This contract needs confirmation against current Meta documentation and the configuration's actual token type; it is not a claim of live Unified business-integration compatibility.
+
+**Token behavior and recovery.** Unified credentials are typed `facebook-user`, expire at the earlier token/data-access expiry, and never go through Instagram's `ig_refresh_token` endpoint. This implementation does not extend their lifetime. Reconnect from the page on expiry, revocation or changed asset selection. `tokenEnv` and the legacy token-seeding CLI are not supported for Unified accounts. Changing the account back to `instagram` fails closed while a Unified token remains stored; explicitly reseed a verified Instagram Login token to switch back. Preserve `SOCIAL_TOKEN_ENC_KEY`; after losing it, restore it or authorize each account again with the replacement key.
+
+**Logging.** Callback errors are generic and never include provider error descriptions, codes or tokens. The shipped Caddy template excludes `/socials/ig/auth/callback` from access logs using `log_skip`. Before live use, apply the reviewed proxy configuration and ensure every other ingress, CDN and tracing layer also omits callback query strings. No production configuration is changed by this feature.
+
 ## X
 
 fxtwitter (`api.fxtwitter.com`) is free and needs no key, but it is unofficial and can stop working without notice. It answers a profile and a single post by id. **It has no timeline**, so the collector never discovers posts on its own. It reads only:
@@ -139,7 +169,8 @@ It lists each account's follower (or subscriber) count with its change over the 
 | `metric_samples` | Account numbers, one row per reading (unchanged; shared with the brain map) |
 | `social_post_stats` | One row per `(platform, external_id, day)`: `account`, `url`, `posted_at`, `kind`, `views`, `likes`, `comments`, `shares`, `saves`, `reach` (NULL = not reported), `social_post_id` (set when the post was published by the `social` module, matched by id or URL), `source`, `raw`, `sampled_at` |
 | `social_metric_status` | Per collector: last run, last success, last redacted error, posts written |
-| `social_metric_tokens` | Instagram tokens as ciphertext, with expiry, last refresh and last refresh error |
+| `social_metric_tokens` | Tokens as ciphertext with explicit `token_kind`, per-account `asset_id`, expiry, last refresh and last refresh error |
+| `instagram_login_states` | Hashed single-use OAuth state and callback binding, initiating auth session, intended account/asset and exact redirect; expires in ten minutes |
 
 ## Not covered
 
