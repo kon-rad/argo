@@ -57,6 +57,8 @@ A **dispatcher** turns wakes into runs. It is not included, because it is the pa
 
 Row-level security in Postgres gives each agent its own view of the board through a dedicated `sb_org` role, so an agent cannot read another's DMs by writing SQL.
 
+The optional automatic review correction queue is also only a public coordination contract, not a dispatcher installation. It is off by default. An owner-operated trusted worker may register the original builder identity, lease one revision-bound correction, acknowledge a real run before moving the card to running, and resubmit through the same review gate. See [Automatic contextual review and shipping](../automatic-review.md#typed-feedback-and-the-optional-correction-queue). Keep host paths, credentials, machine names, and launcher commands in owner configuration, never in engine source.
+
 ## Layer 4: the bill (the `usage` module and the agent ledger)
 
 `MODULES=usage` adds a page of what your agents cost: tokens per run, by bot, why it woke, which card and project, the work type and which host, plus plan percentages and API credit balances. Each machine that runs agents feeds it through the agent ledger, which captures every turn locally, redacts the secrets you named and syncs when it can ([Connect servers and computers](06-connect-machines.md#shape-c-several-machines-running-agents)). Hermes gets per-request tokens from a small plugin ([Connect Hermes](04-hermes.md)).

@@ -14,13 +14,13 @@ async function as(user:string,sql:string,params:unknown[]=[]):Promise<pg.QueryRe
   await c.connect();try{return await c.query(sql,params);}finally{await c.end();}
 }
 beforeEach(async()=>{
-  await query(`UPDATE review_policy SET enabled=false,reviewer=NULL,worker_login=NULL`);
+  await query(`UPDATE review_policy SET enabled=false,corrections_enabled=false,reviewer=NULL,worker_login=NULL`);
   await truncateAll();
   await importOrg({version:'review-fixture',company:'Example',ceo:'owner',agents:{owner:{runtime:'human',role:'Owner'},builder:{runtime:'codex',model:'test-codex',team:'engineering',reports_to:'auditor',role:'Builder',capabilities:['code']},auditor:{runtime:'codex',model:'test-codex',team:'engineering',reports_to:'owner',role:'Reviewer',capabilities:['review']}},teams:{engineering:{name:'Engineering',lead:'auditor'}},channels:{}});
   await query(`DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='sb_review_fixture') THEN CREATE ROLE sb_review_fixture LOGIN; END IF; END $$`);
   if(process.env.PGPASSWORD) await query(`ALTER ROLE sb_review_fixture PASSWORD '${process.env.PGPASSWORD.replace(/'/g,"''")}'`);
   await query(`GRANT sb_review_worker TO sb_review_fixture`);
-  await query(`INSERT INTO review_policy(singleton,enabled,shipping_enabled,reviewer,worker_login) VALUES(true,true,true,'auditor',$1) ON CONFLICT(singleton) DO UPDATE SET enabled=true,shipping_enabled=true,boards=NULL,repositories=NULL,max_rounds=2,reviewer='auditor',worker_login=excluded.worker_login`,[workerName]);
+  await query(`INSERT INTO review_policy(singleton,enabled,shipping_enabled,reviewer,worker_login) VALUES(true,true,true,'auditor',$1) ON CONFLICT(singleton) DO UPDATE SET enabled=true,corrections_enabled=false,shipping_enabled=true,boards=NULL,repositories=NULL,max_rounds=2,reviewer='auditor',worker_login=excluded.worker_login`,[workerName]);
 });
 afterAll(async()=>{await query('UPDATE review_policy SET enabled=false,reviewer=NULL,worker_login=NULL');});
 async function card(work:'coding'|'writing'='coding') {return createCard('owner',{title:'Review fixture',body:'Acceptance: authorized writes',contract:{objective:'Authorized write',verification:'tests'},assignee:'builder',work,repo:'engine'});}

@@ -1,0 +1,26 @@
+import type pg from 'pg';
+import { z } from 'zod';
+import { LaunchRegistration, type LaunchRegistration as Launch } from './launch.js';
+
+const Correction=z.object({ id:z.coerce.number().int().positive(),feedbackId:z.string(),card:z.string(),builder:z.string(),persona:z.string(),runtime:z.string(),model:z.string(),host:z.string(),repo:z.string(),branch:z.string(),worktree:z.string(),commonDir:z.string(),originalRunId:z.string(),head:z.string(),base:z.string(),pr:z.coerce.number(),evidenceHash:z.string(),leaseToken:z.string(),fence:z.coerce.number(),transientAttempts:z.coerce.number() });
+export type ClaimedCorrection=z.infer<typeof Correction>;
+
+export async function registerLaunch(client:pg.Client,input:Launch):Promise<void>{
+ const value=LaunchRegistration.parse(input);
+ await client.query('SELECT review_register_launch($1::jsonb)',[JSON.stringify(value)]);
+}
+function claimed(row:Record<string,unknown>|undefined):ClaimedCorrection|null {
+ if(!row)return null;
+ return Correction.parse({id:row.id,feedbackId:row.feedback_id,card:row.card,builder:row.builder,persona:row.persona,runtime:row.runtime,model:row.model,host:row.host,repo:row.repo,branch:row.branch,worktree:row.worktree,commonDir:row.common_dir,originalRunId:row.original_run_id,head:row.head,base:row.base,pr:row.pr,evidenceHash:row.evidence_hash,leaseToken:row.lease_token,fence:row.fence,transientAttempts:row.transient_attempts});
+}
+export async function claimCorrection(client:pg.Client,host:string,ttlSeconds=300):Promise<ClaimedCorrection|null>{
+ const result=await client.query('SELECT * FROM review_correction_claim($1,$2)',[host,ttlSeconds]);return claimed(result.rows[0]);
+}
+export async function acknowledgeCorrection(client:pg.Client,id:number,token:string,runId:string,processId:string,head:string):Promise<{state:string}>{
+ return (await client.query('SELECT * FROM review_correction_ack($1,$2,$3,$4,$5)',[id,token,runId,processId,head])).rows[0];
+}
+export async function retryCorrection(client:pg.Client,id:number,token:string,reason:string,delaySeconds=30):Promise<void>{
+ await client.query('SELECT review_correction_retry($1,$2,$3,$4)',[id,token,reason,delaySeconds]);
+}
+export async function cancelCorrection(client:pg.Client,id:number,reason:string):Promise<void>{await client.query('SELECT review_correction_cancel($1,$2)',[id,reason]);}
+export async function finishCorrection(client:pg.Client,id:number,runId:string,head:string):Promise<void>{await client.query('SELECT review_correction_finish($1,$2,$3)',[id,runId,head]);}

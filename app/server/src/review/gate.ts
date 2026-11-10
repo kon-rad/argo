@@ -4,16 +4,17 @@ import { z } from 'zod';
 const Sha = z.string().regex(/^[a-f0-9]{40}$/);
 export const Source = z.object({ ref: z.string(), revision: z.string(), text: z.string(), essential: z.boolean(), missing: z.boolean(), truncated: z.boolean(), redacted:z.boolean().optional() }).strict();
 export type Source = z.infer<typeof Source>;
+const Finding=z.object({ code:z.enum(['scope-changed-files','scope-reviewable-files','scope-sources','scope-source-chars','scope-diff-chars','scope-combined-chars','ci-failure','code-finding','stale-evidence']).optional(), severity:z.enum(['critical','high','medium','low']),location:z.string().min(1),evidence:z.string().min(1),impact:z.string().min(1),fix:z.string().min(1),verification:z.string().min(1) }).strict();
 export const Snapshot = z.object({ repo: z.string(), pr: z.number().int().positive(), head: Sha, base: Sha, branch: z.string(), merged: Sha.nullable(),
   behind:z.boolean().optional(), conflicting:z.boolean().optional(),
   draft: z.boolean().optional(), unresolved: z.number().int().nonnegative().optional(), changesRequested: z.boolean().optional(),
-  checks: z.array(z.object({ name: z.string(), state: z.string() }).strict()), sources: z.array(Source) }).strict();
+  checks: z.array(z.object({ name: z.string(), state: z.string() }).strict()), sources: z.array(Source), preflight: z.array(Finding).optional() }).strict();
 export type Snapshot = z.infer<typeof Snapshot>;
 const Checked = z.object({ status:z.enum(['checked','not-applicable']), evidence:z.array(z.string().min(1)).min(1), rationale:z.string().min(1) }).strict();
 export const Verdict = z.object({
   decision: z.enum(['accept', 'reject']), reviewer: z.string(), repo: z.string(), pr: z.number().int(), head: Sha, base: Sha, evidence: z.string().regex(/^[a-f0-9]{64}$/),
   categories: z.object({ security: Checked, compatibility: Checked, migrations: Checked, regressions: Checked, scope: Checked, placeholders: Checked, tests: Checked.extend({status:z.literal('checked')}) }).strict(),
-  findings: z.array(z.object({ severity: z.enum(['critical', 'high', 'medium', 'low']), location: z.string().min(1), evidence: z.string().min(1), impact: z.string().min(1), fix: z.string().min(1), verification: z.string().min(1) }).strict()).max(30),
+  findings: z.array(Finding).max(30),
 }).strict();
 export type Verdict = z.infer<typeof Verdict>;
 export interface Job {
@@ -60,14 +61,14 @@ function ready(s: Snapshot, checks: string[]): void {
   if (!checks.length || checks.some(name => !s.checks.some(c => c.name === name) || s.checks.some(c => c.name === name && c.state !== 'pass'))) throw new Error('Required CI missing, failed or pending');
 }
 function preflightFindings(s: Snapshot, checks: string[]): Verdict['findings'] {
-  const failures: Verdict['findings'] = [];
-  const add = (location: string, detail: string, fix: string, verification: string) => failures.push({ severity:'high',location,evidence:detail,impact:'This PR is not ready for acceptance and shipping',fix,verification });
+  const failures: Verdict['findings'] = [...(s.preflight ?? [])];
+  const add = (location: string, detail: string, fix: string, verification: string, code:'ci-failure'|'code-finding'='code-finding') => failures.push({ code,severity:'high',location,evidence:detail,impact:'This PR is not ready for acceptance and shipping',fix,verification });
   if (s.behind) add('PR base','PR branch is behind the protected base','Merge the current base into the same PR branch and address any resulting changes','Rerun required checks and resubmit the same card');
   if (s.conflicting) add('PR conflicts','PR conflicts with its protected base','Resolve the conflicts on the same PR branch without force-pushing','Rerun required checks and resubmit the same card');
   if (s.draft) add('PR readiness','PR is marked as draft','Complete the work and mark the PR ready for review','Confirm isDraft=false');
   if (s.unresolved) add('PR review threads',`${s.unresolved} unresolved review threads`,'Address and resolve the outstanding findings','Confirm no unresolved review threads remain');
   if (s.changesRequested) add('PR reviews','An active review requests changes','Address the requested changes and obtain an updated review','Confirm the changes-requested review has been resolved');
-  for (const name of checks) if (s.checks.some(c=>c.name===name && c.state==='fail')) add(`CI: ${name}`,'Required check failed',`Fix the failure in ${name}`,`Rerun ${name} and record its passing output`);
+  for (const name of checks) if (s.checks.some(c=>c.name===name && c.state==='fail')) add(`CI: ${name}`,'Required check failed',`Fix the failure in ${name}`,`Rerun ${name} and record its passing output`,'ci-failure');
   return failures;
 }
 export function findingsText(v: Verdict): string {
@@ -99,6 +100,8 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
           categories:{security:checked,compatibility:checked,migrations:checked,regressions:checked,scope:checked,placeholders:checked,tests:{...checked,status:'checked'}},findings:problems};
         await save({snapshot:s,verdict:v,state:'reviewing'});
       }
+      const waiting=checks.filter(name=>!s.checks.some(c=>c.name===name && c.state==='pass') && !s.checks.some(c=>c.name===name && c.state==='fail'));
+      if(!s.merged && waiting.length && !problems.length && !job.verdict){await save({state:'reviewing',error:`Waiting for required CI: ${waiting.join(', ')}`});return;}
       if (!s.merged && job.verdict?.decision!=='reject') ready(s, checks);
       // An interrupted merge must use its recorded approved snapshot, never a fresh verdict on a merged PR.
       if (!job.verdict || !job.snapshot) {

@@ -34,9 +34,10 @@ describe('automatic contextual shipping gate', () => {
     const f = fixture(), s = snapshot(); s.sources[0]![field] = true; f.setCurrent(s);
     await runReview(f.job, ['test'], f.io); expect(f.job.state).toBe('blocked'); expect(f.counts().reviews).toBe(0);
   });
-  it.each(['pending', 'fail'])('blocks %s required CI', async state => {
+  it.each([['pending','reviewing'],['fail','rejected']] as const)('%s required CI has the typed non-accepting state %s', async (state,expected) => {
     const f = fixture(), s = snapshot(); s.checks[0]!.state = state; f.setCurrent(s);
-    await runReview(f.job, ['test'], f.io); expect(f.job.state).toBe(state==='fail'?'rejected':'blocked'); expect(f.counts().merges).toBe(0);
+    await runReview(f.job, ['test'], f.io); expect(f.job.state).toBe(expected); expect(f.counts().merges).toBe(0);
+    if(state==='pending')expect(f.job.error).toContain('Waiting for required CI');else expect(f.job.verdict?.findings[0]?.code).toBe('ci-failure');
   });
   it('rejects unauthorized reviewer, self review, malformed verdict and missing coverage', async () => {
     for (const change of [{ reviewer: 'builder' }, { reviewer: 'stranger' }, { decision: 'maybe' }, { categories: {} }, { evidence: 'forged' }, { categories:{...verdict().categories,tests:{...checked(),evidence:['missing-source']}} }]) {
@@ -298,6 +299,12 @@ it.each(['behind','conflicting'] as const)('returns %s PRs to their original bui
     f.job.round++;f.job.state='queued';f.job.verdict=null;f.job.snapshot=null;s[key]=false;f.setCurrent(s);
     await runReview(f.job,['test'],f.io);expect(f.job.state).toBe('done');expect(f.counts().reviews).toBe(1);
   })();
+});
+it('returns deterministic source-capacity feedback before model review without accepting',async()=>{
+ const f=fixture(),s=snapshot();s.preflight=[{code:'scope-sources',severity:'high',location:'Review source capacity',evidence:'Observed 81; allowed 80. Full independent model review did not run.',impact:'This revision exceeds deterministic reviewer capacity and is not accepted.',fix:'Split the change while preserving acceptance.',verification:'Run review scope actual.'}];f.setCurrent(s);
+ await runReview(f.job,['test'],f.io);
+ expect(f.job.state).toBe('rejected');expect(f.counts().reviews).toBe(0);expect(f.counts().merges).toBe(0);
+ expect(f.job.verdict?.findings[0]?.code).toBe('scope-sources');
 });
 it('invalidates a paused approval when its branch falls behind',async()=>{
   const f=fixture();f.io.mayShip=async()=>false;await runReview(f.job,['test'],f.io);
