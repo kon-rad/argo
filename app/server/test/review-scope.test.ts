@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -203,4 +203,43 @@ it('includes forecast non-code sources in per-source and aggregate budgets', () 
   expect(validatePlan(p).reasons.some(r=>r.code==='sourceChars')).toBe(true);
   p.contextSources=Array.from({length:7},(_,i)=>({ref:String(i),chars:75000}));
   expect(validatePlan(p).reasons.some(r=>r.code==='combinedChars')).toBe(true);
+});
+
+it('forecasts renamed imports from the destination while reading base content from the origin', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scope-rename-'));
+  const git = (...args: string[]) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
+  try {
+    git('init', '-q'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.com'); // public-ok
+    for (const folder of ['old', 'new', 'missing']) await mkdir(join(dir, folder));
+    const text = "import './helper.js';\n";
+    await writeFile(join(dir, 'old/main.ts'), text);
+    await writeFile(join(dir, 'old/helper.ts'), 'old');
+    await writeFile(join(dir, 'new/helper.ts'), 'x'.repeat(1000));
+    await writeFile(join(dir, 'test.ts'), 'test');
+    git('add', '.'); git('commit', '-qm', 'base');
+    const revision = git('rev-parse', 'HEAD');
+    const p = { ...plan(), base: revision, files: [{ path: 'new/main.ts', previousPath: 'old/main.ts',
+      status: 'renamed' as const, sourceChars: 0, imports: [] as { path: string; sourceChars: number }[] }] };
+    p.tasks[0]!.paths = ['new/main.ts']; p.tests[0]!.paths = ['test.ts'];
+    const input = { mode: 'forecast' as const, repository: dir, base: revision, plan: p };
+    const result = await preflight(input);
+    expect(result.status).toBe('pass');
+    expect(result.observations).toMatchObject({ sources: 2, sourceChars: 1000, combinedChars: text.length + 1000 + p.diffChars + p.otherContextChars });
+    expect((await preflight({ ...input, config: { exclude: ['old/helper.ts'] } })).status).toBe('pass');
+    const excluded = await preflight({ ...input, config: { exclude: ['new/helper.ts'] } });
+    expect(excluded.status).toBe('invalid');
+    expect(excluded.reasons[0]).toMatchObject({ code: 'excluded-path', path: 'new/helper.ts' });
+
+    p.files[0]!.path = 'missing/main.ts'; p.tasks[0]!.paths = ['missing/main.ts'];
+    const unresolved = await preflight(input);
+    expect(unresolved.status).toBe('invalid');
+    expect(unresolved.reasons).toContainEqual(expect.objectContaining({ code: 'unresolved-import', path: 'missing/helper.js' }));
+    // A future destination dependency can be forecast explicitly without reading nonexistent content.
+    p.files[0]!.imports = [{ path: 'missing/helper.ts', sourceChars: 2000 }];
+    const declared = await preflight(input);
+    expect(declared.status).toBe('pass');
+    expect(declared.observations).toMatchObject({ sources: 2, sourceChars: 2000 });
+    expect((await preflight({ ...input, config: { exclude: ['missing/helper.ts'] } })).status).toBe('invalid');
+    expect(git('status', '--porcelain')).toBe('');
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
