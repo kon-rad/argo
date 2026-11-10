@@ -136,3 +136,5 @@ The parser derives disjoint token deltas from cumulative high-water snapshots,
 with stable host/session/counter IDs. The forward migration includes Codex in
 `usage_facts`; archives remain the transcript store. No provider pricing is
 inferred. Recent Codex sessions are observations with a 20-minute stale window.
+
+Review capacity lives in `review/policy.ts`: one versioned, hashed policy and evaluator serves the source adapter, context collector, worker and offline admission CLI. `review/scope.ts` selects changed reviewable paths and immediate imports for both GitHub and local Git objects. `review/plan.ts` validates acceptance/test/dependency mappings and bounded uncertainty; `review/preflight.ts` supplies read-only forecast and actual-diff checkpoints through `cli-review scope`. This adds no database state or shipping authority. The actual worker still gathers and verifies its own complete revision-bound evidence. See [the public CLI contract](automatic-review.md#scope-checkpoints-before-building-and-submitting).
