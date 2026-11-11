@@ -5,9 +5,17 @@ on:
   push:
     branches: [main]
 
+# Read-only token, no repository secrets referenced anywhere in this workflow.
+permissions:
+  contents: read
+
 jobs:
+  # The disposable verifier: a GitHub-hosted VM with a throwaway Postgres and fake
+  # credentials. It runs the repository contract through the same entry point used
+  # locally (scripts/verify.mjs) and uploads the evidence. See docs/verification.md.
   app:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -21,19 +29,27 @@ jobs:
       PGHOST: localhost
       PGUSER: postgres
       PGPASSWORD: postgres
-    defaults:
-      run:
-        working-directory: app
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Verify the exact PR head, not GitHub's synthetic merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
-      - run: npm ci
-      - run: npm run build
-      - run: npm test
+      - name: verify (dependencies, build, unit, migrations, integration)
+        run: node scripts/verify.mjs run --out "$RUNNER_TEMP/verification"
+      - name: upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-evidence
+          path: ${{ runner.temp }}/verification
+          retention-days: 14
+          if-no-files-found: error
 
   python:
     runs-on: ubuntu-latest
