@@ -1,14 +1,15 @@
 # Time zone
 
-Status: **shared helpers and Usage consumers work**. The configured IANA location or UTC is kept in your vault's `secondbrain.json`.
+Status: **shared helpers, Usage consumers and session inspection work**. The configured IANA location or UTC is kept in your vault's `secondbrain.json`.
 
 ## What it does
 
 The CLI validates and saves the zone while preserving other settings and the file's owner, group and permissions.
 The metadata API returns the current validated value on each request, including changes made without a server restart.
 Shared frontend time helpers, Usage charts, credit/subscription dates and observation times, subscription resets
-and summaries consume that value. Session inspection, live/running views, TV and Org consumers follow in later
-integration slices.
+and summaries consume that value. The session list and session detail use the same effective zone for Started
+timestamps, with a separate duration and an explicit unavailable state for unknown context capacity.
+Live/running views, TV and Org consumers follow in later integration slices.
 
 | Setting | Metadata API value |
 |---|---|
