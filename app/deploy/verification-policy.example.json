@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "contractPath": "verification/contract.json",
+  "runnerPath": "scripts/verify.mjs",
+  "workflow": {
+    "path": ".github/workflows/ci.yml",
+    "job": "app",
+    "artifact": "verification-evidence",
+    "events": ["pull_request", "push"]
+  },
+  "trustedFiles": {
+    ".github/workflows/ci.yml": ["0000000000000000000000000000000000000000000000000000000000000000"],
+    "scripts/verify.mjs": ["0000000000000000000000000000000000000000000000000000000000000000"]
+  },
+  "runner": { "group": "GitHub Actions", "labels": ["ubuntu-latest", "ubuntu-24.04"] },
+  "capabilities": ["postgres", "loopback-listeners", "dependency-download:npm"],
+  "requiredChecks": [
+    { "id": "dependencies", "argv": ["npm", "ci", "--no-audit", "--no-fund"], "covers": ["dependencies"], "count": "none" },
+    { "id": "build", "argv": ["npm", "run", "build"], "covers": ["build"], "count": "none" },
+    { "id": "tests", "argv": ["npm", "test", "--", "--reporter=default", "--reporter=json", "--outputFile.json={report}"], "covers": ["unit", "migrations", "integration", "regression"], "count": "required" }
+  ],
+  "maxArtifactBytes": 50000000,
+  "mergeDisabled": false
+}
