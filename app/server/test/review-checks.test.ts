@@ -31,15 +31,15 @@ describe('production check normalization', () => {
       .toEqual([{ name: 'tests', state: 'pass' }, { name: 'deploy', state: 'skipped' }, { name: 'advice', state: 'neutral' }]);
   });
   it.each([
-    ['SUCCESS', 'pass'], ['FAILURE', 'fail'], ['CANCELLED', 'cancelled'], ['TIMED_OUT', 'timed_out'], ['ACTION_REQUIRED', 'action_required'],
-    ['STARTUP_FAILURE', 'startup_failure'], ['STALE', 'stale'], ['SKIPPED', 'skipped'], ['NEUTRAL', 'neutral'], ['NEW_CONCLUSION', 'unknown'], ['constructor', 'unknown'], [null, 'unknown'],
+    ['SUCCESS', 'pass'], ['FAILURE', 'fail'], ['CANCELLED', 'fail'], ['TIMED_OUT', 'fail'], ['ACTION_REQUIRED', 'fail'],
+    ['STARTUP_FAILURE', 'fail'], ['STALE', 'fail'], ['SKIPPED', 'skipped'], ['NEUTRAL', 'neutral'], ['NEW_CONCLUSION', 'unknown'], ['constructor', 'unknown'], [null, 'unknown'],
   ] as const)('reports completed %s as %s', (conclusion, state) => {
     expect(normalizeChecks([check('named check', conclusion)])).toEqual([{ name: 'named check', state }]);
   });
   it.each(['QUEUED', 'IN_PROGRESS', 'WAITING', 'REQUESTED', 'PENDING'])('keeps %s pending despite contradictory success fields', status => {
     expect(normalizeChecks([{ name: 'tests', status, conclusion: 'SUCCESS', state: 'SUCCESS' }])[0]!.state).toBe('pending');
   });
-  it.each([['SUCCESS', 'pass'], ['FAILURE', 'fail'], ['ERROR', 'error'], ['PENDING', 'pending'], ['EXPECTED', 'pending'], ['NEW_STATE', 'unknown'], ['toString', 'unknown']] as const)
+  it.each([['SUCCESS', 'pass'], ['FAILURE', 'fail'], ['ERROR', 'fail'], ['PENDING', 'pending'], ['EXPECTED', 'pending'], ['NEW_STATE', 'unknown'], ['toString', 'unknown']] as const)
   ('retains legacy StatusContext names and maps %s to %s', (state, expected) => {
     expect(normalizeChecks([{ context: 'legacy status', state }])).toEqual([{ name: 'legacy status', state: expected }]);
   });
@@ -61,13 +61,18 @@ describe('actual runReview configured-check authority', () => {
   ('stops required %s before model or shipping despite snapshot claiming no required checks', async conclusion => {
     const f = fixture(normalizeChecks([check('tests', conclusion)]), []);
     await runReview(f.job, ['tests'], f.io);
-    expect(['blocked', 'rejected']).toContain(f.job.state);
+    expect(f.job.state).toBe(['SKIPPED', 'NEUTRAL', 'NEW_CONCLUSION'].includes(conclusion) ? 'blocked' : 'rejected');
     expect(f.calls).toEqual({ review: 0, merge: 0, deploy: 0, complete: 0 });
   });
   it.each(['missing', 'pending', 'unknown'])('stops %s configured CI', async state => {
     const checks = state === 'missing' ? [] : normalizeChecks([{ name: 'tests', ...(state === 'pending' ? { status: 'IN_PROGRESS' } : {}) }]);
     const f = fixture(checks, []); await runReview(f.job, ['tests'], f.io);
     expect(f.job.state).toBe('blocked'); expect(f.calls).toEqual({ review: 0, merge: 0, deploy: 0, complete: 0 });
+  });
+  it('preserves the terminal legacy ERROR rejection path without model or shipping', async () => {
+    const f = fixture(normalizeChecks([{ context: 'tests', state: 'ERROR' }]), []);
+    await runReview(f.job, ['tests'], f.io);
+    expect(f.job.state).toBe('rejected'); expect(f.calls).toEqual({ review: 0, merge: 0, deploy: 0, complete: 0 });
   });
   it('does not allow snapshot metadata to substitute a different successful check', async () => {
     const f = fixture(normalizeChecks([check('optional', 'SUCCESS')]), ['optional']);

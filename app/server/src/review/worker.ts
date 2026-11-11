@@ -8,9 +8,9 @@ type CheckRollup = { name?: string | null; context?: string | null; status?: str
 /** Preserve optional check outcomes for the reviewer; only configured required checks control readiness. */
 export function normalizeChecks(checks: readonly CheckRollup[]): Snapshot['checks'] {
   const conclusions = new Map([['SUCCESS', 'pass'], ['FAILURE', 'fail'], ['SKIPPED', 'skipped'], ['NEUTRAL', 'neutral'],
-    ['CANCELLED', 'cancelled'], ['TIMED_OUT', 'timed_out'], ['ACTION_REQUIRED', 'action_required'], ['STARTUP_FAILURE', 'startup_failure'], ['STALE', 'stale']]);
+    ['CANCELLED', 'fail'], ['TIMED_OUT', 'fail'], ['ACTION_REQUIRED', 'fail'], ['STARTUP_FAILURE', 'fail'], ['STALE', 'fail']]);
   const pending = new Set(['QUEUED', 'IN_PROGRESS', 'WAITING', 'REQUESTED', 'PENDING']);
-  const legacy = new Map([['SUCCESS', 'pass'], ['FAILURE', 'fail'], ['ERROR', 'error'], ['PENDING', 'pending'], ['EXPECTED', 'pending']]);
+  const legacy = new Map([['SUCCESS', 'pass'], ['FAILURE', 'fail'], ['ERROR', 'fail'], ['PENDING', 'pending'], ['EXPECTED', 'pending']]);
   return checks.map(c => ({ name: c.name ?? c.context ?? '', state: c.status != null
     ? c.status === 'COMPLETED' ? conclusions.get(c.conclusion ?? '') ?? 'unknown' : pending.has(c.status) ? 'pending' : 'unknown'
     : legacy.get(c.state ?? '') ?? 'unknown' }));
