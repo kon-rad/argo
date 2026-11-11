@@ -29,7 +29,7 @@ const CREDIT_HINTS: Record<CreditProvider, string> = {
   gemini: 'Google has no balance API. Copy it from AI Studio, then: secondbrain credits set gemini <balance>',
 };
 
-function CreditCard({ entry, history }: { entry: UsageCredits['providers'][number]; history: UsageCredits['history'] }) {
+function CreditCard({ entry, history, tz }: { entry: UsageCredits['providers'][number]; history: UsageCredits['history']; tz: string }) {
   const ok = entry.last_ok;
   const failed = entry.latest && entry.latest.status !== 'ok' ? entry.latest : null;
   const mine = history.filter((h) => h.provider === entry.provider && h.currency === ok?.currency);
@@ -43,10 +43,10 @@ function CreditCard({ entry, history }: { entry: UsageCredits['providers'][numbe
         <div className="text-xs text-[var(--ink-dim)]">{money(ok.total_usage, ok.currency)} used of {money(ok.total_credits, ok.currency)} bought</div>
       )}
       {change !== null && (
-        <div className="text-xs text-[var(--ink-dim)]">{change <= 0 ? `${money(-change, ok!.currency)} spent` : `${money(change, ok!.currency)} added`} since {new Date(first!.observed_at).toLocaleDateString()}</div>
+        <div className="text-xs text-[var(--ink-dim)]">{change <= 0 ? `${money(-change, ok!.currency)} spent` : `${money(change, ok!.currency)} added`} since {new Date(first!.observed_at).toLocaleDateString([], { timeZone: tz })}</div>
       )}
       {ok && (
-        <div className="text-xs text-[var(--ink-dim)]">as of {new Date(ok.observed_at).toLocaleString()} ({ok.origin === 'manual' ? 'entered by hand' : 'API'}){ok.note ? `, ${ok.note}` : ''}</div>
+        <div className="text-xs text-[var(--ink-dim)]">as of {new Date(ok.observed_at).toLocaleString([], { timeZone: tz })} ({ok.origin === 'manual' ? 'entered by hand' : 'API'}){ok.note ? `, ${ok.note}` : ''}</div>
       )}
       {failed && <div className="text-xs text-red-600">Latest reading: {failed.status}, {failed.error}</div>}
       {(!ok || entry.provider === 'gemini') && <div className="mt-1 text-xs text-[var(--ink-faint)]">{CREDIT_HINTS[entry.provider]}</div>}
@@ -55,6 +55,7 @@ function CreditCard({ entry, history }: { entry: UsageCredits['providers'][numbe
 }
 
 function Credits({ providers }: { providers: CreditProvider[] }) {
+  const { tz } = useAppTimezone();
   const credits = useQuery({ queryKey: ['usage-credits'], queryFn: () => api.usageCredits(), enabled: providers.length > 0, refetchInterval: 300_000 });
   if (providers.length === 0) return null;
   const entries = new Map(credits.data?.providers.map((entry) => [entry.provider, entry]));
@@ -63,7 +64,7 @@ function Credits({ providers }: { providers: CreditProvider[] }) {
     <div className="mt-1 grid gap-3 sm:grid-cols-3">
       {providers.map((provider) => {
         const entry = entries.get(provider);
-        return entry ? <CreditCard key={provider} entry={entry} history={credits.data!.history} />
+        return entry ? <CreditCard key={provider} entry={entry} history={credits.data!.history} tz={tz} />
           : credits.isSuccess ? <div key={provider} className="rounded border border-[var(--rule)] p-3 text-sm">{PROVIDER_NAMES[provider]}: no reading returned.</div> : null;
       })}
       {credits.isError && <div className="text-sm text-red-600">Credits did not load.</div>}
