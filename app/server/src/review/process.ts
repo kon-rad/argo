@@ -27,22 +27,33 @@ export interface CorrectionLookupRetryOptions {
   attempts?:number;
   delayMs?:number;
   deadlineMs?:number;
+  deadlineAt?:number;
+  perAttemptTimeoutMs?:number;
+  now?:()=>number;
   sleep?:(delayMs:number)=>Promise<void>;
 }
 
 /** Retry only an acknowledgement's read-only binding lookup; the reserved run and process stay untouched. */
-export async function retryCorrectionLookup(lookup:()=>Promise<void>,options:CorrectionLookupRetryOptions={}):Promise<void>{
+export async function retryCorrectionLookup(lookup:(timeoutMs:number)=>Promise<void>,options:CorrectionLookupRetryOptions={}):Promise<void>{
   const attempts=options.attempts ?? 3;
   const delayMs=options.delayMs ?? 250;
   const deadlineMs=options.deadlineMs ?? 20_000;
-  if(!Number.isInteger(attempts) || attempts<1 || attempts>5 || delayMs<0 || deadlineMs<1)throw new Error('Invalid correction lookup retry bounds');
+  const perAttemptTimeoutMs=options.perAttemptTimeoutMs ?? 5_000;
+  if(!Number.isInteger(attempts) || attempts<1 || attempts>5 || delayMs<0 || deadlineMs<1 || perAttemptTimeoutMs<1)throw new Error('Invalid correction lookup retry bounds');
+  const now=options.now ?? Date.now;
   const sleep=options.sleep ?? (delay=>new Promise<void>(resolve=>setTimeout(resolve,delay)));
-  const started=Date.now();
+  const deadlineAt=options.deadlineAt ?? now()+deadlineMs;
   for(let attempt=1;attempt<=attempts;attempt+=1){
-    try{await lookup();return;}
+    try{
+      const remaining=deadlineAt-now();
+      if(remaining<=0)throw new SafeProcessError('temporary');
+      await lookup(Math.max(1,Math.min(perAttemptTimeoutMs,remaining)));
+      if(now()>=deadlineAt)throw new SafeProcessError('temporary');
+      return;
+    }
     catch(error){
       if(!(error instanceof SafeProcessError) || error.kind!=='temporary' || attempt===attempts)throw error;
-      if(Date.now()-started+delayMs>=deadlineMs)throw error;
+      if(delayMs>=deadlineAt-now())throw error;
       await sleep(delayMs);
     }
   }

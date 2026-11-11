@@ -48,7 +48,10 @@ async function main(): Promise<void> {
       const repo=host.repositories[row.repo];if(!repo)return handleCorrectionLookupFailure(client,'ack',body.id,body.leaseToken,new SafeProcessError('identity'));
       const github=new GitHub(host,repo);
       let acknowledged;
-      try{acknowledged=await acknowledgeCorrectionAfterLookup(client,{id:body.id,token:body.leaseToken,runId:body.runId,processId:body.processId,head:body.head},()=>github.correction(row.card,row.pr,row.head,row.base,5_000));}
+      const leaseDeadline=new Date(row.lease_until).getTime();
+      if(!Number.isFinite(leaseDeadline))return handleCorrectionLookupFailure(client,'ack',body.id,body.leaseToken,new SafeProcessError('identity'));
+      const deadlineAt=Math.min(leaseDeadline-1_000,Date.now()+20_000);
+      try{acknowledged=await acknowledgeCorrectionAfterLookup(client,{id:body.id,token:body.leaseToken,runId:body.runId,processId:body.processId,head:body.head},timeout=>github.correction(row.card,row.pr,row.head,row.base,timeout),{deadlineAt});}
       catch(error){return handleCorrectionLookupFailure(client,'ack',body.id,body.leaseToken,error);}
       console.log(JSON.stringify(acknowledged));return;
     }

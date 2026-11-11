@@ -86,6 +86,25 @@ describe('correction PR lookup outcomes', () => {
     expect(JSON.stringify(query.mock.calls[0])).not.toContain('fixture-secret');
   });
 
+  it('caps a short remaining lease and refuses acknowledgement after a late lookup success', async () => {
+    let clock=1_000;
+    const lookup=vi.fn(async (timeoutMs:number) => {
+      expect(timeoutMs).toBe(5);
+      clock=1_006;
+    });
+    const query=vi.fn();
+
+    await expect(acknowledgeCorrectionAfterLookup(
+      {query} as never,
+      {id:9,token:'lease-token',runId:'run-reserved',processId:'process-42',head:'b'.repeat(40)},
+      lookup,
+      {attempts:3,delayMs:1,deadlineAt:1_005,now:()=>clock,sleep:vi.fn()},
+    )).rejects.toMatchObject({kind:'temporary'});
+
+    expect(lookup).toHaveBeenCalledTimes(1);
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it.each(['authentication','identity','confirmed-stale'] as const)('does not retry %s acknowledgement failures', async kind => {
     const lookup=vi.fn().mockRejectedValue(new SafeProcessError(kind));
     const sleep=vi.fn();
