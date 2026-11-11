@@ -62,6 +62,12 @@ const KNOWN_EXTRA: Record<string, string> = {
   DESK_CHAIN_ID: 'desk manifest: settlement chain identifier',
   DESK_PUBLIC_ORIGIN: 'desk manifest: public hiring desk origin',
   DESK_PUBLICATION_TEST_DATABASE_URL: 'opt-in ledger integration test only: disposable sb_*_test database, never production',
+  SB_CONFIG_UNITS_ONLY: 'cli-config: deploy.sh asks for the unit files only, env file untouched',
+  SB_CONFIG_BASE_UNITS: 'cli-config: base units (backup, sync, embed) deploy.sh selects for this server',
+  SB_APP_USER: 'cli-config: deploy.sh override of the service user',
+  SB_APP_DIR: 'cli-config: deploy.sh override of the engine checkout dir',
+  SB_VAULT_DIR: 'cli-config: deploy.sh override of the vault dir',
+  SB_HERMES_HOME: 'cli-config: deploy.sh override of the Hermes home',
 };
 
 const here = dirname(fileURLToPath(import.meta.url));
