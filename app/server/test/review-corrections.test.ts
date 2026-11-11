@@ -33,6 +33,13 @@ async function submitted() {
   return { card, job };
 }
 function rejection(job: Record<string, unknown>) { return { state:'rejected', snapshot:{repo:'example/engine',pr:7,base:'a'.repeat(40),head:'b'.repeat(40)}, verdict:{reviewer:'auditor',decision:'reject',head:'b'.repeat(40),base:'a'.repeat(40),evidence:'c'.repeat(64),findings:[{code:'code-finding',severity:'high',location:'server.ts:12',evidence:'unsafe query',impact:'incorrect result',fix:'Bind the value',verification:'Run correction test'}]} }; }
+async function runningCorrection(runId='run-correction-stale') {
+  const {card,job}=await submitted(); await save(Number(job.id),rejection(job)); const c=await client();
+  const claimed=await claimCorrection(c,'worker-a',60);
+  await prepareCorrection(c,claimed!.id,claimed!.leaseToken,runId,claimed!.head);
+  await acknowledgeCorrection(c,claimed!.id,claimed!.leaseToken,runId,`process-${runId}`,claimed!.head);
+  return {c,card,job,claimed:claimed!,runId};
+}
 
 it('atomically retains assignment and queues one revision-bound correction exactly once', async () => {
   const {card,job} = await submitted(); await save(Number(job.id), rejection(job)); await save(Number(job.id), rejection(job));
@@ -52,6 +59,7 @@ it('proves ready -> claimed -> acknowledged running -> review without double cla
     const running = await acknowledgeCorrection(first,claimed!.id,claimed!.leaseToken,'run-correction-1','process-1',claimed!.head);
     expect(running.state).toBe('running'); expect((await getCard(card.id)).card.status).toBe('running');
     expect((await acknowledgeCorrection(first,claimed!.id,claimed!.leaseToken,'run-correction-1','process-1',claimed!.head)).state).toBe('running');
+    await finishCorrection(first,claimed!.id,'run-correction-1',claimed!.head);
     await finishCorrection(first,claimed!.id,'run-correction-1',claimed!.head);
     expect((await getCard(card.id)).card.status).toBe('review');
     expect((await query('SELECT count(*)::int n FROM review_jobs WHERE card=$1',[card.id])).rows[0]!.n).toBe(2);
@@ -118,6 +126,56 @@ it('closes only the cancelled correction run, not another run on the card', asyn
     const runs = (await query('SELECT run_id,finished_at FROM card_runs WHERE card_id=$1 ORDER BY run_id',[card.id])).rows;
     expect(runs.find(r=>r.run_id==='run-old')!.finished_at).not.toBeNull();
     expect(runs.find(r=>r.run_id==='run-new')!.finished_at).toBeNull();
+  } finally { await c.end(); }
+});
+
+it('cancels an old finish after a newer submission without changing the current review', async () => {
+  const {c,card,claimed,runId}=await runningCorrection();
+  try {
+    await query("UPDATE cards SET status='review' WHERE id=$1",[card.id]);
+    const newer=(await query('SELECT * FROM review_jobs WHERE card=$1 ORDER BY id DESC LIMIT 1',[card.id])).rows[0]!;
+    await finishCorrection(c,claimed.id,runId,claimed.head);
+    await finishCorrection(c,claimed.id,runId,claimed.head);
+    expect((await getCard(card.id)).card.status).toBe('review');
+    expect((await query('SELECT id,state FROM review_jobs WHERE card=$1 ORDER BY id',[card.id])).rows.at(-1)).toMatchObject({id:newer.id,state:'queued'});
+    expect((await query('SELECT state,error FROM review_corrections WHERE id=$1',[claimed.id])).rows[0]).toMatchObject({state:'cancelled',error:'Correction superseded before finish'});
+    expect((await query('SELECT outcome FROM card_runs WHERE card_id=$1 AND run_id=$2',[card.id,runId])).rows[0]!.outcome).toBe('partial');
+  } finally { await c.end(); }
+});
+
+it('cannot regress accepted completion or shipping receipts from an old correction finish', async () => {
+  const {c,card,claimed,runId}=await runningCorrection('run-correction-accepted');
+  try {
+    await query("UPDATE cards SET status='review' WHERE id=$1",[card.id]);
+    const newer=(await query('SELECT * FROM review_jobs WHERE card=$1 ORDER BY id DESC LIMIT 1',[card.id])).rows[0]!;
+    const revision='d'.repeat(40);
+    await save(Number(newer.id),{state:'deployed',merged:revision,deployed:revision,health:revision,snapshot:{repo:'example/engine',pr:7,base:'a'.repeat(40),head:revision},verdict:{reviewer:'auditor',decision:'accept',head:revision,evidence:'e'.repeat(64),findings:[]}});
+    await c.query('SELECT review_complete($1)',[newer.id]);
+    await finishCorrection(c,claimed.id,runId,claimed.head);
+    expect((await getCard(card.id)).card.status).toBe('done');
+    expect((await query('SELECT state,merged,deployed,health FROM review_jobs WHERE id=$1',[newer.id])).rows[0]).toMatchObject({state:'done',merged:revision,deployed:revision,health:revision});
+    expect((await query('SELECT state FROM review_corrections WHERE id=$1',[claimed.id])).rows[0]!.state).toBe('cancelled');
+  } finally { await c.end(); }
+});
+
+it('rejects a different run identity without closing the active correction', async () => {
+  const {c,claimed,runId}=await runningCorrection('run-correction-current');
+  try {
+    await expect(finishCorrection(c,claimed.id,'run-correction-other',claimed.head)).rejects.toThrow(/stale or unknown correction run/);
+    expect((await query('SELECT state FROM review_corrections WHERE id=$1',[claimed.id])).rows[0]!.state).toBe('running');
+    expect((await query('SELECT finished_at FROM card_runs WHERE run_id=$1',[runId])).rows[0]!.finished_at).toBeNull();
+  } finally { await c.end(); }
+});
+
+it('cancels a superseded finish without touching another current run', async () => {
+  const {c,card,claimed,runId}=await runningCorrection('run-correction-old');
+  try {
+    await query("UPDATE card_runs SET finished_at=now(),outcome='partial' WHERE card_id=$1 AND run_id=$2",[card.id,runId]);
+    await query("INSERT INTO card_runs(card_id,agent_name,runtime,run_id,lease_until) VALUES($1,'builder','codex','run-correction-new',now()+interval '1 hour')",[card.id]);
+    await finishCorrection(c,claimed.id,runId,claimed.head);
+    expect((await getCard(card.id)).card.status).toBe('running');
+    expect((await query("SELECT finished_at FROM card_runs WHERE card_id=$1 AND run_id='run-correction-new'",[card.id])).rows[0]!.finished_at).toBeNull();
+    expect((await query('SELECT state FROM review_corrections WHERE id=$1',[claimed.id])).rows[0]!.state).toBe('cancelled');
   } finally { await c.end(); }
 });
 

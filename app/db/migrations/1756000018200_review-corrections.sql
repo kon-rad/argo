@@ -170,10 +170,22 @@ END $$;
 REVOKE ALL ON FUNCTION review_correction_cancel(bigint,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_cancel(bigint,text) TO sb_review_worker;
 
 CREATE FUNCTION review_correction_finish(p_id bigint,p_run text,p_head text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
-DECLARE q review_corrections; BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE;
- IF q.state='review' THEN RETURN; END IF; IF q.state<>'running' OR q.run_id IS DISTINCT FROM p_run OR q.head IS DISTINCT FROM p_head THEN RAISE EXCEPTION 'review: stale or unknown correction run'; END IF;
- UPDATE card_runs SET finished_at=now(),outcome='done' WHERE card_id=q.card AND run_id=p_run AND finished_at IS NULL;
- UPDATE review_corrections SET state='review',updated_at=now() WHERE id=p_id; UPDATE cards SET status='review' WHERE id=q.card;
+DECLARE q review_corrections; c cards; r card_runs; bound_job bigint; latest_job bigint;
+BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE;
+ IF q.run_id IS DISTINCT FROM p_run OR q.head IS DISTINCT FROM p_head THEN RAISE EXCEPTION 'review: stale or unknown correction run'; END IF;
+ IF q.state IN ('review','cancelled') THEN RETURN; END IF; IF q.state<>'running' THEN RAISE EXCEPTION 'review: stale or unknown correction run'; END IF;
+ SELECT * INTO STRICT c FROM cards WHERE id=q.card FOR UPDATE;
+ SELECT f.job INTO STRICT bound_job FROM review_feedback f WHERE f.id=q.feedback_id;
+ SELECT max(j.id) INTO latest_job FROM review_jobs j WHERE j.card=q.card;
+ SELECT * INTO r FROM card_runs WHERE card_id=q.card AND run_id=p_run AND finished_at IS NULL FOR UPDATE;
+ IF c.status IS DISTINCT FROM 'running' OR latest_job IS DISTINCT FROM bound_job OR r.id IS NULL THEN
+   UPDATE card_runs SET finished_at=now(),outcome='partial' WHERE card_id=q.card AND run_id=p_run AND finished_at IS NULL;
+   UPDATE review_corrections SET state='cancelled',error='Correction superseded before finish',updated_at=now() WHERE id=p_id;
+   RETURN;
+ END IF;
+ UPDATE card_runs SET finished_at=now(),outcome='done' WHERE id=r.id;
+ UPDATE review_corrections SET state='review',updated_at=now() WHERE id=p_id;
+ UPDATE cards SET status='review' WHERE id=q.card AND status='running';
 END $$;
 REVOKE ALL ON FUNCTION review_correction_finish(bigint,text,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_finish(bigint,text,text) TO sb_review_worker;
 
