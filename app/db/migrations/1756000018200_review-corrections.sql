@@ -179,7 +179,7 @@ DECLARE q review_corrections; c cards; bound_job bigint; latest_job bigint; BEGI
  SELECT max(j.id) INTO latest_job FROM review_jobs j WHERE j.card=q.card;
  IF c.status IS DISTINCT FROM 'ready' OR latest_job IS DISTINCT FROM bound_job THEN UPDATE review_corrections SET state='cancelled',error='Correction superseded before retry',updated_at=now() WHERE id=p_id; RETURN; END IF;
  IF q.transient_attempts>=9 OR q.created_at<now()-interval '24 hours' THEN UPDATE review_corrections SET state='blocked',error='Transient correction retry limit reached',updated_at=now() WHERE id=p_id; UPDATE cards SET status='blocked',block_kind='tool-error',block_reason='Correction host remained unavailable; owner reconciliation required' WHERE id=q.card AND status='ready' AND (SELECT max(j.id) FROM review_jobs j WHERE j.card=q.card)=bound_job; RETURN; END IF;
- UPDATE review_corrections q SET state='retry',lease_token=NULL,lease_until=NULL,transient_attempts=q.transient_attempts+1,available_at=now()+make_interval(secs=>p_delay),error=p_reason,updated_at=now() WHERE q.id=p_id; END $$;
+ UPDATE review_corrections target SET state='retry',lease_token=NULL,lease_until=NULL,transient_attempts=target.transient_attempts+1,available_at=now()+make_interval(secs=>p_delay),error=p_reason,updated_at=now() WHERE target.id=p_id; END $$;
 REVOKE ALL ON FUNCTION review_correction_retry(bigint,text,text,integer) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_retry(bigint,text,text,integer) TO sb_review_worker;
 
 CREATE FUNCTION review_correction_cancel(p_id bigint,p_reason text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
