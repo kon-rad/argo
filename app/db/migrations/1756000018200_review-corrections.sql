@@ -183,12 +183,33 @@ DECLARE q review_corrections; c cards; bound_job bigint; latest_job bigint; BEGI
 REVOKE ALL ON FUNCTION review_correction_retry(bigint,text,text,integer) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_retry(bigint,text,text,integer) TO sb_review_worker;
 
 CREATE FUNCTION review_correction_cancel(p_id bigint,p_reason text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
-DECLARE q review_corrections; BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE;
- IF q.state IN ('review','cancelled','blocked') THEN RETURN; END IF; IF q.state='running' THEN UPDATE card_runs SET finished_at=now(),outcome='partial' WHERE card_id=q.card AND run_id=q.run_id AND finished_at IS NULL; END IF;
+DECLARE q review_corrections; c cards; r card_runs; bound_job bigint; latest_job bigint; current_attempt boolean;
+BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE;
+ IF q.state IN ('review','cancelled','blocked') THEN RETURN; END IF;
+ SELECT * INTO STRICT c FROM cards WHERE id=q.card FOR UPDATE;
+ SELECT * INTO r FROM card_runs WHERE card_id=q.card AND finished_at IS NULL FOR UPDATE;
+ SELECT f.job INTO STRICT bound_job FROM review_feedback f WHERE f.id=q.feedback_id;
+ SELECT max(j.id) INTO latest_job FROM review_jobs j WHERE j.card=q.card;
+ current_attempt:=latest_job=bound_job AND ((q.state='running' AND c.status='running' AND r.run_id=q.run_id) OR (q.state<>'running' AND c.status='ready' AND r.id IS NULL));
+ IF q.state='running' THEN UPDATE card_runs SET finished_at=now(),outcome='partial' WHERE card_id=q.card AND run_id=q.run_id AND finished_at IS NULL; END IF;
  UPDATE review_corrections SET state='cancelled',error=p_reason,updated_at=now() WHERE id=p_id;
- UPDATE cards SET status='blocked',block_kind='review-changes',block_reason=p_reason WHERE cards.id=q.card AND cards.status IN ('ready','running') AND (SELECT max(j.id) FROM review_jobs j WHERE j.card=cards.id)=(SELECT f.job FROM review_feedback f WHERE f.id=q.feedback_id);
+ IF current_attempt THEN UPDATE cards SET status='blocked',block_kind='review-changes',block_reason=p_reason WHERE id=q.card; END IF;
 END $$;
 REVOKE ALL ON FUNCTION review_correction_cancel(bigint,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_cancel(bigint,text) TO sb_review_worker;
+
+CREATE FUNCTION review_correction_reconcile(p_id bigint,p_reason text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE q review_corrections; c cards; r card_runs; bound_job bigint; latest_job bigint; current_attempt boolean;
+BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE;
+ IF q.state IN ('review','cancelled','blocked') THEN RETURN; END IF;
+ SELECT * INTO STRICT c FROM cards WHERE id=q.card FOR UPDATE;
+ SELECT * INTO r FROM card_runs WHERE card_id=q.card AND finished_at IS NULL FOR UPDATE;
+ SELECT f.job INTO STRICT bound_job FROM review_feedback f WHERE f.id=q.feedback_id;
+ SELECT max(j.id) INTO latest_job FROM review_jobs j WHERE j.card=q.card;
+ current_attempt:=latest_job=bound_job AND ((q.state='running' AND c.status='running' AND r.run_id=q.run_id) OR (q.state<>'running' AND c.status='ready' AND r.id IS NULL));
+ UPDATE review_corrections SET state='blocked',error=p_reason,updated_at=now() WHERE id=p_id;
+ IF current_attempt THEN UPDATE cards SET status='blocked',block_kind='tool-error',block_reason=p_reason WHERE id=q.card; END IF;
+END $$;
+REVOKE ALL ON FUNCTION review_correction_reconcile(bigint,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_reconcile(bigint,text) TO sb_review_worker;
 
 CREATE FUNCTION review_correction_finish(p_id bigint,p_run text,p_head text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 DECLARE q review_corrections; c cards; r card_runs; bound_job bigint; latest_job bigint;
@@ -198,8 +219,8 @@ BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections
  SELECT * INTO STRICT c FROM cards WHERE id=q.card FOR UPDATE;
  SELECT f.job INTO STRICT bound_job FROM review_feedback f WHERE f.id=q.feedback_id;
  SELECT max(j.id) INTO latest_job FROM review_jobs j WHERE j.card=q.card;
- SELECT * INTO r FROM card_runs WHERE card_id=q.card AND run_id=p_run AND finished_at IS NULL FOR UPDATE;
- IF c.status IS DISTINCT FROM 'running' OR latest_job IS DISTINCT FROM bound_job OR r.id IS NULL THEN
+ SELECT * INTO r FROM card_runs WHERE card_id=q.card AND finished_at IS NULL FOR UPDATE;
+ IF c.status IS DISTINCT FROM 'running' OR latest_job IS DISTINCT FROM bound_job OR r.run_id IS DISTINCT FROM p_run THEN
    UPDATE card_runs SET finished_at=now(),outcome='partial' WHERE card_id=q.card AND run_id=p_run AND finished_at IS NULL;
    UPDATE review_corrections SET state='cancelled',error='Correction superseded before finish',updated_at=now() WHERE id=p_id;
    RETURN;

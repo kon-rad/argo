@@ -5,6 +5,25 @@ let privateLog:string|undefined;
 export function setPrivateLog(path:string):void{privateLog=path;}
 function logFailure(detail:string):void{if(privateLog){try{appendFileSync(privateLog,new Date().toISOString()+' '+detail+'\n',{mode:0o600});chmodSync(privateLog,0o600);}catch{/* Never disclose a sensitive child error to the board. */}}}
 
+export type SafeFailureKind='temporary'|'authentication'|'identity'|'confirmed-stale';
+export class SafeProcessError extends Error {
+  constructor(readonly kind:SafeFailureKind, private readonly detail?:string, safeMessage=`Adapter ${kind} failure`){super(safeMessage);this.name='SafeProcessError';}
+  privateDetail():string|undefined{return this.detail;}
+}
+function failureKind(stderr:string):SafeFailureKind {
+  const text=stderr.toLowerCase();
+  if(/authentication|not logged|bad credentials|gh auth login|http 401|status 401/.test(text))return 'authentication';
+  if(/timed? out|timeout|network|connection|temporar|rate.?limit|http 429|status 429|http 5\d\d|status 5\d\d/.test(text))return 'temporary';
+  return 'identity';
+}
+export function correctionLookupDisposition(phase:'prepare'|'ack',error:unknown):{action:'retry'|'reconcile'|'cancel';reason:string}{
+  const kind=error instanceof SafeProcessError ? error.kind : 'identity';
+  if(kind==='confirmed-stale')return {action:'cancel',reason:`Correction PR binding changed or closed before ${phase==='ack'?'acknowledgement':'launch preparation'}`};
+  if(kind==='temporary' && phase==='prepare')return {action:'retry',reason:'Correction PR lookup temporarily unavailable before launch preparation'};
+  if(kind==='temporary')return {action:'reconcile',reason:'Correction PR lookup unavailable after run reservation; owner reconciliation required'};
+  return {action:'reconcile',reason:'Correction PR authentication or identity uncertain; owner reconciliation required'};
+}
+
 /** No shell, inherited loader options, API keys, DB credentials or ambient Git config. */
 export function childEnv(home: string, github = false): NodeJS.ProcessEnv {
   return { PATH: '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin', HOME: home, LANG: 'C.UTF-8',
@@ -17,19 +36,19 @@ export async function command(exe: string, argv: string[], cwd: string, env: Nod
     child.stdin?.on('error',()=>{});
     if(input!==undefined) child.stdin?.end(input);
     let out = '', err = '', bytes = 0, failed = false;
-    const stop = (message: string) => {
+    const stop = (message: string,kind:SafeFailureKind='identity') => {
       if (failed) return; failed = true;
       try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { /* process already exited */ }
-      reject(new Error(message));
+      reject(new SafeProcessError(kind,undefined,message));
     };
-    const timer = setTimeout(() => stop('Adapter timed out'), timeout);
+    const timer = setTimeout(() => stop('Adapter timed out','temporary'), timeout);
     child.stdout!.on('data', (b: Buffer) => { bytes += b.length; if (bytes > maxBytes) stop('Adapter output truncated at byte limit'); else out += b.toString(); });
     child.stderr!.on('data', (b: Buffer) => { bytes += b.length; if (bytes > maxBytes) stop('Adapter output truncated at byte limit'); else err += b.toString(); });
-    child.on('error', () => { clearTimeout(timer); stop('Adapter executable unavailable'); });
+    child.on('error', () => { clearTimeout(timer); stop('Adapter executable unavailable','identity'); });
     child.on('close', code => {
       clearTimeout(timer); if (failed) return;
       // Child output can contain secrets; never persist raw stderr in a board error.
-      if (code !== 0) { logFailure(`${exe} exit ${code}\n${err}\n${out}`); reject(new Error(`Adapter exited ${code}; inspect the protected host log`)); }
+      if (code !== 0) { logFailure(`${exe} exit ${code}\n${err}\n${out}`); reject(new SafeProcessError(failureKind(err),`Adapter exited ${code}`)); }
       else resolve(includeStderr ? out+err : out);
     });
   });

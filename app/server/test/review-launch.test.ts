@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { LaunchRegistration } from '../src/review/launch.js';
+import { handleCorrectionLookupFailure } from '../src/review/corrections.js';
+import { SafeProcessError } from '../src/review/process.js';
 
 describe('trusted correction launch identity', () => {
   const launch = {
@@ -18,4 +20,21 @@ describe('trusted correction launch identity', () => {
     ['unknown stage', { ...launch, stage: 'ship' }],
     ['missing original run', { ...launch, originalRunId: '' }],
   ])('rejects %s', (_name, value) => expect(LaunchRegistration.safeParse(value).success).toBe(false));
+});
+
+describe('correction PR lookup outcomes', () => {
+  it.each([
+    ['prepare','temporary','review_correction_retry'],
+    ['prepare','authentication','review_correction_reconcile'],
+    ['ack','temporary','review_correction_reconcile'],
+    ['ack','authentication','review_correction_reconcile'],
+    ['prepare','confirmed-stale','review_correction_cancel'],
+    ['ack','confirmed-stale','review_correction_cancel'],
+  ] as const)('%s %s uses %s and reports only a safe reason', async (phase,kind,procedure) => {
+    const query=vi.fn().mockResolvedValue({rows:[]});
+    await expect(handleCorrectionLookupFailure({query} as never,phase,9,'lease-token',new SafeProcessError(kind,'fixture-secret'))).rejects.toThrow(/Correction PR/);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0]![0]).toContain(procedure);
+    expect(JSON.stringify(query.mock.calls[0])).not.toContain('fixture-secret');
+  });
 });

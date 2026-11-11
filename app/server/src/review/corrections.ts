@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { z } from 'zod';
 import { LaunchRegistration, type LaunchRegistration as Launch } from './launch.js';
+import { correctionLookupDisposition } from './process.js';
 
 const Correction=z.object({ id:z.coerce.number().int().positive(),feedbackId:z.string(),card:z.string(),builder:z.string(),persona:z.string(),runtime:z.string(),model:z.string(),host:z.string(),repo:z.string(),branch:z.string(),worktree:z.string(),commonDir:z.string(),originalRunId:z.string(),head:z.string(),base:z.string(),pr:z.coerce.number(),evidenceHash:z.string(),leaseToken:z.string(),fence:z.coerce.number(),transientAttempts:z.coerce.number() });
 export type ClaimedCorrection=z.infer<typeof Correction>;
@@ -26,4 +27,13 @@ export async function retryCorrection(client:pg.Client,id:number,token:string,re
  await client.query('SELECT review_correction_retry($1,$2,$3,$4)',[id,token,reason,delaySeconds]);
 }
 export async function cancelCorrection(client:pg.Client,id:number,reason:string):Promise<void>{await client.query('SELECT review_correction_cancel($1,$2)',[id,reason]);}
+export async function reconcileCorrection(client:pg.Client,id:number,reason:string):Promise<void>{await client.query('SELECT review_correction_reconcile($1,$2)',[id,reason]);}
 export async function finishCorrection(client:pg.Client,id:number,runId:string,head:string):Promise<void>{await client.query('SELECT review_correction_finish($1,$2,$3)',[id,runId,head]);}
+
+export async function handleCorrectionLookupFailure(client:pg.Client,phase:'prepare'|'ack',id:number,token:string,error:unknown):Promise<never>{
+ const disposition=correctionLookupDisposition(phase,error);
+ if(disposition.action==='cancel')await cancelCorrection(client,id,disposition.reason);
+ else if(disposition.action==='retry')await retryCorrection(client,id,token,disposition.reason,30);
+ else await reconcileCorrection(client,id,disposition.reason);
+ throw new Error(disposition.reason);
+}

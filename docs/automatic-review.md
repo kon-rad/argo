@@ -36,7 +36,7 @@ Create a dedicated LOGIN with a private authentication mechanism, grant it `sb_r
 ```sql
 CREATE ROLE review_service LOGIN;
 GRANT sb_review_worker TO review_service;
-UPDATE review_policy SET reviewer='auditor', worker_login='review_service', enabled=false, corrections_enabled=false, shipping_enabled=false;
+UPDATE review_policy SET reviewer='auditor', worker_login='review_service', enabled=false, shipping_enabled=false;
 ```
 
 The reviewer must be an independent roster agent. The worker verifies its configured identity against the structured verdict. Database functions authorize the actual `session_user` and role membership, not the caller's `org.agent` setting. Builders have no grants on review state, attempts, policy or decisions. The legacy `ship check` refuses gated cards even if they have a ship-now approval. Other approvals keep their existing rules.
@@ -150,45 +150,7 @@ The trusted host sends bounded JSON on stdin to `cli-review stage /absolute/owne
 {"card":"t_123abc","head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","result":"Actual completion evidence","log":"Execution index with the full log hash and explicit omissions"}
 ```
 
-The importer uses the same per-card content lock, stamps both sources with the actual builder revision, sanitizes secret literals and atomically writes private files. It accepts identical retries and refuses replacement after review or merge. The worker requires both stamps to match the PR head. `cli-review retries /absolute/owner-policy.json` preserves the legacy ready-card interface while correction queues are disabled. Worker subprocess errors are kept in the private `review-adapters.log` beneath its configured HOME; board errors contain no raw stderr or credentials.
-
-### Typed feedback and the optional correction queue
-
-`corrections_enabled` is independently disabled by default. When it is false, rejection keeps the existing ready transition and wake. When it is true, `review_save` stores immutable revision-bound feedback, preserves the original assignee, increments the existing bounded correction round once, and creates one correction item in the same transaction. Each feedback ID includes a deterministic digest of the complete normalized finding, so exact replay is idempotent while different locations, evidence, fixes, or verification remain distinct. Scope/context capacity failures and terminal failed CI use the same finding fields as reviewer findings. A capacity rejection explicitly records that full model review did not run. Missing or pending CI waits. Missing essential or private-excluded context, unknown identity, exhausted rounds, authentication uncertainty, and uncertain merge/deploy effects block instead of being treated as code fixes.
-
-Before the first submission, a trusted coordinator registers the original launch by sending strict JSON on stdin. Values below are generic examples; paths and identities are owner configuration:
-
-```sh
-node server/dist/cli-review.js register /etc/secondbrain/review-host.json <<'JSON'
-{"card":"t_123abc","builder":"builder","persona":"engineer","runtime":"codex","model":"example-model","host":"worker-a","repo":"engine","branch":"card/t_123abc-fix","worktree":"/srv/worktrees/t_123abc","commonDir":"/srv/git/engine","originalRunId":"run-original","stage":"build"}
-JSON
-```
-
-Only the dedicated review worker login can register or consume launches. Registration is immutable and must match the card's trusted assignee. `stage` is optional for compatibility and, when supplied, is one of `plan`, `build`, or `correction`.
-
-The host loop uses the same owner-owned policy file:
-
-```sh
-node server/dist/cli-review.js claim  /etc/secondbrain/review-host.json worker-a
-node server/dist/cli-review.js prepare /etc/secondbrain/review-host.json < prepare.json
-node server/dist/cli-review.js ack    /etc/secondbrain/review-host.json < acknowledgement.json
-node server/dist/cli-review.js retry  /etc/secondbrain/review-host.json < retry.json
-node server/dist/cli-review.js finish /etc/secondbrain/review-host.json < finish.json
-node server/dist/cli-review.js cancel /etc/secondbrain/review-host.json < cancel.json
-node server/dist/cli-review.js status /etc/secondbrain/review-host.json
-```
-
-`claim` leases one item with `FOR UPDATE SKIP LOCKED` and a fencing token. It does not move the card to running. Before any process spawn, `prepare` reserves the real unique run ID and marks the lease `starting`; only then may the host launch it. `ack` binds that run ID to the real process ID, revalidates the live PR/card/base/head, and moves the card to running. Prepare, acknowledgement, retry, cancellation and finish lock and compare the bound rejected review with the card's latest review and expected state before changing the card. Repeated calls are idempotent.
-
-An expired plain `claimed` lease is a protocol-proven no-start and is returned to bounded transient retry without spending a code round. An expired `starting` lease may already have spawned, so it blocks for owner reconciliation and is never launched again automatically. `retry` is only for a claimed item that has not been prepared, records bounded host/offline backoff separately, and does not increment code rounds. Exhaustion blocks only while that correction is still current. `finish` returns the same card through the existing review submission gate. A stale callback cancels only its old correction and closes only its bound run; a newer submission, accepted/completed card, other run or shipping receipt cannot regress. Closed, cancelled, or changed-head work is cancelled before acknowledgement. Merge, deployment, and exact-revision health receipts remain immutable review-job history.
-
-Enable only after a scratch-database round trip and a real non-shipping host canary:
-
-```sql
-UPDATE review_policy SET corrections_enabled=true WHERE singleton;
-```
-
-Rollback is `UPDATE review_policy SET corrections_enabled=false WHERE singleton;`. It prevents new correction items and returns later rejections to the legacy wake path. It deliberately retains feedback, queued items, attempts, and shipping receipts. This engine does not install a timer or private host launcher, and unit/database tests do not prove scheduled repair.
+The importer uses the same per-card content lock, stamps both sources with the actual builder revision, sanitizes secret literals and atomically writes private files. It accepts identical retries and refuses replacement after review or merge. The worker requires both stamps to match the PR head. `cli-review retries /absolute/owner-policy.json` returns only claimable correction rounds for the trusted launching host. A host can relaunch the original coder with the same card, branch, PR, persona and runtime; findings remain acceptance constraints and never grant merge or deploy authority. Worker subprocess errors are kept in the private `review-adapters.log` beneath its configured HOME; board errors contain no raw stderr or credentials.
 
 ### Stable context and historical shipping receipts
 
@@ -262,4 +224,4 @@ Every result has `status` (`pass`, `decompose`, `invalid`), `phase`, policy vers
 
 For decomposition, retain every original requirement and planned path in proposed slices. Each slice declares `id`, `requirements`, `paths`, full `base`, `dependencies`, `diffChars`, `otherContextChars` and nonempty `verification`. The validator checks coverage, dependency references/cycles and estimated slice capacities. This is a proposal: admit each child with its own complete plan, margins and independent checks, preserve migration order, then verify parent integration acceptance. Do not remove tests/docs or narrow acceptance to fit a cap.
 
-Private coordinator integration, runtime installation, scheduled repair and reusable lessons are separate phases. The public correction contract does not install or run a host worker. Passing scope, unit or database tests proves none of those private/runtime pieces are installed. Existing independent exact-revision review and registered shipping authority remain required.
+Private coordinator integration, runtime installation, scheduled repair, correction feedback/state changes and reusable lessons are separate phases. Passing scope tests proves none of those are installed or running. Existing independent exact-revision review and registered shipping authority remain required.

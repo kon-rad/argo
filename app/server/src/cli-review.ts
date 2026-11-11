@@ -9,7 +9,8 @@ import { setPrivateLog } from './review/process.js';
 import { stage } from './review/stage.js';
 import { runFixture } from './review/fixture.js';
 import { scopeMain } from './review/preflight.js';
-import { acknowledgeCorrection, cancelCorrection, claimCorrection, finishCorrection, prepareCorrection, registerLaunch, retryCorrection } from './review/corrections.js';
+import { acknowledgeCorrection, cancelCorrection, claimCorrection, finishCorrection, handleCorrectionLookupFailure, prepareCorrection, registerLaunch, retryCorrection } from './review/corrections.js';
+import { SafeProcessError } from './review/process.js';
 import { GitHub } from './review/adapters.js';
 
 async function stdin():Promise<unknown>{let raw='';for await(const part of process.stdin){raw+=String(part);if(Buffer.byteLength(raw)>600000)throw new Error('Input too large');}return JSON.parse(raw);}
@@ -36,17 +37,17 @@ async function main(): Promise<void> {
     if(action==='prepare'){
       const body=await stdin() as {id:number;leaseToken:string;runId:string;head:string};
       const row=(await client.query('SELECT q.*,l.repo FROM review_corrections q JOIN review_launches l ON l.card=q.launch_card WHERE q.id=$1',[body.id])).rows[0];if(!row)throw new Error('Unknown correction');
-      const repo=host.repositories[row.repo];if(!repo){await cancelCorrection(client,body.id,'Unknown registered repository');throw new Error('Unknown registered repository');}
+      const repo=host.repositories[row.repo];if(!repo)return handleCorrectionLookupFailure(client,'prepare',body.id,body.leaseToken,new SafeProcessError('identity'));
       try{await new GitHub(host,repo).correction(row.card,row.pr,row.head,row.base);}
-      catch(error){await cancelCorrection(client,body.id,'PR closed, cancelled or unavailable before correction launch');throw error;}
+      catch(error){return handleCorrectionLookupFailure(client,'prepare',body.id,body.leaseToken,error);}
       console.log(JSON.stringify(await prepareCorrection(client,body.id,body.leaseToken,body.runId,body.head)));return;
     }
     if(action==='ack'){
       const body=await stdin() as {id:number;leaseToken:string;runId:string;processId:string;head:string};
       const row=(await client.query('SELECT q.*,l.repo FROM review_corrections q JOIN review_launches l ON l.card=q.launch_card WHERE q.id=$1',[body.id])).rows[0];if(!row)throw new Error('Unknown correction');
-      const repo=host.repositories[row.repo];if(!repo){await cancelCorrection(client,body.id,'Unknown registered repository');throw new Error('Unknown registered repository');}
+      const repo=host.repositories[row.repo];if(!repo)return handleCorrectionLookupFailure(client,'ack',body.id,body.leaseToken,new SafeProcessError('identity'));
       try{await new GitHub(host,repo).correction(row.card,row.pr,row.head,row.base);}
-      catch(error){await cancelCorrection(client,body.id,'PR closed, cancelled or unavailable before correction acknowledgement');throw error;}
+      catch(error){return handleCorrectionLookupFailure(client,'ack',body.id,body.leaseToken,error);}
       console.log(JSON.stringify(await acknowledgeCorrection(client,body.id,body.leaseToken,body.runId,body.processId,body.head)));return;
     }
     if(action==='retry'){const body=await stdin() as {id:number;leaseToken:string;reason:string;delaySeconds?:number};await retryCorrection(client,body.id,body.leaseToken,body.reason,body.delaySeconds);console.log(JSON.stringify({retried:true}));return;}

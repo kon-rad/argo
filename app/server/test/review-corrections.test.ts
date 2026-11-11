@@ -3,7 +3,7 @@ import { afterAll, beforeEach, expect, it } from 'vitest';
 import { query } from '../src/db.js';
 import { createCard, finishCard, getCard } from '../src/board.js';
 import { importOrg } from '../src/org.js';
-import { acknowledgeCorrection, cancelCorrection, claimCorrection, finishCorrection, prepareCorrection, registerLaunch, retryCorrection } from '../src/review/corrections.js';
+import { acknowledgeCorrection, cancelCorrection, claimCorrection, finishCorrection, prepareCorrection, reconcileCorrection, registerLaunch, retryCorrection } from '../src/review/corrections.js';
 import { truncateAll } from './helpers.js';
 
 const workerName = 'sb_review_correction_fixture';
@@ -123,9 +123,44 @@ it('closes only the cancelled correction run, not another run on the card', asyn
     await query("UPDATE card_runs SET finished_at=now(),outcome='partial' WHERE card_id=$1 AND run_id='run-old'",[card.id]);
     await query("INSERT INTO card_runs(card_id,agent_name,runtime,run_id,lease_until) VALUES($1,'builder','codex','run-new',now()+interval '1 hour')",[card.id]);
     await cancelCorrection(c,claimed!.id,'Old correction cancelled');
+    expect((await getCard(card.id)).card.status).toBe('running');
+    expect((await query('SELECT state FROM review_corrections WHERE id=$1',[claimed!.id])).rows[0]!.state).toBe('cancelled');
     const runs = (await query('SELECT run_id,finished_at FROM card_runs WHERE card_id=$1 ORDER BY run_id',[card.id])).rows;
     expect(runs.find(r=>r.run_id==='run-old')!.finished_at).not.toBeNull();
     expect(runs.find(r=>r.run_id==='run-new')!.finished_at).toBeNull();
+  } finally { await c.end(); }
+});
+
+it('finishes the current correction run while rejecting a different active run', async () => {
+  const {c,card,claimed,runId}=await runningCorrection('run-correction-bound');
+  try {
+    await finishCorrection(c,claimed.id,runId,claimed.head);
+    expect((await getCard(card.id)).card.status).toBe('review');
+    expect((await query('SELECT state FROM review_corrections WHERE id=$1',[claimed.id])).rows[0]!.state).toBe('review');
+    expect((await query('SELECT outcome FROM card_runs WHERE card_id=$1 AND run_id=$2',[card.id,runId])).rows[0]!.outcome).toBe('done');
+  } finally { await c.end(); }
+});
+
+it('blocks an authentication-uncertain unprepared lookup without inventing stale PR state', async () => {
+  const {card,job}=await submitted(); await save(Number(job.id),rejection(job)); const c=await client();
+  try {
+    const claimed=await claimCorrection(c,'worker-a',60);
+    await reconcileCorrection(c,claimed!.id,'Correction PR authentication or identity uncertain; owner reconciliation required');
+    await reconcileCorrection(c,claimed!.id,'duplicate poll');
+    expect((await getCard(card.id)).card).toMatchObject({status:'blocked',block_kind:'tool-error'});
+    expect((await query('SELECT state,run_id,error FROM review_corrections WHERE id=$1',[claimed!.id])).rows[0]).toMatchObject({state:'blocked',run_id:null,error:'Correction PR authentication or identity uncertain; owner reconciliation required'});
+  } finally { await c.end(); }
+});
+
+it('retains the reserved run for reconciliation after an acknowledgement lookup failure', async () => {
+  const {card,job}=await submitted(); await save(Number(job.id),rejection(job)); const c=await client();
+  try {
+    const claimed=await claimCorrection(c,'worker-a',60);
+    await prepareCorrection(c,claimed!.id,claimed!.leaseToken,'run-reserved',claimed!.head);
+    await reconcileCorrection(c,claimed!.id,'Correction PR lookup unavailable after run reservation; owner reconciliation required');
+    expect((await getCard(card.id)).card).toMatchObject({status:'blocked',block_kind:'tool-error'});
+    expect((await query('SELECT state,run_id FROM review_corrections WHERE id=$1',[claimed!.id])).rows[0]).toMatchObject({state:'blocked',run_id:'run-reserved'});
+    expect((await query("SELECT count(*)::int n FROM card_runs WHERE card_id=$1 AND run_id='run-reserved'",[card.id])).rows[0]!.n).toBe(0);
   } finally { await c.end(); }
 });
 

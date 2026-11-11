@@ -84,7 +84,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { vi } from 'vitest';
 import { source, note } from '../src/review/context.js';
-import { childEnv, command } from '../src/review/process.js';
+import { childEnv, command, correctionLookupDisposition, SafeProcessError } from '../src/review/process.js';
 import { targetMain } from '../src/review/target.js';
 import { GitHub, type HostConfig } from '../src/review/adapters.js';
 import { parseCodexResult } from '../src/addons/dispatch/codex.js';
@@ -112,6 +112,26 @@ describe('bounded context and concrete adapters',()=>{
     const env=childEnv('/tmp');expect(env).not.toHaveProperty('DATABASE_URL');expect(env).not.toHaveProperty('OPENAI_API_KEY');expect(env).not.toHaveProperty('NODE_OPTIONS');
     await expect(command(process.execPath,['-e','setTimeout(()=>{},10000)'],'/tmp',env,20)).rejects.toThrow(/timed out/);
     await expect(command(process.execPath,['-e',"process.stdout.write('x'.repeat(200))"],'/tmp',env,1000,30)).rejects.toThrow(/truncated/);
+  });
+  it.each([
+    ['prepare','temporary','retry'],
+    ['ack','temporary','reconcile'],
+    ['prepare','authentication','reconcile'],
+    ['ack','authentication','reconcile'],
+    ['prepare','identity','reconcile'],
+    ['ack','confirmed-stale','cancel'],
+  ] as const)('maps %s %s correction lookups to %s without raw adapter details',(phase,kind,action)=>{
+    const error=new SafeProcessError(kind,'fixture token must not escape');
+    const result=correctionLookupDisposition(phase,error);
+    expect(result.action).toBe(action);
+    expect(result.reason).not.toContain('fixture token');
+  });
+  it('classifies authentication failures without exposing child stderr',async()=>{
+    const script="process.stderr.write('authentication failed fixture-secret');process.exit(1)";
+    const error=await command(process.execPath,['-e',script],'/tmp',childEnv('/tmp')).catch(value=>value);
+    expect(error).toBeInstanceOf(SafeProcessError);
+    expect(error).toMatchObject({kind:'authentication'});
+    expect(String(error)).not.toContain('fixture-secret');
   });
   it('requires a unique known PR and uses normal exact-head PR merge under strict branch protection',async()=>{
     const repo={github:'example/engine',gitDir:'/tmp/fixture.git',base:'main',target:'fixture',checks:['test'],notes:['design.md']};
