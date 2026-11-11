@@ -156,6 +156,9 @@ export function parseZenTrace(records: unknown[], host: Host, logPath: string, f
     startedAt, endedAt, messageCount: messages.length, inputTokens, outputTokens, costUsd: run.totalCostUsd,
     meta: { persona: meta.persona ?? null, parts: run.parts, budget: run.budget, tools: meta.tools ?? null, skills: meta.skills ?? null,
       dispatch, stopped, resumed: meta.resumed ?? null, version,
+      // How the run was started (chat, run, wake, serve, subagent) and the model's context window; absent on older traces.
+      entrypoint: str(latestMeta.entrypoint) ?? str(meta.entrypoint),
+      context_window: num(latestMeta.context_window) ?? num(meta.context_window),
       ...channelMeta(zenChannel(dispatch, run.reasons), 'zen-agent', str(dispatch.bot)) },
     b2Path: null,
   };

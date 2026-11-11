@@ -73,6 +73,13 @@ describe('parseZenTrace', () => {
     expect(() => parseZenTrace([{ type: 'meta', id: 'z', version: 9 }], 'mac', '/x.jsonl', MTIME)).toThrow(/version 9/);
   });
 
+  it('carries how the run was started and the context window into session meta; older traces leave both null', () => {
+    const meta = { type: 'meta', id: 'zen-2', at: '2026-10-24T09:00:00Z', model: 'ollama/qwen3:8b', parts: [], entrypoint: 'chat', context_window: 32000 };
+    expect(parseZenTrace([meta], 'mac', '/x.jsonl', MTIME).session!.input.meta).toMatchObject({ entrypoint: 'chat', context_window: 32000 });
+    const old = parseZenTrace([{ type: 'meta', id: 'zen-3', at: '2026-10-24T09:00:00Z', model: 'ollama/qwen3:8b', parts: [] }], 'mac', '/x.jsonl', MTIME);
+    expect(old.session!.input.meta).toMatchObject({ entrypoint: null, context_window: null });
+  });
+
   it('maps zen tool names to the ledger\'s actions', () => {
     expect(classifyZenAction('org_dm', {})).toBe('dm');
     expect(classifyZenAction('org_handoff', {})).toBe('post');
