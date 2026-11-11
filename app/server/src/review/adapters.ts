@@ -55,10 +55,12 @@ export class GitHub {
     if(threads.nodes.some((t:{comments?:{pageInfo?:{hasNextPage?:boolean}}})=>t.comments?.pageInfo?.hasNextPage!==false))throw new Error('Review comments truncated');
     return z.array(z.object({id:z.string(),isResolved:z.boolean(),isOutdated:z.boolean()}).passthrough()).parse(threads.nodes);
   }
-  async diff(pr: number): Promise<string> {
-    const files=(await this.gh(['pr','diff',String(pr),'--repo',this.repo.github,'--name-only'])).split('\n');
+  /** Final aggregate between the reviewed commits, matching actual scope preflight. */
+  async diff(s: {number:number;headRefOid:string;baseRefOid:string}): Promise<string> {
+    await this.git(['fetch','--no-tags',`https://github.com/${this.repo.github}.git`,s.headRefOid,s.baseRefOid]);
+    const files=(await this.git(['diff','--name-only','--no-renames','-z',s.baseRefOid,s.headRefOid,'--'])).split('\0');
     checkPaths(files.filter(Boolean).map(path => ({path,status:'modified'})),this.host.exclude);
-    return this.gh(['pr','diff',String(pr),'--repo',this.repo.github,'--patch']);
+    return this.git(['diff','--no-ext-diff','--no-textconv','--binary',s.baseRefOid,s.headRefOid,'--']);
   }
   /** Exact-revision source around the diff, including immediate local imports. No checkout or scripts. */
   async code(s: {number:number;headRefOid:string;baseRefOid:string}):Promise<{ref:string;text:string}[]> {
