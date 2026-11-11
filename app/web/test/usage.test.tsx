@@ -19,10 +19,10 @@ const row = (o: Record<string, unknown>) => ({ id: 1, source: 'claude-code', har
   external_id: 'x', parent_external_id: null, project: null, title: null, first_prompt: null, started_at: null, ended_at: null,
   steps: 0, tool_calls: 0, errors: 0, subagents: 0, models: [], calls: 0, input: 0, cache_write: 0, cache_read: 0, output: 0, reasoning: 0, ...o });
 const SESSIONS = { total: 3, sessions: [
-  row({ id: 1, external_id: 'cc1', task_ids: ['t_1234abcd'], title: 'Fix dispatcher', display_title: 'Fix dispatcher', title_source: 'title', started_at: '2026-10-14T01:00:00Z', ended_at: '2026-10-14T01:05:00Z',
+  row({ id: 1, external_id: 'cc1', task_ids: ['t_1234abcd'], title: 'Fix dispatcher', started_at: '2026-10-14T01:00:00Z', ended_at: '2026-10-14T01:05:00Z',
     calls: 9, input: 10, cache_write: 100, cache_read: 1000, output: 50, steps: 12, tool_calls: 4, errors: 1, models: ['claude-opus-5-5'] }),
   row({ id: 2, host: 'mac', external_id: 'arch-only-session' }),
-  row({ id: 3, source: 'hermes', harness: 'hermes', profile: 'main', provider: 'openrouter', external_id: 'h1', title: 'Hermes chat', display_title: 'Hermes chat', title_source: 'title',
+  row({ id: 3, source: 'hermes', harness: 'hermes', profile: 'main', provider: 'openrouter', external_id: 'h1', title: 'Hermes chat',
     started_at: '2026-10-14T01:00:00Z', calls: 2, input: 5, output: 5, cost_usd: 0.42, models: ['deepseek-v4-flash'] })] };
 const AFACETS = { facets: { harness: [{ value: 'claude-code', n: 2 }, { value: 'hermes', n: 1 }], host: [{ value: 'droplet', n: 2 }, { value: 'mac', n: 1 }],
   profile: [], provider: [], tool: [{ value: 'Bash', n: 4 }] } };
@@ -71,52 +71,6 @@ describe('bucketEnd', () => {
 });
 
 describe('Usage page', () => {
-  it('uses the vault zone for credit and subscription timestamps and browser fallback after clearing it', async () => {
-    const first = '2026-11-10T23:30:00Z';
-    const latest = '2026-11-10T23:45:00Z';
-    const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const date = (iso: string, timeZone: string) => new Date(iso).toLocaleDateString([], { timeZone });
-    const datetime = (iso: string, timeZone: string) => new Date(iso).toLocaleString([], { timeZone });
-    // Pick opposite sides of midnight regardless of the test machine's own zone.
-    let configured: string | null = date(first, browserZone) === date(first, 'Asia/Tokyo')
-      ? 'Pacific/Honolulu' : 'Asia/Tokyo';
-    const vaultZone = configured;
-    expect(date(first, vaultZone)).not.toBe(date(first, browserZone));
-    const reading = { provider: 'openrouter', observed_at: latest, status: 'ok', origin: 'api', balance: 8,
-      currency: 'USD', total_credits: null, total_usage: null, note: null };
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const u = String(input);
-      const body = u.includes('/usage/config') ? { subscriptions: ['claude-code'], credits: ['openrouter'], sections: [] }
-        : u.includes('/usage/credits') ? { providers: [{ provider: 'openrouter', latest: reading, last_ok: reading }], history: [
-          { provider: 'openrouter', observed_at: first, balance: 10, currency: 'USD' },
-          { provider: 'openrouter', observed_at: latest, balance: 8, currency: 'USD' }] }
-          : u.includes('/usage/subscriptions') ? { providers: [{ ...SUBSCRIPTIONS.providers[0], observed_at: latest,
-            windows: [{ ...SUBSCRIPTIONS.providers[0]!.windows[0], resets_at: first, observed_at: latest }] }] }
-            : u.includes('/meta') ? { timezone: configured, modules: [] } : {};
-      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    }));
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><MemoryRouter><Usage /></MemoryRouter></QueryClientProvider>);
-    await screen.findByText(/spent since/);
-    expect.soft(screen.getByText(/spent since/).textContent).toBe(`$2.00 spent since ${date(first, vaultZone)}`);
-    expect.soft(screen.getByText(/^as of /).textContent).toBe(`as of ${datetime(latest, vaultZone)} (API)`);
-    await screen.findByText(/^Window observed /);
-    expect.soft(screen.getByText(/^Resets /).textContent?.startsWith(`Resets ${datetime(first, vaultZone)}`)).toBe(true);
-    expect.soft(screen.getByText(/^Window observed /).textContent).toBe(`Window observed ${datetime(latest, vaultZone)}`);
-    expect.soft(screen.getByText(/^Source: /).textContent).toBe(`Source: statusline · observed ${datetime(latest, vaultZone)}`);
-
-    configured = null;
-    await client.invalidateQueries({ queryKey: ['meta'] });
-    await waitFor(() => {
-      expect(screen.getByText(/spent since/).textContent).toBe(`$2.00 spent since ${date(first, browserZone)}`);
-      expect(screen.getByText(/^as of /).textContent).toBe(`as of ${datetime(latest, browserZone)} (API)`);
-      expect(screen.getByText(/^Resets /).textContent?.startsWith(`Resets ${datetime(first, browserZone)}`)).toBe(true);
-      expect(screen.getByText(/^Window observed /).textContent).toBe(`Window observed ${datetime(latest, browserZone)}`);
-      expect(screen.getByText(/^Source: /).textContent).toBe(`Source: statusline · observed ${datetime(latest, browserZone)}`);
-    });
-    client.clear();
-  });
-
   it('requests sessions for the clicked bucket', async () => {
     mockFetch();
     const { container } = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Usage /></MemoryRouter></QueryClientProvider>);

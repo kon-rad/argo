@@ -335,12 +335,20 @@ const Server = z
   })
   .prefault({});
 
-/** An IANA zone name the runtime knows; a typo is dropped (no zone set) rather than discarding the whole file. */
+/** Shared CLI/settings rule: a geographic IANA name or UTC, never a legacy abbreviation/fixed-offset alias. */
+export function isIanaTimeZone(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  if (value.toUpperCase() !== 'UTC' && (
+    !/^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+)+$/.test(value) || /^(?:Etc|SystemV)\//i.test(value)
+  )) return false;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: value }); return true; }
+  catch { return false; }
+}
+
+/** Invalid timezone values are dropped without discarding the rest of the settings. */
 const TimeZone = z
   .string()
-  .refine((tz) => {
-    try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return /^[A-Za-z]/.test(tz); } catch { return false; }
-  })
+  .refine(isIanaTimeZone)
   .optional()
   .catch(undefined);
 

@@ -40,26 +40,3 @@ export function bucketEnd(startIso: string, bucket: 'hour' | 'day', tz: string):
   t = wall - tzOffsetMs(t, tz);
   return new Date(t).toISOString();
 }
-
-/** Strictly under 100 characters, one line: the Session column never wraps into a paragraph. */
-export function clampLine(s: string, max = 99): string {
-  const t = s.replace(/\s+/g, ' ').trim();
-  if (t.length <= max) return t;
-  const cut = t.slice(0, max - 1);
-  const space = cut.lastIndexOf(' ');
-  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd()}…`;
-}
-
-/** The persona cell: the recorded persona, else `none` for a person at a terminal and `unknown` for anything else. */
-export function personaLabel(s: { persona?: string | null; session_type?: string | null }): { text: string; known: boolean } {
-  if (s.persona) return { text: s.persona, known: true };
-  return { text: s.session_type === 'cli' ? 'none' : 'unknown', known: false };
-}
-
-/** Context at the latest call over the recorded window: "30.2k / 128.0k", "30.2k / ?", "? / 128.0k", or null when neither is known. */
-export function contextLabel(s: { context_tokens?: number | null; context_window?: number | null }): string | null {
-  const used = s.context_tokens ?? null;
-  const cap = s.context_window ?? null;
-  if (used === null && cap === null) return null;
-  return `${used === null ? '?' : formatTokens(used)} / ${cap === null ? '?' : formatTokens(cap)}`;
-}
