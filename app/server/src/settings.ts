@@ -334,8 +334,30 @@ const Server = z
   })
   .prefault({});
 
+/** Shared CLI/settings rule: a geographic IANA name or UTC, never a legacy abbreviation/fixed-offset alias. */
+export function isIanaTimeZone(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  if (value.toUpperCase() !== 'UTC' && (
+    !/^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+)+$/.test(value) || /^(?:Etc|SystemV)\//i.test(value)
+  )) return false;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: value }); return true; }
+  catch { return false; }
+}
+
+/** Invalid timezone values are dropped without discarding the rest of the settings. */
+const TimeZone = z
+  .string()
+  .refine(isIanaTimeZone)
+  .optional()
+  .catch(undefined);
+
 const Settings = z.object({
   server: Server,
+  /**
+   * The owner's current time zone (IANA, e.g. `Asia/Singapore`): every time the web app shows and the Usage
+   * buckets use it. Unset: each browser's own zone. Change it when travelling: `secondbrain timezone set <zone>`.
+   */
+  timezone: TimeZone,
   /** Providers and panels shown on the Usage page. Empty provider lists do no polling. */
   usage: z.object({
     subscriptions: z.array(z.enum(['codex', 'claude-code'])).default([]),

@@ -13,7 +13,7 @@ import { splitJsonLines } from './lines.js';
 import { transcriptIds } from './transcript.js';
 import { parseRunLog } from './runLog.js';
 import { parseZenTrace } from './zenTrace.js';
-import { channelMeta } from '../archive/channelMeta.js';
+import { claudeSessionMeta } from '../archive/channelMeta.js';
 import { parseStatuslineLog } from './statusline.js';
 import * as store from './store.js';
 
@@ -40,7 +40,7 @@ export async function ingestTranscript(tx: TxClient, host: Host, path: string, b
     const s = await archive.upsertSession(tx, {
       source: 'claude-code', host, externalId: ids.sessionExternalId, parentExternalId: ids.parentSid,
       project: ids.project, title: chunk.title, model: chunk.model, startedAt: null, endedAt: null, messageCount: null,
-      inputTokens: null, outputTokens: null, costUsd: null, meta: channelMeta(chunk.channel, 'claude-code'), b2Path: null,
+      inputTokens: null, outputTokens: null, costUsd: null, meta: claudeSessionMeta(chunk), b2Path: null,
     });
     if (s.changed) sessions++;
     const msgs = ids.parentSid ? chunk.messages.map((m) => ({ ...m, isSidechain: true })) : chunk.messages;
