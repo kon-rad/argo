@@ -10,6 +10,7 @@ import { AgentAvatar } from '../../components/AgentAvatar.js';
 import StackedBars, { type BarSeries } from '../../components/charts/StackedBars.js';
 import { bucketEnd, formatTokens, money, TYPE_SERIES } from './format.js';
 import { zoned } from '../../lib/time.js';
+import { useAppTimezone } from '../../lib/useTimezone.js';
 import AgentSessions from './AgentSessions.js';
 import Summaries from './Summaries.js';
 import LiveAgents, { useLiveCount } from './LiveAgents.js';
@@ -18,7 +19,6 @@ import AgentToggle from '../../components/AgentToggle.js';
 
 const RANGES = [{ label: '24 h', days: 1 }, { label: '7 d', days: 7 }, { label: '30 d', days: 30 }, { label: '90 d', days: 90 }];
 const GROUP_COLORS = ['var(--chart-bar)', 'var(--ink)', '#c2410c', '#15803d', '#7c3aed', '#0e7490', '#b45309', '#be123c', '#4d7c0f', '#6d28d9'];
-const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 type Group = 'type' | UsageDimension;
 const GROUPS: Group[] = ['type', ...USAGE_DIMENSIONS];
 
@@ -29,7 +29,7 @@ const CREDIT_HINTS: Record<CreditProvider, string> = {
   gemini: 'Google has no balance API. Copy it from AI Studio, then: secondbrain credits set gemini <balance>',
 };
 
-function CreditCard({ entry, history }: { entry: UsageCredits['providers'][number]; history: UsageCredits['history'] }) {
+function CreditCard({ entry, history, tz }: { entry: UsageCredits['providers'][number]; history: UsageCredits['history']; tz: string }) {
   const ok = entry.last_ok;
   const failed = entry.latest && entry.latest.status !== 'ok' ? entry.latest : null;
   const mine = history.filter((h) => h.provider === entry.provider && h.currency === ok?.currency);
@@ -43,10 +43,10 @@ function CreditCard({ entry, history }: { entry: UsageCredits['providers'][numbe
         <div className="text-xs text-[var(--ink-dim)]">{money(ok.total_usage, ok.currency)} used of {money(ok.total_credits, ok.currency)} bought</div>
       )}
       {change !== null && (
-        <div className="text-xs text-[var(--ink-dim)]">{change <= 0 ? `${money(-change, ok!.currency)} spent` : `${money(change, ok!.currency)} added`} since {new Date(first!.observed_at).toLocaleDateString()}</div>
+        <div className="text-xs text-[var(--ink-dim)]">{change <= 0 ? `${money(-change, ok!.currency)} spent` : `${money(change, ok!.currency)} added`} since {new Date(first!.observed_at).toLocaleDateString([], { timeZone: tz })}</div>
       )}
       {ok && (
-        <div className="text-xs text-[var(--ink-dim)]">as of {new Date(ok.observed_at).toLocaleString()} ({ok.origin === 'manual' ? 'entered by hand' : 'API'}){ok.note ? `, ${ok.note}` : ''}</div>
+        <div className="text-xs text-[var(--ink-dim)]">as of {new Date(ok.observed_at).toLocaleString([], { timeZone: tz })} ({ok.origin === 'manual' ? 'entered by hand' : 'API'}){ok.note ? `, ${ok.note}` : ''}</div>
       )}
       {failed && <div className="text-xs text-red-600">Latest reading: {failed.status}, {failed.error}</div>}
       {(!ok || entry.provider === 'gemini') && <div className="mt-1 text-xs text-[var(--ink-faint)]">{CREDIT_HINTS[entry.provider]}</div>}
@@ -55,6 +55,7 @@ function CreditCard({ entry, history }: { entry: UsageCredits['providers'][numbe
 }
 
 function Credits({ providers }: { providers: CreditProvider[] }) {
+  const { tz } = useAppTimezone();
   const credits = useQuery({ queryKey: ['usage-credits'], queryFn: () => api.usageCredits(), enabled: providers.length > 0, refetchInterval: 300_000 });
   if (providers.length === 0) return null;
   const entries = new Map(credits.data?.providers.map((entry) => [entry.provider, entry]));
@@ -63,7 +64,7 @@ function Credits({ providers }: { providers: CreditProvider[] }) {
     <div className="mt-1 grid gap-3 sm:grid-cols-3">
       {providers.map((provider) => {
         const entry = entries.get(provider);
-        return entry ? <CreditCard key={provider} entry={entry} history={credits.data!.history} />
+        return entry ? <CreditCard key={provider} entry={entry} history={credits.data!.history} tz={tz} />
           : credits.isSuccess ? <div key={provider} className="rounded border border-[var(--rule)] p-3 text-sm">{PROVIDER_NAMES[provider]}: no reading returned.</div> : null;
       })}
       {credits.isError && <div className="text-sm text-red-600">Credits did not load.</div>}
@@ -162,6 +163,8 @@ function who(r: UsageRun): { dim: UsageDimension; value: string } | null {
 
 function UsageLedger({ claudeConfigured }: { claudeConfigured: boolean }) {
   const [sp, setSp] = useSearchParams();
+  // One zone for the buckets, their labels and every time below: the vault's setting, else this browser's.
+  const { tz, source: tzSource } = useAppTimezone();
   const days = Number(sp.get('days')) || 1;
   const group: Group = isGroup(sp.get('group')) ? (sp.get('group') as Group) : 'type';
   const hourly = sp.get('bucket') !== 'day';
@@ -210,7 +213,7 @@ function UsageLedger({ claudeConfigured }: { claudeConfigured: boolean }) {
   const filterKey = JSON.stringify(filters);
 
   const plan = useQuery({ queryKey: ['usage-plan', from, to], queryFn: () => api.usagePlan(from, to), enabled: claudeConfigured, refetchInterval: 60_000 });
-  const series = useQuery({ queryKey: ['usage-series', from, to, bucket, group, filterKey], queryFn: () => api.usageSeries({ from, to, bucket, tz, group }, filters) });
+  const series = useQuery({ queryKey: ['usage-series', from, to, bucket, tz, group, filterKey], queryFn: () => api.usageSeries({ from, to, bucket, tz, group }, filters) });
   const { buckets, series: bars } = useMemo(() => toSeries(series.data?.rows ?? [], group), [series.data, group]);
   const sel = selected !== null && buckets[selected] ? buckets[selected]! : null;
   const selFrom = sel ?? from;
@@ -219,7 +222,7 @@ function UsageLedger({ claudeConfigured }: { claudeConfigured: boolean }) {
   const runs = useQuery({ queryKey: ['usage-runs', selFrom, selTo, filterKey], queryFn: () => api.usageRuns(selFrom, selTo, filters) });
   const orgWakes = useQuery({ queryKey: ['usage-org-wakes', selFrom, selTo], queryFn: () => api.usageOrgWakes(selFrom, selTo) });
   const fmtBucket = (b: string) => new Date(b).toLocaleString([], bucket === 'hour'
-    ? { month: 'short', day: 'numeric', hour: '2-digit' } : { month: 'short', day: 'numeric' });
+    ? { timeZone: tz, month: 'short', day: 'numeric', hour: '2-digit', hourCycle: 'h23' } : { timeZone: tz, month: 'short', day: 'numeric' });
   const history = plan.data?.history ?? [];
   const breakdown = group !== 'type' ? (facets.data?.facets?.[group] ?? []) : [];
   const total = facets.data?.total?.tokens ?? 0;
@@ -239,7 +242,8 @@ function UsageLedger({ claudeConfigured }: { claudeConfigured: boolean }) {
           <option value="type">by token type</option>
           {USAGE_DIMENSIONS.map((d) => <option key={d} value={d}>by {USAGE_DIMENSION_LABELS[d]}</option>)}
         </select>
-        <span className="ml-auto text-xs text-[var(--ink-dim)]">time zone {tz}</span>
+        <span className="ml-auto text-xs text-[var(--ink-dim)]" title={tzSource === 'setting' ? 'from secondbrain.json; change it with: secondbrain timezone set <Area/City>' : 'no time zone is set for the vault; using this browser\'s'}>
+          time zone {tz} ({tzSource === 'setting' ? 'vault setting' : 'this browser'})</span>
       </div>
 
       <FilterBar filters={filters} facets={facets.data} onAdd={addFilter} onRemove={removeFilter} onClear={clearFilters} />
@@ -366,6 +370,7 @@ function RunningLink() {
 
 function UsageSessions() {
   const [sp] = useSearchParams();
+  const { tz } = useAppTimezone();
   const days = Number(sp.get('days')) || 1;
   const [from, to] = useMemo(() => {
     const end = new Date(Math.ceil(Date.now() / 3600_000) * 3600_000);

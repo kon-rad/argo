@@ -3,10 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, type AgentSummary } from '../../lib/api.js';
 import { zoned } from '../../lib/time.js';
+import { useAppTimezone } from '../../lib/useTimezone.js';
 import { sessionLink } from './AgentSessions.js';
 import { formatTokens } from './format.js';
 
-const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const OUTCOMES = ['finished', 'partial', 'blocked', 'failed', 'unknown'] as const;
 const OUTCOME_STYLE: Record<string, string> = {
   finished: 'border-green-700 text-green-700', partial: 'border-amber-600 text-amber-700', blocked: 'border-amber-600 text-amber-700',
@@ -27,7 +27,7 @@ function Card({ s }: { s: AgentSummary }) {
     <article className="border-t border-[var(--rule)] py-3" aria-label={`Summary of ${title}`}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--ink-dim)]">
         <Chip outcome={s.outcome} />
-        <span>{s.ended_at ? zoned(s.ended_at, tz) : ''}</span>
+        <span>{s.ended_at ? zoned(s.ended_at) : ''}</span>
         <span>{s.harness}{s.profile && s.profile !== 'main' ? ` · ${s.profile}` : ''} on {s.host}</span>
         {s.project ? <span>{s.project}</span> : null}
         <span title={`input ${formatTokens(m.input_tokens)} · cache write ${formatTokens(m.cache_write_tokens)} · cache read ${formatTokens(m.cache_read_tokens)} · output ${formatTokens(m.output_tokens)}`}>
@@ -63,7 +63,8 @@ export default function Summaries() {
   }, [days]);
   const filters = { outcome, harness, ...(sp.get('s_q') ? { q: sp.get('s_q')! } : {}) };
   const list = useQuery({ queryKey: ['summaries', from, to, JSON.stringify(filters)], queryFn: () => api.summaries(from, to, filters) });
-  const overview = useQuery({ queryKey: ['summary-overview', from, to], queryFn: () => api.summaryOverview(from, to, tz) });
+  const { tz } = useAppTimezone();
+  const overview = useQuery({ queryKey: ['summary-overview', from, to, tz], queryFn: () => api.summaryOverview(from, to, tz) });
 
   const update = (fn: (n: URLSearchParams) => void) => { const n = new URLSearchParams(sp); fn(n); setSp(n, { replace: true }); };
   const toggle = (key: string, v: string) => update((n) => {

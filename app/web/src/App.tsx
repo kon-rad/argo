@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAppTimezone } from './lib/useTimezone.js';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import Browse from './routes/Browse.js';
 import Search from './routes/Search.js';
@@ -71,6 +72,8 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
   const queryClient = useQueryClient();
   // Which optional pages and note links this install has; nothing until it answers.
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
+  // The vault's time zone for every time helper (lib/time.ts); the browser's until /api/meta answers.
+  useAppTimezone();
   const modules = new Set(meta.data?.modules ?? []);
   const moduleKey = (meta.data?.modules ?? []).join(',');
   const shortcuts = useMemo(() => available(new Set(moduleKey.split(','))), [moduleKey]);
