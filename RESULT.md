@@ -1,81 +1,98 @@
-DONE
+# Core v2 phase 0: docs status pass and personal scrub (RESULT)
 
-## Summary
+Card `t_f90cb751` (engine-core-v2 phase 0). Repo `kon-rad/argo`, engine worktree on branch `card/t_f90cb751-core-v2-phase-0-engine-docs-status-pass`, based on `origin/main` (`170d9fc`).
 
-Closes Engine simplification round 2, item 1: one settings reader, per-section validation, and schema-backed environment reads.
+Goal: a one-line Status at the top of every `docs/` page, the proposal pages out of `docs/` and the mkdocs nav, the module lists reconciled, and the owner's personal residue out of the public engine (`docs` and `app`) with no behaviour change beyond a default value.
 
-- Added `app/server/src/settings-file.ts` as the only settings path resolver and JSON file loader. It has no `config.ts` import.
-- Routed runtime settings, addon discovery, and doctor through that loader. `SECONDBRAIN_SETTINGS` now works for default, absolute, and vault-relative paths, including addon discovery.
-- Added `settingsReport()`. Each top-level section validates independently, so an invalid `socialMetrics` section uses its defaults while valid `summaries` settings still load.
-- Made doctor fail critically for invalid JSON or schema-invalid settings. Diagnostics include only the settings path, section, field path, and Zod message.
-- Moved production env reads behind the Zod-backed `config.env` surface and removed the env-schema exception worklist.
-- Updated configuration docs and both env examples.
+## 1. Docs pages removed (4)
 
-## Before and after
+Each path was deleted from `docs/` and its entry removed from the `mkdocs.yml` `nav`. Every inbound link was retargeted (see section 3); `mkdocs build --strict` reports no dangling link.
 
-| Measure | Before | After |
-|---|---:|---:|
-| Settings file readers/parsers | 3 | 1 shared loader |
-| Invalid section blast radius | Whole settings object reset | Invalid section only |
-| Cataloged direct `process.env.X` reads outside `config.ts` and tests | 62 in 29 files | 10 lines in 7 bootstrap or standalone files |
-| Env schema exception worklist | 49 entries | 0 entries |
-| New focused isolated checks | 0 | 18 passing |
+- `docs/self-improvement.md` (a proposal; not built)
+- `docs/zen-runtime.md` (a proposal/pilot description; the shipped runtime is documented on `zen-agent.md`)
+- `docs/org-routing.md` (pilot/experimental; config lives on `org-yaml.md`)
+- `docs/memory-golden-set.md` (the recall test method folds into `memory.md`)
 
-The remaining 10 direct reads are intentional and their keys are still in the schema:
+`docs/board-design.md` is kept for now: it carries its own Status line and is the board's architecture page, referenced by `kanban-board.md` and `architecture.md`. Folding it into `kanban-board.md` (review item 11) is deferred, see section 6. `docs/getting-started.md` is likewise kept; folding it into `onboarding/02-set-up-your-vault.md` is deferred.
 
-- `settings-file.ts`: `SECONDBRAIN_SETTINGS`; the required leaf resolver cannot import `config.ts`.
-- `cli-features.ts`: `MODULES`; this manifest bootstrap runs before app config.
-- `cli-review.ts` and `review/process.ts`: `REVIEW_DB_URL` and `GH_TOKEN`; the standalone trusted review worker intentionally does not load the vault env or app config.
-- `cli-ledger.ts`, `ledger/sync.ts`, and `archive/redact.ts`: `SB_LEDGER_DIR`, `SB_LEDGER_TOKEN`, `REDACT_ENV_FILES`, `XDG_CONFIG_HOME`, and `USER`; the ledger is built as a standalone single-file tool from Node builtins and pure modules.
+## 2. Status lines added (every remaining `docs/` page)
 
-## Environment keys added to the schema
+Format, as the first content line: `Status: **<works|pilot|proposal>** - <one sentence>.` All 34 pages that lacked one now have one; `board-design.md` already had a compatible line and was left. Verdicts:
 
-`SECONDBRAIN_SETTINGS`, `SB_UNIT_DIR`, `SB_ENV_FILE`, `SECONDBRAIN_DB_URL`, `SB_ORG_DB_URL`, `ORG_DB_URL`, `ORG_AGENT`, `ORG_VIA`, `ORG_RUN`, `ORG_ROUTING_JSON`, `ORG_BREAKER`, `ORG_BREAKER_AS`, `PROJECTS_BY`, `PLAN_USAGE_LOG`, `CLAUDE_PROJECTS_DIR`, `CLAUDE_BIN`, `CC_RUNS_DIR`, `SECONDBRAIN_TELEGRAM_DIR`, `USAGE_HOST`, `USAGE_SYNC_HOST`, `USAGE_SYNC_SERVER`, `USAGE_SYNC_TOKEN`, `USAGE_PUSH_HOST`, `USAGE_PUSH_STATE`, `USAGE_PUSH_MAX_BYTES`, `SB_LEDGER_DIR`, `SB_LEDGER_TOKEN`, `BOT_REPOS_FILE`, `HERMES_ENV_FILE`, `REMOTE_HERMES_USER`, `AGENTS_SYNC_HOST`, `REDACT_ENV_FILES`, `B2STORE`, `CREDITS_KEYS_FILE`, `FAL_BILLING_KEY`, `GEMINI_API_KEY`, `BASE_RPC_URL`, `LIVESTREAM_YOUTUBE`, `LIVESTREAM_TWITCH`, `LIVESTREAM_KICK`, `LIVESTREAM_PUBLIC_DIR`, `SUMMARIES_LOCAL_URL`, `XDG_CONFIG_HOME`, `USER`, `NODE_ENV`, `DESK_TEST_DATABASE_URL`, `DESK_PUBLICATION_TEST_DATABASE_URL`.
+| Page | Verdict |
+|---|---|
+| all `docs/onboarding/*.md` (13) | works |
+| README.md, architecture.md, configuration.md, deployment.md, modules.md, privacy.md, rag.md, sync.md, uploads.md, vault.md, summaries.md, garden.md | works |
+| agent-company.md, agent-harness.md, agent-memory.md, memory.md, kanban-board.md | works |
+| zen-agent.md | pilot (the roster `runtime: zen-agent` switch and dispatcher hand-off were still to do at the page's last update) |
+| getting-started.md, org-yaml.md | works |
+| board-design.md | works (pre-existing line, "built as the `board` module") |
 
-The legacy `LIVESTREAM_YOUTUBE`, `LIVESTREAM_TWITCH`, and `LIVESTREAM_KICK` values are per-vault choices already represented by `secondbrain.json`. This card kept their existing env-over-settings precedence mechanically as required.
+`docs/modules.md`: the module list was checked against `app/server/src/features/` (dirs `board`, `org`, `projects`, `summaries`, `usage`, matching `registry.ts` `MANIFESTS`) and against the modules table. No mismatch found; the page already names the five core features as `projects, org, board, usage, summaries` and describes the older modules as not-yet-moved to `addons/`. Left unchanged.
 
-## Verification
+## 3. Docs personal residue scrub + link retargets
 
-- `cd app && npm ci --offline`
-  - Added 514 packages.
-  - Audited 518 packages.
-  - 0 vulnerabilities.
-- `cd app && npm run build`
-  - Server TypeScript build passed.
-  - Web TypeScript and Vite build passed.
-  - 784 modules transformed.
-- Isolated Vitest config, then `npx vitest run ... settings.test.ts env-schema.test.ts machines.test.ts`
-  - 3 test files passed.
-  - 18 tests passed.
-- Focused doctor checks for schema-invalid and missing settings files
-  - 1 test file passed.
-  - 2 tests passed, 4 skipped by the name filter.
-- `scripts/check-public.sh`
-  - Exit 0, no output.
-- `git diff origin/main --check`
-  - Exit 0.
-- Required env grep
-  - 10 remaining lines, all listed above with reasons.
+Retarget map applied everywhere a deleted page was linked:
 
-## Not verified
+| Deleted page | Retarget |
+|---|---|
+| `self-improvement.md` | link dropped, prose kept (or `zen-agent.md` where the sentence is about the headless runtime) |
+| `zen-runtime.md` | `zen-agent.md` |
+| `org-routing.md` | `org-yaml.md` |
+| `memory-golden-set.md` | `memory.md` |
 
-`cd app && npx vitest run --project server` could not enter test collection because no PostgreSQL server is available at `/tmp/.s.PGSQL.5432`. The real output was:
+Residue removed from `docs/`:
 
-```text
-psql: error: connection to server on socket "/tmp/.s.PGSQL.5432" failed: No such file or directory
-Is the server running locally and accepting connections on that socket?
-No test files found, exiting with code 1
+| Page(s) | Was | Now |
+|---|---|---|
+| onboarding/00, agent-memory, memory | `CURRENT/`, `Areas/Finance/` exclusions named as defaults | "a private folder"/"private folders" |
+| onboarding/00, 06, configuration, deployment, uploads, architecture | `b2store`/B2 as a hard dependency | "if you configure object storage..."/"object-storage client" |
+| configuration, README, modules | `Jev`, `TypeSafe` brand, `openrouter/typesafe/jev-1.14` default, `CLASSIFY_PROVIDER` prose | generic provider/model wording |
+| summaries | `qwen3.6:35b-a3b`, `qwen3.6:27b` | "a local model" |
+| configuration, garden | `CURRENT/catalog.md` (stale) | `garden/catalog.md` (matches the real code default) |
+| privacy | `my-droplet` denylist example | `my-server` |
+| org-yaml | avatar example `sol.jpg` | `atlas.jpg` |
+| onboarding/11 | `"persona": "sol"` | `"persona": "assistant"` |
+| kanban-board | "a Mac", host `m4` | "your laptop", `<host>` |
+
+## 4. App personal residue scrub (behaviour-preserving)
+
+Shipped defaults / config:
+- `app/config/summaries.json` - dropped the home-server entry `{"provider":"ollama","model":"qwen3.6:35b-a3b","baseUrlEnv":"SUMMARIES_M1_URL"}`; the shipped chain is now Together then OpenRouter.
+- `SUMMARIES_M1_URL` -> `SUMMARIES_LOCAL_URL` across `features/summaries/manifest.ts`, `summaries/config.ts`, `deploy/env.example` (the tests already expected the new name).
+- `app/deploy/deploy.sh` - `ZEN_BOARD_AGENT` default `sol` -> `owner`.
+- `app/deploy/secondbrain-db-backup.sh` + `.service` - `DB_BACKUP_HOST` default `droplet` -> `server` (note: an install that relied on the default moves its backup prefix from `.../droplet/` to `.../server/`; the retention windows are keyed by prefix, no data is lost).
+
+Comments and user-facing strings naming the owner's machines (`droplet`, `Mac`/`M4`, "the owner's ...") were rewritten to neutral wording across ~55 `server`/`web`/`deploy`/`bin` files; `hub.ts`'s route message changed and `hub.test.ts` was updated to match.
+
+Pre-existing in the working tree when this phase started (left as-is): `classify/index.ts` (settings model default removed -> `no-model` fallthrough), `org-powers.ts` (`RECALL_EXCLUDE` from `['CURRENT/','Areas/Finance/','.env']` to `['.env']`), `settings.ts` (`classify.model` default `openrouter/typesafe/jev-1.14` -> optional; garden `catalogFile` `CURRENT/catalog.md` -> `garden/catalog.md`), and their tests.
+
+## 5. Residual `droplet` mentions in `app` (justified)
+
+`grep -rni droplet app | grep -v /migrations/ | grep -v node_modules` -> 148 lines (168 with gitignored `app/server/dist/`), in three justified groups:
+
+a. **Test-only fixtures and helper names** (not shipped): e.g. `test/usage-api.test.ts`, `test/usage-sync.test.ts`, `test/zen-trace.test.ts`, `test/archive-run.test.ts` (`dropletFails`, `pullDroplet` fakes), and `test/usage-schema.test.ts` which asserts the seeded host slugs are `['droplet','mac']`.
+b. **Identifiers and values pinned by an applied migration**: the host slugs `'droplet'`/`'mac'` are the only rows seeded in `usage_hosts` by `1756000012900_usage-attribution.sql`, with a FK and `CHECK (host IN ('mac','droplet'))` in `1756000012000_usage.sql`. Changing a writer's default would cause FK violations on a real install; the neutral fix needs a new migration (out of scope here). This covers `cli-usage-sync.ts`, `cli-agents-sync.ts`, `dispatch/store.ts`, `archive/ingest.ts`, `archive/run.ts` (`pullDroplet`/`DROPLET_HOME`/`opts.droplet`) and the two `secondbrain-*-sync.service` units.
+c. **Generated build output** (`app/server/dist/**`), gitignored and not shipped.
+
+Also intentionally kept (accurate, test-asserted engine vocabulary): the `m1` capability and the `m4` legacy vault-assignee slug (`LEGACY_VAULT_ASSIGNEE`, `SYSTEM_SESSIONS`), the `m1` value in `board-design.md`'s `needs` CHECK list, the `sb_agent`/`sb_org`/`sb_app` DB role names, and macOS/`Macintosh` strings (they name the OS/browser, not the owner's machine).
+
+## 6. Deferred (not done in this pass)
+
+- Folding `docs/board-design.md` into `docs/kanban-board.md`, and `docs/getting-started.md` into `docs/onboarding/02-set-up-your-vault.md` (review item 11 "cheap merges"). Both pages are otherwise compliant (Status line, scrubbed).
+- "The proposals come to this vault": parking the prose of `self-improvement.md` / `zen-runtime.md` as notes under the vault's engine-review folder. Their content is preserved in this repo's git history for now.
+- Neutralising the migration-pinned host slugs (needs a new migration).
+
+## 7. Verification
+
+```
+cd <engine worktree>
+mkdocs build --strict -f mkdocs.yml        # exit 0, no warnings
+cd app && npm -w server run build          # tsc, exit 0
+npx tsc -p web/tsconfig.json --noEmit      # exit 0
+SB_TEST_DB=secondbrain_phase0_verify_test npm test
+#   Test Files  143 passed (143)
+#   Tests       1311 passed (1311)
 ```
 
-An isolated PostgreSQL start was attempted under `/private/tmp`, but this managed sandbox rejects PostgreSQL's shared-memory allocation with `shmget: Operation not permitted`. Supertest listener-based tests are also blocked by `listen EPERM`. CI or Vera needs to run the full server project against `SB_TEST_DB=sb_card_70c44306_test`.
-
-## Commits
-
-- `4cead52 fix(settings): share loading and isolate invalid sections`
-- `9ee8887 refactor(config): route runtime env through schema`
-
-## Assumptions and follow-ups
-
-- Assumed a schema-invalid settings file must make doctor unhealthy, not merely advisory, because the card says doctor must fail.
-- No migration, deploy, web source, zen-agent, or desk behavior beyond desk env reads changed.
-- Follow-up only if desired: remove the three legacy livestream env overrides in a separate behavior-change card after migrating users fully to `secondbrain.json`.
+Baseline on `origin/main` (`170d9fc`) had 2 failing: `summaries.test.ts` "ships a default chain that needs no home server" (fixed here by the shipped-config change) and one flaky `board.test.ts` socket hang-up (passes on re-run). No new failures. `scripts/check-public.sh` over the changed files reports only the pre-existing denylist hit on `app/server/src/org-powers.ts:7` (unchanged line, also on `main`).
