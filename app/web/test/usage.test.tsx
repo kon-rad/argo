@@ -71,6 +71,52 @@ describe('bucketEnd', () => {
 });
 
 describe('Usage page', () => {
+  it('uses the vault zone for credit and subscription timestamps and browser fallback after clearing it', async () => {
+    const first = '2026-11-10T23:30:00Z';
+    const latest = '2026-11-10T23:45:00Z';
+    const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const date = (iso: string, timeZone: string) => new Date(iso).toLocaleDateString([], { timeZone });
+    const datetime = (iso: string, timeZone: string) => new Date(iso).toLocaleString([], { timeZone });
+    // Pick opposite sides of midnight regardless of the test machine's own zone.
+    let configured: string | null = date(first, browserZone) === date(first, 'Asia/Tokyo')
+      ? 'Pacific/Honolulu' : 'Asia/Tokyo';
+    const vaultZone = configured;
+    expect(date(first, vaultZone)).not.toBe(date(first, browserZone));
+    const reading = { provider: 'openrouter', observed_at: latest, status: 'ok', origin: 'api', balance: 8,
+      currency: 'USD', total_credits: null, total_usage: null, note: null };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const u = String(input);
+      const body = u.includes('/usage/config') ? { subscriptions: ['claude-code'], credits: ['openrouter'], sections: [] }
+        : u.includes('/usage/credits') ? { providers: [{ provider: 'openrouter', latest: reading, last_ok: reading }], history: [
+          { provider: 'openrouter', observed_at: first, balance: 10, currency: 'USD' },
+          { provider: 'openrouter', observed_at: latest, balance: 8, currency: 'USD' }] }
+          : u.includes('/usage/subscriptions') ? { providers: [{ ...SUBSCRIPTIONS.providers[0], observed_at: latest,
+            windows: [{ ...SUBSCRIPTIONS.providers[0]!.windows[0], resets_at: first, observed_at: latest }] }] }
+            : u.includes('/meta') ? { timezone: configured, modules: [] } : {};
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><MemoryRouter><Usage /></MemoryRouter></QueryClientProvider>);
+    await screen.findByText(/spent since/);
+    expect.soft(screen.getByText(/spent since/).textContent).toBe(`$2.00 spent since ${date(first, vaultZone)}`);
+    expect.soft(screen.getByText(/^as of /).textContent).toBe(`as of ${datetime(latest, vaultZone)} (API)`);
+    await screen.findByText(/^Window observed /);
+    expect.soft(screen.getByText(/^Resets /).textContent?.startsWith(`Resets ${datetime(first, vaultZone)}`)).toBe(true);
+    expect.soft(screen.getByText(/^Window observed /).textContent).toBe(`Window observed ${datetime(latest, vaultZone)}`);
+    expect.soft(screen.getByText(/^Source: /).textContent).toBe(`Source: statusline · observed ${datetime(latest, vaultZone)}`);
+
+    configured = null;
+    await client.invalidateQueries({ queryKey: ['meta'] });
+    await waitFor(() => {
+      expect(screen.getByText(/spent since/).textContent).toBe(`$2.00 spent since ${date(first, browserZone)}`);
+      expect(screen.getByText(/^as of /).textContent).toBe(`as of ${datetime(latest, browserZone)} (API)`);
+      expect(screen.getByText(/^Resets /).textContent?.startsWith(`Resets ${datetime(first, browserZone)}`)).toBe(true);
+      expect(screen.getByText(/^Window observed /).textContent).toBe(`Window observed ${datetime(latest, browserZone)}`);
+      expect(screen.getByText(/^Source: /).textContent).toBe(`Source: statusline · observed ${datetime(latest, browserZone)}`);
+    });
+    client.clear();
+  });
+
   it('requests sessions for the clicked bucket', async () => {
     mockFetch();
     const { container } = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Usage /></MemoryRouter></QueryClientProvider>);
