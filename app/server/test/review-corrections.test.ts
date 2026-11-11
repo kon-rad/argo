@@ -150,7 +150,9 @@ it('cannot regress accepted completion or shipping receipts from an old correcti
     const newer=(await query('SELECT * FROM review_jobs WHERE card=$1 ORDER BY id DESC LIMIT 1',[card.id])).rows[0]!;
     const revision='d'.repeat(40);
     await save(Number(newer.id),{state:'deployed',merged:revision,deployed:revision,health:revision,snapshot:{repo:'example/engine',pr:7,base:'a'.repeat(40),head:revision},verdict:{reviewer:'auditor',decision:'accept',head:revision,evidence:'e'.repeat(64),findings:[]}});
+    await query('UPDATE review_policy SET shipping_enabled=true');
     await c.query('SELECT review_complete($1)',[newer.id]);
+    await query('UPDATE review_policy SET shipping_enabled=false');
     await finishCorrection(c,claimed.id,runId,claimed.head);
     expect((await getCard(card.id)).card.status).toBe('done');
     expect((await query('SELECT state,merged,deployed,health FROM review_jobs WHERE id=$1',[newer.id])).rows[0]).toMatchObject({state:'done',merged:revision,deployed:revision,health:revision});
@@ -190,5 +192,48 @@ it('separates transient host backoff from code rounds and rejects stale acknowle
     await expect(acknowledgeCorrection(c,retry!.id,retry!.leaseToken,'run-stale','process-stale','d'.repeat(40))).rejects.toThrow(/stale/);
     await cancelCorrection(c,retry!.id,'PR head changed');
     expect((await getCard(card.id)).card.status).toBe('blocked');
+  } finally { await c.end(); }
+});
+
+it('cancels a prepared stale acknowledgement after a newer submission without creating a run', async () => {
+  const {card,job}=await submitted(); await save(Number(job.id),rejection(job)); const c=await client();
+  try {
+    const claimed=await claimCorrection(c,'worker-a',60);
+    await prepareCorrection(c,claimed!.id,claimed!.leaseToken,'run-old-ack',claimed!.head);
+    await finishCard('builder',card.id,{outcome:'done'});
+    expect((await acknowledgeCorrection(c,claimed!.id,claimed!.leaseToken,'run-old-ack','process-old-ack',claimed!.head)).state).toBe('cancelled');
+    expect((await getCard(card.id)).card.status).toBe('review');
+    expect((await query("SELECT count(*)::int n FROM card_runs WHERE card_id=$1 AND run_id='run-old-ack'",[card.id])).rows[0]!.n).toBe(0);
+  } finally { await c.end(); }
+});
+
+it('cancels stale retry exhaustion without regressing a newer accepted completion', async () => {
+  const {card,job}=await submitted(); await save(Number(job.id),rejection(job)); const c=await client();
+  try {
+    const claimed=await claimCorrection(c,'worker-a',60);
+    await query('UPDATE review_corrections SET transient_attempts=9 WHERE id=$1',[claimed!.id]);
+    await finishCard('builder',card.id,{outcome:'done'});
+    const newer=(await query('SELECT * FROM review_jobs WHERE card=$1 ORDER BY id DESC LIMIT 1',[card.id])).rows[0]!;
+    const revision='e'.repeat(40);
+    await save(Number(newer.id),{state:'deployed',merged:revision,deployed:revision,health:revision,snapshot:{repo:'example/engine',pr:7,base:'a'.repeat(40),head:revision},verdict:{reviewer:'auditor',decision:'accept',head:revision,evidence:'f'.repeat(64),findings:[]}});
+    await query('UPDATE review_policy SET shipping_enabled=true');
+    await c.query('SELECT review_complete($1)',[newer.id]);
+    await query('UPDATE review_policy SET shipping_enabled=false');
+    await retryCorrection(c,claimed!.id,claimed!.leaseToken,'host-offline',1);
+    expect((await getCard(card.id)).card.status).toBe('done');
+    expect((await query('SELECT state FROM review_corrections WHERE id=$1',[claimed!.id])).rows[0]!.state).toBe('cancelled');
+    expect((await query('SELECT state,merged,deployed,health FROM review_jobs WHERE id=$1',[newer.id])).rows[0]).toMatchObject({state:'done',merged:revision,deployed:revision,health:revision});
+  } finally { await c.end(); }
+});
+
+it('blocks only the current correction when live host retries are exhausted', async () => {
+  const {card,job}=await submitted(); await save(Number(job.id),rejection(job)); const c=await client();
+  try {
+    const claimed=await claimCorrection(c,'worker-a',60);
+    await query('UPDATE review_corrections SET transient_attempts=9 WHERE id=$1',[claimed!.id]);
+    await retryCorrection(c,claimed!.id,claimed!.leaseToken,'host-offline',1);
+    await retryCorrection(c,claimed!.id,claimed!.leaseToken,'duplicate-poll',1);
+    expect((await getCard(card.id)).card).toMatchObject({status:'blocked',block_kind:'tool-error'});
+    expect((await query('SELECT state FROM review_corrections WHERE id=$1',[claimed!.id])).rows[0]!.state).toBe('blocked');
   } finally { await c.end(); }
 });

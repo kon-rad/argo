@@ -126,25 +126,41 @@ END $$;
 REVOKE ALL ON FUNCTION review_correction_claim(text,integer) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_claim(text,integer) TO sb_review_worker;
 
 CREATE FUNCTION review_correction_prepare(p_id bigint,p_token text,p_run text,p_head text) RETURNS TABLE(state text) LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
-DECLARE q review_corrections;
+DECLARE q review_corrections; c cards; bound_job bigint; latest_job bigint;
 BEGIN
  PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE;
  IF q.state IN ('starting','running') AND q.run_id=p_run THEN RETURN QUERY SELECT q.state; RETURN; END IF;
+ IF q.state='cancelled' THEN RETURN QUERY SELECT q.state; RETURN; END IF;
  IF q.state<>'claimed' OR q.lease_token IS DISTINCT FROM p_token OR q.lease_until<now() THEN RAISE EXCEPTION 'review: invalid or expired correction lease'; END IF;
  IF q.head IS DISTINCT FROM p_head OR coalesce(p_run,'')='' THEN RAISE EXCEPTION 'review: stale correction head or missing run id'; END IF;
  IF EXISTS(SELECT 1 FROM review_corrections WHERE run_id=p_run AND id<>p_id) THEN RAISE EXCEPTION 'review: run id already registered'; END IF;
+ SELECT * INTO STRICT c FROM cards WHERE id=q.card FOR UPDATE;
+ SELECT f.job INTO STRICT bound_job FROM review_feedback f WHERE f.id=q.feedback_id;
+ SELECT max(j.id) INTO latest_job FROM review_jobs j WHERE j.card=q.card;
+ IF c.status IS DISTINCT FROM 'ready' OR latest_job IS DISTINCT FROM bound_job THEN
+   UPDATE review_corrections SET state='cancelled',error='Correction superseded before launch preparation',updated_at=now() WHERE id=p_id RETURNING review_corrections.state INTO q.state;
+   RETURN QUERY SELECT q.state; RETURN;
+ END IF;
  UPDATE review_corrections SET state='starting',run_id=p_run,updated_at=now() WHERE id=p_id RETURNING review_corrections.state INTO q.state;
  RETURN QUERY SELECT q.state;
 END $$;
 REVOKE ALL ON FUNCTION review_correction_prepare(bigint,text,text,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_prepare(bigint,text,text,text) TO sb_review_worker;
 
 CREATE FUNCTION review_correction_ack(p_id bigint,p_token text,p_run text,p_process text,p_head text) RETURNS TABLE(state text) LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
-DECLARE q review_corrections; l review_launches;
+DECLARE q review_corrections; l review_launches; c cards; bound_job bigint; latest_job bigint;
 BEGIN
  PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE; SELECT * INTO STRICT l FROM review_launches WHERE card=q.launch_card;
  IF q.state='running' AND q.run_id=p_run AND q.process_id=p_process THEN RETURN QUERY SELECT q.state; RETURN; END IF;
+ IF q.state='cancelled' THEN RETURN QUERY SELECT q.state; RETURN; END IF;
  IF q.state<>'starting' OR q.run_id IS DISTINCT FROM p_run OR q.lease_token IS DISTINCT FROM p_token OR q.lease_until<now() THEN RAISE EXCEPTION 'review: launch must be prepared under a live correction lease'; END IF;
  IF q.head IS DISTINCT FROM p_head THEN RAISE EXCEPTION 'review: stale correction head'; END IF;
+ SELECT * INTO STRICT c FROM cards WHERE id=q.card FOR UPDATE;
+ SELECT f.job INTO STRICT bound_job FROM review_feedback f WHERE f.id=q.feedback_id;
+ SELECT max(j.id) INTO latest_job FROM review_jobs j WHERE j.card=q.card;
+ IF c.status IS DISTINCT FROM 'ready' OR latest_job IS DISTINCT FROM bound_job THEN
+   UPDATE review_corrections SET state='cancelled',error='Correction superseded before launch acknowledgement',updated_at=now() WHERE id=p_id RETURNING review_corrections.state INTO q.state;
+   RETURN QUERY SELECT q.state; RETURN;
+ END IF;
  INSERT INTO card_runs(card_id,agent_name,runtime,run_id,lease_until) VALUES(q.card,l.builder,l.runtime,p_run,q.lease_until);
  UPDATE cards SET status='running',started_at=coalesce(started_at,now()),block_kind=NULL,block_reason=NULL WHERE id=q.card AND status='ready';
  IF NOT FOUND THEN RAISE EXCEPTION 'review: correction card is no longer ready'; END IF;
@@ -154,11 +170,16 @@ END $$;
 REVOKE ALL ON FUNCTION review_correction_ack(bigint,text,text,text,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_ack(bigint,text,text,text,text) TO sb_review_worker;
 
 CREATE FUNCTION review_correction_retry(p_id bigint,p_token text,p_reason text,p_delay integer) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
-DECLARE q review_corrections; BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE;
+DECLARE q review_corrections; c cards; bound_job bigint; latest_job bigint; BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE;
+ IF q.state IN ('cancelled','blocked') THEN RETURN; END IF;
  IF q.state<>'claimed' OR q.lease_token IS DISTINCT FROM p_token OR q.run_id IS NOT NULL THEN RAISE EXCEPTION 'review: only an unstarted claimed correction may retry'; END IF;
  IF p_delay NOT BETWEEN 1 AND 86400 THEN RAISE EXCEPTION 'review: invalid retry delay'; END IF;
- IF q.transient_attempts>=9 OR q.created_at<now()-interval '24 hours' THEN UPDATE review_corrections SET state='blocked',error='Transient correction retry limit reached',updated_at=now() WHERE id=p_id; UPDATE cards SET status='blocked',block_kind='tool-error',block_reason='Correction host remained unavailable; owner reconciliation required' WHERE id=q.card; RETURN; END IF;
- UPDATE review_corrections SET state='retry',lease_token=NULL,lease_until=NULL,transient_attempts=transient_attempts+1,available_at=now()+make_interval(secs=>p_delay),error=p_reason,updated_at=now() WHERE id=p_id; END $$;
+ SELECT * INTO STRICT c FROM cards WHERE id=q.card FOR UPDATE;
+ SELECT f.job INTO STRICT bound_job FROM review_feedback f WHERE f.id=q.feedback_id;
+ SELECT max(j.id) INTO latest_job FROM review_jobs j WHERE j.card=q.card;
+ IF c.status IS DISTINCT FROM 'ready' OR latest_job IS DISTINCT FROM bound_job THEN UPDATE review_corrections SET state='cancelled',error='Correction superseded before retry',updated_at=now() WHERE id=p_id; RETURN; END IF;
+ IF q.transient_attempts>=9 OR q.created_at<now()-interval '24 hours' THEN UPDATE review_corrections SET state='blocked',error='Transient correction retry limit reached',updated_at=now() WHERE id=p_id; UPDATE cards SET status='blocked',block_kind='tool-error',block_reason='Correction host remained unavailable; owner reconciliation required' WHERE id=q.card AND status='ready' AND (SELECT max(j.id) FROM review_jobs j WHERE j.card=q.card)=bound_job; RETURN; END IF;
+ UPDATE review_corrections q SET state='retry',lease_token=NULL,lease_until=NULL,transient_attempts=q.transient_attempts+1,available_at=now()+make_interval(secs=>p_delay),error=p_reason,updated_at=now() WHERE q.id=p_id; END $$;
 REVOKE ALL ON FUNCTION review_correction_retry(bigint,text,text,integer) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_retry(bigint,text,text,integer) TO sb_review_worker;
 
 CREATE FUNCTION review_correction_cancel(p_id bigint,p_reason text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
