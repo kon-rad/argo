@@ -22,7 +22,7 @@ function repo(contract: unknown): string {
   const dir = temp();
   mkdirSync(join(dir, 'verification'));
   writeFileSync(join(dir, 'verification/contract.json'), JSON.stringify(contract));
-  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgSign=false', ...args], { cwd: dir, stdio: 'pipe' });
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@localhost', '-c', 'commit.gpgSign=false', ...args], { cwd: dir, stdio: 'pipe' });
   git('init', '-q'); git('add', '.'); git('commit', '-q', '-m', 'fixture');
   return dir;
 }
