@@ -70,12 +70,16 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
         if(sources.filter(s=>s.ref.startsWith('note:'+job.card+'/')).some(s=>!s.text.startsWith('Builder revision: '+p.headRefOid+'\n')))sources.push(source('missing:evidence-for-current-head',''));
         const threads=await github.threads(p.number);
         sources.push(source(`github:${repo.github}/pull/${p.number}`,{body:p.body,headRefName:p.headRefName,baseRefName:p.baseRefName,isDraft:p.isDraft,reviewDecision:p.reviewDecision,statusCheckRollup:p.statusCheckRollup,threads}));
-        const diff=await github.diff(p.number), code=await github.code(p);
+        // After merge, retain the approved base even if the protected branch has advanced.
+        const revision={...p,baseRefOid:p.mergeCommit && job.snapshot ? job.snapshot.base : p.baseRefOid};
+        const diff=await github.diff(revision), code=await github.code(revision);
+        const current=await github.pr(job.card,p.number);
+        if(current.headRefOid!==p.headRefOid || current.baseRefOid!==p.baseRefOid)throw new Error('PR head or base changed during collection; retry with fresh evidence');
         requireCapacity(evaluate(scopeObservation([],code,diff,0,sources.reduce((n,s)=>n+s.text.length,0)),'actual'));
         sources.push(source(`github:diff:${p.headRefOid}`,diff,true,POLICY.diffChars));
         for(const item of code)sources.push(source(item.ref,item.text));
         return { repo:repo.github,pr:p.number,head:p.headRefOid,behind:p.state==='OPEN' && p.mergeStateStatus==='BEHIND',conflicting:p.state==='OPEN' && (p.mergeStateStatus==='DIRTY' || p.mergeable==='CONFLICTING'),draft:p.isDraft,unresolved:threads.filter(t=>!t.isResolved).length,changesRequested:p.reviewDecision==='CHANGES_REQUESTED',
-          base:p.mergeCommit && job.snapshot ? job.snapshot.base : p.baseRefOid,branch:p.baseRefName,merged:p.mergeCommit?.oid ?? null,
+          base:revision.baseRefOid,branch:p.baseRefName,merged:p.mergeCommit?.oid ?? null,
           checks:p.statusCheckRollup.map(c => ({ name:c.name ?? c.context ?? '',state: c.status === 'COMPLETED' && c.conclusion === 'SUCCESS' || c.state === 'SUCCESS' ? 'pass' : c.status==='COMPLETED' || ['FAILURE','ERROR'].includes(c.state ?? '') ? 'fail' : 'pending' })),sources };
       };
       await runReview(job,repo.checks,{
