@@ -132,6 +132,7 @@ describe('bounded context and concrete adapters',()=>{
     expect(error).toBeInstanceOf(SafeProcessError);
     expect(error).toMatchObject({kind:'authentication'});
     expect(String(error)).not.toContain('fixture-secret');
+    expect(JSON.stringify(error)).not.toContain('fixture-secret');
   });
   it('requires a unique known PR and uses normal exact-head PR merge under strict branch protection',async()=>{
     const repo={github:'example/engine',gitDir:'/tmp/fixture.git',base:'main',target:'fixture',checks:['test'],notes:['design.md']};

@@ -7,8 +7,7 @@ function logFailure(detail:string):void{if(privateLog){try{appendFileSync(privat
 
 export type SafeFailureKind='temporary'|'authentication'|'identity'|'confirmed-stale';
 export class SafeProcessError extends Error {
-  constructor(readonly kind:SafeFailureKind, private readonly detail?:string, safeMessage=`Adapter ${kind} failure`){super(safeMessage);this.name='SafeProcessError';}
-  privateDetail():string|undefined{return this.detail;}
+  constructor(readonly kind:SafeFailureKind, _discardedDetail?:string, safeMessage=`Adapter ${kind} failure`){super(safeMessage);this.name='SafeProcessError';}
 }
 function failureKind(stderr:string):SafeFailureKind {
   const text=stderr.toLowerCase();
