@@ -40,7 +40,7 @@ For unprepared host unavailability, `retry` takes `id`, `leaseToken`, a safe `re
 
 ## Failures and recovery
 
-A confirmed closed, unrelated or changed PR is stale work and may be cancelled. A temporary GitHub or network lookup failure is not evidence that a PR closed: preserve its binding and use bounded retry or reconciliation appropriate to whether a process may have started. Authentication or identity uncertainty blocks for operator action and must not retry indefinitely. Surface only a safe error kind; raw child stderr and credentials never belong in card findings or CLI evidence.
+A confirmed closed, unrelated or changed PR is stale work and may be cancelled. A temporary GitHub or network lookup failure is not evidence that a PR closed. Before launch, bounded backoff can safely return a proven no-start item to the queue. During acknowledgement, the worker retries only the same read-only lookup for a short fixed bound while retaining the same correction, run ID, fence, process ID and reservation. A later success acknowledges once; exhaustion reconciles that reserved run and never redispatches it. Authentication or identity uncertainty blocks immediately for operator action. Surface only a safe error kind; raw child stderr and credentials never belong in card findings or CLI evidence.
 
 An expired plain claimed lease is a protocol-proven no-start. An expired prepared lease may already have spawned; reconcile its reserved run ID before any new process. Ambiguous starts or external shipping effects never permit blind replay. Current-attempt checks and the card lock protect newer work when cancelling or finishing old callbacks.
 

@@ -9,7 +9,7 @@ import { setPrivateLog } from './review/process.js';
 import { stage } from './review/stage.js';
 import { runFixture } from './review/fixture.js';
 import { scopeMain } from './review/preflight.js';
-import { acknowledgeCorrection, cancelCorrection, claimCorrection, finishCorrection, handleCorrectionLookupFailure, prepareCorrection, registerLaunch, retryCorrection } from './review/corrections.js';
+import { acknowledgeCorrectionAfterLookup, cancelCorrection, claimCorrection, finishCorrection, handleCorrectionLookupFailure, prepareCorrection, registerLaunch, retryCorrection } from './review/corrections.js';
 import { SafeProcessError } from './review/process.js';
 import { GitHub } from './review/adapters.js';
 
@@ -46,9 +46,11 @@ async function main(): Promise<void> {
       const body=await stdin() as {id:number;leaseToken:string;runId:string;processId:string;head:string};
       const row=(await client.query('SELECT q.*,l.repo FROM review_corrections q JOIN review_launches l ON l.card=q.launch_card WHERE q.id=$1',[body.id])).rows[0];if(!row)throw new Error('Unknown correction');
       const repo=host.repositories[row.repo];if(!repo)return handleCorrectionLookupFailure(client,'ack',body.id,body.leaseToken,new SafeProcessError('identity'));
-      try{await new GitHub(host,repo).correction(row.card,row.pr,row.head,row.base);}
+      const github=new GitHub(host,repo);
+      let acknowledged;
+      try{acknowledged=await acknowledgeCorrectionAfterLookup(client,{id:body.id,token:body.leaseToken,runId:body.runId,processId:body.processId,head:body.head},()=>github.correction(row.card,row.pr,row.head,row.base,5_000));}
       catch(error){return handleCorrectionLookupFailure(client,'ack',body.id,body.leaseToken,error);}
-      console.log(JSON.stringify(await acknowledgeCorrection(client,body.id,body.leaseToken,body.runId,body.processId,body.head)));return;
+      console.log(JSON.stringify(acknowledged));return;
     }
     if(action==='retry'){const body=await stdin() as {id:number;leaseToken:string;reason:string;delaySeconds?:number};await retryCorrection(client,body.id,body.leaseToken,body.reason,body.delaySeconds);console.log(JSON.stringify({retried:true}));return;}
     if(action==='cancel'){const body=await stdin() as {id:number;reason:string};await cancelCorrection(client,body.id,body.reason);console.log(JSON.stringify({cancelled:true}));return;}

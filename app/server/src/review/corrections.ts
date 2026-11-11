@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { z } from 'zod';
 import { LaunchRegistration, type LaunchRegistration as Launch } from './launch.js';
-import { correctionLookupDisposition } from './process.js';
+import { correctionLookupDisposition, retryCorrectionLookup, type CorrectionLookupRetryOptions } from './process.js';
 
 const Correction=z.object({ id:z.coerce.number().int().positive(),feedbackId:z.string(),card:z.string(),builder:z.string(),persona:z.string(),runtime:z.string(),model:z.string(),host:z.string(),repo:z.string(),branch:z.string(),worktree:z.string(),commonDir:z.string(),originalRunId:z.string(),head:z.string(),base:z.string(),pr:z.coerce.number(),evidenceHash:z.string(),leaseToken:z.string(),fence:z.coerce.number(),transientAttempts:z.coerce.number() });
 export type ClaimedCorrection=z.infer<typeof Correction>;
@@ -22,6 +22,10 @@ export async function prepareCorrection(client:pg.Client,id:number,token:string,
 }
 export async function acknowledgeCorrection(client:pg.Client,id:number,token:string,runId:string,processId:string,head:string):Promise<{state:string}>{
  return (await client.query('SELECT * FROM review_correction_ack($1,$2,$3,$4,$5)',[id,token,runId,processId,head])).rows[0];
+}
+export async function acknowledgeCorrectionAfterLookup(client:pg.Client,input:{id:number;token:string;runId:string;processId:string;head:string},lookup:()=>Promise<void>,options:CorrectionLookupRetryOptions={}):Promise<{state:string}>{
+ await retryCorrectionLookup(lookup,options);
+ return acknowledgeCorrection(client,input.id,input.token,input.runId,input.processId,input.head);
 }
 export async function retryCorrection(client:pg.Client,id:number,token:string,reason:string,delaySeconds=30):Promise<void>{
  await client.query('SELECT review_correction_retry($1,$2,$3,$4)',[id,token,reason,delaySeconds]);

@@ -2,7 +2,6 @@ import pg from 'pg';
 import { afterAll, beforeEach, expect, it } from 'vitest';
 import { query } from '../src/db.js';
 import { createCard, finishCard, getCard } from '../src/board.js';
-import { importOrg } from '../src/org.js';
 import { acknowledgeCorrection, cancelCorrection, claimCorrection, finishCorrection, prepareCorrection, reconcileCorrection, registerLaunch, retryCorrection } from '../src/review/corrections.js';
 import { truncateAll } from './helpers.js';
 
@@ -15,7 +14,11 @@ async function save(job: number, patch: unknown): Promise<void> { const c = awai
 beforeEach(async () => {
   await query('UPDATE review_policy SET enabled=false,corrections_enabled=false,reviewer=NULL,worker_login=NULL');
   await truncateAll();
-  await importOrg({ version:'correction-fixture', company:'Example', ceo:'owner', agents:{ owner:{runtime:'human',role:'Owner'}, builder:{runtime:'codex',model:'test-model',team:'engineering',reports_to:'auditor',role:'Builder',capabilities:['code']}, auditor:{runtime:'codex',model:'test-model',team:'engineering',reports_to:'owner',role:'Reviewer',capabilities:['review']} }, teams:{engineering:{name:'Engineering',lead:'auditor'}}, channels:{} });
+  await query("INSERT INTO teams(slug,name,lead,members) VALUES('engineering','Engineering','auditor',ARRAY['builder','auditor'])");
+  await query(`INSERT INTO org_agents(name,team_slug,runtime,role,reports_to,model,org_version,work,capabilities) VALUES
+    ('owner',NULL,'human','Owner',NULL,NULL,'correction-fixture',NULL,'{}'),
+    ('auditor','engineering','codex','Reviewer','owner','test-model','correction-fixture','coding',ARRAY['review']),
+    ('builder','engineering','codex','Builder','auditor','test-model','correction-fixture','coding',ARRAY['code'])`);
   await query(`DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='${workerName}') THEN CREATE ROLE ${workerName} LOGIN; END IF; END $$`);
   if (process.env.PGPASSWORD) await query(`ALTER ROLE ${workerName} PASSWORD '${process.env.PGPASSWORD.replace(/'/g, "''")}'`);
   await query(`GRANT sb_review_worker TO ${workerName}`);
