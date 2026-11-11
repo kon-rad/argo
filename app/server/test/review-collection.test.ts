@@ -84,7 +84,7 @@ it('gives actual admission and live review the same final net diff after two cor
     expect(actual.status).toBe('pass'); expect(live.status).toBe('pass');
     expect(actual.observations).toEqual(live.observations);
     const sources = [...code, { ref: `github:diff:${head}`, text: diff }, { ref: 'board:prior-findings', text: 'Earlier finding and card comment' }]
-      .map(s => ({ ...s, revision: gate.digest(s.text), essential: true, missing: false, truncated: false }));
+      .map(s => ({ ref: s.ref, text: s.text, revision: gate.digest(s.text), essential: true, missing: false, truncated: false }));
     const snapshot: gate.Snapshot = { repo: repo.github, pr: 7, head, base, branch: 'main', merged: null, checks: [{ name: 'test', state: 'pass' }], sources };
     const job: gate.Job = { id: 1, card: 'example-task', builder: 'builder', reviewer: 'auditor', target: 'fixture', round: 0, state: 'queued', snapshot: null, verdict: null, merged: null, deployed: null };
     const review = vi.fn(async () => { throw new Error('Fixture reviewer received input; stop before verdict or shipping'); });
