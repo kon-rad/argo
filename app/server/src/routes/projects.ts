@@ -16,6 +16,7 @@ import {
 import { config } from '../config.js';
 import { renderMarkdown, renderStandup, renderTelegram } from '../projects-report.js';
 import { HttpError, parseOr400, wrap } from './http.js';
+import type { ProjectsMarkdownResponse, StageChangedResponse, TrackerReport, VerificationCreatedResponse } from '@secondbrain/contracts/projects';
 
 const Slug = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
 const Params = z.object({ slug: Slug, feature: Slug.optional() });
@@ -51,9 +52,10 @@ export function projectsRouter(vaultRoot: string): Router {
     wrap(async (req, res) => {
       const { format } = parseOr400(Format, req.query);
       const report = await buildReport(vaultRoot);
-      if (format === 'json') return void res.json(report);
+      if (format === 'json') return void res.json(report satisfies TrackerReport);
       const text = format === 'markdown' ? renderMarkdown(report) : format === 'standup' ? renderStandup(report) : renderTelegram(report);
-      res.json({ format, text, as_of: report.as_of });
+      const response = { format, text, as_of: report.as_of } satisfies ProjectsMarkdownResponse;
+      res.json(response);
     }),
   );
 
@@ -62,7 +64,8 @@ export function projectsRouter(vaultRoot: string): Router {
     wrap(async (req, res) => {
       const { slug } = parseOr400(Params, req.params);
       const patch = parseOr400(ProjectPatch, req.body);
-      res.json(await tracked(() => upsertProject(slug, patch, BY_APP)));
+      const response = await tracked(() => upsertProject(slug, patch, BY_APP));
+      res.json(response satisfies StageChangedResponse);
     }),
   );
 
@@ -81,7 +84,8 @@ export function projectsRouter(vaultRoot: string): Router {
     wrap(async (req, res) => {
       const { slug, feature } = parseOr400(Params, req.params);
       const patch = parseOr400(FeaturePatch, req.body);
-      res.json(await tracked(() => upsertFeature(slug, feature!, patch, BY_APP)));
+      const response = await tracked(() => upsertFeature(slug, feature!, patch, BY_APP));
+      res.json(response satisfies StageChangedResponse);
     }),
   );
 
@@ -90,7 +94,8 @@ export function projectsRouter(vaultRoot: string): Router {
     wrap(async (req, res) => {
       const { slug, feature } = parseOr400(Params, req.params);
       const v = parseOr400(VerificationInput, req.body);
-      res.status(201).json({ id: await tracked(() => addVerification(slug, feature!, v, BY_APP)) });
+      const response = { id: await tracked(() => addVerification(slug, feature!, v, BY_APP)) } satisfies VerificationCreatedResponse;
+      res.status(201).json(response);
     }),
   );
 

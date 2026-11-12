@@ -4,7 +4,9 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ChatInput } from '../../components/ChatInput.js';
 import EventFeed from '../../components/EventFeed.js';
 import { VaultMarkdown } from '../../components/VaultMarkdown.js';
-import { api, BOARD_STATUSES, type BoardCard, type BoardCardDetail, type BoardStatus, type OrgChart, type TrackerProject } from '../../lib/api.js';
+import { api, type OrgChart } from '../../lib/api.js';
+import { projectsApi, type TrackerProject } from '../Projects.api.js';
+import { boardApi, BOARD_STATUSES, type BoardCard, type BoardCardDetail, type BoardStatus } from './api.js';
 import { useEventLog } from '../../lib/useEventLog.js';
 import { CardNotes, useCardNotesFor } from '../../components/CardNotes.js';
 
@@ -72,7 +74,7 @@ export function AgentChip({ name, chart }: { name: string | null; chart?: OrgCha
 
 /** The tracker's projects a card can be tagged with: everything but parked and done, by slug. */
 function useTrackerProjects(): TrackerProject[] {
-  const report = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, retry: false });
+  const report = useQuery({ queryKey: ['projects', 'report'], queryFn: projectsApi.report, staleTime: 60_000, retry: false });
   return useMemo(() => (report.data?.projects ?? []).filter((p) => p.stage !== 'parked' && p.stage !== 'done').sort((a, b) => a.slug.localeCompare(b.slug)), [report.data]);
 }
 
@@ -128,11 +130,11 @@ export default function Board() {
   };
   const [showNew, setShowNew] = useState(false);
   const live = useBoardLive(board);
-  const boards = useQuery({ queryKey: ['board', 'boards'], queryFn: api.boardBoards, staleTime: 60_000 });
+  const boards = useQuery({ queryKey: ['board', 'boards'], queryFn: boardApi.boards, staleTime: 60_000 });
   const chart = useQuery({ queryKey: ['org', 'chart'], queryFn: api.orgChart, staleTime: 60_000, retry: false });
   const cards = useQuery({
     queryKey: ['board', 'cards', { board, project, assignee, kind, q, ids }],
-    queryFn: () => api.boardCards({ board, project, assignee, kind, q: q.trim() || undefined, id: ids }),
+    queryFn: () => boardApi.cards({ board, project, assignee, kind, q: q.trim() || undefined, id: ids }),
     refetchInterval: live ? false : 15_000,
   });
   const list = cards.data?.cards ?? [];
@@ -237,7 +239,7 @@ function NewCard({ board, chart, onCreated }: { board: string | undefined; chart
   const byRuntime = new Map<string, typeof bots>();
   for (const b of bots) byRuntime.set(b.runtime, [...(byRuntime.get(b.runtime) ?? []), b]);
   const create = useMutation({
-    mutationFn: () => api.boardCreate({ board, title, body: body || undefined, assignee: assignee || null, project: project || undefined, feature: feature || undefined, kind, priority }),
+    mutationFn: () => boardApi.create({ board, title, body: body || undefined, assignee: assignee || null, project: project || undefined, feature: feature || undefined, kind, priority }),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ['board'] });
       onCreated(r.card.id);
@@ -302,24 +304,24 @@ function Contract({ c }: { c: BoardCard['contract'] }) {
 
 function CardPanel({ id, chart, onClose }: { id: string; chart: OrgChart | null; onClose: () => void }) {
   const qc = useQueryClient();
-  const detail = useQuery({ queryKey: ['board', 'card', id], queryFn: () => api.boardCard(id) });
+  const detail = useQuery({ queryKey: ['board', 'card', id], queryFn: () => boardApi.card(id) });
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
   const d: BoardCardDetail | undefined = detail.data;
   const c = d?.card;
   const isClaude = runtimeOf(chart, c?.assignee ?? null) === 'claude-code' && (meta.data?.modules ?? []).includes('agents');
-  const log = useEventLog(isClaude && c ? `card:${id}` : null, (off) => api.boardLog(id, off), c?.status === 'running');
+  const log = useEventLog(isClaude && c ? `card:${id}` : null, (off) => boardApi.log(id, off), c?.status === 'running');
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['board', 'card', id] });
     void qc.invalidateQueries({ queryKey: ['board', 'cards'] });
   };
   const [comment, setComment] = useState('');
   const [assignee, setAssignee] = useState<string | null>(null);
-  const send = useMutation({ mutationFn: () => api.boardComment(id, comment), onSuccess: () => { setComment(''); refresh(); } });
-  const move = useMutation({ mutationFn: (status: BoardStatus) => api.boardMove(id, status), onSuccess: refresh });
-  const finish = useMutation({ mutationFn: (outcome: 'done' | 'partial') => api.boardFinish(id, { outcome }), onSuccess: refresh });
-  const assign = useMutation({ mutationFn: (to: string | null) => api.boardAssign(id, { assignee: to }), onSuccess: () => { setAssignee(null); refresh(); } });
-  const flag = useMutation({ mutationFn: (ship_now: boolean) => api.boardFlags(id, { ship_now }), onSuccess: refresh });
-  const tag = useMutation({ mutationFn: (t: { project: string | null; feature: string | null }) => api.boardTag(id, t), onSuccess: refresh });
+  const send = useMutation({ mutationFn: () => boardApi.comment(id, comment), onSuccess: () => { setComment(''); refresh(); } });
+  const move = useMutation({ mutationFn: (status: BoardStatus) => boardApi.move(id, status), onSuccess: refresh });
+  const finish = useMutation({ mutationFn: (outcome: 'done' | 'partial') => boardApi.finish(id, { outcome }), onSuccess: refresh });
+  const assign = useMutation({ mutationFn: (to: string | null) => boardApi.assign(id, { assignee: to }), onSuccess: () => { setAssignee(null); refresh(); } });
+  const flag = useMutation({ mutationFn: (ship_now: boolean) => boardApi.flags(id, { ship_now }), onSuccess: refresh });
+  const tag = useMutation({ mutationFn: (t: { project: string | null; feature: string | null }) => boardApi.tag(id, t), onSuccess: refresh });
   const err = [send, move, finish, assign, flag, tag].find((m) => m.isError)?.error;
   const bots = (chart?.agents ?? []).filter((a) => a.runtime !== 'human');
   const tracker = useTrackerProjects();

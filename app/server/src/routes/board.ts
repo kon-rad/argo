@@ -8,6 +8,7 @@ import { config } from '../config.js';
 import { assignTask, createTask, getAgent, OrgError, redoTask, type Agent } from '../org.js';
 import { HttpError, intParam, parseOr400, wrap } from './http.js';
 import type { HubOptions } from './hub.js';
+import type { BoardBoardsResponse, BoardCardDetail, BoardCardResponse, BoardCardsResponse } from '@secondbrain/contracts/board';
 
 /**
  * /api/board: the board module's API (docs/board-design.md section 5). Three doors, one identity: a browser
@@ -119,20 +120,24 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
 
   router.get('/boards', wrap(async (_req, res) => {
     noStore(res);
-    res.json({ boards: await boardErrors(() => listBoards(caller(res).viewer)) });
+    const response = { boards: await boardErrors(() => listBoards(caller(res).viewer)) } as unknown as BoardBoardsResponse;
+    res.json(response);
   }));
 
   router.get('/cards', wrap(async (req, res) => {
     const q = parseOr400(ListQuery, req.query);
     noStore(res);
     const { id, done_days, ...rest } = q;
-    res.json({ cards: await boardErrors(() => listCards({ ...rest, ids: id?.split(','), doneDays: done_days }, caller(res).viewer)) });
+    const cards = await boardErrors(() => listCards({ ...rest, ids: id?.split(','), doneDays: done_days }, caller(res).viewer));
+    const response = { cards } as unknown as BoardCardsResponse;
+    res.json(response);
   }));
 
   router.get('/cards/:id', wrap(async (req, res) => {
     const id = parseOr400(Id, req.params['id']);
     noStore(res);
-    res.json(await boardErrors(() => getCard(id, caller(res).viewer)));
+    const response = await boardErrors(() => getCard(id, caller(res).viewer)) as unknown as BoardCardDetail;
+    res.json(response);
   }));
 
   // Create and assign go through the org's verbs: the repo rule and the team mention live there.
@@ -151,7 +156,8 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
     const b = parseOr400(AssignBody, req.body);
     const me = await agentOf(caller(res));
     if (b.assignee === null) {
-      res.json({ card: await boardErrors(() => assignCard(me.name, id, null)) });
+      const response = { card: await boardErrors(() => assignCard(me.name, id, null)) } as unknown as BoardCardResponse;
+      res.json(response);
       return;
     }
     const r = await boardErrors(() => assignTask(me, { taskId: id, assignee: b.assignee!, project: b.project, feature: b.feature, type: b.work, needs: b.needs, repo: b.repo, shipNow: b.ship_now, run: 'app' }));
@@ -162,7 +168,8 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
   router.post('/cards/:id/project', wrap(async (req, res) => {
     const id = parseOr400(Id, req.params['id']);
     const b = parseOr400(TagBody, req.body);
-    res.json({ card: await boardErrors(() => tagCard(caller(res).name, id, { project: b.project, feature: b.project ? (b.feature ?? null) : null })) });
+    const response = { card: await boardErrors(() => tagCard(caller(res).name, id, { project: b.project, feature: b.project ? (b.feature ?? null) : null })) } as unknown as BoardCardResponse;
+    res.json(response);
   }));
 
   // Changes requested on a review card: a new round for the builder, the review card parked until it is done.
@@ -183,7 +190,8 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
   router.post('/cards/:id/move', wrap(async (req, res) => {
     const id = parseOr400(Id, req.params['id']);
     const b = parseOr400(MoveBody, req.body);
-    res.json({ card: await boardErrors(() => moveCard(caller(res).name, id, b.status, b.note)) });
+    const response = { card: await boardErrors(() => moveCard(caller(res).name, id, b.status, b.note)) } as unknown as BoardCardResponse;
+    res.json(response);
   }));
 
   router.post('/cards/:id/link', wrap(async (req, res) => {
@@ -196,7 +204,8 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
   router.post('/cards/:id/flags', wrap(async (req, res) => {
     const id = parseOr400(Id, req.params['id']);
     const b = parseOr400(FlagsBody, req.body);
-    res.json({ card: await boardErrors(() => flagCard(caller(res).name, id, { shipNow: b.ship_now, needs: b.needs })) });
+    const response = { card: await boardErrors(() => flagCard(caller(res).name, id, { shipNow: b.ship_now, needs: b.needs })) } as unknown as BoardCardResponse;
+    res.json(response);
   }));
 
   router.post('/claim', wrap(async (req, res) => {
@@ -220,7 +229,8 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
   router.post('/cards/:id/finish', wrap(async (req, res) => {
     const id = parseOr400(Id, req.params['id']);
     const b = parseOr400(FinishBody, req.body);
-    res.json({ card: await boardErrors(() => finishCard(caller(res).name, id, { outcome: b.outcome, result: b.result, blockKind: b.block_kind, verification: b.verification, tokens: b.tokens, turns: b.turns, runId: b.run_id })) });
+    const response = { card: await boardErrors(() => finishCard(caller(res).name, id, { outcome: b.outcome, result: b.result, blockKind: b.block_kind, verification: b.verification, tokens: b.tokens, turns: b.turns, runId: b.run_id })) } as unknown as BoardCardResponse;
+    res.json(response);
   }));
 
   // The live feed: one line per board event, a comment every 25 s so proxies keep the stream open.

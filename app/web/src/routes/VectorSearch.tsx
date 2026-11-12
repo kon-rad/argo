@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api, fileHref, type SearchResponse } from '../lib/api.js';
+import { fileHref } from '../lib/http.js';
+import { searchApi, type SearchResponse } from '../lib/searchApi.js';
 
 const PAGE = 20;
 
@@ -18,7 +19,7 @@ export default function VectorSearch() {
 
   const { data, isPending, error } = useQuery<SearchResponse>({
     queryKey: ['vector-search', q, offset],
-    queryFn: () => api.search(q, 'vault', offset, PAGE, 'semantic'),
+    queryFn: () => searchApi.search(q, 'vault', offset, PAGE, 'semantic'),
     enabled: q.trim().length > 0,
   });
 
