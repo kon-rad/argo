@@ -91,7 +91,7 @@ describe('Tv page', () => {
     await waitFor(() => expect(video(container)?.getAttribute('src')).toBe('/api/tv/media/selected'));
     const selectedLabel = screen.getByText(/^generated /);
     const stripCard = container.querySelector<HTMLElement>('[data-id="selected"]')!;
-    const stripLabel = Array.from(stripCard.querySelectorAll('div')).find((node) => node.textContent?.includes(displayTime(generatedAt, timezone)))!;
+    const stripLabel = Array.from(stripCard.querySelectorAll('div')).find((node) => node.textContent?.includes(displayTime(generatedAt, timezone!)))!;
     expect(selectedLabel.textContent).toContain(displayTime(generatedAt, timezone));
     expect(stripLabel.textContent).toContain(displayTime(generatedAt, timezone));
 
