@@ -10,6 +10,7 @@ import { ChatInput } from '../../components/ChatInput.js';
 import { VaultMarkdown } from '../../components/VaultMarkdown.js';
 import { AgentAvatar } from '../../components/AgentAvatar.js';
 import { teamColor } from '../../lib/teamColor.js';
+import { useAppTimezone } from '../../lib/useTimezone.js';
 
 /**
  * The agent company: Argo's named agents on teams, talking in channels and DMs
@@ -60,14 +61,14 @@ function KindChip({ kind, urgent }: { kind: string; urgent: boolean }) {
   );
 }
 
-function MessageCard({ m, teams, showChannel, big }: { m: OrgMessage; teams: Map<string, string | null>; showChannel?: boolean; big?: boolean }) {
+function MessageCard({ m, teams, tz, showChannel, big }: { m: OrgMessage; teams: Map<string, string | null>; tz: string; showChannel?: boolean; big?: boolean }) {
   return (
     <article className={`rounded border border-[var(--rule)] bg-[var(--paper)] ${big ? 'p-4 text-lg' : 'p-2 text-sm'}`} data-testid="org-message">
       <div className="flex flex-wrap items-center gap-2">
         <AuthorChip name={m.author} team={teams.get(m.author) ?? null} />
         <KindChip kind={m.kind} urgent={m.urgent} />
         {showChannel && <Link to={`/org?channel=${encodeURIComponent(m.channel_slug)}`} className="text-xs text-[var(--accent)]">{channelLabel(m.channel_slug)}</Link>}
-        <span className="text-xs text-[var(--ink-faint)]" title={zoned(m.created_at)}>{ago(m.created_at)}</span>
+        <span className="text-xs text-[var(--ink-faint)]" title={zoned(m.created_at, tz)}>{ago(m.created_at)}</span>
         <span className="text-xs text-[var(--ink-faint)]">#{m.id}</span>
         {m.task_id && <Link to={`/board/${m.task_id}`} className="text-xs text-[var(--accent)]">task {m.task_id}</Link>}
         {m.project_slug && (
@@ -84,6 +85,7 @@ function MessageCard({ m, teams, showChannel, big }: { m: OrgMessage; teams: Map
 /** Messages in order, replies folded under their root when the root is on the page. */
 function MessageList({ messages, teams, showChannel, big }: { messages: OrgMessage[]; teams: Map<string, string | null>; showChannel?: boolean; big?: boolean }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
+  const { tz } = useAppTimezone();
   const roots = messages.filter((m) => !m.thread_id || !messages.some((r) => r.id === m.thread_id));
   const replies = new Map<number, OrgMessage[]>();
   for (const m of messages) {
@@ -97,13 +99,13 @@ function MessageList({ messages, teams, showChannel, big }: { messages: OrgMessa
         const shown = open.has(m.id);
         return (
           <div key={m.id}>
-            <MessageCard m={m} teams={teams} showChannel={showChannel} big={big} />
+            <MessageCard m={m} teams={teams} tz={tz} showChannel={showChannel} big={big} />
             {rs.length > 0 && (
               <div className="ml-6 mt-1">
                 <button type="button" className="text-xs text-[var(--accent)]" onClick={() => setOpen((s) => { const n = new Set(s); if (n.has(m.id)) n.delete(m.id); else n.add(m.id); return n; })}>
                   {shown ? 'hide' : 'show'} {rs.length} {rs.length === 1 ? 'reply' : 'replies'}
                 </button>
-                {shown && <div className="mt-1 space-y-1">{rs.map((r) => <MessageCard key={r.id} m={r} teams={teams} big={big} />)}</div>}
+                {shown && <div className="mt-1 space-y-1">{rs.map((r) => <MessageCard key={r.id} m={r} teams={teams} tz={tz} big={big} />)}</div>}
               </div>
             )}
           </div>
@@ -350,11 +352,12 @@ function Live() {
 /** Who may reach the board from elsewhere: the per-device tokens, with revoke. Minting stays on the CLI (the secret is shown once, in a terminal). */
 function Tokens() {
   const qc = useQueryClient();
+  const { tz } = useAppTimezone();
   const tokens = useQuery({ queryKey: ['board', 'tokens'], queryFn: api.boardTokens, retry: false, staleTime: 15_000 });
   const revoke = useMutation({ mutationFn: (id: number) => api.boardRevokeToken(id), onSuccess: () => void qc.invalidateQueries({ queryKey: ['board', 'tokens'] }) });
   if (tokens.isError) return null;   // the board module is off here
   const rows = tokens.data?.tokens ?? [];
-  const when = (iso: string | null): string => (iso ? new Date(iso).toLocaleString() : 'never');
+  const when = (iso: string | null): string => (iso ? zoned(iso, tz, { seconds: true }) : 'never');
   return (
     <section className="mt-6 rounded border border-[var(--rule)] p-3" aria-label="Board tokens">
       <h2 className="mb-1 font-semibold tracking-tight">Board tokens</h2>
