@@ -6,7 +6,7 @@
       "id": "dependencies",
       "covers": ["dependencies"],
       "cwd": "app",
-      "argv": ["npm", "ci", "--no-audit", "--no-fund"],
+      "argv": ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
       "requires": ["dependency-download:npm"],
       "timeoutSeconds": 900,
       "count": "none"

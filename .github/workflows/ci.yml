@@ -11,8 +11,10 @@ permissions:
 
 jobs:
   # The disposable verifier: a GitHub-hosted VM with a throwaway Postgres and fake
-  # credentials. It runs the repository contract through the same entry point used
-  # locally (scripts/verify.mjs) and uploads the evidence. See docs/verification.md.
+  # credentials. scripts/verify.mjs (the same entry point used locally) supervises:
+  # it runs every repository check as a separate unprivileged user with loopback-only
+  # egress, proves that boundary with an adversarial probe first, and uploads the
+  # evidence from a directory that user cannot touch. See docs/verification.md.
   app:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -35,11 +37,11 @@ jobs:
           # Verify the exact PR head, not GitHub's synthetic merge commit.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      # No npm cache: the sandbox user fetches dependencies through the supervisor's
+      # registry-only proxy with lifecycle scripts disabled.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
       - name: verify (dependencies, build, unit, migrations, integration)
         run: node scripts/verify.mjs run --out "$RUNNER_TEMP/verification"
       - name: upload verification evidence
