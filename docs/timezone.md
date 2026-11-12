@@ -1,6 +1,6 @@
 # Time zone
 
-Status: **shared helpers, Usage consumers and session inspection work**. The configured IANA location or UTC is kept in your vault's `secondbrain.json`.
+Status: **shared helpers, Usage and session inspection, Org, and TV work**. The configured IANA location or UTC is kept in your vault's `secondbrain.json`.
 
 ## What it does
 
@@ -9,7 +9,10 @@ The metadata API returns the current validated value on each request, including 
 Shared frontend time helpers, Usage charts, credit/subscription dates and observation times, subscription resets
 and summaries consume that value. The session list and session detail use the same effective zone for Started
 timestamps, with a separate duration and an explicit unavailable state for unknown context capacity.
-Live/running views, TV and Org consumers follow in later integration slices.
+Org message tooltips and board-token Made and Last seen values use the shared zone; token values include seconds and
+an absent Last seen remains `never`. TV uses it for the selected episode and episode-strip generated labels. These
+mounted views update when their cached metadata is refetched, including a cleared setting falling back to the browser.
+Usage live/running views follow in a later integration slice.
 
 | Setting | Metadata API value |
 |---|---|

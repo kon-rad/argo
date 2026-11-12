@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import Tv, { formatDuration, nextId, showLabel } from '../src/routes/Tv.js';
 import type { TvEpisode } from '../src/lib/api.js';
+import { browserTimezone } from '../src/lib/time.js';
 
 const ep = (id: string, title: string, show: string, video: string | null, generated_at: string): TvEpisode => ({
   id, title, show, generated_at, duration_s: 500, voice: 'am_michael',
@@ -19,16 +20,28 @@ const EPISODES = {
   ],
 };
 
-function mount(path = '/tv') {
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(EPISODES), { status: 200, headers: { 'Content-Type': 'application/json' } })));
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+function mount(path = '/tv', metadata: () => unknown = () => ({ timezone: null }), episodes = EPISODES, client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const body = new URL(String(input), 'http://x').pathname === '/api/meta' ? metadata() : episodes;
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }));
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
         <Tv />
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, client };
+}
+
+function displayTime(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat([], {
+    timeZone,
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+    hourCycle: 'h23', timeZoneName: 'short',
+  }).format(new Date(iso));
 }
 
 const video = (container: HTMLElement) => container.querySelector('video');
@@ -56,6 +69,51 @@ describe('Tv helpers', () => {
 });
 
 describe('Tv page', () => {
+  it('updates selected and strip generated labels in place while preserving the selected video', async () => {
+    const generatedAt = '2026-01-02T00:15:30Z';
+    const episodes = { episodes: [
+      ep('newest', 'Newest episode', 'news', '/api/tv/media/newest', '2026-01-02T00:20:30Z'),
+      ep('selected', 'Selected episode', 'research', '/api/tv/media/selected', generatedAt),
+    ] };
+    let timezone: string | null = 'America/Los_Angeles';
+    const calls: string[] = [];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const pathname = new URL(String(input), 'http://x').pathname;
+      calls.push(pathname);
+      return Response.json(pathname === '/api/meta' ? { timezone } : episodes);
+    }));
+    const { container } = render(
+      <QueryClientProvider client={client}><MemoryRouter initialEntries={['/tv']}><Tv /></MemoryRouter></QueryClientProvider>,
+    );
+    await waitFor(() => expect(video(container)?.getAttribute('src')).toBe('/api/tv/media/newest'));
+    fireEvent.click(screen.getByText('Selected episode'));
+    await waitFor(() => expect(video(container)?.getAttribute('src')).toBe('/api/tv/media/selected'));
+    const selectedLabel = screen.getByText(/^generated /);
+    const stripCard = container.querySelector<HTMLElement>('[data-id="selected"]')!;
+    const stripLabel = Array.from(stripCard.querySelectorAll('div')).find((node) => node.textContent?.includes(displayTime(generatedAt, timezone!)))!;
+    expect(selectedLabel.textContent).toContain(displayTime(generatedAt, timezone));
+    expect(stripLabel.textContent).toContain(displayTime(generatedAt, timezone));
+
+    let before = calls.length;
+    timezone = 'Asia/Tokyo';
+    await client.invalidateQueries({ queryKey: ['meta'] });
+    await waitFor(() => expect(selectedLabel.textContent).toContain(displayTime(generatedAt, timezone!)));
+    expect(stripLabel.textContent).toContain(displayTime(generatedAt, timezone));
+    expect(video(container)?.getAttribute('src')).toBe('/api/tv/media/selected');
+    expect(calls.slice(before)).toEqual(['/api/meta']);
+    expect(screen.getByText(/^generated /)).toBe(selectedLabel);
+
+    before = calls.length;
+    timezone = null;
+    await client.invalidateQueries({ queryKey: ['meta'] });
+    await waitFor(() => expect(selectedLabel.textContent).toContain(displayTime(generatedAt, browserTimezone())));
+    expect(stripLabel.textContent).toContain(displayTime(generatedAt, browserTimezone()));
+    expect(video(container)?.getAttribute('src')).toBe('/api/tv/media/selected');
+    expect(calls.slice(before)).toEqual(['/api/meta']);
+    client.clear();
+  });
+
   it('starts on the newest playable episode with autoplay and shows the strip', async () => {
     const { container } = mount();
     await waitFor(() => expect(video(container)).toBeTruthy());
