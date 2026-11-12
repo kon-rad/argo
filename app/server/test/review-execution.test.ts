@@ -1,8 +1,6 @@
 import pg from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { createCard, finishCard, getCard } from '../src/board.js';
 import { query } from '../src/db.js';
-import { truncateAll } from './helpers.js';
 
 const workerName = 'sb_review_execution_fixture';
 const databaseUrl = `postgres://${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${process.env.SB_TEST_DB ?? 'secondbrain_test'}`;
@@ -16,7 +14,7 @@ async function asWorker(sql: string, values: unknown[] = []): Promise<pg.QueryRe
 
 beforeEach(async () => {
   await query('UPDATE review_policy SET enabled=false,corrections_enabled=false,reviewer=NULL,worker_login=NULL');
-  await truncateAll();
+  await query('TRUNCATE cards, org_agents, teams RESTART IDENTITY CASCADE');
   await query("INSERT INTO teams(slug,name,lead,members) VALUES('engineering','Engineering','auditor',ARRAY['builder','auditor'])");
   await query(`INSERT INTO org_agents(name,team_slug,runtime,role,reports_to,model,org_version,work,capabilities) VALUES
     ('owner',NULL,'human','Owner',NULL,NULL,'execution-fixture',NULL,'{}'),
@@ -30,11 +28,13 @@ beforeEach(async () => {
 afterAll(async () => { await query('UPDATE review_policy SET enabled=false,corrections_enabled=false,reviewer=NULL,worker_login=NULL'); });
 
 async function submitted() {
-  const card = await createCard('owner', { title:'Reviewer execution fixture', body:'Done when: execution tests pass', contract:{objective:'Review safely',verification:'tests'}, assignee:'builder', work:'coding', repo:'engine' });
-  await finishCard('builder', card.id, { outcome:'done' });
+  const card = (await query(`SELECT * FROM board_card_create($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+    ['owner',null,'Reviewer execution fixture','Done when: execution tests pass',{objective:'Review safely',verification:'tests'},'builder',null,null,null,'coding',null,'engine',null,null,null,null,null,false,null,null])).rows[0]!;
+  await query("SELECT board_card_finish($1,$2,'done',$3,NULL,NULL,NULL,NULL,NULL)",['builder',card.id,'tests passed']);
   const job = (await query('SELECT * FROM review_jobs WHERE card=$1', [card.id])).rows[0]!;
   return { card, job };
 }
+async function cardState(id:string) { return (await query('SELECT status,rounds,block_kind FROM cards WHERE id=$1',[id])).rows[0]!; }
 function snapshot() { return { repo:'example/engine',pr:7,base,head,branch:'main',merged:null,checks:[{name:'test',state:'pass'}],sources:[{ref:'ticket',revision:'1',text:'Done when: execution tests pass',essential:true,missing:false,truncated:false}] }; }
 function rejected(code='scope-capacity') { return { reviewer:'auditor',decision:'reject',repo:'example/engine',pr:7,base,head,evidence,categories:{},findings:[{code,severity:'high',location:'scope',evidence:'capacity exceeded',impact:'review cannot continue',fix:'split the change',verification:'rerun scope'}] }; }
 async function save(job: number, patch: unknown, origin?: 'reviewer'|'coordinator') {
@@ -49,6 +49,7 @@ async function fail(job: number, generation: number, kind: string, retrySeconds=
 
 describe('durable trusted verdict producer', () => {
   it('keeps a genuine coordinator origin across a separate default rejection save and worker restart', async () => {
+    await query('UPDATE review_policy SET corrections_enabled=true');
     const { job } = await submitted();
     await save(Number(job.id), { state:'reviewing',snapshot:snapshot(),verdict:rejected() }, 'coordinator');
     await save(Number(job.id), { state:'rejected' });
@@ -58,6 +59,7 @@ describe('durable trusted verdict producer', () => {
   });
 
   it('defaults model codes to reviewer and clears stale origin on replacement, clear, or revision reset', async () => {
+    await query('UPDATE review_policy SET corrections_enabled=true');
     const malicious = await submitted();
     await save(Number(malicious.job.id), {state:'rejected',snapshot:snapshot(),verdict:rejected('ci-failure')});
     expect((await query('SELECT producer_kind FROM review_feedback WHERE job=$1',[malicious.job.id])).rows[0]).toMatchObject({producer_kind:'reviewer'});
@@ -84,10 +86,17 @@ describe('bounded reviewer invocation state', () => {
     const second=await reserve(Number(job.id)); expect(second).toMatchObject({attempt:2,generation:0});
     await asWorker('SELECT review_execution_succeed($1,$2,$3,$4)',[job.id,head,evidence,second.generation]);
     expect((await query('SELECT outcome,attempts,first_failure_at FROM review_executions WHERE job=$1',[job.id])).rows[0]).toMatchObject({outcome:'succeeded',attempts:2});
-    expect((await getCard(card.id)).card).toMatchObject({status:'review',rounds:0});
+    expect(await cardState(card.id)).toMatchObject({status:'review',rounds:0});
     expect((await query('SELECT verdict,merged,deployed,health FROM review_jobs WHERE id=$1',[job.id])).rows[0]).toMatchObject({verdict:null,merged:null,deployed:null,health:null});
     expect((await query('SELECT count(*)::int n FROM review_feedback WHERE job=$1',[job.id])).rows[0].n).toBe(0);
     expect((await query('SELECT count(*)::int n FROM review_corrections WHERE card=$1',[card.id])).rows[0].n).toBe(0);
+  });
+
+  it('pauses reservations when the global review gate is disabled', async () => {
+    const {job}=await submitted(); await save(Number(job.id),{state:'reviewing',snapshot:snapshot(),verdict:null});
+    await query('UPDATE review_policy SET enabled=false');
+    expect(await reserve(Number(job.id))).toBeNull();
+    expect((await query('SELECT count(*)::int n FROM review_executions WHERE job=$1',[job.id])).rows[0].n).toBe(0);
   });
 
   it('exhausts finite attempts and elapsed time across fresh worker connections', async () => {
@@ -108,7 +117,7 @@ describe('bounded reviewer invocation state', () => {
     expect(result).toMatchObject({outcome:'exhausted',failure_kind:kind});
     const row=(await query('SELECT * FROM review_executions WHERE job=$1',[job.id])).rows[0];
     expect(JSON.stringify(row)).not.toContain('fixture-secret');
-    expect((await getCard(card.id)).card).toMatchObject({status:'review',rounds:0});
+    expect(await cardState(card.id)).toMatchObject({status:'review',rounds:0});
   });
 });
 
@@ -122,10 +131,14 @@ describe('fenced operator recovery', () => {
     const recovered=(await recover([job.id,head,evidence,0,'identity repaired'])).rows[0]; expect(recovered).toMatchObject({recovery_generation:1,outcome:'retry'});
     await expect(recover([job.id,head,evidence,0,'replay'])).rejects.toThrow(/generation|replay/);
 
-    await finishCard('builder',card.id,{outcome:'done'}); // creates a newer review job for the same card
+    await query("UPDATE review_jobs SET state='rejected' WHERE id=$1",[job.id]);
+    await query("INSERT INTO review_jobs(card,builder,reviewer,repo,round,state) VALUES($1,'builder','auditor','engine',1,'queued')",[card.id]);
     await expect(recover([job.id,head,evidence,1,'stale older job'])).rejects.toThrow(/newer|stale/);
-    await query("UPDATE review_jobs SET merged=$2,state='merged' WHERE id=$1",[job.id,'e'.repeat(40)]);
-    await expect(recover([job.id,head,evidence,1,'shipping started'])).rejects.toThrow(/shipping|state/);
     expect((await query("SELECT count(*)::int n FROM card_events WHERE card_id=$1 AND kind='review-execution-recovered'",[card.id])).rows[0].n).toBe(1);
+
+    const shipping=await submitted(); await save(Number(shipping.job.id),{state:'reviewing',snapshot:snapshot(),verdict:null});
+    const shippingClaim=await reserve(Number(shipping.job.id)); await fail(Number(shipping.job.id),Number(shippingClaim.generation),'identity');
+    await query("UPDATE review_jobs SET merged=$2,state='merged' WHERE id=$1",[shipping.job.id,'e'.repeat(40)]);
+    await expect(recover([shipping.job.id,head,evidence,0,'shipping started'])).rejects.toThrow(/shipping|state/);
   });
 });
