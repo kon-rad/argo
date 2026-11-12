@@ -86,6 +86,26 @@ The app refuses to start in server mode without `AUTH_PASSWORD_HASH`, `AUTH_TOTP
 | `secondbrain-vault-sync.timer` | Every 15 minutes | `DEPLOY_VAULT_SYNC=1` |
 | `claude-telegram.service` + `-clear.timer`, `telegram-bridge.service` | Always, nightly clear 19:00 UTC | `secondbrain telegram add` ([Connect Telegram](onboarding/11-telegram.md)), not `deploy.sh` |
 
+### Unit files are generated
+
+Recurring feature units come only from `app/server/src/features/*/manifest.ts` and
+`app/server/src/addons/*/manifest.ts`. To add a timer, add one `timers` entry to its
+manifest with the unit name, calendar, command, descriptions and any service options.
+The deploy generator renders both the `.service` and `.timer`; do not add either file
+under `app/deploy/`.
+
+Preview the generated env and units without writing them:
+
+```bash
+secondbrain plan
+```
+
+`app/deploy/secondbrain.service` and `app/deploy/zen-agent-serve.service` remain
+hand-written because they are long-running services, not feature timers. The Telegram
+bridge owns its templates under `app/deploy/telegram/`, and Caddy continues to use
+`app/deploy/Caddyfile.template`. Database backup, vault sync and embedding are base
+jobs declared in `app/server/src/deploy/generate.ts` because no feature owns them.
+
 ## Which version is live
 
 `deploy.sh` records the commit it shipped in `<app dir>/data/build-info.json` (the deploy rsync excludes `data/`, so the file survives the next deploy). The app reads it at startup and reports it in `GET /api/meta`, which the ⓘ panel in the header shows as `Second Brain v<version> · <short commit>`; the tooltip has the full hash and the build time. On a laptop there is no build file, so the app asks git instead and shows the checkout's commit. Bump `app/package.json`'s `version` when you want a new number in the panel.
