@@ -1,9 +1,0 @@
-{
-  "name": "@secondbrain/desk-client",
-  "private": true,
-  "type": "module",
-  "scripts": { "build": "../../app/node_modules/.bin/tsc -p tsconfig.json", "test": "node --test test/*.test.mjs" },
-  "dependencies": { "@secondbrain/desk-contracts": "file:../../app/shared" },
-  "exports": { ".": { "types": "./src/client.d.mts", "import": "./src/client.mjs" } },
-  "bin": { "desk-reader": "./bin/desk-reader.mjs" }
-}

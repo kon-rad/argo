@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "workspaces": ["shared", "server", "web"],
+  "workspaces": ["server", "web"],
   "scripts": {
     "dev": "concurrently -n api,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "npm -w server run dev",
@@ -14,7 +14,6 @@
     "migrate": "node-pg-migrate -m db/migrations -j sql",
     "migrate:up": "npm run migrate -- up",
     "scan": "npm -w server run scan",
-    "build:shared": "npm -w @secondbrain/desk-contracts run build",
     "build:server": "npm -w server run build",
     "build:web": "npm -w web run build"
   },

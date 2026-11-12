@@ -19,21 +19,6 @@ export default defineConfig({
     projects: [
       {
         test: {
-          name: 'desk',
-          root: './server',
-          environment: 'node',
-          include: [
-            'src/addons/desk/settlement/arc*.test.ts',
-            'src/addons/desk/boot.test.ts',
-            'src/addons/desk/public-api.test.ts',
-            'src/addons/desk/orchestration/payment-gate.test.ts',
-            'src/addons/desk/persistence/persistence.test.ts',
-          ],
-          env: { VAULT_ROOT: engineRoot, DEPLOYMENT: 'local' },
-        },
-      },
-      {
-        test: {
           name: 'server',
           root: './server',
           environment: 'node',
