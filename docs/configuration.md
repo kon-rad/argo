@@ -323,7 +323,7 @@ The Usage tabs sit at the top. Account contains subscription quotas, prepaid cre
 | Started | `YYYYMMDD HH:mm`, 24-hour, in the [shared time zone](timezone.md) |
 | Duration | Elapsed from the first to the last recorded step, not active working time |
 | Machine | The recorded host |
-| Type | `telegram`, `cli`, `headless`, another recorded channel such as `web` or `remote-control`, or `unknown`. Recorded channels take precedence; matched runs and harness entrypoints provide the remaining classification. For example, Hermes `api_server` and zen-agent `serve` map to `web`. The machine never determines type |
+| Type | `telegram`, `cli` (a person at a terminal), `headless` (`claude -p`, a card wake or a cron job), another recorded channel such as `web` or `remote-control`, or `unknown`. Recorded channels take precedence; matched runs and harness entrypoints provide the remaining classification. For example, Hermes `api_server` and zen-agent `serve` map to `web`. The machine never determines type |
 | Bot persona | The recorded run agent, session persona, channel persona, then recorded bot identity. A CLI session displays `none` only when no persona was recorded; other missing personas display `unknown` |
 | Session name | A one-line label under 100 characters: card title, skill with its start time, harness title, or first real request. AGENTS.md, system/environment blocks, local commands and transport wrappers are skipped; no transcript is sent to a model for naming |
 | Context | The latest recorded main-call prompt size over an independently recorded context window. Either unknown side is `?`; both unknown display `-`. Cumulative token totals and Codex usage deltas do not establish current occupancy, and capacity is never guessed from a model name |
