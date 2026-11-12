@@ -156,6 +156,34 @@ The engine supplies a real JSON-RPC reader, the explicitly selected settlement a
 | `TTS_URL`, `TTS_MODEL` | `voice` | `http://127.0.0.1:8880`, a Kokoro model | A local OpenAI-compatible speech server. Never used on a server |
 | `ROBOT_LAUNCH_SCRIPT` | none (local only) | unset | A script the "start robot" button runs. Unset: the route isn't mounted |
 
+## Advanced operational settings
+
+These are schema-validated too. Most are set by launchers, installers, agent runtimes, or tests rather than by a normal app install.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SB_UNIT_DIR`, `SB_ENV_FILE` | system locations | Override `plan\|apply` output paths, mainly for dry runs and tests |
+| `ORG_AGENT`, `ORG_VIA`, `ORG_RUN` | unset | Calling agent, runtime, and run identifiers supplied by the harness |
+| `ORG_DB_URL`, `SB_ORG_DB_URL` | unset | Bot-role database connections supplied by org launchers |
+| `ORG_ROUTING_JSON`, `ORG_BREAKER`, `ORG_BREAKER_AS` | unset | Routing-pilot config and one-run breaker overrides |
+| `PROJECTS_BY` | OS user and host | Override project report author attribution |
+| `PLAN_USAGE_LOG`, `CLAUDE_PROJECTS_DIR`, `CC_RUNS_DIR`, `CODEX_HOME` | OS data folders | Locations scanned by usage collectors |
+| `USAGE_HOST`, `USAGE_SYNC_HOST`, `USAGE_SYNC_SERVER`, `USAGE_SYNC_TOKEN` | unset | Usage machine label and sync destination credentials |
+| `USAGE_PUSH_HOST`, `USAGE_PUSH_STATE`, `USAGE_PUSH_MAX_BYTES` | unset, OS data folder, `20000000` | Legacy usage push destination, cursor, and batch cap |
+| `SB_LEDGER_DIR`, `SB_LEDGER_TOKEN` | OS data folder, stored token | Standalone ledger location and token override |
+| `SECONDBRAIN_TELEGRAM_DIR`, `CLAUDE_BIN` | OS data folder, PATH | Telegram setup state and Claude executable override |
+| `BOT_REPOS_FILE` | `/etc/secondbrain/bot-repos.toml` | Bot repository allowlist path |
+| `HERMES_ENV_FILE`, `REMOTE_HERMES_USER`, `B2STORE` | derived | Archive source env, remote user, and b2store executable overrides |
+| `AGENTS_SYNC_HOST`, `REDACT_ENV_FILES` | unset | Agent archive host label and extra env files whose values are redacted |
+| `CREDITS_KEYS_FILE`, `FAL_BILLING_KEY` | unset | Optional provider-key file and fal billing credential for credit collection |
+| `GEMINI_API_KEY` | unset | Image provider credential for org avatar generation |
+| `BASE_RPC_URL` | Base public RPC | RPC used by the optional Base balance collector |
+| `LIVESTREAM_YOUTUBE`, `LIVESTREAM_TWITCH`, `LIVESTREAM_KICK` | unset | Legacy env overrides for the `secondbrain.json` livestream channels |
+| `LIVESTREAM_PUBLIC_DIR` | `/var/lib/secondbrain-public` | Generated public livestream summary directory |
+| `SUMMARIES_LOCAL_URL` | unset | Address selected by a summaries chain entry's `baseUrlEnv` |
+| `XDG_CONFIG_HOME`, `USER`, `NODE_ENV` | process defaults | Standard process metadata used by installers and desk adapter checks |
+| `DESK_TEST_DATABASE_URL`, `DESK_PUBLICATION_TEST_DATABASE_URL` | unset | Opt-in disposable `sb_*_test` databases for desk integration tests |
+
 ## Doctor
 
 `secondbrain doctor` checks the whole install and exits non-zero when a critical check fails. The same checks answer at `GET /api/health` (`{"ok": true, "checks": [...]}`), so a monitor and a person read one answer. It checks Node's major version, Postgres, the `vector` extension, pending migrations, unknown names in `MODULES`, a stale `AGENTS.md`, an unparsable `secondbrain.json`, the sync state, and each core feature's tables (the feature's manifest names them).
@@ -184,7 +212,7 @@ Per-machine settings for `secondbrain-vault sync` ([sync.md](sync.md)); the shar
 
 ## `secondbrain.json`
 
-The **instance configuration** holds settings that do not fit on one env line. Every section is optional. A missing file uses defaults; an unparsable or invalid file is reported and ignored, and the app uses defaults. `init` copies `vault-template/secondbrain.example.json` into a new vault as a reference, not as the active file.
+The **instance configuration** holds settings that do not fit on one env line. Every section is optional. A missing file uses defaults. Invalid JSON is reported and ignored; if one section fails schema validation, that section uses its defaults and every valid section still loads. `secondbrain doctor` names the section and field without printing its value. `init` copies `vault-template/secondbrain.example.json` into a new vault as a reference, not as the active file.
 
 Start with `secondbrain.json` containing `{}` and add only the sections you need. Alternatively, copy `secondbrain.example.json` to `secondbrain.json`, then remove unwanted sections and replace placeholder paths, handles and models before starting the app. Do not overwrite an existing instance configuration when following setup instructions again.
 
@@ -320,3 +348,7 @@ ReadWritePaths=-/srv/codex-state
 ```
 
 Replace the example path with the selected `CODEX_HOME`, keep its ownership with the app user, and restart the app after `sudo systemctl daemon-reload`. Leave `ProtectHome=read-only` enabled. Verify quota retrieval through the running app's authenticated `/api/usage/subscriptions` endpoint; a successful shell probe does not verify the systemd sandbox.
+
+### Review scope CLI configuration
+
+The standalone `review scope` commands take an optional owner-controlled JSON configuration, separate from app env and worker host configuration. Defaults are `softTarget: 24` and `exclude: []`; the soft target accepts 1 through the unchanged hard limit of 30. There are no configurable hard-cap increases. Copy [review-scope.example.json](https://github.com/kon-rad/argo/blob/main/app/deploy/review-scope.example.json), keep private exclusion prefixes outside public source, and supply the same exclusions to the reviewer host. See [scope checkpoints](automatic-review.md#scope-checkpoints-before-building-and-submitting) for the versioned plan, request schema, exit codes and module-off direct Node command.

@@ -5,6 +5,7 @@ import { addonRoutes } from './addons/index.js';
 import { createAuth, type AuthOptions } from './auth/router.js';
 import { config, type ModuleName } from './config.js';
 import { healthy, runChecks } from './doctor.js';
+import { currentTimezone } from './timezone.js';
 import { connectors as defaultConnectors, type ConnectorRegistry } from './connectors/index.js';
 import { defaultEmbeddingProvider } from './embeddings/factory.js';
 import { featureRoutes, mountAt, navFor } from './features/index.js';
@@ -189,6 +190,8 @@ export function createApp(opts: AppOptions = {}): express.Express {
       devLogPath: config.devLogPath,
       docsPath: config.docsPath,
       robot: !remote && Boolean(config.robotLaunchScript),
+      // The vault's current time zone (secondbrain.json), read fresh so `secondbrain timezone set` needs no restart; null: unset.
+      timezone: currentTimezone(),
       ...buildInfo,
     });
   });

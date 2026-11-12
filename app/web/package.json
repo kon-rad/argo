@@ -5,13 +5,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
-    "preview": "vite preview",
-    "prebuild": "npm -w @secondbrain/desk-contracts run build"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.102.2",
     "3d-force-graph": "^1.80.1",
-    "@secondbrain/desk-contracts": "1.0.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",

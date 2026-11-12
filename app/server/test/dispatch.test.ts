@@ -125,6 +125,8 @@ describe('tick', () => {
     expect(r).toMatchObject({ agents: 1, runs: 1, errors: [] });
     expect(h.calls.map((c) => c.args[0])).toEqual(['login', 'exec', 'exec']);
     expect(h.calls[2]!.args).toContain('gpt-6-sol');
+    expect(h.calls[2]!.env).toMatchObject({ ORG_AGENT: 'codebot', CC_CARD: card.id });
+    expect(h.calls[2]!.env.ORG_RUN).toBeTruthy();
     expect((await getCard(card.id)).card.status).toBe('review');
     expect((await query(`SELECT runtime, outcome, usage->>'input_tokens' AS input FROM usage_runs WHERE agent_name = 'codebot'`)).rows)
       .toEqual([{ runtime: 'codex', outcome: 'did-work', input: '12' }]);
@@ -163,6 +165,7 @@ describe('tick', () => {
     const h = harness();
     h.setResult(codexFake());
     await h.d.tick();
+    expect(h.calls[2]!.env).toMatchObject({ ORG_AGENT: 'codebot', CC_CARD: '' });
     const { rows } = await query<{ author: string; body: string; kind: string }>(
       `SELECT author, body, kind FROM org_messages WHERE author = 'codebot' AND kind = 'reply' ORDER BY id`);
     expect(rows).toEqual([{ author: 'codebot', body: 'Changed the file; tests pass', kind: 'reply' }]);

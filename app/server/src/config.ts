@@ -24,6 +24,74 @@ const Schema = z.object({
   // Standalone review worker only; never passed to its model subprocess.
   REVIEW_DB_URL: z.string().optional(),
   GH_TOKEN: z.string().optional(),
+  // Structured settings path, absolute or relative to VAULT_ROOT.
+  SECONDBRAIN_SETTINGS: z.string().optional(),
+  // plan|apply filesystem overrides, primarily for dry runs and tests.
+  SB_UNIT_DIR: z.string().optional(),
+  SB_ENV_FILE: z.string().optional(),
+  // cli-config, called by deploy.sh: unit files only, and the server fields it overrides.
+  SB_CONFIG_UNITS_ONLY: z.string().optional(),
+  SB_CONFIG_BASE_UNITS: z.string().optional(),
+  SB_APP_USER: z.string().optional(),
+  SB_APP_DIR: z.string().optional(),
+  SB_VAULT_DIR: z.string().optional(),
+  SB_HERMES_HOME: z.string().optional(),
+  // Client-mode database URLs used by launchers and bot-scoped roles.
+  SECONDBRAIN_DB_URL: z.string().optional(),
+  SB_ORG_DB_URL: z.string().optional(),
+  ORG_DB_URL: z.string().optional(),
+  // Calling-agent identity and run metadata supplied by the agent harness.
+  ORG_AGENT: z.string().optional(),
+  ORG_VIA: z.string().optional(),
+  ORG_RUN: z.string().optional(),
+  // Pilot routing and breaker overrides for org commands.
+  ORG_ROUTING_JSON: z.string().optional(),
+  ORG_BREAKER: z.enum(['on', 'off']).optional(),
+  ORG_BREAKER_AS: z.string().optional(),
+  // Attribution override for project report writes.
+  PROJECTS_BY: z.string().optional(),
+  // Local agent and usage filesystem locations.
+  PLAN_USAGE_LOG: z.string().optional(),
+  CLAUDE_PROJECTS_DIR: z.string().optional(),
+  CLAUDE_BIN: z.string().optional(),
+  CC_RUNS_DIR: z.string().optional(),
+  SECONDBRAIN_TELEGRAM_DIR: z.string().optional(),
+  // Usage sync host labels, destinations, credentials and batching controls.
+  USAGE_HOST: z.string().optional(),
+  USAGE_SYNC_HOST: z.string().optional(),
+  USAGE_SYNC_SERVER: z.string().optional(),
+  USAGE_SYNC_TOKEN: z.string().optional(),
+  USAGE_PUSH_HOST: z.string().optional(),
+  USAGE_PUSH_STATE: z.string().optional(),
+  USAGE_PUSH_MAX_BYTES: z.coerce.number().int().positive().default(20_000_000),
+  // Standalone ledger location and an optional token override.
+  SB_LEDGER_DIR: z.string().optional(),
+  SB_LEDGER_TOKEN: z.string().optional(),
+  // Archive and agent-sync machine paths and commands.
+  BOT_REPOS_FILE: z.string().optional(),
+  HERMES_ENV_FILE: z.string().optional(),
+  REMOTE_HERMES_USER: z.string().optional(),
+  AGENTS_SYNC_HOST: z.string().optional(),
+  REDACT_ENV_FILES: z.string().optional(),
+  B2STORE: z.string().optional(),
+  // Provider key-file and API credentials used by credits and avatar jobs.
+  CREDITS_KEYS_FILE: z.string().optional(),
+  FAL_BILLING_KEY: z.string().optional(),
+  GEMINI_API_KEY: z.string().optional(),
+  // Optional public collectors and their output locations.
+  BASE_RPC_URL: z.string().url().default('https://mainnet.base.org'),
+  LIVESTREAM_YOUTUBE: z.string().optional(),
+  LIVESTREAM_TWITCH: z.string().optional(),
+  LIVESTREAM_KICK: z.string().optional(),
+  LIVESTREAM_PUBLIC_DIR: z.string().default('/var/lib/secondbrain-public'),
+  SUMMARIES_LOCAL_URL: z.string().url().optional(),
+  // Standard process metadata used for local paths and service instructions.
+  XDG_CONFIG_HOME: z.string().optional(),
+  USER: z.string().optional(),
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  // Opt-in disposable databases for the desk integration suites.
+  DESK_TEST_DATABASE_URL: z.string().url().optional(),
+  DESK_PUBLICATION_TEST_DATABASE_URL: z.string().url().optional(),
   PORT: z.coerce.number().int().positive().default(5123),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   // Optional: the embeddings source falls back to a local Ollama provider, and
@@ -263,7 +331,23 @@ if (ollamaMachines.skipped.length) {
   console.warn(`OLLAMA_MACHINES: skipped ${ollamaMachines.skipped.length} invalid entr${ollamaMachines.skipped.length === 1 ? 'y' : 'ies'} (expected name=http://host:11434)`);
 }
 
+const schemaShape = Schema.shape as Record<string, z.ZodType>;
+/** Keep explicit run-scoped overrides observable while validating them through the same schema. */
+const schemaEnv = new Proxy(parsed.data, {
+  get(target, key, receiver) {
+    if (typeof key !== 'string' || !(key in schemaShape) || process.env[key] === undefined) {
+      return Reflect.get(target, key, receiver) as unknown;
+    }
+    const current = schemaShape[key]!.safeParse(process.env[key]);
+    return current.success ? current.data : Reflect.get(target, key, receiver) as unknown;
+  },
+});
+
 export const config = {
+  /** Schema-validated environment for operational settings that do not merit a derived field. */
+  env: schemaEnv,
+  /** True only when the process explicitly supplied a key, regardless of schema defaults. */
+  envHas: (key: keyof typeof parsed.data): boolean => process.env[key] !== undefined,
   appRoot,
   vaultRoot: resolve(parsed.data.VAULT_ROOT),
   databaseUrl: parsed.data.DATABASE_URL,

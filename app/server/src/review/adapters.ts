@@ -1,10 +1,12 @@
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join, posix } from 'node:path';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
 import { parseCodexResult } from '../addons/dispatch/codex.js';
 import { childEnv, command } from './process.js';
 import { Verdict, type Snapshot } from './gate.js';
+import { ChangedFile, checkPaths, collectCode } from './scope.js';
+import { evaluate, requireCapacity, scopeObservation } from './policy.js';
 
 export const Repository = z.object({ github: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
   gitDir: z.string().startsWith('/'), base: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9/_.-]*$/), target: z.string(), checks: z.array(z.string().min(1)).min(1),
@@ -48,45 +50,24 @@ export class GitHub {
     if(threads.nodes.some((t:{comments?:{pageInfo?:{hasNextPage?:boolean}}})=>t.comments?.pageInfo?.hasNextPage!==false))throw new Error('Review comments truncated');
     return z.array(z.object({id:z.string(),isResolved:z.boolean(),isOutdated:z.boolean()}).passthrough()).parse(threads.nodes);
   }
-  async diff(pr: number): Promise<string> {
-    const files=(await this.gh(['pr','diff',String(pr),'--repo',this.repo.github,'--name-only'])).split('\n');
-    if(files.some(file => !/(?:^|\/)\.env\.(?:example|sample|template)$/.test(file) && (/(?:^|\/)(?:\.env(?:\.[^/]*)?|credentials?[^/]*|secrets?[^/]*)(?:$|\/)|\.(?:pem|key)$/i.test(file) || this.host.exclude.some(p=>file===p || file.startsWith(`${p}/`))))) {
-      throw new Error('PR touches excluded secret/private files; diff collection blocked');
-    }
-    return this.gh(['pr','diff',String(pr),'--repo',this.repo.github,'--patch']);
+  /** Final aggregate between the reviewed commits, matching actual scope preflight. */
+  async diff(s: {number:number;headRefOid:string;baseRefOid:string}): Promise<string> {
+    await this.git(['fetch','--no-tags',`https://github.com/${this.repo.github}.git`,s.headRefOid,s.baseRefOid]);
+    const files=(await this.git(['diff','--name-only','--no-renames','-z',s.baseRefOid,s.headRefOid,'--'])).split('\0');
+    checkPaths(files.filter(Boolean).map(path => ({path,status:'modified'})),this.host.exclude);
+    return this.git(['diff','--no-ext-diff','--no-textconv','--binary',s.baseRefOid,s.headRefOid,'--']);
   }
   /** Exact-revision source around the diff, including immediate local imports. No checkout or scripts. */
   async code(s: {number:number;headRefOid:string;baseRefOid:string}):Promise<{ref:string;text:string}[]> {
     const pages=JSON.parse(await this.gh(['api',`repos/${this.repo.github}/pulls/${s.number}/files?per_page=100`,'--paginate','--slurp']));
-    const files=z.array(z.array(z.object({filename:z.string(),status:z.string()}).passthrough())).parse(pages).flat();
-    if(files.length>100)throw new Error('Changed file context exceeds limit; split this PR');
+    const files=z.array(z.array(z.object({filename:z.string(),status:z.string(),previous_filename:z.string().optional()}).passthrough())).parse(pages).flat()
+      .map(f => ChangedFile.parse({path:f.filename,status:f.status,...(f.previous_filename ? {previousPath:f.previous_filename} : {})}));
+    checkPaths(files,this.host.exclude);
+    requireCapacity(evaluate(scopeObservation(files,[],''),'actual'));
     const remote=`https://github.com/${this.repo.github}.git`;
     await this.git(['fetch','--no-tags',remote,s.headRefOid,s.baseRefOid]);
-    const tracked=new Set((await this.git(['ls-tree','-r','--name-only',s.headRefOid])).trim().split('\n'));
-    const selected=new Map<string,string>();
-    for(const f of files)if(/\.(?:[cm]?[jt]sx?|py|rs|go|java|swift|sh|sql|ya?ml|toml|json|css|html|md)$/.test(f.filename) && !/(?:^|\/)(?:package-lock\.json|[^/]*\.lock)$/.test(f.filename))selected.set(f.filename,f.status==='removed'?s.baseRefOid:s.headRefOid);
-    if(selected.size>30)throw new Error('Changed source context exceeds limit; split this PR');
-    const result:{ref:string;text:string}[]=[];
-    for(const [path,revision] of [...selected]){
-      const text=await this.git(['show',`${revision}:${path}`]);
-      result.push({ref:`github:source:${revision}:${path}`,text});
-      if(revision!==s.headRefOid)continue;
-      for(const m of text.matchAll(/(?:from\s*|import\s*|require\()\s*['"](\.[^'"]+)['"]/g)){
-        const stem=posix.normalize(posix.join(posix.dirname(path),m[1]!));
-        if(stem.startsWith('../'))continue;
-        const variants=[stem,stem.replace(/\.js$/,'.ts'),stem+'.ts',stem+'.tsx',stem+'.js',stem+'/index.ts',stem+'/index.js'];
-        const found=variants.find(v=>tracked.has(v));
-        if(found && (/credential|(?:^|\/)secrets?(?:\/|\.)|\.(?:pem|key)$|(?:^|\/)\.env(?:$|\.)/i.test(found) || this.host.exclude.some(p=>found===p || found.startsWith(p+'/'))))throw new Error('Local import references excluded credential/private source');
-        if(found && !selected.has(found))selected.set(found,s.headRefOid);
-      }
-    }
-    if(selected.size>80)throw new Error('Imported source context exceeds limit; split this PR');
-    const present=new Set(result.map(x=>x.ref));
-    for(const [path,revision] of selected){
-      const ref=`github:source:${revision}:${path}`;
-      if(!present.has(ref))result.push({ref,text:await this.git(['show',`${revision}:${path}`])});
-    }
-    return result;
+    const tracked=new Set((await this.git(['ls-tree','-rz','--name-only',s.headRefOid])).split('\0').filter(Boolean));
+    return collectCode(files,s.headRefOid,s.baseRefOid,tracked,(revision,path)=>this.git(['show',`${revision}:${path}`]),this.host.exclude);
   }
   async reject(pr: number, job: number, text: string): Promise<void> {
     const marker = `[review ${job}]`;

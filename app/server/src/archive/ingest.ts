@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { basename } from 'node:path';
 import { query, withTransaction } from '../db.js';
+import { hermesChannel } from './channel.js';
+import { channelMeta, claudeSessionMeta } from './channelMeta.js';
 import { parseClaudeJsonl } from './claude.js';
 import { readHermes } from './hermes.js';
 import { splitLog } from './logs.js';
@@ -58,7 +60,9 @@ export async function ingest(item: Item, errors: string[], bump: Bump): Promise<
     await withTransaction(async (tx) => {
       const ids = new Map<string, number>();
       for (const s of sessions) {
-        const r = await store.upsertSession(tx, { ...s, b2Path: row.b2Path });
+        // The same channel label agents-sync writes: this upsert replaces meta, so leaving it out would erase it.
+        const profile = item.source.includes(':') ? item.source.split(':')[1]! : 'main';
+        const r = await store.upsertSession(tx, { ...s, meta: { ...s.meta, ...channelMeta(hermesChannel(s.meta.source), 'hermes', profile) }, b2Path: row.b2Path });
         ids.set(s.externalId, r.id); if (r.changed) bump('hermes', 'sessions');
       }
       const bySession = new Map<string, typeof messages>();
@@ -85,7 +89,7 @@ export async function ingest(item: Item, errors: string[], bump: Bump): Promise<
         const s = await store.upsertSession(tx, { source: 'claude-code', host: 'mac', externalId: sid,
           parentExternalId: item.parentSid ?? null, project: item.project ?? null, title: chunk.title, model: chunk.model,
           startedAt: null, endedAt: null, messageCount: null, inputTokens: null, outputTokens: null, costUsd: null,
-          meta: {}, b2Path: row.b2Path });
+          meta: claudeSessionMeta(chunk), b2Path: row.b2Path });
         if (s.changed) bump('claude-code', 'sessions');
         const msgs = item.parentSid ? chunk.messages.map((m) => ({ ...m, isSidechain: true })) : chunk.messages;
         bump('claude-code', 'messages', await store.upsertMessages(tx, s.id, msgs));
