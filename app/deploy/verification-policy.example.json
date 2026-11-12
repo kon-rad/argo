@@ -6,19 +6,43 @@
     "path": ".github/workflows/ci.yml",
     "job": "app",
     "artifact": "verification-evidence",
-    "events": ["pull_request", "push"]
+    "events": [
+      "pull_request",
+      "push"
+    ]
   },
   "trustedFiles": {
-    ".github/workflows/ci.yml": ["0000000000000000000000000000000000000000000000000000000000000000"],
-    "scripts/verify.mjs": ["0000000000000000000000000000000000000000000000000000000000000000"]
+    ".github/workflows/ci.yml": [
+      "0000000000000000000000000000000000000000000000000000000000000000"
+    ],
+    "scripts/verify.mjs": [
+      "0000000000000000000000000000000000000000000000000000000000000000"
+    ]
   },
-  "runner": { "group": "GitHub Actions", "labels": ["ubuntu-latest", "ubuntu-24.04"] },
-  "capabilities": ["postgres", "loopback-listeners", "dependency-download:npm"],
-  "requiredChecks": [
-    { "id": "dependencies", "argv": ["npm", "ci", "--no-audit", "--no-fund"], "covers": ["dependencies"], "count": "none" },
-    { "id": "build", "argv": ["npm", "run", "build"], "covers": ["build"], "count": "none" },
-    { "id": "tests", "argv": ["npm", "test", "--", "--reporter=default", "--reporter=json", "--outputFile.json={report}"], "covers": ["unit", "migrations", "integration", "regression"], "count": "required" }
+  "runner": {
+    "group": "GitHub Actions",
+    "labels": [
+      "ubuntu-latest",
+      "ubuntu-24.04"
+    ]
+  },
+  "capabilities": [
+    "postgres",
+    "loopback-listeners",
+    "dependency-download:npm"
   ],
+  "requiredChecks": [
+    {"id": "dependencies", "cwd": "app", "argv": ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], "covers": ["dependencies"], "requires": ["dependency-download:npm"], "report": null, "count": "none", "minTimeoutSeconds": 600},
+    {"id": "build", "cwd": "app", "argv": ["npm", "run", "build"], "covers": ["build"], "requires": [], "report": null, "count": "none", "minTimeoutSeconds": 600},
+    {"id": "tests", "cwd": "app", "argv": ["npm", "test", "--", "--reporter=default", "--reporter=json", "--outputFile.json={report}"], "covers": ["unit", "migrations", "integration", "regression"], "requires": ["postgres", "loopback-listeners"], "report": "vitest-json", "count": "required", "minTimeoutSeconds": 1200}
+  ],
+  "externalEvidence": {
+    "documentationOrigins": [],
+    "observed": []
+  },
+  "backend": {
+    "maxAgeDays": 14
+  },
   "maxArtifactBytes": 50000000,
   "mergeDisabled": false
 }

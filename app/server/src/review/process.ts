@@ -12,25 +12,33 @@ export function childEnv(home: string, github = false): NodeJS.ProcessEnv {
     ...(github && process.env.GH_TOKEN ? { GH_TOKEN: process.env.GH_TOKEN, GIT_CONFIG_COUNT:'1', GIT_CONFIG_KEY_0:'http.https://github.com/.extraheader', GIT_CONFIG_VALUE_0:'AUTHORIZATION: basic '+Buffer.from('x-access-token:'+process.env.GH_TOKEN).toString('base64') } : {}) };
 }
 export async function command(exe: string, argv: string[], cwd: string, env: NodeJS.ProcessEnv, timeout = 120_000, maxBytes = 1_000_000, includeStderr = false, input?:string): Promise<string> {
+  const { out, err } = await run(exe, argv, cwd, env, timeout, maxBytes, input);
+  return includeStderr ? out.toString()+err.toString() : out.toString();
+}
+/** Binary-safe stdout (artifact archives). Same limits and error handling as command(). */
+export async function commandBytes(exe: string, argv: string[], cwd: string, env: NodeJS.ProcessEnv, timeout = 120_000, maxBytes = 1_000_000): Promise<Buffer> {
+  return (await run(exe, argv, cwd, env, timeout, maxBytes)).out;
+}
+function run(exe: string, argv: string[], cwd: string, env: NodeJS.ProcessEnv, timeout: number, maxBytes: number, input?:string): Promise<{ out: Buffer; err: Buffer }> {
   return new Promise((resolve, reject) => {
     const child = spawn(exe, argv, { cwd, env, stdio: [input===undefined?'ignore':'pipe', 'pipe', 'pipe'], detached: true });
     child.stdin?.on('error',()=>{});
     if(input!==undefined) child.stdin?.end(input);
-    let out = '', err = '', bytes = 0, failed = false;
+    const out: Buffer[] = [], err: Buffer[] = []; let bytes = 0, failed = false;
     const stop = (message: string) => {
       if (failed) return; failed = true;
       try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { /* process already exited */ }
       reject(new Error(message));
     };
     const timer = setTimeout(() => stop('Adapter timed out'), timeout);
-    child.stdout!.on('data', (b: Buffer) => { bytes += b.length; if (bytes > maxBytes) stop('Adapter output truncated at byte limit'); else out += b.toString(); });
-    child.stderr!.on('data', (b: Buffer) => { bytes += b.length; if (bytes > maxBytes) stop('Adapter output truncated at byte limit'); else err += b.toString(); });
+    child.stdout!.on('data', (b: Buffer) => { bytes += b.length; if (bytes > maxBytes) stop('Adapter output truncated at byte limit'); else out.push(b); });
+    child.stderr!.on('data', (b: Buffer) => { bytes += b.length; if (bytes > maxBytes) stop('Adapter output truncated at byte limit'); else err.push(b); });
     child.on('error', () => { clearTimeout(timer); stop('Adapter executable unavailable'); });
     child.on('close', code => {
       clearTimeout(timer); if (failed) return;
       // Child output can contain secrets; never persist raw stderr in a board error.
-      if (code !== 0) { logFailure(`${exe} exit ${code}\n${err}\n${out}`); reject(new Error(`Adapter exited ${code}; inspect the protected host log`)); }
-      else resolve(includeStderr ? out+err : out);
+      if (code !== 0) { logFailure(`${exe} exit ${code}\n${Buffer.concat(err).toString()}\n${Buffer.concat(out).toString()}`); reject(new Error(`Adapter exited ${code}; inspect the protected host log`)); }
+      else resolve({ out: Buffer.concat(out), err: Buffer.concat(err) });
     });
   });
 }
