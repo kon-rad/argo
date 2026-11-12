@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import LiveAgents from '../src/routes/usage/LiveAgents.js';
+import { browserTimezone } from '../src/lib/time.js';
 
 const agent = (o: Record<string, unknown>) => ({ id: 'proc:1', machine: 'srv', harness: 'claude-code', name: 'atlas', model: 'opus', task: { cardId: 't_abc123', label: 'Write the doc', reason: 'task' },
   source: 'process', turns: 7, tokens: { input: 4000, output: 1000 }, startedAt: '2026-10-27T11:58:00Z', lastActivityAt: null, elapsedSec: 120, log: null, pid: 1, runId: 'r', stoppable: true, ...o });
@@ -15,6 +16,38 @@ const LIVE = { at: '2026-10-27T12:00:00Z', serverMachine: 'srv', total: 2, machi
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Live agents page', () => {
+  it('updates the same Updated timestamp when metadata changes and clears to the browser zone', async () => {
+    const instant = '2026-01-02T00:15:30Z';
+    let timezone: string | null = 'America/Los_Angeles';
+    const calls: string[] = [];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const clock = (tz: string) => new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).format(new Date(instant));
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const pathname = new URL(String(input), 'http://x').pathname;
+      calls.push(pathname);
+      return Response.json(pathname === '/api/meta' ? { timezone } : { ...LIVE, at: instant });
+    }));
+    render(<QueryClientProvider client={client}><MemoryRouter><LiveAgents /></MemoryRouter></QueryClientProvider>);
+    const updated = await screen.findByText(/^Updated /);
+    expect(updated.textContent).toContain(`Updated ${clock(timezone)}`);
+
+    let before = calls.length;
+    timezone = 'Asia/Tokyo';
+    await client.invalidateQueries({ queryKey: ['meta'] });
+    await waitFor(() => expect(updated.textContent).toContain(`Updated ${clock(timezone!)}`));
+    expect(calls.slice(before)).toEqual(['/api/meta']);
+    expect(screen.getByText(/^Updated /)).toBe(updated);
+
+    before = calls.length;
+    timezone = null;
+    await client.invalidateQueries({ queryKey: ['meta'] });
+    await waitFor(() => expect(updated.textContent).toContain(`Updated ${clock(browserTimezone())}`));
+    expect(calls.slice(before)).toEqual(['/api/meta']);
+    client.clear();
+  });
+
   it('shows a group per machine, links the card and the logs, and only offers stop where it can work', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const body = String(input).includes('/usage/live/stop') ? { ok: true, pid: 1, signal: 'SIGTERM' } : LIVE;
