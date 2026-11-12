@@ -9,7 +9,7 @@ import { decryptToken, encryptToken } from '../../social/crypto.js';
 
 export type TokenPlatform = 'instagram';
 
-export type TokenKind = 'instagram-login' | 'facebook-user';
+export type TokenKind = 'instagram-login' | 'facebook-user' | 'facebook-system-user';
 
 export interface StoredToken { tokenKind: TokenKind; assetId: string | null; token: string; expiresAt: Date | null; refreshedAt: Date; lastError: string | null }
 

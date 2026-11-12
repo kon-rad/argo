@@ -1,6 +1,6 @@
 -- Up Migration
 ALTER TABLE social_metric_tokens
-  ADD COLUMN token_kind text NOT NULL DEFAULT 'instagram-login' CHECK (token_kind IN ('instagram-login', 'facebook-user')),
+  ADD COLUMN token_kind text NOT NULL DEFAULT 'instagram-login' CHECK (token_kind IN ('instagram-login', 'facebook-user', 'facebook-system-user')),
   ADD COLUMN asset_id text;
 ALTER TABLE social_metric_tokens ADD CONSTRAINT social_metric_token_asset CHECK (token_kind = 'instagram-login' OR asset_id IS NOT NULL);
 

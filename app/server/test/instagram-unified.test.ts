@@ -104,6 +104,30 @@ it('uses exact configured redirect, one-time random state, encrypted independent
   expect(get.mock.calls.filter(([url]) => url.includes('/101')).every(([, headers]) => headers?.Authorization === `Bearer ${token}`)).toBe(true);
   expect(get.mock.calls.some(([url]) => url.includes('graph.instagram.com'))).toBe(false);
 });
+it('stores a business-integration system-user credential for its granted asset only and collects with it', async () => {
+  const a = app(), session = await login(a);
+  debug = { is_valid: true, app_id: 'fake-app', type: 'SYSTEM_USER', user_id: '501', expires_at: 0, scopes: ['instagram_basic', 'instagram_manage_insights'],
+    granular_scopes: [{ scope: 'instagram_basic', target_ids: ['101'] }, { scope: 'instagram_manage_insights', target_ids: ['101'] }] };
+  // Cross-account: the owner granted only asset 101, so an attempt for example.two (102) stores nothing.
+  const other = await start(a, session, 'example.two');
+  expect((await request(a).get(callback).set('Cookie', other.cookie).query({ state: other.state, code: 'fake-secret-code' })).status).toBe(400);
+  expect((await query('SELECT * FROM social_metric_tokens')).rows).toHaveLength(0);
+  const s = await start(a, session, 'example.one');
+  const r = await request(a).get(callback).set('Cookie', s.cookie).query({ state: s.state, code: 'fake-secret-code' });
+  expect(r.status).toBe(303); expect(JSON.stringify(r.headers) + r.text).not.toContain(token);
+  // Asset proof comes from granular_scopes; no Page listing is needed.
+  expect(get.mock.calls.some(([url]) => url.includes('/me/accounts'))).toBe(false);
+  const stored = await loadToken('instagram', 'example.one', key);
+  expect(stored).toMatchObject({ tokenKind: 'facebook-system-user', assetId: '101', expiresAt: null, token });
+  expect(JSON.stringify((await query('SELECT * FROM social_metric_tokens')).rows)).not.toContain(token);
+  const settingsNow = parseSettings({ socialMetrics: { instagram: configs } }).socialMetrics;
+  const account = socialAccounts(settingsNow).find(x => x.platform === 'instagram' && x.account === 'example.one')!;
+  if (account.platform !== 'instagram') throw new Error('fixture');
+  get.mockClear();
+  const collected = await collectInstagram(account, settingsNow, { get, now: new Date(clock + 400 * 86_400_000), encKey: key, env: {}, vaultRoot: root });
+  expect(collected.error).toBeUndefined(); expect(collected.samples[0]?.value).toBe(42);
+  expect(get.mock.calls.every(([url]) => url.startsWith('https://graph.facebook.com/') && !url.includes('refresh'))).toBe(true);
+});
 it.each(['absent', 'mismatch', 'expired', 'other-session', 'different-strict-session', 'revoked-session', 'provider-error', 'missing-code', 'redirect-changed', 'no-cookie'])('refuses %s before exchange', async kind => {
   const a = app(), session = await login(a), s = await start(a, session);
   let cookie = s.cookie, state: string | undefined = s.state;

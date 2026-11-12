@@ -42,8 +42,11 @@ async function resolveToken(a: InstagramAccount, deps: SocialDeps, r: SocialResu
   if (unified) {
     if (!deps.encKey) throw new Error('SOCIAL_TOKEN_ENC_KEY is required for Unified Login');
     const stored = await loadToken('instagram', username, deps.encKey);
-    if (!stored || stored.tokenKind !== 'facebook-user' || !a.cfg.assetId || stored.assetId !== a.cfg.assetId) throw new Error('Unified credential missing or asset changed; reconnect from the authenticated app');
-    if (!stored.expiresAt || stored.expiresAt.getTime() <= deps.now.getTime()) throw new Error('Unified credential expired; reconnect from the authenticated app');
+    const kinds = ['facebook-user', 'facebook-system-user'];
+    if (!stored || !kinds.includes(stored.tokenKind) || !a.cfg.assetId || stored.assetId !== a.cfg.assetId) throw new Error('Unified credential missing or asset changed; reconnect from the authenticated app');
+    // USER tokens always expire; a system-user token may never expire (NULL). Neither is ever refreshed here.
+    if (stored.tokenKind === 'facebook-user' && !stored.expiresAt) throw new Error('Unified credential has no expiry; reconnect from the authenticated app');
+    if (stored.expiresAt && stored.expiresAt.getTime() <= deps.now.getTime()) throw new Error('Unified credential expired; reconnect from the authenticated app');
     return stored.token;
   }
   const envName = a.cfg.tokenEnv;

@@ -6,7 +6,7 @@ import { query } from '../../db.js';
 import { settings } from '../../settings.js';
 import type { HttpGet } from '../collect.js';
 import { fetchGet, getJson } from './http.js';
-import { validateFacebookUserToken } from './facebook-token.js';
+import { validateFacebookToken } from './facebook-token.js';
 import { saveToken } from './tokens.js';
 
 export const IG_CALLBACK = '/socials/ig/auth/callback';
@@ -18,7 +18,7 @@ export interface InstagramUnifiedOptions {
   get?: HttpGet; now?: () => number; secureCookie?: boolean;
 }
 
-/** Conservative Facebook USER-token flow. SYSTEM_USER and undocumented token types fail closed. */
+/** Facebook USER and business-integration SYSTEM_USER tokens, each with its own asset proof. Other token types fail closed. */
 export function instagramUnifiedRoutes(o: InstagramUnifiedOptions, vaultRoot: string, sessionGate?: RequestHandler) {
   const start = Router(), callback = Router();
   const get = o.get ?? fetchGet, now = o.now ?? Date.now;
@@ -89,10 +89,11 @@ export function instagramUnifiedRoutes(o: InstagramUnifiedOptions, vaultRoot: st
       const appToken = `${o.appId}|${o.appSecret}`;
       const debug = await getJson<unknown>(get,
         `${base}/debug_token?input_token=${encodeURIComponent(token)}`, 'Facebook token validation', [token, appToken], { Authorization: `Bearer ${appToken}` });
-      const { expiresAt } = validateFacebookUserToken(debug, o.appId!, now());
-      // /me/accounts proves management of the Page-linked IG asset, not just knowledge of its ID.
-      let url: string | undefined = `${base}/me/accounts?fields=id,instagram_business_account&limit=100`;
-      let owned = false;
+      const credential = validateFacebookToken(debug, o.appId!, now(), attempt.asset_id);
+      // A system-user token already proved the selected asset through granular_scopes.
+      // For a USER token, /me/accounts proves management of the Page-linked IG asset, not just knowledge of its ID.
+      let url: string | undefined = credential.kind === 'facebook-user' ? `${base}/me/accounts?fields=id,instagram_business_account&limit=100` : undefined;
+      let owned = credential.kind === 'facebook-system-user';
       const seen = new Set<string>();
       while (url && !owned) {
         if (seen.has(url) || seen.size >= 100) throw new Error('invalid paging');
@@ -107,7 +108,7 @@ export function instagramUnifiedRoutes(o: InstagramUnifiedOptions, vaultRoot: st
       if (!owned) throw new Error('asset not selected or not managed');
       const profile = await getJson<{ id?: string; username?: string }>(get, `${base}/${attempt.asset_id}?fields=id,username`, 'Instagram asset', [token], { Authorization: `Bearer ${token}` });
       if (profile.id !== attempt.asset_id || profile.username?.toLowerCase() !== attempt.account) throw new Error('account mapping mismatch');
-      await saveToken('instagram', attempt.account, token, o.encKey, { tokenKind: 'facebook-user', assetId: attempt.asset_id, expiresAt, refreshedAt: new Date(now()) });
+      await saveToken('instagram', attempt.account, token, o.encKey, { tokenKind: credential.kind, assetId: attempt.asset_id, expiresAt: credential.expiresAt, refreshedAt: new Date(now()) });
       res.redirect(303, '/socials/ig/auth/complete');
     } catch {
       res.status(400).type('text').send('Instagram connection failed. Restart connect from the authenticated app; verify configuration, permissions, token type and selected asset.');
