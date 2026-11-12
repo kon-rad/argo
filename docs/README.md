@@ -30,10 +30,13 @@ New here? Start with the [onboarding path](onboarding/README.md): short pages fr
 | [configuration.md](configuration.md) | You need a setting: every env variable, every instance configuration (`secondbrain.json`) key, and how it differs from engine feature manifests |
 | [sync.md](sync.md) | You work in the vault from more than one computer, or a server runs agents in it, and want every checkout committed, pulled and pushed on a timer without losing a note or leaking a key |
 | [modules.md](modules.md) | You want an optional feature (tracker, org board, kanban board, map, TV, usage, voice, livestream, ring, agents, chat, uploads, garden) |
+| [Native Codex conversation setup](modules.md#native-codex-conversation-usage) | You want to import Desktop, CLI and exec history from each Mac, verify discovery, and distinguish conversations from account quotas |
+| [zen-session-metadata.md](zen-session-metadata.md) | You need recorded invocation type and context-capacity provenance for zen-agent sessions |
 | [garden.md](garden.md) | You want the vault to organise itself every night: shelves with a small header, a catalog, archiving of stale projects, a report you can act on |
 | [kanban-board.md](kanban-board.md) | You want to use the board: the nine statuses, the three doors, every `cli-board` and `cli-org task` command, per-machine tokens, and the `hermes kanban` trap |
 | [board-design.md](board-design.md) | You want the board's architecture before changing its code: the record and the lanes, the tables, the write path, the rollout |
 | [rag.md](rag.md) | You want to know how notes become searchable passages and how the chat answers from them: chunking, embedding, hybrid retrieval, reranking, providers |
+| [timezone.md](timezone.md) | You want Usage, session, Running/Live, Org and TV timestamps in a configured zone, with browser fallback and a CLI for travel |
 | [summaries.md](summaries.md) | You want every agent session summarized by a local model (with paid fallbacks), the facts it learned held for your approval, a digest for a stand-up, and quality checks you can run |
 | [agent-harness.md](agent-harness.md) | You run Claude Code or Hermes in the vault and want to know what the guard and the dev-log gate do |
 | [agent-company.md](agent-company.md) | You want a company of named agents on a message board that wake for cards, DMs and mentions and report to you |
