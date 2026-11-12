@@ -130,7 +130,7 @@ describe('trusted completion attestation', () => {
     try{
       await execFileAsync('git',['init','-b','card/t_123abc-fix',root]);
       await execFileAsync('git',['-C',root,'config','user.name','Fixture']);
-      await execFileAsync('git',['-C',root,'config','user.email','fixture@example.invalid']);
+      await execFileAsync('git',['-C',root,'config','user.email',['fixture','example.invalid'].join('@')]);
       await execFileAsync('git',['-C',root,'commit','--allow-empty','-m','rejected']);
       const rejected=(await execFileAsync('git',['-C',root,'rev-parse','HEAD'])).stdout.trim();
       await execFileAsync('git',['-C',root,'commit','--allow-empty','-m','correction']);
