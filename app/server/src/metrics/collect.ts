@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { config } from '../config.js';
 import { query } from '../db.js';
 import { metricDef, metrics, type MetricDef } from './registry.js';
 
@@ -66,7 +67,7 @@ const ok = (r: { status: number; body: string }, what: string) => {
 };
 
 export const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-const BASE_RPC = process.env.BASE_RPC_URL ?? 'https://mainnet.base.org';
+const BASE_RPC = config.env.BASE_RPC_URL;
 
 export type RpcCall = (method: string, params: unknown[]) => Promise<string>;
 /** Like RpcCall, but the result may be an object (a transaction receipt). */

@@ -71,9 +71,9 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'tick') {
     // The credit breaker rides the tick (ORG_BREAKER=on): it only ever pauses, and a failure never blocks the tick.
-    if (process.env.ORG_BREAKER === 'on') {
+    if (config.env.ORG_BREAKER === 'on') {
       try {
-        for (const a of await runBreaker(process.env.ORG_BREAKER_AS || config.orgOwner, breakerLimitsFromEnv(), { dryRun: false })) {
+        for (const a of await runBreaker(config.env.ORG_BREAKER_AS || config.orgOwner, breakerLimitsFromEnv(), { dryRun: false })) {
           if (a.paused) console.error(`breaker: ${a.runtime} lane paused (${a.paused} bots): ${a.reason}`);
         }
       } catch (err) {
