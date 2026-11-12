@@ -215,6 +215,8 @@ Start with `secondbrain.json` containing `{}` and add only the sections you need
 
 The app loads `<vault>/secondbrain.json` once per server process. `SECONDBRAIN_SETTINGS` selects another file; a relative value is resolved against the vault root. Restart the app after edits. Commit non-secret instance settings to your private vault and sync them to other machines; keep credentials out of this file. For server provisioning, [plan and apply](#generated-config-plan-apply-upgrade) use the `server` block together with the engine's feature manifests. They do not create subscription logins or provider credentials.
 
+The `timezone` setting is an exception: the metadata endpoint rereads it without a restart; reload the page or refresh metadata after a change.
+
 The reference below lists shipped settings. It is not a generic registry for arbitrary subscription accounts or harnesses; a new integration still needs engine support.
 
 | Key | Module | Holds |
