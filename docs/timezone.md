@@ -1,21 +1,23 @@
 # Time zone
 
-Status: **works**. One IANA time zone for the whole app, kept in your vault's `secondbrain.json`.
+Status: **shared helpers, Usage consumers and session inspection work**. The configured IANA location or UTC is kept in your vault's `secondbrain.json`.
 
 ## What it does
 
-The shared time helpers, Usage charts, credit reading dates and observation times, subscription reset and
-observation times, and summaries use the configured zone. Usage charts bucket hours and days
-by it, so a day bar and the sessions it opens agree. Session inspection, live/running views, TV and Org consumers
-are delivered in subsequent integration slices.
+The CLI validates and saves the zone while preserving other settings and the file's owner, group and permissions.
+The metadata API returns the current validated value on each request, including changes made without a server restart.
+Shared frontend time helpers, Usage charts, credit/subscription dates and observation times, subscription resets
+and summaries consume that value. The session list and session detail use the same effective zone for Started
+timestamps, with a separate duration and an explicit unavailable state for unknown context capacity.
+Live/running views, TV and Org consumers follow in later integration slices.
 
-| Setting | Zone used |
+| Setting | Metadata API value |
 |---|---|
-| `"timezone": "<Area/City>"` in `secondbrain.json` | That zone, on every device |
-| Not set (the default), or not a valid zone | Each browser's own zone |
+| `"timezone": "<Area/City>"` or `"UTC"` in `secondbrain.json` | That configured zone |
+| Not set (the default), or not a valid zone | `null`, for browser-zone fallback in frontend consumers |
 
 The server's own zone is never used: it says where the machine is, not where you are. Travel is never inferred.
-The Usage page shows the zone in use and where it came from (`vault setting` or `this browser`).
+The Usage ledger shows the chosen zone and its source (`vault setting` or `this browser`).
 
 ## Change it
 
@@ -26,9 +28,10 @@ secondbrain timezone clear                   # back to each browser's zone
 secondbrain timezone show --json
 ```
 
-Only IANA names are accepted (`America/Los_Angeles`, `Europe/Berlin`, `UTC`), never offsets or abbreviations, so
-daylight saving changes are handled for you. A refused value changes nothing and exits 2. The app reads the setting
-on each page load, so no restart is needed; reload the page.
+Geographic IANA names (`America/Los_Angeles`, `America/New_York`, `Europe/Berlin`) and `UTC` are accepted.
+Abbreviations and fixed-offset aliases (`EST`, `GMT`, `Etc/GMT+5`) are rejected; a geographic zone retains its
+daylight saving rules. A refused value changes nothing and exits 2. The metadata API reads the setting on each request,
+so no server restart is needed. Reload a page after CLI changes to refresh its cached metadata.
 
 The command writes `secondbrain.json` on the machine it runs on. If your vault syncs between machines, commit and
 sync the change as you would any other setting so the server sees it.
@@ -45,5 +48,6 @@ agent to do this when you mention travelling (your own zone belongs in your vaul
 
 ## API
 
-`GET /api/meta` returns `timezone`: the configured zone, or `null` when none is set. The web app's `useAppTimezone`
-hook (`app/web/src/lib/useTimezone.ts`) reads it and sets the default for the helpers in `app/web/src/lib/time.ts`.
+`GET /api/meta` returns `timezone`: the validated configured zone, or `null` when it is unset or invalid.
+The frontend consumes this field and falls back to the browser's zone for `null`. Credit and subscription readings,
+Usage bucketing, and shared helper timestamps use the same chosen zone.

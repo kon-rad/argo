@@ -42,4 +42,3 @@ describe('time helpers in the shared zone', () => {
     expect(span('2026-11-10T07:13:00Z', null)).toBeNull();
   });
 });
-

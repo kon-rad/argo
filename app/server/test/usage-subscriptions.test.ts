@@ -5,7 +5,7 @@ import request from 'supertest';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { query } from '../src/db.js';
-import { parseSettings, resetSettings } from '../src/settings.js';
+import { parseSettings, resetSettings, settingsReport } from '../src/settings.js';
 import { claudeUsageFromSnapshots, codexSubscription, parseCodexRateLimits, readCodexRpc, resetCodexQuotaCache, resolveCodexCommand } from '../src/usage/subscriptions.js';
 import type { SubscriptionUsage } from '../src/usage/subscriptions.js';
 import { ALL_MODULES, truncateAll } from './helpers.js';
@@ -165,10 +165,12 @@ describe('Codex quota reader and cache', () => {
 });
 
 describe('usage manifest routes', () => {
-  it('defaults to no providers, and rejects unknown config values', async () => {
+  it('defaults to no providers, and defaults only an invalid usage section', async () => {
     expect(parseSettings({}).usage).toEqual({ subscriptions: [], credits: [],
       sections: ['running', 'ledger', 'sessions', 'summaries'] });
-    expect(() => parseSettings({ usage: { subscriptions: ['other'] } })).toThrow();
+    const invalid = settingsReport({ usage: { subscriptions: ['other'] } });
+    expect(invalid.settings.usage.subscriptions).toEqual([]);
+    expect(invalid.errors[0]).toMatchObject({ section: 'usage', path: ['usage', 'subscriptions', 0] });
     const file = join(dir, 'empty.json');
     writeFileSync(file, '{}');
     process.env.SECONDBRAIN_SETTINGS = file;

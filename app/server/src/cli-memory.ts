@@ -88,8 +88,8 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
   // The capture loop also stays on the app's own connection: it writes as the table owner, and memory_facts' write
   // policy would refuse an agent identity.
   const vaultHits = sub === 'recall' && pos[0] ? await recallVault(pos[0], num(opts.limit, 'limit') ?? 8, process.env, settings().memory.exclude) : null;
-  if (sub !== 'capture' && process.env.ORG_AGENT?.trim() && process.env.SB_ORG_DB_URL) setDatabaseUrl(agentDatabaseUrl(process.env.SB_ORG_DB_URL, identityName()));
-  const me = async (): Promise<{ name: string }> => (process.env.ORG_AGENT?.trim() ? await getAgent(identityName()) : { name: config.orgOwner });
+  if (sub !== 'capture' && config.env.ORG_AGENT?.trim() && config.env.SB_ORG_DB_URL) setDatabaseUrl(agentDatabaseUrl(config.env.SB_ORG_DB_URL, identityName()));
+  const me = async (): Promise<{ name: string }> => (config.env.ORG_AGENT?.trim() ? await getAgent(identityName()) : { name: config.orgOwner });
 
   switch (sub) {
     case 'recall': {
@@ -112,7 +112,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       if (!subject || !claim || !source) throw new OrgError('remember "<subject>" "<claim>" --source <path|#msg|t_card|url> [--project p] [--agent a] [--inferred] [--supersedes id]');
       const f = await remember(await me(), {
         subject, claim, source, project: str(opts.project), agent: str(opts.agent), inferred: opts.inferred === true,
-        supersedes: num(opts.supersedes, 'supersedes'), via: str(opts.via) ?? process.env.ORG_VIA,
+        supersedes: num(opts.supersedes, 'supersedes'), via: str(opts.via) ?? config.env.ORG_VIA,
       });
       out(json ? JSON.stringify(f) : `fact #${f.id} saved${f.agent ? ` (${f.agent}'s memory)` : ''}${f.supersedes ? ` (closes #${f.supersedes})` : ''}`);
       return 0;
