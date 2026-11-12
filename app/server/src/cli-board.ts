@@ -194,13 +194,13 @@ export class DbBoard implements BoardClient {
   show(id: string) { return getCard(id, this.viewer); }
   async create(c: Record<string, unknown>) {
     const b = c as { title: string; assignee?: string | null; body?: string; contract?: Contract; project?: string; feature?: string; board?: string; priority?: number; work?: string; needs?: string; repo?: string; ship_now?: boolean; kind?: string; deps?: string[] };
-    const r = await createTask(await getAgent(this.me), { assignee: b.assignee ?? null, title: b.title, body: b.body, contract: b.contract, project: b.project, feature: b.feature, board: b.board, priority: b.priority, type: b.work, needs: b.needs, repo: b.repo, shipNow: b.ship_now, kind: b.kind, deps: b.deps, run: process.env.ORG_RUN });
+    const r = await createTask(await getAgent(this.me), { assignee: b.assignee ?? null, title: b.title, body: b.body, contract: b.contract, project: b.project, feature: b.feature, board: b.board, priority: b.priority, type: b.work, needs: b.needs, repo: b.repo, shipNow: b.ship_now, kind: b.kind, deps: b.deps, run: config.env.ORG_RUN });
     return { card: r.card, message: r.message };
   }
   async comment(id: string, body: string) { await commentCard(this.me, id, body); }
   async assign(id: string, assignee: string | null, o: { project?: string; feature?: string; work?: string; needs?: string; repo?: string; shipNow?: boolean }) {
     if (assignee === null) return assignCard(this.me, id, null);
-    return (await assignTask(await getAgent(this.me), { taskId: id, assignee, project: o.project, feature: o.feature, type: o.work, needs: o.needs, repo: o.repo, shipNow: o.shipNow, run: process.env.ORG_RUN })).card;
+    return (await assignTask(await getAgent(this.me), { taskId: id, assignee, project: o.project, feature: o.feature, type: o.work, needs: o.needs, repo: o.repo, shipNow: o.shipNow, run: config.env.ORG_RUN })).card;
   }
   async redo(id: string, changes: string, runId?: string) {
     const r = await redoTask(await getAgent(this.me), id, changes, runId);
@@ -213,7 +213,7 @@ export class DbBoard implements BoardClient {
   finish(id: string, o: FinishOpts) { return finishCard(this.me, id, o); }
   flags(id: string, o: { shipNow?: boolean; needs?: string }) { return flagCard(this.me, id, o); }
   async watch(board: string | undefined, onEvent: (e: unknown) => void): Promise<() => void> {
-    const bus = new BoardBus(process.env.SB_ORG_DB_URL && this.viewer ? agentDatabaseUrl(process.env.SB_ORG_DB_URL, this.viewer) : config.databaseUrl);
+    const bus = new BoardBus(config.env.SB_ORG_DB_URL && this.viewer ? agentDatabaseUrl(config.env.SB_ORG_DB_URL, this.viewer) : config.databaseUrl);
     const off = bus.subscribe((n) => { if (!board || n.board === board) onEvent(n); });
     return () => { off(); void bus.close(); };
   }

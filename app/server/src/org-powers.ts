@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { config } from './config.js';
 import { query, withTransaction } from './db.js';
 import { getAgent, OrgError, type Agent, type Message } from './org.js';
 
@@ -78,7 +79,7 @@ export async function shipRequest(caller: Agent, opts: ShipRequestOpts): Promise
       const { rows: m } = await tx.query<Message>(
         `INSERT INTO org_messages (channel_slug, author, kind, body, mentions, task_id, project_slug, feature_slug, run_id)
          VALUES ($1,$2,'question-for-owner',$3,'{}',$4,$5,$6,$7) RETURNING ${MESSAGE_COLS}`,
-        [caller.team_slug, caller.name, `Ship #${approval.id}? ${what}. ${summary}`, opts.card, link[0]!.project_slug, link[0]!.feature_slug, process.env.ORG_RUN ?? null],
+        [caller.team_slug, caller.name, `Ship #${approval.id}? ${what}. ${summary}`, opts.card, link[0]!.project_slug, link[0]!.feature_slug, config.env.ORG_RUN ?? null],
       );
       message = m[0]!;
       await tx.query(`SELECT org_ship_set_message($1, $2)`, [approval.id, message.id]);

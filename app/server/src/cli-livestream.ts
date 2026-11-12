@@ -1,4 +1,5 @@
 import { exitFlushed } from './cli-exit.js';
+import { config } from './config.js';
 import { pool } from './db.js';
 import { addManualSession, buildSummary, pollers, recordObservation, writeSummary, type Platform } from './livestream.js';
 import { fetchXBroadcast, hermesTelegram, parseBroadcastId, pollX, registerXBroadcast, remindXLink } from './livestream-x.js';
@@ -12,7 +13,7 @@ import { fetchXBroadcast, hermesTelegram, parseBroadcastId, pollX, registerXBroa
 // `cli-livestream.js add <start> <end> [note] [platform]`
 //                                a stream the collector never saw, e.g.
 //                                add 2026-10-12T10:00:00+08:00 2026-10-12T13:30:00+08:00 "day 1"
-const outDir = process.env.LIVESTREAM_PUBLIC_DIR ?? '/var/lib/secondbrain-public';
+const outDir = config.env.LIVESTREAM_PUBLIC_DIR;
 const [cmd, ...args] = process.argv.slice(2);
 
 function date(s: string | undefined): Date {
