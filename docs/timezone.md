@@ -1,13 +1,14 @@
 # Time zone
 
-Status: **settings CLI and metadata API work**. The configured IANA location or UTC is kept in your vault's `secondbrain.json`.
+Status: **shared helpers and Usage consumers work**. The configured IANA location or UTC is kept in your vault's `secondbrain.json`.
 
 ## What it does
 
 The CLI validates and saves the zone while preserving other settings and the file's owner, group and permissions.
 The metadata API returns the current validated value on each request, including changes made without a server restart.
-The dependent frontend slice applies that value to shared time helpers, Usage charts, credit/subscription readings
-and summaries. Session inspection, live/running views, TV and Org consumers follow in later integration slices.
+Shared frontend time helpers, Usage charts, credit/subscription dates and observation times, subscription resets
+and summaries consume that value. Session inspection, live/running views, TV and Org consumers follow in later
+integration slices.
 
 | Setting | Metadata API value |
 |---|---|
@@ -15,7 +16,7 @@ and summaries. Session inspection, live/running views, TV and Org consumers foll
 | Not set (the default), or not a valid zone | `null`, for browser-zone fallback in frontend consumers |
 
 The server's own zone is never used: it says where the machine is, not where you are. Travel is never inferred.
-The frontend integration shows the chosen zone and its source (`vault setting` or `this browser`).
+The Usage ledger shows the chosen zone and its source (`vault setting` or `this browser`).
 
 ## Change it
 
@@ -29,7 +30,7 @@ secondbrain timezone show --json
 Geographic IANA names (`America/Los_Angeles`, `America/New_York`, `Europe/Berlin`) and `UTC` are accepted.
 Abbreviations and fixed-offset aliases (`EST`, `GMT`, `Etc/GMT+5`) are rejected; a geographic zone retains its
 daylight saving rules. A refused value changes nothing and exits 2. The metadata API reads the setting on each request,
-so no server restart is needed.
+so no server restart is needed. Reload a page after CLI changes to refresh its cached metadata.
 
 The command writes `secondbrain.json` on the machine it runs on. If your vault syncs between machines, commit and
 sync the change as you would any other setting so the server sees it.
@@ -47,4 +48,5 @@ agent to do this when you mention travelling (your own zone belongs in your vaul
 ## API
 
 `GET /api/meta` returns `timezone`: the validated configured zone, or `null` when it is unset or invalid.
-The dependent frontend integration consumes this field and falls back to the browser's zone for `null`.
+The frontend consumes this field and falls back to the browser's zone for `null`. Credit and subscription readings,
+Usage bucketing, and shared helper timestamps use the same chosen zone.
