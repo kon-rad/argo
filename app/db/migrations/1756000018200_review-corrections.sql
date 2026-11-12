@@ -185,11 +185,15 @@ DECLARE q review_corrections; c cards; bound_job bigint; latest_job bigint; BEGI
  UPDATE review_corrections target SET state='retry',lease_token=NULL,lease_until=NULL,transient_attempts=target.transient_attempts+1,available_at=now()+make_interval(secs=>p_delay),error=p_reason,updated_at=now() WHERE target.id=p_id; END $$;
 REVOKE ALL ON FUNCTION review_correction_retry(bigint,text,text,integer) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_retry(bigint,text,text,integer) TO sb_review_worker;
 
-CREATE FUNCTION review_correction_cancel(p_id bigint,p_reason text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+CREATE FUNCTION review_correction_cancel(p_id bigint,p_token text,p_fence bigint,p_run text,p_reason text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 DECLARE q review_corrections; c cards; r card_runs; bound_job bigint; latest_job bigint; current_attempt boolean;
 BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE;
  IF q.state IN ('review','cancelled','blocked') THEN RETURN; END IF;
  SELECT * INTO STRICT c FROM cards WHERE id=q.card FOR UPDATE;
+ IF q.lease_token IS DISTINCT FROM p_token OR q.fence IS DISTINCT FROM p_fence OR
+    (q.run_id IS NULL AND p_run IS NOT NULL) OR (q.run_id IS NOT NULL AND q.run_id IS DISTINCT FROM p_run) THEN
+   RAISE EXCEPTION 'review: stale correction callback';
+ END IF;
  SELECT * INTO r FROM card_runs WHERE card_id=q.card AND finished_at IS NULL FOR UPDATE;
  SELECT f.job INTO STRICT bound_job FROM review_feedback f WHERE f.id=q.feedback_id;
  SELECT max(j.id) INTO latest_job FROM review_jobs j WHERE j.card=q.card;
@@ -198,13 +202,17 @@ BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections
  UPDATE review_corrections SET state='cancelled',error=p_reason,updated_at=now() WHERE id=p_id;
  IF current_attempt THEN UPDATE cards SET status='blocked',block_kind='review-changes',block_reason=p_reason WHERE id=q.card; END IF;
 END $$;
-REVOKE ALL ON FUNCTION review_correction_cancel(bigint,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_cancel(bigint,text) TO sb_review_worker;
+REVOKE ALL ON FUNCTION review_correction_cancel(bigint,text,bigint,text,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_cancel(bigint,text,bigint,text,text) TO sb_review_worker;
 
-CREATE FUNCTION review_correction_reconcile(p_id bigint,p_reason text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+CREATE FUNCTION review_correction_reconcile(p_id bigint,p_token text,p_fence bigint,p_run text,p_reason text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 DECLARE q review_corrections; c cards; r card_runs; bound_job bigint; latest_job bigint; current_attempt boolean;
 BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE;
  IF q.state IN ('review','cancelled','blocked') THEN RETURN; END IF;
  SELECT * INTO STRICT c FROM cards WHERE id=q.card FOR UPDATE;
+ IF q.lease_token IS DISTINCT FROM p_token OR q.fence IS DISTINCT FROM p_fence OR
+    (q.run_id IS NULL AND p_run IS NOT NULL) OR (q.run_id IS NOT NULL AND q.run_id IS DISTINCT FROM p_run) THEN
+   RAISE EXCEPTION 'review: stale correction callback';
+ END IF;
  SELECT * INTO r FROM card_runs WHERE card_id=q.card AND finished_at IS NULL FOR UPDATE;
  SELECT f.job INTO STRICT bound_job FROM review_feedback f WHERE f.id=q.feedback_id;
  SELECT max(j.id) INTO latest_job FROM review_jobs j WHERE j.card=q.card;
@@ -212,7 +220,7 @@ BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections
  UPDATE review_corrections SET state='blocked',error=p_reason,updated_at=now() WHERE id=p_id;
  IF current_attempt THEN UPDATE cards SET status='blocked',block_kind='tool-error',block_reason=p_reason WHERE id=q.card; END IF;
 END $$;
-REVOKE ALL ON FUNCTION review_correction_reconcile(bigint,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_reconcile(bigint,text) TO sb_review_worker;
+REVOKE ALL ON FUNCTION review_correction_reconcile(bigint,text,bigint,text,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_reconcile(bigint,text,bigint,text,text) TO sb_review_worker;
 
 CREATE FUNCTION review_correction_finish(p_id bigint,p_run text,p_head text,p_completion_head text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 DECLARE q review_corrections; c cards; r card_runs; bound_job bigint; latest_job bigint;

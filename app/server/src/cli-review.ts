@@ -35,38 +35,41 @@ async function main(): Promise<void> {
     if(action==='register'){await registerLaunch(client,await stdin() as never);console.log(JSON.stringify({registered:true}));return;}
     if(action==='claim'){const workerHost=process.argv[4];if(!workerHost)throw new Error('claim requires a registered host name');console.log(JSON.stringify(await claimCorrection(client,workerHost)));return;}
     if(action==='prepare'){
-      const body=await stdin() as {id:number;leaseToken:string;runId:string;head:string};
+      const body=await stdin() as {id:number;leaseToken:string;fence:number;runId:string;head:string};
+      const callback={id:body.id,leaseToken:body.leaseToken,fence:body.fence,runId:null};
       const row=(await client.query('SELECT q.*,l.repo FROM review_corrections q JOIN review_launches l ON l.card=q.launch_card WHERE q.id=$1',[body.id])).rows[0];if(!row)throw new Error('Unknown correction');
-      const repo=host.repositories[row.repo];if(!repo)return handleCorrectionLookupFailure(client,'prepare',body.id,body.leaseToken,new SafeProcessError('identity'));
+      const repo=host.repositories[row.repo];if(!repo)return handleCorrectionLookupFailure(client,'prepare',callback,new SafeProcessError('identity'));
       try{await new GitHub(host,repo).correction(row.card,row.pr,row.head,row.base);}
-      catch(error){return handleCorrectionLookupFailure(client,'prepare',body.id,body.leaseToken,error);}
+      catch(error){return handleCorrectionLookupFailure(client,'prepare',callback,error);}
       console.log(JSON.stringify(await prepareCorrection(client,body.id,body.leaseToken,body.runId,body.head)));return;
     }
     if(action==='ack'){
-      const body=await stdin() as {id:number;leaseToken:string;runId:string;processId:string;head:string};
+      const body=await stdin() as {id:number;leaseToken:string;fence:number;runId:string;processId:string;head:string};
+      const callback={id:body.id,leaseToken:body.leaseToken,fence:body.fence,runId:body.runId};
       const row=(await client.query('SELECT q.*,l.repo FROM review_corrections q JOIN review_launches l ON l.card=q.launch_card WHERE q.id=$1',[body.id])).rows[0];if(!row)throw new Error('Unknown correction');
-      const repo=host.repositories[row.repo];if(!repo)return handleCorrectionLookupFailure(client,'ack',body.id,body.leaseToken,new SafeProcessError('identity'));
+      const repo=host.repositories[row.repo];if(!repo)return handleCorrectionLookupFailure(client,'ack',callback,new SafeProcessError('identity'));
       const github=new GitHub(host,repo);
       let acknowledged;
       const leaseDeadline=new Date(row.lease_until).getTime();
-      if(!Number.isFinite(leaseDeadline))return handleCorrectionLookupFailure(client,'ack',body.id,body.leaseToken,new SafeProcessError('identity'));
+      if(!Number.isFinite(leaseDeadline))return handleCorrectionLookupFailure(client,'ack',callback,new SafeProcessError('identity'));
       const deadlineAt=Math.min(leaseDeadline-1_000,Date.now()+20_000);
       try{acknowledged=await acknowledgeCorrectionAfterLookup(client,{id:body.id,token:body.leaseToken,runId:body.runId,processId:body.processId,head:body.head},timeout=>github.correction(row.card,row.pr,row.head,row.base,timeout),{deadlineAt});}
-      catch(error){return handleCorrectionLookupFailure(client,'ack',body.id,body.leaseToken,error);}
+      catch(error){return handleCorrectionLookupFailure(client,'ack',callback,error);}
       console.log(JSON.stringify(acknowledged));return;
     }
     if(action==='retry'){const body=await stdin() as {id:number;leaseToken:string;reason:string;delaySeconds?:number};await retryCorrection(client,body.id,body.leaseToken,body.reason,body.delaySeconds);console.log(JSON.stringify({retried:true}));return;}
-    if(action==='cancel'){const body=await stdin() as {id:number;reason:string};await cancelCorrection(client,body.id,body.reason);console.log(JSON.stringify({cancelled:true}));return;}
+    if(action==='cancel'){const body=await stdin() as {id:number;leaseToken:string;fence:number;runId:string|null;reason:string};await cancelCorrection(client,body,body.reason);console.log(JSON.stringify({cancelled:true}));return;}
     if(action==='finish'){
-      const body=await stdin() as {id:number;runId:string;head:string};
+      const body=await stdin() as {id:number;leaseToken:string;fence:number;runId:string;head:string};
+      const callback={id:body.id,leaseToken:body.leaseToken,fence:body.fence,runId:body.runId};
       const row=(await client.query('SELECT q.*,l.repo,l.branch,l.worktree,l.common_dir FROM review_corrections q JOIN review_launches l ON l.card=q.launch_card WHERE q.id=$1',[body.id])).rows[0];if(!row)throw new Error('Unknown correction');
-      const repo=host.repositories[row.repo];if(!repo)return handleCorrectionLookupFailure(client,'finish',body.id,'',new SafeProcessError('identity'));
+      const repo=host.repositories[row.repo];if(!repo)return handleCorrectionLookupFailure(client,'finish',callback,new SafeProcessError('identity'));
       let completionHead:string;
       try{
         completionHead=await attestCorrectionCompletion({git:host.git,worktree:row.worktree,commonDir:row.common_dir,branch:row.branch,rejectedHead:row.head,home:host.home});
         const github=new GitHub(host,repo);
         await finishCorrectionAfterAttestation(client,{id:body.id,runId:body.runId,rejectedHead:body.head,completionHead},()=>github.correctionCompletion(row.card,row.pr,completionHead,row.base,row.branch));
-      }catch(error){return handleCorrectionLookupFailure(client,'finish',body.id,'',error);}
+      }catch(error){return handleCorrectionLookupFailure(client,'finish',callback,error);}
       console.log(JSON.stringify({submitted:true,head:completionHead}));return;
     }
     if(action==='status'){console.log(JSON.stringify((await client.query('SELECT q.*,f.code,f.reason,f.required_fix,f.verification FROM review_corrections q JOIN review_feedback f ON f.id=q.feedback_id ORDER BY q.id DESC LIMIT 100')).rows));return;}

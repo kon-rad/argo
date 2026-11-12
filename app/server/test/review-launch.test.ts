@@ -30,6 +30,8 @@ describe('trusted correction launch identity', () => {
 });
 
 describe('correction PR lookup outcomes', () => {
+  const callback={id:9,leaseToken:'lease-token',fence:4,runId:'run-reserved'};
+
   it.each([
     ['prepare','temporary','review_correction_retry'],
     ['prepare','authentication','review_correction_reconcile'],
@@ -42,9 +44,11 @@ describe('correction PR lookup outcomes', () => {
     ['finish','confirmed-stale','review_correction_cancel'],
   ] as const)('%s %s uses %s and reports only a safe reason', async (phase,kind,procedure) => {
     const query=vi.fn().mockResolvedValue({rows:[]});
-    await expect(handleCorrectionLookupFailure({query} as never,phase,9,'lease-token',new SafeProcessError(kind,'fixture-secret'))).rejects.toThrow(/Correction PR/);
+    const caller=phase==='prepare'?{...callback,runId:null}:callback;
+    await expect(handleCorrectionLookupFailure({query} as never,phase,caller,new SafeProcessError(kind,'fixture-secret'))).rejects.toThrow(/Correction PR/);
     expect(query).toHaveBeenCalledTimes(1);
     expect(query.mock.calls[0]![0]).toContain(procedure);
+    if(procedure!=='review_correction_retry')expect(query.mock.calls[0]![1]).toEqual([9,'lease-token',4,phase==='prepare'?null:'run-reserved',expect.any(String)]);
     expect(JSON.stringify(query.mock.calls[0])).not.toContain('fixture-secret');
   });
 
@@ -90,9 +94,10 @@ describe('correction PR lookup outcomes', () => {
     expect(lookup).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledTimes(2);
     expect(query).not.toHaveBeenCalled();
-    await expect(handleCorrectionLookupFailure({query} as never,'ack',9,'lease-token',failure)).rejects.toThrow(/owner reconciliation required/);
+    await expect(handleCorrectionLookupFailure({query} as never,'ack',callback,failure)).rejects.toThrow(/owner reconciliation required/);
     expect(query).toHaveBeenCalledTimes(1);
     expect(query.mock.calls[0]![0]).toContain('review_correction_reconcile');
+    expect(query.mock.calls[0]![1]).toEqual([9,'lease-token',4,'run-reserved',expect.any(String)]);
     expect(JSON.stringify(query.mock.calls[0])).not.toContain('fixture-secret');
   });
 

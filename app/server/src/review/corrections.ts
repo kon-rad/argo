@@ -5,6 +5,7 @@ import { childEnv, command, correctionLookupDisposition, retryCorrectionLookup, 
 
 const Correction=z.object({ id:z.coerce.number().int().positive(),feedbackId:z.string(),card:z.string(),builder:z.string(),persona:z.string(),runtime:z.string(),model:z.string(),host:z.string(),repo:z.string(),branch:z.string(),worktree:z.string(),commonDir:z.string(),originalRunId:z.string(),head:z.string(),base:z.string(),pr:z.coerce.number(),evidenceHash:z.string(),leaseToken:z.string(),fence:z.coerce.number(),transientAttempts:z.coerce.number() });
 export type ClaimedCorrection=z.infer<typeof Correction>;
+export interface CorrectionCallbackIdentity { id:number; leaseToken:string; fence:number; runId:string|null; }
 
 export interface CorrectionCompletionInput { git:string; worktree:string; commonDir:string; branch:string; rejectedHead:string; home:string; }
 /** Derive completion identity from the registered checkout. Builder output is never an attestation. */
@@ -44,18 +45,22 @@ export async function acknowledgeCorrectionAfterLookup(client:pg.Client,input:{i
 export async function retryCorrection(client:pg.Client,id:number,token:string,reason:string,delaySeconds=30):Promise<void>{
  await client.query('SELECT review_correction_retry($1,$2,$3,$4)',[id,token,reason,delaySeconds]);
 }
-export async function cancelCorrection(client:pg.Client,id:number,reason:string):Promise<void>{await client.query('SELECT review_correction_cancel($1,$2)',[id,reason]);}
-export async function reconcileCorrection(client:pg.Client,id:number,reason:string):Promise<void>{await client.query('SELECT review_correction_reconcile($1,$2)',[id,reason]);}
+export async function cancelCorrection(client:pg.Client,caller:CorrectionCallbackIdentity,reason:string):Promise<void>{
+ await client.query('SELECT review_correction_cancel($1,$2,$3,$4,$5)',[caller.id,caller.leaseToken,caller.fence,caller.runId,reason]);
+}
+export async function reconcileCorrection(client:pg.Client,caller:CorrectionCallbackIdentity,reason:string):Promise<void>{
+ await client.query('SELECT review_correction_reconcile($1,$2,$3,$4,$5)',[caller.id,caller.leaseToken,caller.fence,caller.runId,reason]);
+}
 export async function finishCorrection(client:pg.Client,id:number,runId:string,rejectedHead:string,completionHead:string):Promise<void>{await client.query('SELECT review_correction_finish($1,$2,$3,$4)',[id,runId,rejectedHead,completionHead]);}
 export async function finishCorrectionAfterAttestation(client:pg.Client,input:{id:number;runId:string;rejectedHead:string;completionHead:string},validate:()=>Promise<void>):Promise<void>{
  await validate();
  await finishCorrection(client,input.id,input.runId,input.rejectedHead,input.completionHead);
 }
 
-export async function handleCorrectionLookupFailure(client:pg.Client,phase:'prepare'|'ack'|'finish',id:number,token:string,error:unknown):Promise<never>{
+export async function handleCorrectionLookupFailure(client:pg.Client,phase:'prepare'|'ack'|'finish',caller:CorrectionCallbackIdentity,error:unknown):Promise<never>{
  const disposition=correctionLookupDisposition(phase,error);
- if(disposition.action==='cancel')await cancelCorrection(client,id,disposition.reason);
- else if(disposition.action==='retry')await retryCorrection(client,id,token,disposition.reason,30);
- else await reconcileCorrection(client,id,disposition.reason);
+ if(disposition.action==='cancel')await cancelCorrection(client,caller,disposition.reason);
+ else if(disposition.action==='retry')await retryCorrection(client,caller.id,caller.leaseToken,disposition.reason,30);
+ else await reconcileCorrection(client,caller,disposition.reason);
  throw new Error(disposition.reason);
 }
