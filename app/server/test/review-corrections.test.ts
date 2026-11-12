@@ -127,7 +127,7 @@ it.each(['cancel','reconcile'] as const)('rejects a reclaimed lease holder\'s la
       : reconcileCorrection(c,caller,'uncertain correction lookup');
     await expect(invoke(callback(stale!))).rejects.toThrow(/stale correction callback/);
     expect((await getCard(card.id)).card.status).toBe('ready');
-    expect((await query('SELECT state,fence,lease_token FROM review_corrections WHERE id=$1',[current!.id])).rows[0]).toMatchObject({state:'claimed',fence:String(current!.fence),lease_token:current!.leaseToken});
+    expect((await query('SELECT state,fence,lease_token FROM review_corrections WHERE id=$1',[current!.id])).rows[0]).toMatchObject({state:'claimed',fence:current!.fence,lease_token:current!.leaseToken});
 
     const runId='run-current-holder';
     await prepareCorrection(c,current!.id,current!.leaseToken,runId,current!.head);
