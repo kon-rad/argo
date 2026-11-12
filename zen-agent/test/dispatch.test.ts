@@ -11,6 +11,8 @@ import { ZenAgent } from '../src/agent.js';
 import { parseMeta, parseThinking, parseTools, runOptions } from '../src/cli.js';
 import { loadConfig } from '../src/config.js';
 import { buildSystemPrompt } from '../src/context.js';
+import { buildModels } from '../src/models.js';
+import { refreshMachines } from '../src/machines.js';
 
 // What a dispatcher needs from a run (docs/zen-runtime.md, section 8): labels in the trace, a handoff part
 // instead of a resumed transcript, the tool sets and thinking level per run, and the model and part sizes
@@ -102,8 +104,8 @@ for (const capacity of [0, -1, NaN, Infinity, undefined]) {
   });
 }
 
-for (const mode of ['run', 'chat'] as const) {
-  test(`the compiled CLI ${mode} producer persists its real entrypoint and configured model window`, async (t) => {
+for (const [mode, capacity] of [['run', 4096], ['chat', 4096], ['run', undefined]] as const) {
+  test(`the compiled CLI ${mode} producer persists its real entrypoint and ${capacity ?? 'unknown'} model window`, async (t) => {
     const dir = mkdtempSync(join(tmpdir(), 'zen-cli-provenance-'));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const requests: { path: string | undefined; model: unknown; authorization: string | undefined }[] = [];
@@ -135,8 +137,10 @@ for (const mode of ['run', 'chat'] as const) {
       model: 'fixture/fixture-model', sessionsDir: 'sessions', tools: [], skills: [], rules: [],
       guard: { local: null, log: null, hooks: { preToolUse: [], stop: [] } },
       providers: { fixture: { api: 'openai-completions', baseUrl: `http://127.0.0.1:${address.port}/v1`,
-        apiKeyEnv: 'ZEN_TEST_PROVIDER_KEY', models: [{ id: 'fixture-model', contextWindow: 4096, maxTokens: 128 }] } },
+        apiKeyEnv: 'ZEN_TEST_PROVIDER_KEY', models: [{ id: 'fixture-model', ...(capacity === undefined ? {} : { contextWindow: capacity }), maxTokens: 128 }] } },
     }));
+    const catalogue = buildModels(loadConfig({ workdir: dir, path: config, env: {} }));
+    assert.equal(catalogue.getModel('fixture', 'fixture-model')?.contextWindow, capacity ?? 128_000, 'runtime planning fallback remains intact');
     const args = [fileURLToPath(new URL('../src/cli.js', import.meta.url)), mode,
       ...(mode === 'run' ? ['hello', '--json'] : []), '--config', config, '--workdir', dir];
     const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
@@ -151,7 +155,7 @@ for (const mode of ['run', 'chat'] as const) {
     const trace = readFileSync(join(dir, 'sessions', files[0]!), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     assert.equal(trace[0].entrypoint, mode);
     assert.equal(trace[0].model, 'fixture/fixture-model');
-    assert.equal(trace[0].context_window, 4096);
+    assert.equal(trace[0].context_window, capacity ?? null);
     if (mode === 'run') {
       const run = JSON.parse(result.stdout) as { text: string; error?: string; stopped: string };
       assert.equal(run.text, 'fixture answer');
@@ -165,6 +169,35 @@ for (const mode of ['run', 'chat'] as const) {
     }
     t.diagnostic(JSON.stringify({ producer: 'compiled-cli', entrypoint: trace[0].entrypoint,
       model: trace[0].model, context_window: trace[0].context_window, requests: requests.length }));
+  });
+}
+
+
+for (const capacity of [undefined, 16_384]) {
+  test(`machine factory records ${capacity ?? 'unknown'} capacity across cached refresh`, async (t) => {
+    const dir = mkdtempSync(join(tmpdir(), 'zen-machine-provenance-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const models = createModels();
+    const known = new Map();
+    const machines = { fixture: { url: 'http://192.0.2.10:11434', ...(capacity === undefined ? {} : { contextWindow: capacity }) } };
+    const discovery = (async (input: string | URL | Request) => String(input).endsWith('/api/tags')
+      ? Response.json({ models: [{ name: 'fixture-model' }] })
+      : Response.json({ capabilities: ['completion', 'tools'], model_info: { 'general.architecture': 'fixture', 'fixture.context_length': 65_536 } })) as typeof fetch;
+    const config = loadConfig({ workdir: dir, env: {}, overrides: { model: 'ollama-fixture/fixture-model', tools: [] } });
+    const check = (expected: number | null) => {
+      const agent = new ZenAgent({ config, models, env: {}, entrypoint: 'serve' });
+      assert.equal(agent.model.contextWindow, capacity ?? 32_000, 'discovery/cache keeps runtime capacity');
+      const meta = JSON.parse(readFileSync(agent.session.path, 'utf8').split('\n')[0]!);
+      assert.equal(meta.context_window, expected);
+      assert.equal(meta.entrypoint, 'serve');
+    };
+    await refreshMachines(models, machines, known, discovery);
+    check(capacity ?? null);
+    const unreachable = (async () => { throw new Error('fixture offline'); }) as typeof fetch;
+    await refreshMachines(models, machines, known, unreachable);
+    check(capacity ?? null);
+    await refreshMachines(models, { fixture: { ...machines.fixture, contextWindow: 8192 } }, known, unreachable);
+    check(null); // Changing a setting cannot prove that an unreachable server adopted it.
   });
 }
 

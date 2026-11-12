@@ -19,8 +19,10 @@ Each startup appends a `meta` line to the session JSONL file in the configured `
 | Field | Recorded value |
 |---|---|
 | `entrypoint` | The actual entrypoint supplied by the producer: `chat`, `run`, `wake`, `serve` or `subagent`. `null` when the caller did not supply it |
-| `context_window` | The selected model catalogue's positive finite `contextWindow`, or `null` when it is missing or invalid |
+| `context_window` | The selected model's positive finite capacity established by its provider catalogue or explicit configuration; `null` when unknown, invalid or supplied by a runtime fallback |
 | `parent` | The parent session identity for a delegated child; existing parent and tool restrictions remain in force |
+
+Custom models without an explicit window still use the existing 128000-token runtime planning default, but record `null`. Machine discovery still uses its existing 32000-token default when no server window is configured. That default and a model's architecture maximum do not establish the server's effective capacity. Configure the machine's `contextWindow` to match its server setting to record capacity. Cached discovery retains this provenance; a changed setting on an unreachable machine leaves recorded capacity unknown.
 
 The catalogue window is a configured capacity, not a measurement of the current prompt. Keep a custom provider's `contextWindow` consistent with its model/server configuration. Input/output usage totals do not establish either this capacity or current context occupancy. Older traces without these fields remain unknown; these changes do not backfill guesses into them.
 
