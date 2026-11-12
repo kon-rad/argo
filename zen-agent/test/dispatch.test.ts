@@ -1,9 +1,12 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from '@earendil-works/pi-ai';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { ZenAgent } from '../src/agent.js';
 import { parseMeta, parseThinking, parseTools, runOptions } from '../src/cli.js';
 import { loadConfig } from '../src/config.js';
@@ -70,7 +73,7 @@ test('a run without dispatcher flags has an empty dispatch object, not a missing
 });
 
 for (const entrypoint of ['chat', 'run', 'wake', 'serve', 'subagent'] as const) {
-  test(`the actual ${entrypoint} producer records start mode and model context`, async () => {
+  test(`serializes an explicit ${entrypoint} label and catalogue context`, async () => {
     const { cfg, faux, models } = setup();
     faux.setResponses([fauxAssistantMessage([fauxText('ok')])]);
     const zen = new ZenAgent({ config: cfg, models, env: {}, entrypoint });
@@ -79,6 +82,89 @@ for (const entrypoint of ['chat', 'run', 'wake', 'serve', 'subagent'] as const) 
     assert.equal(meta['entrypoint'], entrypoint);
     assert.equal(meta['context_window'], zen.model.contextWindow);
     assert.ok(typeof meta['context_window'] === 'number' && meta['context_window'] > 0);
+  });
+}
+
+for (const capacity of [0, -1, NaN, Infinity, undefined]) {
+  test(`an invalid or missing catalogue capacity (${capacity}) stays unknown`, () => {
+    const { cfg, models } = setup();
+    const model = models.getModel('faux', 'faux-1')!;
+    const previous = model.contextWindow;
+    try {
+      Object.assign(model, { contextWindow: capacity });
+      const zen = new ZenAgent({ config: cfg, models, env: {} });
+      const meta = JSON.parse(readFileSync(zen.session.path, 'utf8').split('\n')[0]!) as Record<string, unknown>;
+      assert.equal(meta['context_window'], null);
+      assert.equal(meta['entrypoint'], null);
+    } finally {
+      model.contextWindow = previous;
+    }
+  });
+}
+
+for (const mode of ['run', 'chat'] as const) {
+  test(`the compiled CLI ${mode} producer persists its real entrypoint and configured model window`, async (t) => {
+    const dir = mkdtempSync(join(tmpdir(), 'zen-cli-provenance-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const requests: { path: string | undefined; model: unknown; authorization: string | undefined }[] = [];
+    const server = createServer((req, res) => {
+      let body = '';
+      req.setEncoding('utf8');
+      req.on('data', (chunk: string) => { body += chunk; });
+      req.on('end', () => {
+        let input: { model?: unknown };
+        try { input = JSON.parse(body) as { model?: unknown }; }
+        catch { res.writeHead(400).end(); return; }
+        requests.push({ path: req.url, model: input.model, authorization: req.headers.authorization });
+        const chunk = (delta: object, finish: string | null, usage?: object) => ({
+          id: 'fixture-completion', object: 'chat.completion.chunk', created: 0, model: 'fixture-model',
+          choices: [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage } : {}),
+        });
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.end(`data: ${JSON.stringify(chunk({ role: 'assistant', content: 'fixture answer' }, null))}\n\n`
+          + `data: ${JSON.stringify(chunk({}, 'stop', { prompt_tokens: 7, completion_tokens: 2, total_tokens: 9 }))}\n\n`
+          + 'data: [DONE]\n\n');
+      });
+    });
+    await new Promise<void>((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
+    t.after(() => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const config = join(dir, 'zen.json');
+    writeFileSync(config, JSON.stringify({
+      model: 'fixture/fixture-model', sessionsDir: 'sessions', tools: [], skills: [], rules: [],
+      guard: { local: null, log: null, hooks: { preToolUse: [], stop: [] } },
+      providers: { fixture: { api: 'openai-completions', baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        apiKeyEnv: 'ZEN_TEST_PROVIDER_KEY', models: [{ id: 'fixture-model', contextWindow: 4096, maxTokens: 128 }] } },
+    }));
+    const args = [fileURLToPath(new URL('../src/cli.js', import.meta.url)), mode,
+      ...(mode === 'run' ? ['hello', '--json'] : []), '--config', config, '--workdir', dir];
+    const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      const child = execFile(process.execPath, args, { cwd: dir, encoding: 'utf8', timeout: 15_000, maxBuffer: 100_000,
+        env: { PATH: process.env['PATH'] ?? '', HOME: dir, ZEN_TEST_PROVIDER_KEY: 'synthetic-test-key' } },
+      (error, stdout, stderr) => error ? reject(new Error(`CLI ${mode} failed: ${error.message}; ${stderr.slice(0, 1000)}`)) : resolve({ stdout, stderr }));
+      child.stdin?.on('error', () => {}); // A failed child is reported by its completion callback.
+      child.stdin?.end(mode === 'chat' ? '/quit\n' : '');
+    });
+    const files = readdirSync(join(dir, 'sessions')).filter((name) => name.endsWith('.jsonl'));
+    assert.equal(files.length, 1);
+    const trace = readFileSync(join(dir, 'sessions', files[0]!), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(trace[0].entrypoint, mode);
+    assert.equal(trace[0].model, 'fixture/fixture-model');
+    assert.equal(trace[0].context_window, 4096);
+    if (mode === 'run') {
+      const run = JSON.parse(result.stdout) as { text: string; error?: string; stopped: string };
+      assert.equal(run.text, 'fixture answer');
+      assert.equal(run.error, undefined);
+      assert.equal(run.stopped, 'done');
+      assert.deepEqual(requests, [{ path: '/v1/chat/completions', model: 'fixture-model', authorization: 'Bearer synthetic-test-key' }]);
+      assert.equal(trace.at(-1)?.type, 'end');
+    } else {
+      assert.equal(requests.length, 0, 'chat startup and quit do not call a model');
+      assert.equal(trace.length, 1, 'chat still records its actual startup before the first prompt');
+    }
+    t.diagnostic(JSON.stringify({ producer: 'compiled-cli', entrypoint: trace[0].entrypoint,
+      model: trace[0].model, context_window: trace[0].context_window, requests: requests.length }));
   });
 }
 
