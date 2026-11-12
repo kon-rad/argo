@@ -7,6 +7,18 @@ import { failure } from '../verification/contract.js';
 import type { Decision } from '../verification/evidence.js';
 import { GitHubVerificationSource, activation, integrationsAt, verifyHead } from '../verification/github.js';
 
+type CheckRollup = { name?: string | null; context?: string | null; status?: string | null; conclusion?: string | null; state?: string | null };
+/** Preserve optional check outcomes for the reviewer; only configured required checks control readiness. */
+export function normalizeChecks(checks: readonly CheckRollup[]): Snapshot['checks'] {
+  const conclusions = new Map([['SUCCESS', 'pass'], ['FAILURE', 'fail'], ['SKIPPED', 'skipped'], ['NEUTRAL', 'neutral'],
+    ['CANCELLED', 'fail'], ['TIMED_OUT', 'fail'], ['ACTION_REQUIRED', 'fail'], ['STARTUP_FAILURE', 'fail'], ['STALE', 'fail']]);
+  const pending = new Set(['QUEUED', 'IN_PROGRESS', 'WAITING', 'REQUESTED', 'PENDING']);
+  const legacy = new Map([['SUCCESS', 'pass'], ['FAILURE', 'fail'], ['ERROR', 'fail'], ['PENDING', 'pending'], ['EXPECTED', 'pending']]);
+  return checks.map(c => ({ name: c.name ?? c.context ?? '', state: c.status != null
+    ? c.status === 'COMPLETED' ? conclusions.get(c.conclusion ?? '') ?? 'unknown' : pending.has(c.status) ? 'pending' : 'unknown'
+    : legacy.get(c.state ?? '') ?? 'unknown' }));
+}
+
 export async function tick(client: pg.Client, host: HostConfig): Promise<{ claimed: boolean; job?: Job }> {
   const candidates = await client.query(`SELECT * FROM review_jobs WHERE state NOT IN ('done','rejected') AND (state<>'blocked' OR updated_at<now()-interval '5 minutes') ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END, updated_at, id LIMIT 100`);
   for (const row of candidates.rows) {
@@ -91,7 +103,7 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
         for(const item of code)sources.push(source(item.ref,item.text));
         return { repo:repo.github,pr:p.number,head:p.headRefOid,behind:p.state==='OPEN' && p.mergeStateStatus==='BEHIND',conflicting:p.state==='OPEN' && (p.mergeStateStatus==='DIRTY' || p.mergeable==='CONFLICTING'),draft:p.isDraft,unresolved:threads.filter(t=>!t.isResolved).length,changesRequested:p.reviewDecision==='CHANGES_REQUESTED',
           base:revision.baseRefOid,branch:p.baseRefName,merged:p.mergeCommit?.oid ?? null,
-          checks:p.statusCheckRollup.map(c => ({ name:c.name ?? c.context ?? '',state: c.status === 'COMPLETED' && c.conclusion === 'SUCCESS' || c.state === 'SUCCESS' ? 'pass' : c.status==='COMPLETED' || ['FAILURE','ERROR'].includes(c.state ?? '') ? 'fail' : 'pending' })),sources };
+          requiredChecks:[...repo.checks],checks:normalizeChecks(p.statusCheckRollup),sources };
       };
       await runReview(job,repo.checks,{
         gather,

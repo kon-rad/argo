@@ -8,6 +8,8 @@ export type Source = z.infer<typeof Source>;
 export const Snapshot = z.object({ repo: z.string(), pr: z.number().int().positive(), head: Sha, base: Sha, branch: z.string(), merged: Sha.nullable(),
   behind:z.boolean().optional(), conflicting:z.boolean().optional(),
   draft: z.boolean().optional(), unresolved: z.number().int().nonnegative().optional(), changesRequested: z.boolean().optional(),
+  // Informative collector metadata only; runReview always uses its trusted configured checks argument.
+  requiredChecks: z.array(z.string().min(1)).optional(),
   checks: z.array(z.object({ name: z.string(), state: z.string() }).strict()), sources: z.array(Source) }).strict();
 export type Snapshot = z.infer<typeof Snapshot>;
 const Checked = z.object({ status:z.enum(['checked','not-applicable']), evidence:z.array(z.string().min(1)).min(1), rationale:z.string().min(1) }).strict();
