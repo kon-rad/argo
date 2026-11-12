@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { config } from '../config.js';
 
 const run = promisify(execFile);
 
@@ -18,9 +19,9 @@ export async function snapshotSqlite(src: string, dest: string): Promise<void> {
 }
 
 // Hermes on the server: its home and the Unix user that owns it.
-const REMOTE_USER = process.env.REMOTE_HERMES_USER ?? 'hermes';
+const REMOTE_USER = config.env.REMOTE_HERMES_USER ?? 'hermes';
 // `~user`, not `~`: the remote shell runs as the ssh login, not as REMOTE_USER.
-const REMOTE_HOME = process.env.REMOTE_HERMES_HOME ?? `~${REMOTE_USER}/.hermes`;
+const REMOTE_HOME = config.env.REMOTE_HERMES_HOME ?? `~${REMOTE_USER}/.hermes`;
 // A server's UFW may rate-limit port 22 (6 connections / 30 s): share one connection across ssh and rsync.
 const SSH_OPTS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15',
   '-o', 'ControlMaster=auto', '-o', 'ControlPath=/tmp/sb-archive-%C', '-o', 'ControlPersist=60'];
@@ -50,6 +51,6 @@ export async function pullDroplet(destDir: string, sshHost: string): Promise<voi
 }
 
 export async function uploadOutbox(outboxRoot: string): Promise<void> {
-  const b2store = process.env.B2STORE ?? 'b2store';
+  const b2store = config.env.B2STORE ?? 'b2store';
   await run(b2store, ['put', join(outboxRoot, 'archives')], { timeout: 6 * 3600_000, maxBuffer: 64 * 1024 * 1024 });
 }

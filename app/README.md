@@ -184,7 +184,7 @@ Upgrade the server before the machines: a ledger newer than the server may send 
 
 ### `secondbrain.json`
 
-Settings that don't fit one env line live in the vault, in `secondbrain.json` at its root. Every section is optional; a file that doesn't parse is reported and ignored. `vault-template/secondbrain.example.json` shows each one.
+Settings that don't fit one env line live in the vault, in `secondbrain.json` at its root. Every section is optional. Invalid JSON is reported and ignored; a schema-invalid section is reported and reset to its defaults without discarding valid sections. `vault-template/secondbrain.example.json` shows each one.
 
 | Key | Used by | Holds |
 |---|---|---|

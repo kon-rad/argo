@@ -1,23 +1,15 @@
 /**
- * The vault's current time zone (docs/timezone.md): one IANA name in `secondbrain.json` (`"timezone"`) that the
- * web app uses for every time it shows and for the Usage page's hour and day buckets. Set it when travelling with
+ * The vault's configured time zone (docs/timezone.md): an IANA location or UTC in `secondbrain.json` (`"timezone"`),
+ * exposed by the metadata API for frontend display and Usage bucketing. Set it when travelling with
  * `secondbrain timezone set <Area/City>`. Unset: each browser uses its own zone. Never inferred from the server's
  * zone, which says where the machine is, not where its owner is.
  */
 import { closeSync, fchmodSync, fchownSync, fstatSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { settingsPath } from './settings.js';
+import { isIanaTimeZone, settingsPath } from './settings.js';
 
 /** A real IANA zone name the runtime knows (`Asia/Singapore`, `UTC`); not an offset or an abbreviation. */
-export function isTimeZone(tz: unknown): tz is string {
-  if (typeof tz !== 'string' || !/^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+)*$/.test(tz)) return false;
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-}
+export const isTimeZone = isIanaTimeZone;
 
 /** The runtime's spelling of a zone (`asia/singapore` -> `Asia/Singapore`), or null when it is not a zone. */
 export function canonicalTimeZone(tz: string): string | null {

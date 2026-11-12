@@ -25,10 +25,40 @@ afterEach(() => { delete process.env.SECONDBRAIN_SETTINGS; resetSettings(); });
 
 describe('time zone setting', () => {
   it('accepts IANA names only', () => {
-    for (const tz of ['America/Los_Angeles', 'Asia/Singapore', 'UTC', 'Europe/London']) expect(isTimeZone(tz), tz).toBe(true);
-    for (const tz of ['', 'Mars/Olympus', 'PST8PDT; rm -rf /', '+05:30', 'not a zone', 42, null]) expect(isTimeZone(tz), String(tz)).toBe(false);
+    for (const tz of ['America/Los_Angeles', 'America/New_York', 'Asia/Singapore', 'UTC', 'Europe/London']) expect(isTimeZone(tz), tz).toBe(true);
+    for (const tz of ['', 'Mars/Olympus', 'PST8PDT; rm -rf /', '+05:30', 'not a zone', 'EST', 'CET', 'GMT', 'GMT0', 'EST5EDT', 'Etc/GMT+5', 'Etc/UTC', 'SystemV/EST5', 42, null]) expect(isTimeZone(tz), String(tz)).toBe(false);
     expect(canonicalTimeZone('asia/singapore')).toBe('Asia/Singapore');
     expect(canonicalTimeZone('Mars/Olympus')).toBeNull();
+  });
+
+  it('rejects legacy abbreviations and fixed aliases in CLI and settings without changing the file', () => {
+    saveTimezone('America/New_York', file);
+    const before = statSync(file);
+    const text = readFileSync(file, 'utf8');
+    for (const alias of ['EST', 'CET', 'GMT', 'GMT0', 'EST5EDT', 'Etc/GMT+5', 'Etc/UTC', 'SystemV/EST5']) {
+      const errors: string[] = [];
+      expect(runTimezone(['set', alias], { path: file, out: () => {}, err: (line) => errors.push(line) }), alias).toBe(2);
+      expect(errors.join('\n')).toMatch(/not an IANA time zone/);
+      expect(canonicalTimeZone(alias), alias).toBeNull();
+      expect(readFileSync(file, 'utf8'), alias).toBe(text);
+      expect(statSync(file).ino, alias).toBe(before.ino);
+      const parsed = parseSettings({ timezone: alias, usage: { credits: ['fal'] } });
+      expect(parsed.timezone, alias).toBeUndefined();
+      expect(parsed.usage.credits).toEqual(['fal']);
+    }
+  });
+
+  it.each([
+    ['2026-03-08T06:59:00Z', '01:59', 'GMT-5'],
+    ['2026-03-08T07:01:00Z', '03:01', 'GMT-4'],
+    ['2026-11-01T05:59:00Z', '01:59', 'GMT-4'],
+    ['2026-11-01T06:01:00Z', '01:01', 'GMT-5'],
+  ])('keeps New York DST semantics at %s', (at, clock, offset) => {
+    saveTimezone('America/New_York', file);
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: currentTimezone(file)!, hour: '2-digit',
+      minute: '2-digit', hourCycle: 'h23', timeZoneName: 'shortOffset' }).formatToParts(new Date(at));
+    expect(parts.filter((p) => p.type === 'hour' || p.type === 'minute').map((p) => p.value).join(':')).toBe(clock);
+    expect(parts.find((p) => p.type === 'timeZoneName')?.value).toBe(offset);
   });
 
   it('persists in secondbrain.json, keeping every other key, and reads back fresh', () => {
@@ -54,12 +84,22 @@ describe('time zone setting', () => {
     expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 
-  it('preserves owner, service group and 0640 access when setting and clearing', () => {
+  it('preserves owner, service group and 0640 access when setting and clearing', (context) => {
+    const uid = process.getuid?.();
     const groups = process.getgroups?.() ?? [];
     const original = statSync(file);
-    const group = groups.find((gid) => gid !== original.gid) ?? original.gid;
+    const group = groups.find((gid) => gid !== original.gid);
+    if (uid === undefined || uid === 0 || group === undefined) {
+      console.info('SKIP: unprivileged distinct supplementary-group scenario is unavailable');
+      context.skip();
+      return;
+    }
+    expect(uid).toBeGreaterThan(0);
+    expect(original.uid).toBe(uid);
+    expect(group).not.toBe(original.gid);
     chownSync(file, original.uid, group);
     chmodSync(file, 0o640);
+    console.info('Verified unprivileged distinct supplementary-group scenario', { uid, originalGid: original.gid, serviceGid: group });
     const identity = () => { const s = statSync(file); return { uid: s.uid, gid: s.gid, mode: s.mode & 0o777 }; };
     const expected = { uid: original.uid, gid: group, mode: 0o640 };
     saveTimezone('Asia/Singapore', file);

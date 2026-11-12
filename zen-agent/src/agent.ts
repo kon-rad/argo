@@ -9,7 +9,7 @@ import { buildSystemPrompt, type Assembled, type Part, type PartStat } from './c
 import type { FetcherStat } from './fetchers.js';
 import { decide, findLocalRules, loadLocalRules, logBlock, toolPayload, type LocalRules } from './guard.js';
 import { runHooks, writeClaudeTranscript } from './hooks.js';
-import { buildModels, pickModel } from './models.js';
+import { buildModels, pickModel, recordedContextWindow } from './models.js';
 import { loadPersona, type Persona } from './persona.js';
 import { newSessionId, Session, TRACE_VERSION, ZERO_USAGE, type SessionLine, type UsageTotals } from './session.js';
 import { discoverSkills, type Skill } from './skills.js';
@@ -271,8 +271,8 @@ export class ZenAgent {
       workdir: cfg.workdir,
       dispatch: opts.dispatch ?? {},
       entrypoint: opts.entrypoint ?? null,
-      // The model's context window as the catalogue knows it, so a reader can show capacity without a model table.
-      context_window: Number.isFinite(this.model.contextWindow) && this.model.contextWindow > 0 ? this.model.contextWindow : null,
+      // Record established capacity, never an assumed runtime planning default.
+      context_window: recordedContextWindow(this.models, this.model),
     });
   }
 

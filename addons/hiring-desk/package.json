@@ -1,0 +1,39 @@
+{
+  "name": "@secondbrain/hiring-desk",
+  "version": "1.0.0",
+  "type": "module",
+  "workspaces": ["contracts", "packages/client", "packages/arkiv", "packages/public"],
+  "exports": {
+    "./server": { "types": "./dist/server/index.d.ts", "import": "./dist/server/index.js" },
+    "./web": { "types": "./dist/web/Desk.d.ts", "import": "./dist/web/Desk.js" }
+  },
+  "scripts": {
+    "build": "npm -w @secondbrain/desk-contracts run build && tsc -p tsconfig.server.json && tsc -p tsconfig.web.json && vite build && npm -ws --if-present run build",
+    "test": "vitest run && npm -ws --if-present test && python3 -m pytest worker"
+  },
+  "dependencies": {
+    "@secondbrain/desk-contracts": "1.0.0",
+    "@tanstack/react-query": "^5.102.2",
+    "express": "^5.2.1",
+    "pg": "^8.23.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.15.3",
+    "@types/pg": "^8.15.6",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^5.1.0",
+    "jsdom": "^28.0.0",
+    "supertest": "^7.2.2",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  }
+}
