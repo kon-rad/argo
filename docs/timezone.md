@@ -12,7 +12,9 @@ timestamps, with a separate duration and an explicit unavailable state for unkno
 Org message tooltips and board-token Made and Last seen values use the shared zone; token values include seconds and
 an absent Last seen remains `never`. TV uses it for the selected episode and episode-strip generated labels. These
 mounted views update when their cached metadata is refetched, including a cleared setting falling back to the browser.
-Usage live/running views follow in a later integration slice.
+The Usage live view formats its Updated time in the shared zone. The legacy Running view does the same for its read
+time and includes a zoned, second-precision start time in each running-duration tooltip. Both mounted views update
+when their cached metadata is refetched, including a cleared setting falling back to the browser.
 
 | Setting | Metadata API value |
 |---|---|
