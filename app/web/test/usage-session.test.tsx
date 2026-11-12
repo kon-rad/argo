@@ -13,7 +13,7 @@ const step = (o: Partial<AgentStep> & Pick<AgentStep, 'id' | 'step'>): AgentStep
 
 const SESSION = {
   id: 1, source: 'claude-code', harness: 'claude-code', profile: null, provider: 'anthropic', host: 'mac', external_id: 's1',
-  parent_external_id: null, project: null, title: 'Plan the usage board', first_prompt: 'Build the usage board',
+  parent_external_id: null, project: null, title: 'Plan the usage board', display_title: 'Plan the usage board', title_source: 'title', first_prompt: 'Build the usage board',
   started_at: '2026-10-13T23:29:00Z', ended_at: '2026-10-13T23:40:00Z', steps: 5, tool_calls: 1, errors: 1, subagents: 1,
   models: ['claude-opus-5-5'], calls: 1, input: 10, cache_write: 100, cache_read: 1000, output: 50, reasoning: 0,
 };
@@ -95,9 +95,10 @@ describe('UsageSession', () => {
     expect(screen.getByText('git status').closest('details')?.open).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: /show full text/i }));
     await waitFor(() => expect(screen.getByText('FULL TEXT HERE')).toBeTruthy());
-    expect(String(fetchMock.mock.calls[0]![0])).toContain('/usage/agent-sessions/mac/s1');
-    expect(String(fetchMock.mock.calls[0]![0])).toContain('source=claude-code');
-    expect(String(fetchMock.mock.calls[0]![0])).toContain('meta=1');
+    const sessionUrl = fetchMock.mock.calls.map((c) => String(c[0])).find((u) => u.includes('/usage/agent-sessions/'))!;
+    expect(sessionUrl).toContain('/usage/agent-sessions/mac/s1');
+    expect(sessionUrl).toContain('source=claude-code');
+    expect(sessionUrl).toContain('meta=1');
     expect(document.body.textContent).not.toContain('$');
     expect(document.body.textContent).not.toContain('USD');
   });

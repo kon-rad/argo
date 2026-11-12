@@ -9,12 +9,12 @@ import { syncUsage } from './usage/sync.js';
 // `secondbrain usage-sync`: this machine's Claude Code transcripts, cc-runs logs, plan readings and zen-agent traces -> the ledger.
 // On the server a systemd timer runs it as the service user (deploy/secondbrain-usage-sync.*).
 const home = homedir();
-const host = (process.env.USAGE_SYNC_HOST ?? (process.env.DEPLOYMENT === 'server' ? 'droplet' : 'mac')) as Host;
+const host = (config.env.USAGE_SYNC_HOST ?? (config.env.DEPLOYMENT === 'server' ? 'droplet' : 'mac')) as Host;
 const paths = {
-  claudeProjectsDir: process.env.CLAUDE_PROJECTS_DIR ?? join(home, '.claude', 'projects'),
-  runsDir: process.env.CC_RUNS_DIR ?? join(home, 'cc-runs'),
-  statuslineLog: process.env.PLAN_USAGE_LOG ?? join(home, '.local', 'share', 'secondbrain', 'plan-usage.ndjson'),
-  codexSessionsDir: join(process.env.CODEX_HOME ?? join(home, '.codex'), 'sessions'),
+  claudeProjectsDir: config.env.CLAUDE_PROJECTS_DIR ?? join(home, '.claude', 'projects'),
+  runsDir: config.env.CC_RUNS_DIR ?? join(home, 'cc-runs'),
+  statuslineLog: config.env.PLAN_USAGE_LOG ?? join(home, '.local', 'share', 'secondbrain', 'plan-usage.ndjson'),
+  codexSessionsDir: join(config.env.CODEX_HOME ?? join(home, '.codex'), 'sessions'),
   zenSessionsDir: config.zenSessionsDir,
 };
 

@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { config } from './config.js';
+import { loadSettingsFile, settingsPath as resolveSettingsPath } from './settings-file.js';
 
 /**
  * Structured, non-secret settings that don't fit one env line: which numbers
@@ -480,31 +479,63 @@ export type MetricSetting = z.infer<typeof Metric>;
 export type SocialMetricsSettings = z.infer<typeof SocialMetrics>;
 export type TelegramBotSetting = z.infer<typeof TelegramBot>;
 
+export interface SettingsSectionError {
+  section: string;
+  path: PropertyKey[];
+  message: string;
+}
+
+export interface SettingsReport {
+  settings: SecondBrainSettings;
+  errors: SettingsSectionError[];
+}
+
+/** Validate each top-level section independently so one typo cannot erase unrelated settings. */
+export function settingsReport(raw: unknown): SettingsReport {
+  const source = raw === null || raw === undefined ? {} : raw;
+  const input = typeof source === 'object' && !Array.isArray(source) ? source as Record<string, unknown> : {};
+  const errors: SettingsSectionError[] = [];
+  if (input !== source) errors.push({ section: '$root', path: ['$root'], message: 'Expected an object' });
+
+  const values: Record<string, unknown> = {};
+  for (const [section, schema] of Object.entries(Settings.shape)) {
+    const result = schema.safeParse(input[section]);
+    if (result.success) {
+      values[section] = result.data;
+      continue;
+    }
+    values[section] = schema.parse(undefined);
+    for (const issue of result.error.issues) {
+      errors.push({ section, path: [section, ...issue.path], message: issue.message });
+    }
+  }
+  return { settings: values as SecondBrainSettings, errors };
+}
+
 export function parseSettings(raw: unknown): SecondBrainSettings {
-  return Settings.parse(raw ?? {});
+  return settingsReport(raw).settings;
 }
 
 export function settingsPath(vaultRoot = config.vaultRoot): string {
-  const p = process.env.SECONDBRAIN_SETTINGS;
-  if (p) return isAbsolute(p) ? p : join(vaultRoot, p);
-  return join(vaultRoot, 'secondbrain.json');
+  return resolveSettingsPath(vaultRoot);
 }
 
 let cached: { path: string; value: SecondBrainSettings } | null = null;
 
 /** The vault's settings, read once per process (tests reset with `resetSettings`). */
 export function settings(vaultRoot = config.vaultRoot): SecondBrainSettings {
-  const path = settingsPath(vaultRoot);
+  const loaded = loadSettingsFile(vaultRoot);
+  const { path } = loaded;
   if (cached?.path === path) return cached.value;
-  let value = parseSettings({});
-  try {
-    value = parseSettings(JSON.parse(readFileSync(path, 'utf8')));
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException;
-    if (e.code !== 'ENOENT') console.error(`secondbrain.json ignored (${path}): ${e.message.split('\n')[0]}`);
+  const report = settingsReport(loaded.raw);
+  if (loaded.error) {
+    console.error(`secondbrain.json ignored (${path}): ${loaded.error.kind === 'json' ? 'invalid JSON' : 'could not be read'}`);
   }
-  cached = { path, value };
-  return value;
+  for (const error of report.errors) {
+    console.error(`secondbrain.json section ignored (${path}): ${error.path.map(String).join('.')}: ${error.message}`);
+  }
+  cached = { path, value: report.settings };
+  return report.settings;
 }
 
 export function resetSettings(): void {

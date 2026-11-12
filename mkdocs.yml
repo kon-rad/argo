@@ -80,7 +80,6 @@ nav:
       - Memory, and how to check it works: memory.md
       - Agent harness: agent-harness.md
       - The agent company: agent-company.md
-      - ENSv2 agent names: ensv2-agent-registration.md
       - org.yaml and wake rules: org-yaml.md
       - Deployment: deployment.md
       - Privacy (engine): privacy.md

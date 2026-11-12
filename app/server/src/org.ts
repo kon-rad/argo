@@ -1082,7 +1082,7 @@ async function cardTarget(name: string): Promise<Agent> {
 }
 
 /** The repos a bot can branch and push in: the registry plus the ones the bots created. Null when this machine has no registry. */
-export function botRepos(file = process.env.BOT_REPOS_FILE ?? '/etc/secondbrain/bot-repos.toml'): string[] | null {
+export function botRepos(file = config.env.BOT_REPOS_FILE ?? '/etc/secondbrain/bot-repos.toml'): string[] | null {
   let toml: string;
   try {
     toml = readFileSync(file, 'utf8');
