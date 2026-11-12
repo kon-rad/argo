@@ -95,6 +95,15 @@ export default function AgentSessions({ from, to, tz }: { from: string; to: stri
   });
   const flag = (name: string, on: boolean) => update((n) => { if (on) n.set(name, '1'); else n.delete(name); });
   const total = list.data?.total ?? 0;
+  const optionsFor = (d: Dim) => {
+    const all = facets.data?.facets[d] ?? [];
+    const visible = d === 'persona' ? [...all] : all.slice(0, d === 'tool' ? 16 : 8);
+    // Every active URL filter remains removable, including values absent from this range's facets.
+    for (const value of filters[d] ?? []) {
+      if (!visible.some(f => f.value === value)) visible.push(all.find(f => f.value === value) ?? { value, n: 0 });
+    }
+    return visible;
+  };
 
   return (
     <section>
@@ -105,10 +114,10 @@ export default function AgentSessions({ from, to, tz }: { from: string; to: stri
           <input aria-label="Search sessions" className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-0.5" placeholder="search text"
             value={q} onChange={(e) => setQ(e.target.value)} />
         </form>
-        {DIMS.map((d) => (facets.data?.facets[d]?.length ?? 0) > 1 || filters[d]?.length ? (
+        {DIMS.map((d) => (facets.data?.facets[d]?.length ?? 0) > (d === 'persona' ? 0 : 1) || filters[d]?.length ? (
           <span key={d} className="flex flex-wrap items-center gap-1">
             <span className="text-[var(--ink-dim)]">{DIM_LABELS[d]}</span>
-            {(facets.data?.facets[d] ?? []).slice(0, d === 'tool' || d === 'persona' ? 16 : 8).map((f) => {
+            {optionsFor(d).map((f) => {
               const on = filters[d]?.includes(f.value) ?? false;
               return (
                 <button key={f.value} type="button" aria-pressed={on} onClick={() => toggle(d, f.value)}

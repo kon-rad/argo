@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -29,7 +29,7 @@ const CREDIT_HINTS: Record<CreditProvider, string> = {
   gemini: 'Google has no balance API. Copy it from AI Studio, then: secondbrain credits set gemini <balance>',
 };
 
-function CreditCard({ entry, history }: { entry: UsageCredits['providers'][number]; history: UsageCredits['history'] }) {
+function CreditCard({ entry, history, tz }: { entry: UsageCredits['providers'][number]; history: UsageCredits['history']; tz: string }) {
   const ok = entry.last_ok;
   const failed = entry.latest && entry.latest.status !== 'ok' ? entry.latest : null;
   const mine = history.filter((h) => h.provider === entry.provider && h.currency === ok?.currency);
@@ -43,10 +43,10 @@ function CreditCard({ entry, history }: { entry: UsageCredits['providers'][numbe
         <div className="text-xs text-[var(--ink-dim)]">{money(ok.total_usage, ok.currency)} used of {money(ok.total_credits, ok.currency)} bought</div>
       )}
       {change !== null && (
-        <div className="text-xs text-[var(--ink-dim)]">{change <= 0 ? `${money(-change, ok!.currency)} spent` : `${money(change, ok!.currency)} added`} since {new Date(first!.observed_at).toLocaleDateString()}</div>
+        <div className="text-xs text-[var(--ink-dim)]">{change <= 0 ? `${money(-change, ok!.currency)} spent` : `${money(change, ok!.currency)} added`} since {new Date(first!.observed_at).toLocaleDateString([], { timeZone: tz })}</div>
       )}
       {ok && (
-        <div className="text-xs text-[var(--ink-dim)]">as of {new Date(ok.observed_at).toLocaleString()} ({ok.origin === 'manual' ? 'entered by hand' : 'API'}){ok.note ? `, ${ok.note}` : ''}</div>
+        <div className="text-xs text-[var(--ink-dim)]">as of {new Date(ok.observed_at).toLocaleString([], { timeZone: tz })} ({ok.origin === 'manual' ? 'entered by hand' : 'API'}){ok.note ? `, ${ok.note}` : ''}</div>
       )}
       {failed && <div className="text-xs text-red-600">Latest reading: {failed.status}, {failed.error}</div>}
       {(!ok || entry.provider === 'gemini') && <div className="mt-1 text-xs text-[var(--ink-faint)]">{CREDIT_HINTS[entry.provider]}</div>}
@@ -55,6 +55,7 @@ function CreditCard({ entry, history }: { entry: UsageCredits['providers'][numbe
 }
 
 function Credits({ providers }: { providers: CreditProvider[] }) {
+  const { tz } = useAppTimezone();
   const credits = useQuery({ queryKey: ['usage-credits'], queryFn: () => api.usageCredits(), enabled: providers.length > 0, refetchInterval: 300_000 });
   if (providers.length === 0) return null;
   const entries = new Map(credits.data?.providers.map((entry) => [entry.provider, entry]));
@@ -63,7 +64,7 @@ function Credits({ providers }: { providers: CreditProvider[] }) {
     <div className="mt-1 grid gap-3 sm:grid-cols-3">
       {providers.map((provider) => {
         const entry = entries.get(provider);
-        return entry ? <CreditCard key={provider} entry={entry} history={credits.data!.history} />
+        return entry ? <CreditCard key={provider} entry={entry} history={credits.data!.history} tz={tz} />
           : credits.isSuccess ? <div key={provider} className="rounded border border-[var(--rule)] p-3 text-sm">{PROVIDER_NAMES[provider]}: no reading returned.</div> : null;
       })}
       {credits.isError && <div className="text-sm text-red-600">Credits did not load.</div>}
@@ -160,7 +161,7 @@ function who(r: UsageRun): { dim: UsageDimension; value: string } | null {
   return null;
 }
 
-function UsageLedger({ claudeConfigured }: { claudeConfigured: boolean }) {
+function UsageLedger({ claudeConfigured, onSelectBucketZone }: { claudeConfigured: boolean; onSelectBucketZone: (zone: string) => void }) {
   const [sp, setSp] = useSearchParams();
   // One zone for the buckets, their labels and every time below: the vault's setting, else this browser's.
   const { tz, source: tzSource } = useAppTimezone();
@@ -187,6 +188,7 @@ function UsageLedger({ claudeConfigured }: { claudeConfigured: boolean }) {
     const next = new URLSearchParams(sp);
     const chosen = selected === index ? null : buckets[index];
     if (chosen) {
+      onSelectBucketZone(tz);
       next.set('sessionFrom', chosen);
       next.set('sessionTo', bucketEnd(chosen, bucket, tz));
     } else {
@@ -367,7 +369,7 @@ function RunningLink() {
   </Link>;
 }
 
-function UsageSessions() {
+function UsageSessions({ ignoreBucketRange }: { ignoreBucketRange: boolean }) {
   const [sp] = useSearchParams();
   const { tz } = useAppTimezone();
   const days = Number(sp.get('days')) || 1;
@@ -375,14 +377,33 @@ function UsageSessions() {
     const end = new Date(Math.ceil(Date.now() / 3600_000) * 3600_000);
     return [new Date(end.getTime() - days * 86400_000).toISOString(), end.toISOString()];
   }, [days]);
-  return <div className="h-full overflow-auto p-4"><AgentSessions from={sp.get('sessionFrom') ?? from} to={sp.get('sessionTo') ?? to} tz={tz} /></div>;
+  return <div className="h-full overflow-auto p-4"><AgentSessions from={ignoreBucketRange ? from : sp.get('sessionFrom') ?? from} to={ignoreBucketRange ? to : sp.get('sessionTo') ?? to} tz={tz} /></div>;
 }
 
 /** The manifest controls providers and sections. A hidden section never mounts its polling queries. */
 export default function Usage() {
   const config = useQuery({ queryKey: ['usage-config'], queryFn: api.usageConfig, staleTime: 60_000, retry: false });
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
+  const { tz } = useAppTimezone();
   const [sp, setSp] = useSearchParams();
+  const observedZone = useRef<string | null>(null);
+  const clearingBucketRange = useRef(false);
+  const zoneChanged = observedZone.current !== null && observedZone.current !== tz;
+  useEffect(() => {
+    const hasRange = sp.has('sessionFrom') || sp.has('sessionTo');
+    if (!hasRange) clearingBucketRange.current = false;
+    if (meta.isPending) return;
+    const previous = observedZone.current;
+    observedZone.current = tz;
+    // Initial hydration/remount establishes the zone without discarding intentional bookmarks.
+    if (previous === null || previous === tz || !hasRange) return;
+    clearingBucketRange.current = true;
+    setSp((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('sessionFrom'); next.delete('sessionTo');
+      return next;
+    }, { replace: true });
+  }, [meta.isPending, sp, tz, setSp]);
   if (config.isPending) return <div className="p-4 text-sm text-[var(--ink-dim)]">Loading Usage configuration…</div>;
   if (config.isError) return <div className="p-4 text-sm text-red-600" role="alert">Usage configuration did not load. Account limits and sections are unavailable.</div>;
   const sections = config.data.sections.filter((section) => section !== 'summaries' || (meta.data?.modules ?? []).includes('summaries'));
@@ -425,8 +446,8 @@ export default function Usage() {
       </div>
         ) : view === 'running' ? <LiveAgents embedded />
           : view === 'summaries' ? <div className="h-full overflow-auto p-4"><Summaries /></div>
-            : view === 'sessions' ? <UsageSessions />
-              : view === 'ledger' ? <UsageLedger claudeConfigured={config.data.subscriptions.includes('claude-code')} /> : null}
+            : view === 'sessions' ? <UsageSessions ignoreBucketRange={zoneChanged || clearingBucketRange.current} />
+              : view === 'ledger' ? <UsageLedger key={tz} claudeConfigured={config.data.subscriptions.includes('claude-code')} onSelectBucketZone={(zone) => { observedZone.current = zone; clearingBucketRange.current = false; }} /> : null}
       </div>}
     </div>
   );

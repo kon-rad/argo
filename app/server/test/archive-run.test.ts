@@ -75,7 +75,7 @@ describe('runArchive', () => {
     const s = (await runArchive(deps))!;
     expect(s.errors).toEqual([]);
     const { rows } = await query(`SELECT source, host, external_id, channel, meta ->> 'entrypoint' AS entrypoint FROM archive_sessions
-      WHERE external_id IN ('h-tg', 'h1', 'S2') ORDER BY host, external_id`);
+      WHERE external_id IN ('h-tg', 'h1', 'S2') ORDER BY host COLLATE "C", external_id COLLATE "C"`);
     expect(rows).toEqual([
       { source: 'hermes', host: 'droplet', external_id: 'h1', channel: null, entrypoint: null },
       { source: 'claude-code', host: 'mac', external_id: 'S2', channel: 'telegram', entrypoint: 'cli' },

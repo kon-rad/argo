@@ -1,22 +1,15 @@
 /**
- * The vault's current time zone (docs/timezone.md): one IANA name in `secondbrain.json` (`"timezone"`) that the
- * web app uses for every time it shows and for the Usage page's hour and day buckets. Set it when travelling with
+ * The vault's configured time zone (docs/timezone.md): an IANA location or UTC in `secondbrain.json` (`"timezone"`),
+ * exposed by the metadata API for frontend display and Usage bucketing. Set it when travelling with
  * `secondbrain timezone set <Area/City>`. Unset: each browser uses its own zone. Never inferred from the server's
  * zone, which says where the machine is, not where its owner is.
  */
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { settingsPath } from './settings.js';
+import { closeSync, fchmodSync, fchownSync, fstatSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { isIanaTimeZone, settingsPath } from './settings.js';
 
 /** A real IANA zone name the runtime knows (`Asia/Singapore`, `UTC`); not an offset or an abbreviation. */
-export function isTimeZone(tz: unknown): tz is string {
-  if (typeof tz !== 'string' || !/^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+)*$/.test(tz)) return false;
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-}
+export const isTimeZone = isIanaTimeZone;
 
 /** The runtime's spelling of a zone (`asia/singapore` -> `Asia/Singapore`), or null when it is not a zone. */
 export function canonicalTimeZone(tz: string): string | null {
@@ -70,8 +63,34 @@ export function saveTimezone(tz: string | null, path = settingsPath()): string |
   const name = tz === null ? null : canonicalTimeZone(tz);
   if (tz !== null && !name) throw new Error(`not an IANA time zone: ${tz} (use a name like America/Los_Angeles or Asia/Singapore)`);
   const next = withTimezone(readText(path), name);
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, next);
-  renameSync(tmp, path);
+  let original: Stats | undefined;
+  try { original = statSync(path); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  // A private sibling directory prevents following a pre-existing temporary-file symlink.
+  // Keep the rename on the same filesystem, and restore the original mode despite umask.
+  const directory = mkdtempSync(join(dirname(path), '.timezone-'));
+  const tmp = join(directory, 'settings');
+  let fd: number | undefined;
+  try {
+    fd = openSync(tmp, 'wx', 0o600);
+    writeFileSync(fd, next);
+    if (original) {
+      // A replacement owned by the CLI caller could revoke the service's access.
+      // Fail before rename if this caller cannot retain the original identity.
+      try { fchownSync(fd, original.uid, original.gid); }
+      catch (error) { throw new Error('cannot preserve settings ownership; original file unchanged', { cause: error }); }
+      // chown can clear permission bits, so restore them afterwards.
+      fchmodSync(fd, original.mode & 0o777);
+      const actual = fstatSync(fd);
+      if (actual.uid !== original.uid || actual.gid !== original.gid || (actual.mode & 0o777) !== (original.mode & 0o777)) {
+        throw new Error('cannot preserve settings identity and permissions; original file unchanged');
+      }
+    }
+    closeSync(fd); fd = undefined;
+    renameSync(tmp, path);
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+    rmSync(directory, { recursive: true, force: true });
+  }
   return name;
 }

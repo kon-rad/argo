@@ -6,6 +6,7 @@ import * as archive from '../src/archive/store.js';
 import type { ParsedMessage, SessionInput } from '../src/archive/types.js';
 import { query, withTransaction } from '../src/db.js';
 import * as usage from '../src/usage/store.js';
+import { parseCodex } from '../src/usage/codex.js';
 import type { UsageCall } from '../src/usage/types.js';
 import { ALL_MODULES, truncateAll } from './helpers.js';
 
@@ -56,7 +57,7 @@ async function seed(): Promise<void> {
     // zen-agent: an interactive chat with a recorded context window, and an old trace that says nothing.
     await add({ source: 'zen-agent', externalId: 'z-chat', host: 'droplet', meta: { persona: 'sol', entrypoint: 'chat', context_window: 128000, dispatch: {} } },
       ['draft the stand-up']);
-    await add({ source: 'zen-agent', externalId: 'z-old', host: 'droplet', meta: { persona: 'sol', dispatch: {} } }, ['hello']);
+    await add({ source: 'zen-agent', externalId: 'z-old', host: 'droplet', meta: { persona: 'sol', dispatch: { runtime: 'codex' } } }, ['hello']);
     await usage.upsertCalls(tx, [
       // Two calls on the Telegram session: the latest one is the context, not the sum.
       call({ host: 'droplet', sessionExternalId: 'tg', ts: new Date('2026-11-10T07:14:00Z'), inputTokens: 1000, cacheReadTokens: 20000, cacheWriteTokens: 500, outputTokens: 10 }),
@@ -93,6 +94,25 @@ describe('session type', () => {
       tg: 'telegram', typed: 'cli', 'card-run': 'headless', rc: 'remote-control', skill: 'headless',
       'h-cron': 'headless', 'h-cli': 'cli', 'z-chat': 'cli', 'z-old': 'unknown',
     });
+  });
+
+  it('preserves web and remote-control alongside real producer classifications', async () => {
+    await withTransaction(async (tx) => {
+      await archive.upsertSession(tx, sess({ externalId: 'web-channel', meta: { channel: 'web', entrypoint: 'cli' } }));
+      await archive.upsertSession(tx, sess({ externalId: 'web-serve', meta: { entrypoint: 'serve' } }));
+      await archive.upsertSession(tx, sess({ source: 'hermes', externalId: 'web-hermes', meta: { source: 'api_server' } }));
+    });
+    // These values come from the real HTTP route over stored sessions and usage runs, not a mocked API response.
+    const rows = await byId();
+    const classifications = Object.fromEntries(['tg', 'typed', 'card-run', 'rc', 'web-channel', 'web-serve', 'web-hermes']
+      .map((id) => [id, rows[id]!.session_type]));
+    expect(classifications).toEqual({ tg: 'telegram', typed: 'cli', 'card-run': 'headless', rc: 'remote-control',
+      'web-channel': 'web', 'web-serve': 'web', 'web-hermes': 'web' });
+    expect(await ids({ type: 'web' })).toEqual(['web-channel', 'web-hermes', 'web-serve']);
+    expect(await ids({ type: 'remote-control' })).toEqual(['rc']);
+    const detail = await request(app).get('/api/usage/agent-sessions/mac/web-channel').query({ source: 'claude-code' }).expect(200);
+    expect(detail.body.session.session_type).toBe('web');
+    console.info('Real producer HTTP classification receipt:', JSON.stringify(classifications));
   });
 
   it('filters by type and keeps the other facets working beside it', async () => {
@@ -155,6 +175,47 @@ describe('session titles', () => {
     for (const r of Object.values(s)) {
       const t = r.display_title as string | null;
       if (t !== null) { expect(t.length).toBeLessThan(100); expect(t).not.toMatch(/\n|AGENTS\.md|system-reminder|command-name/); }
+    }
+  });
+});
+
+// Native counters are cumulative snapshots converted to increments, not prompt occupancy.
+describe('native Codex context provenance', () => {
+  it('keeps multi-turn cumulative deltas out of current context occupancy', async () => {
+    const row = (type: string, payload: unknown) => ({ timestamp: T0, type, payload });
+    const counter = (input: number) => row('event_msg', { type: 'token_count', info: {
+      total_token_usage: { input_tokens: input, cached_input_tokens: input / 2, output_tokens: input / 5, reasoning_output_tokens: 0 },
+    } });
+    const parsed = parseCodex([row('session_meta', { id: 'codex-context', source: 'cli', model: 'example-model' }),
+      row('turn_context', { model: 'example-model' }), counter(100), counter(100), counter(180)], 'mac');
+    expect(parsed.calls).toHaveLength(2);
+    expect(parsed.calls.map(c => c.inputTokens + c.cacheReadTokens)).toEqual([100, 80]);
+    await withTransaction(async tx => {
+      await archive.upsertSession(tx, parsed.session);
+      await usage.upsertCalls(tx, parsed.calls);
+    });
+    expect((await byId())['codex-context']).toMatchObject({ context_tokens: null, context_at: null });
+  });
+});
+
+describe('native Codex identity before token counters arrive', () => {
+  it('uses recorded native start mode in list, detail and facets without usage calls', async () => {
+    const baseline = (await request(app).get('/api/usage/agent-sessions/facets').query(RANGE).expect(200)).body.facets.type;
+    for (const nativeSource of ['cli', 'vscode', 'desktop', 'unsupported-source']) {
+      const parsed = parseCodex([{ timestamp: T0, type: 'session_meta', payload: {
+        id: `native-no-tokens-${nativeSource}`, source: nativeSource, model: 'example-model',
+      } }], 'mac');
+      await withTransaction(tx => archive.upsertSession(tx, parsed.session));
+      const expected = nativeSource === 'unsupported-source' ? 'unknown' : 'cli';
+      const rows = await list({ harness: 'codex', type: expected });
+      expect(rows.find(r => r.external_id === parsed.session.externalId)?.session_type).toBe(expected);
+      const detail = await request(app).get(`/api/usage/agent-sessions/mac/${parsed.session.externalId}`).query({ source: 'codex' }).expect(200);
+      expect(detail.body.session.session_type).toBe(expected);
+    }
+    const facets = await request(app).get('/api/usage/agent-sessions/facets').query({ ...RANGE, harness: 'codex' }).expect(200);
+    for (const [value, added] of [['cli', 3], ['unknown', 1]] as const) {
+      const previous = baseline.find((f: { value: string }) => f.value === value)?.n ?? 0;
+      expect(facets.body.facets.type.find((f: { value: string }) => f.value === value)?.n).toBe(previous + added);
     }
   });
 });

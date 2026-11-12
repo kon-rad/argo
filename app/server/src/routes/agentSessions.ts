@@ -45,9 +45,11 @@ const RUNS_OF = (a: string) => `FROM usage_runs r WHERE r.host = ${a}.host AND r
  * meta or, for rows stored before meta carried it, from its calls; zen-agent's trace `entrypoint`; Codex's call
  * entrypoint. zen-agent's calls all say `zen-agent` and Hermes's say the platform, so neither is read here.
  */
-const ENTRY = (a: string) => `coalesce(nullif(${a}.meta ->> 'entrypoint', ''), (SELECT u.entrypoint FROM usage_calls u
+const ENTRY = (a: string) => `CASE WHEN ${a}.harness = 'codex' AND ${a}.meta ->> 'native_source' IS NOT NULL THEN
+  CASE ${a}.meta ->> 'native_source' WHEN 'cli' THEN 'cli' WHEN 'vscode' THEN 'cli' WHEN 'desktop' THEN 'cli' WHEN 'exec' THEN 'exec' WHEN 'subagent' THEN 'subagent' END
+  ELSE coalesce(nullif(${a}.meta ->> 'entrypoint', ''), (SELECT u.entrypoint FROM usage_calls u
   WHERE u.host = ${a}.host AND u.source = ${a}.source AND u.session_external_id = ${a}.external_id AND ${a}.harness IN ('claude-code', 'codex')
-    AND u.entrypoint IS NOT NULL ORDER BY u.ts LIMIT 1))`;
+    AND u.entrypoint IS NOT NULL ORDER BY u.ts LIMIT 1)) END`;
 
 /**
  * The session's type: `telegram`, `cli` (a person at a terminal) or `headless` (`claude -p`, a card wake, a cron job),
@@ -60,7 +62,7 @@ export const TYPE_SQL = (a: string) => `CASE
   WHEN ${a}.harness = 'hermes' THEN CASE coalesce(nullif(${a}.meta ->> 'source', ''), 'unknown')
     WHEN 'cli' THEN 'cli' WHEN 'cron' THEN 'headless' WHEN 'api_server' THEN 'web' ELSE coalesce(nullif(${a}.meta ->> 'source', ''), 'unknown') END
   WHEN ${a}.harness = 'zen-agent' AND ${a}.meta ->> 'entrypoint' IS NULL
-    THEN CASE WHEN jsonb_typeof(${a}.meta -> 'dispatch') = 'object' AND ${a}.meta -> 'dispatch' <> '{}'::jsonb THEN 'headless' ELSE 'unknown' END
+    THEN 'unknown'
   ELSE (SELECT CASE WHEN e IS NULL THEN 'unknown' WHEN e IN ('cli', 'chat') THEN 'cli'
       WHEN e LIKE 'sdk%' OR e IN ('run', 'wake', 'subagent', 'exec') THEN 'headless' WHEN e = 'serve' THEN 'web' ELSE e END
     FROM (SELECT ${ENTRY(a)} AS e) x)
@@ -135,7 +137,7 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
        SELECT DISTINCT ON (p.id) p.id AS root, u.ts, u.model,
               (coalesce(u.input_tokens, 0) + coalesce(u.cache_write_tokens, 0) + coalesce(u.cache_read_tokens, 0))::bigint AS tokens
        FROM page p JOIN usage_calls u ON u.host = p.host AND u.source = p.source AND u.session_external_id = p.external_id
-       WHERE NOT coalesce(u.is_sidechain, false) AND coalesce(u.entrypoint, '') NOT LIKE 'aux:%'
+       WHERE u.source = 'claude-code' AND NOT coalesce(u.is_sidechain, false) AND coalesce(u.entrypoint, '') NOT LIKE 'aux:%'
        ORDER BY p.id, u.ts DESC, u.id DESC)
      SELECT p.id, p.source, p.harness, p.profile, p.provider, p.host, p.external_id, p.parent_external_id, p.project, p.title,
             coalesce((SELECT array_agg(DISTINCT r.task_id ORDER BY r.task_id) FROM usage_runs r

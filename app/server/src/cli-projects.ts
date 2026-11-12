@@ -111,7 +111,7 @@ export function writeIfChanged(path: string, text: string): boolean {
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
   const { pos, opts } = parseArgs(rest);
-  const by = typeof opts.by === 'string' ? opts.by : (process.env.PROJECTS_BY ?? `${userInfo().username}@${hostname().split('.')[0]}`);
+  const by = typeof opts.by === 'string' ? opts.by : (config.env.PROJECTS_BY ?? `${userInfo().username}@${hostname().split('.')[0]}`);
   const vault = config.vaultRoot;
 
   switch (cmd) {

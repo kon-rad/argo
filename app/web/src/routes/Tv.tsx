@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { tvApi, type TvEpisode } from '../lib/api.js';
 import { zoned } from '../lib/time.js';
+import { useAppTimezone } from '../lib/useTimezone.js';
 
 /**
  * TV: the vault's own video channel. The newest episode starts on its own,
@@ -32,6 +33,7 @@ export function nextId(playable: TvEpisode[], current: string | null): string | 
 }
 
 export default function Tv() {
+  const { tz } = useAppTimezone();
   const [params] = useSearchParams();
   const kiosk = params.get('kiosk') === '1';
   const episodes = useQuery({ queryKey: ['tv'], queryFn: tvApi.episodes, refetchInterval: REFETCH_MS });
@@ -156,7 +158,7 @@ export default function Tv() {
           <span className="rounded border px-1.5 py-0.5 text-xs">{showLabel(episode.show, episodes.data?.shows)}</span>
           <span className="font-medium">{episode.title}</span>
           <span className="text-[var(--ink-dim)]">
-            generated {episode.generated_at ? zoned(episode.generated_at) : 'unknown'}
+            generated {episode.generated_at ? zoned(episode.generated_at, tz) : 'unknown'}
             {episode.duration_s !== null && ` · ${formatDuration(episode.duration_s)}`}
             {episode.source && ` · ${episode.source === 'local' ? 'this machine' : 'B2'}`}
           </span>
@@ -180,7 +182,7 @@ export default function Tv() {
               </div>
               <div className={`mt-1 line-clamp-2 text-sm ${playing ? 'font-semibold' : ''}`}>{e.title}</div>
               <div className="mt-1 text-xs text-[var(--ink-dim)]">
-                {e.generated_at ? zoned(e.generated_at) : ''}
+                {e.generated_at ? zoned(e.generated_at, tz) : ''}
                 {e.duration_s !== null && ` · ${formatDuration(e.duration_s)}`}
               </div>
             </>

@@ -305,7 +305,7 @@ export class Dispatcher {
       }
       const resume = card ? await store.lastCodexSession(agent.name, card) : null;
       const args = codexCommand(model, this.deps.config.vaultRoot, prompt, resume, Boolean(card));
-      const result = parseCodexResult(await this.deps.runner(command, args, { ...env, ORG_RUN: runId },
+      const result = parseCodexResult(await this.deps.runner(command, args, { ...env, ORG_RUN: runId, CC_CARD: card ?? '' },
         this.deps.config.vaultRoot, (budget.minutes + 2) * 60_000));
       out.ran = true;
       const summary = result.text || `Codex ${result.state} (exit ${result.code})`;

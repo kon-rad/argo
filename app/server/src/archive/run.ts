@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve as resolvePath } from 'node:path';
+import { config } from '../config.js';
 import { redactExisting } from './backfill.js';
 import { ingest, type Counts, type Item } from './ingest.js';
 import { withTransaction } from '../db.js';
@@ -47,7 +48,7 @@ export function defaultPaths(vaultRoot: string, home: string): ArchivePaths {
 }
 
 // The server's Hermes home as recorded in archive rows; keep it stable, it is part of each row's identity.
-const DROPLET_HOME = `droplet:${process.env.REMOTE_HERMES_HOME ?? '~/.hermes'}`;
+const DROPLET_HOME = `droplet:${config.env.REMOTE_HERMES_HOME ?? '~/.hermes'}`;
 
 
 function listFiles(dir: string, filter: (name: string) => boolean): string[] {

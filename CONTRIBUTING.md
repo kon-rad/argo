@@ -142,7 +142,7 @@ A feature is wired in one place: its folder `app/server/src/features/<name>/`. `
 3. Register both in `features/registry.ts` (the manifest) and `features/index.ts` (manifest plus routes).
 4. Pages: add the feature's `<Route>`s to `app/web/src/features.tsx` under its name. The nav link comes from the manifest through `/api/meta`.
 5. Tables go in a new migration. They exist whether or not the feature is on.
-6. Timers: add `<unit>.service` and `<unit>.timer` to `app/deploy/` and name the unit in `timers`; `deploy.sh` installs it when the feature is on.
+6. Timers: add one complete `timers` entry to the manifest; the deploy generator renders and installs both unit halves when the feature is on.
 7. A CLI: an entry point `app/server/src/cli-<name>.ts`, named in `cli`; `secondbrain <command>` reaches it with no launcher change.
 8. Tests: `test/features.test.ts` already checks that every file the manifest names exists; add the feature's own route tests, on and off.
 9. Docs: the page named in `docs`, its settings in [docs/configuration.md](docs/configuration.md), and a row in the module tables of `README.md` and `app/README.md`.
@@ -153,7 +153,7 @@ A feature is wired in one place: its folder `app/server/src/features/<name>/`. `
 2. Mount its routes only when it is on: `if (modules.has('<name>'))` in `app/server/src/app.ts`.
 3. Show its nav link and routes only when it is on (`app/web/src/App.tsx` reads the module list from `/api/meta`).
 4. Tables go in a new migration. They exist whether or not the module is on.
-5. Timers: add the `.service` and `.timer` to `app/deploy/`, and install them in `deploy.sh` only when the module is in `DEPLOY_MODULES`.
+5. Timers: add one complete `timers` entry to the manifest; the deploy generator renders and installs both unit halves only when the module is on.
 6. A CLI: add a subcommand to `app/bin/secondbrain` and an entry point in `app/server/src/cli-<name>.ts`.
 7. Tests: the module on, and the module off (routes return 404, nothing in the nav).
 8. Docs: a section in [docs/modules.md](docs/modules.md), its settings in [docs/configuration.md](docs/configuration.md), and a row in the module tables of `README.md` and `app/README.md`.

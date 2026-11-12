@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import Usage from '../src/routes/usage/Usage.js';
 import UsageSession from '../src/routes/usage/UsageSession.js';
 import { sessionName } from '../src/routes/usage/AgentSessions.js';
@@ -89,11 +89,11 @@ const FACETS = { facets: { harness: [{ value: 'claude-code', n: 2 }], host: [{ v
   type: [{ value: 'headless', n: 1 }, { value: 'telegram', n: 1 }], persona: [{ value: 'claude', n: 1 }, { value: 'unknown', n: 1 }], tool: [] } };
 const CONFIG = { subscriptions: [], credits: [], sections: ['ledger', 'sessions'] };
 
-function mockFetch(meta: Record<string, unknown>) {
+function mockFetch(meta: Record<string, unknown>, facets = FACETS) {
   const fn = vi.fn(async (input: RequestInfo | URL) => {
     const u = String(input);
     const body = u.includes('/api/meta') ? { modules: ['usage'], ...meta } : u.includes('/usage/config') ? CONFIG
-      : u.includes('/usage/agent-sessions/facets') ? FACETS : u.includes('/usage/agent-sessions') ? SESSIONS
+      : u.includes('/usage/agent-sessions/facets') ? facets : u.includes('/usage/agent-sessions') ? SESSIONS
       : u.includes('/usage/series') ? { bucket: 'hour', tz: 'UTC', rows: [] } : u.includes('/usage/facets') ? { total: { calls: 0, tokens: 0 }, facets: {} }
       : u.includes('/usage/runs') ? { runs: [] } : u.includes('/usage/org-wakes') ? { agents: [] } : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -102,7 +102,11 @@ function mockFetch(meta: Record<string, unknown>) {
   return () => fn.mock.calls.map((c) => String(c[0]));
 }
 
-const page = (path: string) => render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[path]}><Usage /></MemoryRouter></QueryClientProvider>);
+function LocationProbe() { return <output data-testid="session-location">{useLocation().search}</output>; }
+const page = (path: string) => render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={[path]}><Usage /><LocationProbe /></MemoryRouter></QueryClientProvider>);
+const locationParams = () => new URLSearchParams(screen.getByTestId('session-location').textContent ?? '');
+const sessionRequests = (calls: () => string[]) => calls().map(u => new URL(u, 'http://example.invalid'))
+  .filter(u => u.pathname === '/api/usage/agent-sessions');
 
 describe('Sessions list', () => {
   it('shows Started, Duration, Machine, Type and Bot persona in the vault zone, with context apart from totals', async () => {
@@ -134,6 +138,63 @@ describe('Sessions list', () => {
     fireEvent.click(screen.getByRole('button', { name: 'headless' }));
     await waitFor(() => expect(calls().some((u) => u.includes('type=telegram%2Cheadless') || u.includes('type=telegram,headless'))).toBe(true));
     expect(screen.getByText('bot persona')).toBeTruthy();
+  });
+
+  it.each([1, 20])('makes every one of %i personas selectable and keeps a reloaded selection removable', async count => {
+    const personas = Array.from({ length: count }, (_, i) => ({ value: 'persona-' + i, n: count - i }));
+    const facets = { facets: { ...FACETS.facets, persona: personas } };
+    const calls = mockFetch({}, facets);
+    const rendered = page('/usage?view=sessions');
+    const last = personas.at(-1)!.value;
+    const chip = await screen.findByRole('button', { name: last });
+    for (const persona of personas) expect(screen.getByRole('button', { name: persona.value })).toBeTruthy();
+    fireEvent.click(chip);
+    await waitFor(() => expect(locationParams().get('s_persona')).toBe(last));
+    await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.get('persona')).toBe(last));
+    const bookmark = '/usage' + screen.getByTestId('session-location').textContent;
+    rendered.unmount();
+
+    const reloadedCalls = mockFetch({}, facets);
+    page(bookmark);
+    const selected = await screen.findByRole('button', { name: last });
+    expect(selected.getAttribute('aria-pressed')).toBe('true');
+    await waitFor(() => expect(sessionRequests(reloadedCalls).at(-1)?.searchParams.get('persona')).toBe(last));
+    fireEvent.click(selected);
+    await waitFor(() => expect(locationParams().has('s_persona')).toBe(false));
+    await waitFor(() => expect(sessionRequests(reloadedCalls).at(-1)?.searchParams.has('persona')).toBe(false));
+    expect(locationParams().get('view')).toBe('sessions');
+  });
+
+  it('keeps bookmarked selections absent from current facets visible and clears their URL and API filters', async () => {
+    const calls = mockFetch({}, { facets: { ...FACETS.facets, persona: [] } });
+    page('/usage?view=sessions&s_persona=absent-persona&s_host=absent-host');
+    const persona = await screen.findByRole('button', { name: 'absent-persona' });
+    const host = screen.getByRole('button', { name: 'absent-host' });
+    expect(persona.getAttribute('aria-pressed')).toBe('true');
+    expect(host.getAttribute('aria-pressed')).toBe('true');
+    await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.get('persona')).toBe('absent-persona'));
+    fireEvent.click(persona);
+    await waitFor(() => expect(locationParams().has('s_persona')).toBe(false));
+    await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.has('persona')).toBe(false));
+    expect(locationParams().get('s_host')).toBe('absent-host');
+    expect(screen.queryByRole('button', { name: 'absent-persona' })).toBeNull();
+    fireEvent.click(host);
+    await waitFor(() => expect(locationParams().has('s_host')).toBe(false));
+    await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.has('host')).toBe(false));
+    expect(screen.queryByRole('button', { name: 'absent-host' })).toBeNull();
+  });
+
+  it('keeps a selected host below the discovery limit visible and removable without losing the type filter', async () => {
+    const hosts = Array.from({ length: 12 }, (_, i) => ({ value: 'host-' + i, n: 12 - i }));
+    const calls = mockFetch({}, { facets: { ...FACETS.facets, host: hosts } });
+    page('/usage?view=sessions&s_host=host-11&s_type=telegram');
+    const selected = await screen.findByRole('button', { name: 'host-11' });
+    expect(selected.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(selected);
+    await waitFor(() => expect(locationParams().has('s_host')).toBe(false));
+    await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.has('host')).toBe(false));
+    expect(locationParams().get('s_type')).toBe('telegram');
+    expect(screen.queryByRole('button', { name: 'host-11' })).toBeNull();
   });
 
   it('buckets the ledger in the vault zone and says where the zone came from', async () => {
