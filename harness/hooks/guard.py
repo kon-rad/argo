@@ -7,8 +7,9 @@ answers in whichever format the calling agent expects:
   Claude Code  hook_event_name "PreToolUse"   block = exit 2, reason on stderr
   Hermes       hook_event_name "pre_tool_call" block = print {"decision": "block", ...}
 
-Built-in rules (every vault): secrets files never reach a tool, no rsync
---delete without a dry run first, no force push.
+Built-in rules (every vault): secrets files never reach a tool, key values
+never sit in a command line or travel over ssh, no rsync --delete without a
+dry run first, no force push.
 
 Vault-specific rules come from .agents/guard.local.json in the vault:
 
@@ -60,6 +61,20 @@ SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|\n]|\$\(|`")
 EXCLUDE_ARG = re.compile(
     r"""--(?:exclude|filter|include)(?:-from)?(?:=|\s+)(?:'[^']*'|"[^"]*"|\S+)"""
 )
+# Key values written into a command line. The command is visible to every user in the
+# process list and is saved verbatim in the agent's transcript and logs.
+KEY_VALUE = re.compile(
+    r"""(?<![A-Za-z0-9_-])(?:sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}"""
+    r"""|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}"""
+    r"""|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}"""
+    r"""|hf_[A-Za-z0-9]{30,}|glpat-[A-Za-z0-9_-]{20,}"""
+    r"""|[A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Za-z0-9_]*=['"]?(?=[A-Za-z_+-]*[0-9])[A-Za-z0-9_+-]{20,}(?![A-Za-z0-9_+/.~-]))"""
+)
+# A shell variable whose name says it holds a secret, e.g. $OPENAI_API_KEY or ${HF_TOKEN}.
+SECRET_VAR = re.compile(
+    r"""\$\{?[A-Za-z_][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)[A-Za-z0-9_]*\}?(?![A-Za-z0-9_])"""
+)
+SSH_WORD = re.compile(r"""(?:^|[\s;&|(])ssh(?=\s)""")
 # Built-in rules a vault may switch off in guard.local.json "disable".
 DISABLEABLE = {"rsync_dry_run"}
 
@@ -128,6 +143,45 @@ def first_word(segment: str) -> str:
     return ""
 
 
+def locally_expanded(cmd: str) -> str:
+    """The parts of cmd this shell expands: drops single-quoted spans and \\$ escapes."""
+    out, i, dq = [], 0, False
+    while i < len(cmd):
+        c = cmd[i]
+        if c == "\\" and i + 1 < len(cmd):
+            i += 2
+            continue
+        if c == '"':
+            dq = not dq
+        elif c == "'" and not dq:
+            end = cmd.find("'", i + 1)
+            i = len(cmd) if end < 0 else end + 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def check_inline_secrets(cmd: str):
+    if KEY_VALUE.search(cmd):
+        return ("guard: that command has a key value written into it, which leaves it in the process "
+                "list and the agent logs. Source .env and pass the variable to a local program instead.")
+    expanded = locally_expanded(cmd)
+    if SSH_WORD.search(" " + cmd) and SECRET_VAR.search(expanded):
+        return ("guard: that would send a key to another machine through ssh, where it lands in the "
+                "remote process list and shell history. Keys are moved between machines by hand: ask "
+                "the owner to put it in a chmod 600 env file there, and source that file remotely.")
+    for raw in SEGMENT_SPLIT.split(cmd):
+        seg = raw.strip().lstrip("(").strip()
+        word = first_word(seg)
+        if word in {"echo", "printf"} and SECRET_VAR.search(locally_expanded(seg)):
+            return ("guard: that would print a key into the transcript. Test it with "
+                    "`[ -n \"$NAME\" ] && echo set` instead (AGENTS.md, Credentials).")
+        if word == "printenv" and re.search(r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)", seg):
+            return "guard: that would print a key into the transcript. Test it with `[ -n \"$NAME\" ] && echo set` instead."
+    return None
+
+
 def protected_reason(item: dict) -> str:
     return "guard: " + (item.get("reason") or f"{item['path']} is off limits to agents (.agents/guard.local.json).")
 
@@ -137,6 +191,10 @@ def check_shell(cmd: str, rules: dict):
         d = item["path"]
         if d in cmd or d.rstrip("/") + " " in cmd + " ":
             return protected_reason(item)
+
+    reason = check_inline_secrets(cmd)
+    if reason:
+        return reason
 
     for raw in SEGMENT_SPLIT.split(cmd):
         seg = raw.strip().lstrip("(").strip()
