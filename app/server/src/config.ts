@@ -29,6 +29,13 @@ const Schema = z.object({
   // plan|apply filesystem overrides, primarily for dry runs and tests.
   SB_UNIT_DIR: z.string().optional(),
   SB_ENV_FILE: z.string().optional(),
+  // cli-config, called by deploy.sh: unit files only, and the server fields it overrides.
+  SB_CONFIG_UNITS_ONLY: z.string().optional(),
+  SB_CONFIG_BASE_UNITS: z.string().optional(),
+  SB_APP_USER: z.string().optional(),
+  SB_APP_DIR: z.string().optional(),
+  SB_VAULT_DIR: z.string().optional(),
+  SB_HERMES_HOME: z.string().optional(),
   // Client-mode database URLs used by launchers and bot-scoped roles.
   SECONDBRAIN_DB_URL: z.string().optional(),
   SB_ORG_DB_URL: z.string().optional(),
