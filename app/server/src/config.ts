@@ -249,6 +249,9 @@ const Schema = z.object({
   // 32-byte key (64 hex chars) used to AES-256-GCM encrypt stored OAuth tokens.
   // Required only when the social module is on; generate with
   // `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`.
+  FACEBOOK_APP_ID: z.string().min(1).optional(),
+  FACEBOOK_APP_SECRET: z.string().min(1).optional(),
+  FACEBOOK_LOGIN_CONFIG_ID: z.string().min(1).optional(),
   SOCIAL_TOKEN_ENC_KEY: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
   // A personal key from Buffer (Settings > API). Relays Instagram, YouTube
   // Shorts and X through the channels connected in that Buffer account;
@@ -429,6 +432,9 @@ export const config = {
   socialMediaBaseUrl: (
     parsed.data.SOCIAL_MEDIA_BASE_URL ?? parsed.data.SOCIAL_REDIRECT_BASE_URL ?? parsed.data.PUBLIC_ORIGIN ?? `http://localhost:${parsed.data.PORT}`
   ).replace(/\/+$/, ''),
+  facebookAppId: parsed.data.FACEBOOK_APP_ID,
+  facebookAppSecret: parsed.data.FACEBOOK_APP_SECRET,
+  facebookLoginConfigId: parsed.data.FACEBOOK_LOGIN_CONFIG_ID,
   socialTokenEncKey: parsed.data.SOCIAL_TOKEN_ENC_KEY,
   bufferApiKey: parsed.data.BUFFER_API_KEY,
   socialXMaxChars: parsed.data.SOCIAL_X_MAX_CHARS,

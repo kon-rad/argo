@@ -96,6 +96,25 @@ describe('session type', () => {
     });
   });
 
+  it('preserves web and remote-control alongside real producer classifications', async () => {
+    await withTransaction(async (tx) => {
+      await archive.upsertSession(tx, sess({ externalId: 'web-channel', meta: { channel: 'web', entrypoint: 'cli' } }));
+      await archive.upsertSession(tx, sess({ externalId: 'web-serve', meta: { entrypoint: 'serve' } }));
+      await archive.upsertSession(tx, sess({ source: 'hermes', externalId: 'web-hermes', meta: { source: 'api_server' } }));
+    });
+    // These values come from the real HTTP route over stored sessions and usage runs, not a mocked API response.
+    const rows = await byId();
+    const classifications = Object.fromEntries(['tg', 'typed', 'card-run', 'rc', 'web-channel', 'web-serve', 'web-hermes']
+      .map((id) => [id, rows[id]!.session_type]));
+    expect(classifications).toEqual({ tg: 'telegram', typed: 'cli', 'card-run': 'headless', rc: 'remote-control',
+      'web-channel': 'web', 'web-serve': 'web', 'web-hermes': 'web' });
+    expect(await ids({ type: 'web' })).toEqual(['web-channel', 'web-hermes', 'web-serve']);
+    expect(await ids({ type: 'remote-control' })).toEqual(['rc']);
+    const detail = await request(app).get('/api/usage/agent-sessions/mac/web-channel').query({ source: 'claude-code' }).expect(200);
+    expect(detail.body.session.session_type).toBe('web');
+    console.info('Real producer HTTP classification receipt:', JSON.stringify(classifications));
+  });
+
   it('filters by type and keeps the other facets working beside it', async () => {
     expect(await ids({ type: 'telegram' })).toEqual(['tg']);
     expect(await ids({ type: 'cli' })).toEqual(['h-cli', 'typed', 'z-chat']);

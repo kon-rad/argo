@@ -82,7 +82,7 @@ Run the review model outside the trusted worker account. A fixed transport may f
 
 ## Runner handoff and evidence
 
-Before submitting, the runner must create or retain a single same-repository PR whose body or branch includes the full card id. The worker discovers it through GitHub and fails closed on unknown or ambiguous PRs. Fork PRs are unsupported and blocked. The existing runner's `move review` is the handoff; it needs no shipping power.
+Before submitting, the runner must create or retain a single same-repository PR whose branch includes the full card id as a complete identifier, such as `card/t_123abc-fix` or the historical `bot/builder/t_123abc-fix` form. Prefixes and suffixes remain supported, but body-only mentions and card-id prefix or suffix collisions do not bind a PR. The worker verifies every broad GitHub search hit and fails closed on unknown, truncated or multiple valid bindings. Fork PRs are unsupported and blocked. The existing runner's `move review` is the handoff; it needs no shipping power.
 
 The owner host integration must stage immutable, scrubbed builder evidence at:
 
