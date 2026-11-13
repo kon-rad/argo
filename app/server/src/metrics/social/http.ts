@@ -12,7 +12,7 @@ export const fetchGet: HttpGet = async (url, headers = {}) => {
   return { status: res.status, body: await res.text() };
 };
 
-const SECRET_PARAMS = /([?&](?:access_token|key|client_secret|token)=)[^&\s"']+/gi;
+const SECRET_PARAMS = /([?&](?:access_token|input_token|code|key|client_secret|token)=)[^&\s"']+/gi;
 
 /** Removes the given secrets and any token-shaped query parameter from a message. */
 export function redact(text: string, secrets: readonly (string | undefined)[] = []): string {
