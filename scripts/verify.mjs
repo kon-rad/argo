@@ -99,7 +99,7 @@ export const resolved = check => ({ cwd: !check.cwd || check.cwd === '.' ? SANDB
 
 function git(repo, args) {
   return spawnSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], { cwd: repo, encoding: 'utf8', timeout: 30_000,
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' } });
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' } });
 }
 const probeTcp = (options, ms = 5000) => new Promise(done => {
   const socket = connect(options); const finish = ok => { socket.destroy(); done(ok); };

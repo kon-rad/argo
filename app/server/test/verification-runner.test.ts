@@ -212,7 +212,7 @@ describe('isolation boundary', () => {
     const lock = (packages: Record<string, unknown>) => JSON.stringify({ lockfileVersion: 3, packages: { '': {}, ...packages } });
     const reg = runner.DOWNLOADS['dependency-download:npm'].registry;
     expect(runner.lockedSources(lock({ 'node_modules/a': { resolved: `${reg}a/-/a-1.tgz`, integrity: 'sha512-x' }, 'node_modules/w': { resolved: 'shared', link: true } }), reg)).toEqual([]);
-    expect(runner.lockedSources(lock({ 'node_modules/a': { resolved: 'git+ssh://git@example.com/a.git' } }), reg)).toHaveLength(1);
+    expect(runner.lockedSources(lock({ 'node_modules/a': { resolved: 'git+ssh://git@example.com/a.git' } }), reg)).toHaveLength(1); // public-ok
     expect(runner.lockedSources(lock({ 'node_modules/a': { resolved: 'https://registry.example.com/a.tgz', integrity: 'sha512-x' } }), reg)).toHaveLength(1);
     expect(runner.lockedSources(lock({ 'node_modules/a': { resolved: `${reg}a.tgz`, integrity: 'sha1-x' } }), reg)).toHaveLength(1);
     expect(runner.lockedSources(readFileSync(join(ROOT, 'app/package-lock.json'), 'utf8'), reg)).toEqual([]);
