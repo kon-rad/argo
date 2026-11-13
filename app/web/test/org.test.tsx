@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import Org, { channelLabel, teamColor } from '../src/routes/org/Org.js';
+import { browserTimezone } from '../src/lib/time.js';
 
 const agent = (name: string, team_slug: string | null, role: string, is_lead = false) => ({
   name, team_slug, team_name: team_slug === 'platform' ? 'Platform & Agents' : team_slug ? 'Media & Growth' : null, runtime: team_slug ? 'claude-code' : 'human',
@@ -51,7 +52,14 @@ const AGENT_PAGE = {
   ],
 };
 
-function mount(path: string, over: { agentPage?: unknown } = {}) {
+type MountOptions = {
+  agentPage?: unknown;
+  messages?: Record<string, unknown[]>;
+  meta?: () => unknown;
+  tokens?: unknown[];
+};
+
+function mount(path: string, over: MountOptions = {}, qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   const calls: { url: string; init?: RequestInit }[] = [];
   vi.stubGlobal(
     'fetch',
@@ -59,15 +67,20 @@ function mount(path: string, over: { agentPage?: unknown } = {}) {
       const url = String(input);
       calls.push({ url, init });
       const u = new URL(url, 'http://x');
+      if (u.pathname === '/api/meta') return Response.json(over.meta?.() ?? { timezone: null });
       if (u.pathname === '/api/org/chart') return Response.json(CHART);
       if (u.pathname === '/api/org/channels') return Response.json(CHANNELS);
       if (u.pathname.endsWith('/members')) return Response.json({ members: [{ agent_name: 'owner', can_post: true, role: 'CEO', team_slug: null, runtime: 'human' }, { agent_name: 'atlas', can_post: true, role: 'Head of Platform', team_slug: 'platform', runtime: 'claude-code' }] });
       if (u.pathname.endsWith('/read')) return Response.json({ ok: true });
       if (u.pathname === '/api/org/messages') {
         const ch = u.searchParams.get('channel');
-        const messages = ch ? (MESSAGES[ch] ?? []) : Object.values(MESSAGES).flat();
+        const fixture = over.messages ?? MESSAGES;
+        const messages = ch ? (fixture[ch] ?? []) : Object.values(fixture).flat();
         return Response.json({ messages, cursor: 4 });
       }
+      if (u.pathname === '/api/org/approvals') return Response.json([]);
+      if (u.pathname === '/api/org/facts') return Response.json([]);
+      if (u.pathname === '/api/board/tokens') return Response.json({ tokens: over.tokens ?? [] });
       if (u.pathname === '/api/org/search') return Response.json({ messages: [msg(3, 'platform', 'rune', 'tests 29/29', { kind: 'status' })] });
       if (u.pathname === '/api/org/post') return Response.json(msg(5, 'all-hands', 'owner', 'posted'), { status: 201 });
       if (u.pathname === '/api/org/dm') return Response.json(msg(6, 'dm:atlas:owner', 'owner', 'hi'), { status: 201 });
@@ -79,7 +92,6 @@ function mount(path: string, over: { agentPage?: unknown } = {}) {
       return Response.json({ error: { message: `unexpected ${url}` } }, { status: 404 });
     }),
   );
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
@@ -90,6 +102,15 @@ function mount(path: string, over: { agentPage?: unknown } = {}) {
     </QueryClientProvider>,
   );
   return calls;
+}
+
+function displayTime(iso: string, timeZone: string, seconds = false): string {
+  return new Intl.DateTimeFormat([], {
+    timeZone,
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: seconds ? '2-digit' : undefined,
+    hourCycle: 'h23', timeZoneName: 'short',
+  }).format(new Date(iso));
 }
 
 afterEach(() => {
@@ -108,6 +129,84 @@ describe('helpers', () => {
 });
 
 describe('Org page', () => {
+  it('updates root and reply tooltips in place when metadata changes and clears to the browser zone', async () => {
+    const rootAt = '2026-01-02T00:15:30Z';
+    const replyAt = '2026-01-02T00:16:31Z';
+    const messages = { platform: [
+      msg(30, 'platform', 'rune', 'midnight root', { created_at: rootAt }),
+      msg(31, 'platform', 'atlas', 'midnight reply', { kind: 'reply', thread_id: 30, created_at: replyAt }),
+    ] };
+    let timezone: string | null = 'America/Los_Angeles';
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const calls = mount('/org?channel=platform', { messages, meta: () => ({ timezone }) }, client);
+
+    const root = await screen.findByText('midnight root');
+    fireEvent.click(screen.getByRole('button', { name: 'show 1 reply' }));
+    const reply = await screen.findByText('midnight reply');
+    const rootTime = root.closest('[data-testid="org-message"]')!.querySelector<HTMLElement>('span[title]')!;
+    const replyTime = reply.closest('[data-testid="org-message"]')!.querySelector<HTMLElement>('span[title]')!;
+    const relative = [rootTime.textContent, replyTime.textContent];
+    expect(rootTime.title).toBe(displayTime(rootAt, timezone));
+    expect(replyTime.title).toBe(displayTime(replyAt, timezone));
+
+    let before = calls.length;
+    timezone = 'Asia/Tokyo';
+    await client.invalidateQueries({ queryKey: ['meta'] });
+    await waitFor(() => expect(rootTime.title).toBe(displayTime(rootAt, timezone!)));
+    expect(replyTime.title).toBe(displayTime(replyAt, timezone));
+    expect(calls.slice(before).map((call) => new URL(call.url, 'http://x').pathname)).toEqual(['/api/meta']);
+    expect(root.closest('[data-testid="org-message"]')!.querySelector('span[title]')).toBe(rootTime);
+    expect(reply.closest('[data-testid="org-message"]')!.querySelector('span[title]')).toBe(replyTime);
+
+    before = calls.length;
+    timezone = null;
+    await client.invalidateQueries({ queryKey: ['meta'] });
+    await waitFor(() => expect(rootTime.title).toBe(displayTime(rootAt, browserTimezone())));
+    expect(replyTime.title).toBe(displayTime(replyAt, browserTimezone()));
+    expect([rootTime.textContent, replyTime.textContent]).toEqual(relative);
+    expect(calls.slice(before).map((call) => new URL(call.url, 'http://x').pathname)).toEqual(['/api/meta']);
+    client.clear();
+  });
+
+  it('updates token Made and Last seen timestamps in place and keeps an absent Last seen as never', async () => {
+    const madeAt = '2026-01-02T00:15:30Z';
+    const seenAt = '2026-01-02T00:16:31Z';
+    let timezone: string | null = 'America/Los_Angeles';
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mount('/org/approvals', {
+      meta: () => ({ timezone }),
+      tokens: [
+        { id: 1, agent_name: 'rune', label: 'workstation', created_at: madeAt, last_seen_at: seenAt, revoked_at: null },
+        { id: 2, agent_name: 'atlas', label: 'backup', created_at: madeAt, last_seen_at: null, revoked_at: null },
+      ],
+    }, client);
+
+    const table = await screen.findByRole('table');
+    const rows = within(table).getAllByRole('row');
+    const first = within(rows[1]!).getAllByRole('cell');
+    const second = within(rows[2]!).getAllByRole('cell');
+    const lastSeen = first[2]!;
+    const made = first[3]!;
+    const never = second[2]!;
+    expect(lastSeen.textContent).toBe(displayTime(seenAt, timezone, true));
+    expect(made.textContent).toBe(displayTime(madeAt, timezone, true));
+    expect(never.textContent).toBe('never');
+
+    timezone = 'Asia/Tokyo';
+    await client.invalidateQueries({ queryKey: ['meta'] });
+    await waitFor(() => expect(lastSeen.textContent).toBe(displayTime(seenAt, timezone!, true)));
+    expect(made.textContent).toBe(displayTime(madeAt, timezone, true));
+    expect(never.textContent).toBe('never');
+    expect(within(rows[1]!).getAllByRole('cell')[2]).toBe(lastSeen);
+
+    timezone = null;
+    await client.invalidateQueries({ queryKey: ['meta'] });
+    await waitFor(() => expect(lastSeen.textContent).toBe(displayTime(seenAt, browserTimezone(), true)));
+    expect(made.textContent).toBe(displayTime(madeAt, browserTimezone(), true));
+    expect(never.textContent).toBe('never');
+    client.clear();
+  });
+
   it('opens all-hands by default, lists channels with unread badges, and posts as owner', async () => {
     const calls = mount('/org');
     await screen.findByText('Morning all');

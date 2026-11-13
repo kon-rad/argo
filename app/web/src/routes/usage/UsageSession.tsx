@@ -2,13 +2,14 @@ import { useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, type AgentSessionRun, type AgentStep } from '../../lib/api.js';
-import { zoned } from '../../lib/time.js';
+import { clock, span, startedStamp, zoned } from '../../lib/time.js';
+import { useAppTimezone } from '../../lib/useTimezone.js';
 import { AgentAvatar } from '../../components/AgentAvatar.js';
 import { SessionContent, SessionReferences } from './SessionContent.js';
-import { formatTokens } from './format.js';
+import { contextLabel, formatTokens, personaLabel } from './format.js';
+import { sessionName } from './AgentSessions.js';
 import { duration, groupTurns, toolSummary, type ToolPair } from './steps.js';
 
-const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const SHOW_KEY = 'usage-session-show';
 type Show = { thinking: boolean; results: boolean; system: boolean };
 const DEFAULT_SHOW: Show = { thinking: false, results: false, system: false };
@@ -21,7 +22,8 @@ function saveShow(s: Show): void {
   try { localStorage.setItem(SHOW_KEY, JSON.stringify(s)); } catch { /* not saved; fine */ }
 }
 
-const time = (ts: string | null) => (ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }) : '');
+// Step times in the app's zone (lib/time.ts: the vault's setting, else the browser's).
+const time = (ts: string | null) => clock(ts);
 
 function CallChip({ call }: { call: AgentStep['call'] }) {
   if (!call) return null;
@@ -106,7 +108,7 @@ function ToolCard({ pair, show }: { pair: ToolPair; show: Show }) {
   );
 }
 
-function Runs({ runs }: { runs: AgentSessionRun[] }) {
+function Runs({ runs, tz }: { runs: AgentSessionRun[]; tz: string }) {
   return <>{runs.map((run) => (
     <div key={run.run_id} className="mt-2 rounded border border-[var(--rule)] p-2 text-sm">
       {run.agent_name
@@ -126,6 +128,7 @@ export default function UsageSession() {
   const [params] = useSearchParams();
   const source = params.get('source');
   const [show, setShowState] = useState<Show>(loadShow);
+  const { tz } = useAppTimezone();
   const setShow = (patch: Partial<Show>) => { const next = { ...show, ...patch }; setShowState(next); saveShow(next); };
   const q = useInfiniteQuery({
     queryKey: ['agent-session', host, externalId, source],
@@ -139,16 +142,31 @@ export default function UsageSession() {
   const s = first.session;
   const steps = q.data.pages.flatMap((p) => p.steps);
   const turns = groupTurns(steps);
-  const mins = s.started_at && s.ended_at ? Math.round((Date.parse(s.ended_at) - Date.parse(s.started_at)) / 60000) : null;
+  const dur = span(s.started_at, s.ended_at);
+  const persona = personaLabel(s);
+  const ctx = contextLabel(s);
   return (
     <div className="h-full overflow-auto break-words p-4">
       <Link to="/usage?view=sessions" className="text-xs underline">Back to Usage</Link>
-      <h1 className="mt-1 text-lg font-semibold">{s.title ?? s.first_prompt ?? s.external_id}</h1>
+      <h1 className="mt-1 text-lg font-semibold">{sessionName(s, tz) ?? s.external_id}</h1>
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs sm:grid-cols-[auto_1fr_auto_1fr]" aria-label="Session summary">
+        <dt className="text-[var(--ink-dim)]">Started</dt><dd className="tabular-nums">{s.started_at ? `${startedStamp(s.started_at, tz)} (${tz})` : 'unknown'}</dd>
+        <dt className="text-[var(--ink-dim)]">Duration</dt><dd title="elapsed from the first to the last recorded step">{dur ?? 'unknown'}</dd>
+        <dt className="text-[var(--ink-dim)]">Type</dt><dd>{s.session_type ?? 'unknown'}</dd>
+        <dt className="text-[var(--ink-dim)]">Bot persona</dt><dd>{persona.text}{s.channel_bot && s.channel_bot !== s.persona ? ` (bot ${s.channel_bot})` : ''}</dd>
+        <dt className="text-[var(--ink-dim)]">Machine</dt><dd>{s.host}</dd>
+        <dt className="text-[var(--ink-dim)]">Model</dt><dd>{s.models.join(', ') || 'unknown'}{s.provider ? ` via ${s.provider}` : ' (provider unknown)'}</dd>
+        <dt className="text-[var(--ink-dim)]">Tokens (all calls)</dt><dd>{s.calls} calls · in {formatTokens(s.input)} · cache r {formatTokens(s.cache_read)} · out {formatTokens(s.output)}</dd>
+        <dt className="text-[var(--ink-dim)]">Context</dt>
+        <dd title="the prompt size of the latest main call over the context window recorded with the session; not the token total">
+          {ctx ? `${ctx} at the latest call${s.context_at ? ` (${clock(s.context_at, tz)})` : ''}` : 'not recorded'}
+          {s.context_tokens != null && s.context_window == null ? ' · capacity unknown' : ''}</dd>
+      </dl>
       <details className="my-3 rounded-lg border border-[var(--rule)] p-3"><summary className="cursor-pointer text-sm font-medium">Session metadata</summary>
       <SessionContent text={JSON.stringify(s, null, 2)} literal />
       <div className="text-xs text-[var(--ink-dim)]">
         {s.harness}{s.profile && s.profile !== 'main' ? ` (${s.profile})` : ''} on {s.host} · {s.models.join(', ') || 'model unknown'}{s.provider ? ` via ${s.provider}` : ''}
-        {s.started_at ? ` · ${zoned(s.started_at, tz)}` : ''}{mins !== null ? ` · ${mins} min` : ''}
+        {s.started_at ? ` · ${zoned(s.started_at, tz)}` : ''}{dur ? ` · ${dur}` : ''}
       </div>
       <div className="text-xs text-[var(--ink-dim)]">
         {s.calls} calls · in {formatTokens(s.input)} · cache w {formatTokens(s.cache_write)} · cache r {formatTokens(s.cache_read)} · out {formatTokens(s.output)}
@@ -160,7 +178,7 @@ export default function UsageSession() {
         <div className="text-xs text-[var(--ink-dim)]">Continues <Link className="underline"
           to={`/usage/session/${s.host}/${encodeURIComponent(s.parent_external_id)}?source=${encodeURIComponent(s.source)}`}>{s.parent_external_id}</Link></div>
       )}
-      <Runs runs={first.runs} />
+      <Runs runs={first.runs} tz={tz} />
       </details>
       <div className="mt-2 flex flex-wrap gap-3 text-xs">
         <label className="flex items-center gap-1"><input type="checkbox" checked={show.thinking} onChange={(e) => setShow({ thinking: e.target.checked })} />Expand thinking</label>

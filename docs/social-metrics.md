@@ -2,6 +2,21 @@
 
 Status: **pilot** - collectors, storage and the report are built and tested against fake API answers; no live account has been checked through this code yet.
 
+## Facebook Unified token-contract foundation
+
+The server contains a pure validator for a future Facebook Unified Login integration. It is foundation code only: no route, configuration, token storage, session, onboarding flow or collector calls it yet. The existing Instagram Login setup and collector below are unchanged.
+
+The validator accepts two distinct contracts and never treats either as a legacy Instagram token:
+
+| Debug token type | Required permissions | Asset proof | Lifetime |
+|---|---|---|---|
+| `USER` | `instagram_basic`, `instagram_manage_insights`, `pages_show_list`, `pages_read_engagement` | Must be proved separately by the future account lookup before storage | `expires_at` must be finite, positive and in the future. A nonzero `data_access_expires_at` is an additional upper bound; zero means no separate data-access bound |
+| `SYSTEM_USER` | `instagram_basic`, `instagram_manage_insights` | Every required permission must have a `granular_scopes` entry whose `target_ids` contains the intended asset | Every nonzero token or data-access expiry is enforced. Both zero means the debug response declares no time limit |
+
+Both contracts must be valid and belong to the configured app. Invalid responses, absent permissions, cross-account asset grants, expired or nonfinite limits, and `PAGE`, `APP` or unknown token types are refused. Shared API error redaction also removes `code` and `input_token` query values, including repeated appearances of those values.
+
+These rules are conservative local fixture behavior. Meta documentation was inaccessible during the preserved implementation run, and no live authorization or credential was used, so live Meta compatibility is not verified. A later storage and collector slice, then an auth and connect slice, must verify the current Meta response shapes before activation.
+
 Daily follower counts and per-post views, likes and comments for the social accounts you own, written to your own Postgres by the `map` module's daily `metrics` timer. Nothing is collected until you list your accounts in `secondbrain.json`, and nothing here needs a paid service.
 
 | Platform | How | Account numbers | Per post | Credential |
