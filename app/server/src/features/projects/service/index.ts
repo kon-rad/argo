@@ -600,7 +600,7 @@ export interface Report {
   teams: (Rollup & { lead: string | null })[];
   goals: (Goal & { projects: string[]; features: string[] })[];
   gaps: {
-    goals_uncovered: Goal[];
+    goals_uncovered: (Goal & { projects: string[]; features: string[] })[];
     unverified_shipped: Item[];
     failing: Item[];
     testing_unverified: Item[];
