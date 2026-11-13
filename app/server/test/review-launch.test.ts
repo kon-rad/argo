@@ -1,7 +1,14 @@
+import { execFile } from 'node:child_process';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import { LaunchRegistration } from '../src/review/launch.js';
-import { acknowledgeCorrectionAfterLookup, handleCorrectionLookupFailure } from '../src/review/corrections.js';
+import { acknowledgeCorrectionAfterLookup, attestCorrectionCompletion, finishCorrectionAfterAttestation, handleCorrectionLookupFailure } from '../src/review/corrections.js';
 import { retryCorrectionLookup, SafeProcessError } from '../src/review/process.js';
+
+const execFileAsync=promisify(execFile);
 
 describe('trusted correction launch identity', () => {
   const launch = {
@@ -23,18 +30,25 @@ describe('trusted correction launch identity', () => {
 });
 
 describe('correction PR lookup outcomes', () => {
+  const callback={id:9,leaseToken:'lease-token',fence:4,runId:'run-reserved'};
+
   it.each([
     ['prepare','temporary','review_correction_retry'],
     ['prepare','authentication','review_correction_reconcile'],
     ['ack','temporary','review_correction_reconcile'],
     ['ack','authentication','review_correction_reconcile'],
+    ['finish','temporary','review_correction_reconcile'],
+    ['finish','authentication','review_correction_reconcile'],
     ['prepare','confirmed-stale','review_correction_cancel'],
     ['ack','confirmed-stale','review_correction_cancel'],
+    ['finish','confirmed-stale','review_correction_cancel'],
   ] as const)('%s %s uses %s and reports only a safe reason', async (phase,kind,procedure) => {
     const query=vi.fn().mockResolvedValue({rows:[]});
-    await expect(handleCorrectionLookupFailure({query} as never,phase,9,'lease-token',new SafeProcessError(kind,'fixture-secret'))).rejects.toThrow(/Correction PR/);
+    const caller=phase==='prepare'?{...callback,runId:null}:callback;
+    await expect(handleCorrectionLookupFailure({query} as never,phase,caller,new SafeProcessError(kind,'fixture-secret'))).rejects.toThrow(/Correction PR/);
     expect(query).toHaveBeenCalledTimes(1);
     expect(query.mock.calls[0]![0]).toContain(procedure);
+    if(procedure!=='review_correction_retry')expect(query.mock.calls[0]![1]).toEqual([9,'lease-token',4,phase==='prepare'?null:'run-reserved',expect.any(String)]);
     expect(JSON.stringify(query.mock.calls[0])).not.toContain('fixture-secret');
   });
 
@@ -80,9 +94,10 @@ describe('correction PR lookup outcomes', () => {
     expect(lookup).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledTimes(2);
     expect(query).not.toHaveBeenCalled();
-    await expect(handleCorrectionLookupFailure({query} as never,'ack',9,'lease-token',failure)).rejects.toThrow(/owner reconciliation required/);
+    await expect(handleCorrectionLookupFailure({query} as never,'ack',callback,failure)).rejects.toThrow(/owner reconciliation required/);
     expect(query).toHaveBeenCalledTimes(1);
     expect(query.mock.calls[0]![0]).toContain('review_correction_reconcile');
+    expect(query.mock.calls[0]![1]).toEqual([9,'lease-token',4,'run-reserved',expect.any(String)]);
     expect(JSON.stringify(query.mock.calls[0])).not.toContain('fixture-secret');
   });
 
@@ -111,5 +126,45 @@ describe('correction PR lookup outcomes', () => {
     await expect(retryCorrectionLookup(lookup,{attempts:3,delayMs:1,deadlineMs:20,sleep})).rejects.toMatchObject({kind});
     expect(lookup).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
+  });
+});
+
+describe('trusted completion attestation', () => {
+  it('derives a genuine new correction commit from the registered branch, worktree and common dir', async () => {
+    const root=await realpath(await mkdtemp(join(tmpdir(),'review-completion-')));
+    try{
+      await execFileAsync('git',['init','-b','card/t_123abc-fix',root]);
+      await execFileAsync('git',['-C',root,'config','user.name','Fixture']);
+      await execFileAsync('git',['-C',root,'config','user.email',['fixture','example.invalid'].join('@')]);
+      await execFileAsync('git',['-C',root,'commit','--allow-empty','-m','rejected']);
+      const rejected=(await execFileAsync('git',['-C',root,'rev-parse','HEAD'])).stdout.trim();
+      await execFileAsync('git',['-C',root,'commit','--allow-empty','-m','correction']);
+      const expected=(await execFileAsync('git',['-C',root,'rev-parse','HEAD'])).stdout.trim();
+      const commonDir=(await execFileAsync('git',['-C',root,'rev-parse','--path-format=absolute','--git-common-dir'])).stdout.trim();
+      await expect(attestCorrectionCompletion({git:'git',worktree:root,commonDir,branch:'card/t_123abc-fix',rejectedHead:rejected,home:root})).resolves.toBe(expected);
+    }finally{await rm(root,{recursive:true,force:true});}
+  });
+
+  it.each(['confirmed-stale','temporary','authentication','identity'] as const)('does not finish when the final live PR check is %s', async kind => {
+    const query=vi.fn();
+    const validate=vi.fn().mockRejectedValue(new SafeProcessError(kind));
+    await expect(finishCorrectionAfterAttestation(
+      {query} as never,
+      {id:9,runId:'run-reserved',rejectedHead:'b'.repeat(40),completionHead:'d'.repeat(40)},
+      validate,
+    )).rejects.toMatchObject({kind});
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('passes both the immutable rejected head and trusted final head only after live validation', async () => {
+    const query=vi.fn().mockResolvedValue({rows:[]});
+    const validate=vi.fn().mockResolvedValue(undefined);
+    await finishCorrectionAfterAttestation(
+      {query} as never,
+      {id:9,runId:'run-reserved',rejectedHead:'b'.repeat(40),completionHead:'d'.repeat(40)},
+      validate,
+    );
+    expect(validate).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledWith('SELECT review_correction_finish($1,$2,$3,$4)',[9,'run-reserved','b'.repeat(40),'d'.repeat(40)]);
   });
 });

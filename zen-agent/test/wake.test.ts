@@ -82,7 +82,7 @@ function messageTexts(path: string): string {
     .join('\n');
 }
 
-test('two wakes of one persona on unrelated cards are two sessions with nothing in common', async () => {
+test('two wakes of one persona on unrelated cards are two sessions with nothing in common', async (t) => {
   const { cfg, faux, models } = setup();
   const kb = fakeBoard([
     card('t_aaaaaa', 'Fix the login redirect', 'Project: app/login\n## Objective\nRedirect after login.'),
@@ -103,9 +103,13 @@ test('two wakes of one persona on unrelated cards are two sessions with nothing 
   assert.match(m2, /t_bbbbbb/);
   assert.doesNotMatch(m2, /t_aaaaaa|login redirect/);
   for (const r of [first, second]) {
-    const meta = lines(r.sessionPath)[0] as { resumed: string | null; persona: string; fetchers: { on: boolean }[] };
+    const meta = lines(r.sessionPath)[0] as { resumed: string | null; persona: string; fetchers: { on: boolean }[]; entrypoint: string; context_window: number; model: string };
     assert.equal(meta.resumed, null, 'a wake never resumes');
     assert.equal(meta.persona, 'bolt');
+    assert.equal(meta.entrypoint, 'wake');
+    assert.equal(meta.model, 'faux/faux-1');
+    assert.equal(meta.context_window, models.getModel('faux', 'faux-1')!.contextWindow);
+    t.diagnostic(JSON.stringify({ producer: 'runWake', entrypoint: meta.entrypoint, model: meta.model, context_window: meta.context_window }));
     assert.ok(meta.fetchers.every((f) => !f.on), 'no fetcher is on unless configured');
     assert.equal(lines(r.sessionPath).filter((l) => l.type === 'message' && l.message.role === 'user').length, 1, 'one user turn: the card');
   }

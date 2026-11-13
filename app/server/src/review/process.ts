@@ -15,9 +15,9 @@ function failureKind(stderr:string):SafeFailureKind {
   if(/timed? out|timeout|network|connection|temporar|rate.?limit|http 429|status 429|http 5\d\d|status 5\d\d/.test(text))return 'temporary';
   return 'identity';
 }
-export function correctionLookupDisposition(phase:'prepare'|'ack',error:unknown):{action:'retry'|'reconcile'|'cancel';reason:string}{
+export function correctionLookupDisposition(phase:'prepare'|'ack'|'finish',error:unknown):{action:'retry'|'reconcile'|'cancel';reason:string}{
   const kind=error instanceof SafeProcessError ? error.kind : 'identity';
-  if(kind==='confirmed-stale')return {action:'cancel',reason:`Correction PR binding changed or closed before ${phase==='ack'?'acknowledgement':'launch preparation'}`};
+  if(kind==='confirmed-stale')return {action:'cancel',reason:`Correction PR binding changed or closed before ${phase==='ack'?'acknowledgement':phase==='finish'?'completion':'launch preparation'}`};
   if(kind==='temporary' && phase==='prepare')return {action:'retry',reason:'Correction PR lookup temporarily unavailable before launch preparation'};
   if(kind==='temporary')return {action:'reconcile',reason:'Correction PR lookup unavailable after run reservation; owner reconciliation required'};
   return {action:'reconcile',reason:'Correction PR authentication or identity uncertain; owner reconciliation required'};

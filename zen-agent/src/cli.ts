@@ -250,12 +250,12 @@ async function main(argv: string[]): Promise<number> {
       const persona = name ? loadPersona(cfg, name) : null;
       // A DM, handoff or mention wake: the thread it answers is the only board history in the prompt.
       const ctx = await wakeContext({ cfg, card: null, persona, thread: threadFlag(flags), fetchers: fetchFlag(flags) ?? [] });
-      const zen = new ZenAgent({ config: cfg, persona, budget: budgetFlags(flags), ...runOptions(flags), parts: ctx.parts, fetchers: ctx.fetchers, resume: flags.resume, models: await liveModels(cfg), onEvent: flags.json ? undefined : printer(flags.quiet === true) });
+      const zen = new ZenAgent({ config: cfg, persona, budget: budgetFlags(flags), ...runOptions(flags), entrypoint: 'run', parts: ctx.parts, fetchers: ctx.fetchers, resume: flags.resume, models: await liveModels(cfg), onEvent: flags.json ? undefined : printer(flags.quiet === true) });
       return report(await zen.run(prompt), flags);
     }
     case 'chat': {
       const chatCfg = config(flags);
-      const zen = new ZenAgent({ config: chatCfg, persona: personaOf(flags), budget: { turns: 10_000, tokens: 50_000_000, minutes: 100_000, ...budgetFlags(flags) }, ...runOptions(flags), resume: flags.resume, models: await liveModels(chatCfg), onEvent: printer(flags.quiet === true) });
+      const zen = new ZenAgent({ config: chatCfg, persona: personaOf(flags), budget: { turns: 10_000, tokens: 50_000_000, minutes: 100_000, ...budgetFlags(flags) }, ...runOptions(flags), entrypoint: 'chat', resume: flags.resume, models: await liveModels(chatCfg), onEvent: printer(flags.quiet === true) });
       const rl = createInterface({ input: process.stdin, output: process.stderr });
       process.stderr.write(`zen-agent chat: ${zen.persona?.name ?? 'default'} on ${zen.model.provider}/${zen.model.id}; session ${zen.session.id}. /quit to leave.\n`);
       for (;;) {

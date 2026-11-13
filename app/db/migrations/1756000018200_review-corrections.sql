@@ -26,7 +26,7 @@ CREATE TABLE review_corrections (
   id bigserial PRIMARY KEY, feedback_id text NOT NULL UNIQUE REFERENCES review_feedback(id),
   card text NOT NULL REFERENCES cards(id) ON DELETE CASCADE, launch_card text NOT NULL REFERENCES review_launches(card),
   state text NOT NULL DEFAULT 'queued' CHECK(state IN ('queued','claimed','starting','running','retry','review','cancelled','blocked')),
-  head text NOT NULL CHECK(head ~ '^[a-f0-9]{40}$'), base text NOT NULL CHECK(base ~ '^[a-f0-9]{40}$'), pr integer NOT NULL,
+  head text NOT NULL CHECK(head ~ '^[a-f0-9]{40}$'), completion_head text CHECK(completion_head ~ '^[a-f0-9]{40}$'), base text NOT NULL CHECK(base ~ '^[a-f0-9]{40}$'), pr integer NOT NULL,
   evidence_hash text NOT NULL CHECK(evidence_hash ~ '^[a-f0-9]{64}$'),
   lease_token text, lease_until timestamptz, fence bigint NOT NULL DEFAULT 0,
   run_id text UNIQUE, process_id text, transient_attempts integer NOT NULL DEFAULT 0,
@@ -56,10 +56,12 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION review_register_launch(jsonb) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_register_launch(jsonb) TO sb_review_worker;
 
-CREATE OR REPLACE FUNCTION review_save(p_job bigint, p_patch jsonb) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DROP FUNCTION review_save(bigint,jsonb);
+CREATE FUNCTION review_save(p_job bigint, p_patch jsonb, p_origin text DEFAULT 'reviewer') RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE j review_jobs; p review_policy; v jsonb; finding jsonb; finding_identity jsonb; fhash text; fid text; first_feedback text; snap jsonb;
 BEGIN
   PERFORM review_authorize(); SELECT * INTO STRICT j FROM review_jobs WHERE id=p_job FOR UPDATE; SELECT * INTO p FROM review_policy;
+  IF p_origin NOT IN ('reviewer','coordinator') THEN RAISE EXCEPTION 'review: invalid trusted feedback origin'; END IF;
   IF j.reviewer IS DISTINCT FROM p.reviewer OR j.builder=j.reviewer THEN RAISE EXCEPTION 'review: unauthorized reviewer or self-review'; END IF;
   IF j.state IN ('done','rejected') THEN RETURN; END IF;
   IF p_patch ? 'target' AND j.target IS NOT NULL AND p_patch->>'target' IS DISTINCT FROM j.target THEN RAISE EXCEPTION 'review: target changed'; END IF;
@@ -80,7 +82,7 @@ BEGIN
         fhash:=md5(finding_identity::text)||md5('finding|'||finding_identity::text);
         fid:=md5(concat_ws('|',j.id,j.verdict->>'head',j.verdict->>'evidence',fhash))||md5(concat_ws('|','feedback',j.id,j.verdict->>'head',j.verdict->>'evidence',fhash));
         INSERT INTO review_feedback(id,job,card,repo,pr,base,head,evidence_hash,finding_hash,code,severity,reason,evidence,required_fix,verification,producer_kind,producer)
-        VALUES(fid,j.id,j.card,snap->>'repo',(snap->>'pr')::integer,snap->>'base',j.verdict->>'head',j.verdict->>'evidence',fhash,finding_identity->>'code',finding_identity->>'severity',coalesce(nullif(finding_identity->>'impact',''),nullif(finding_identity->>'location',''),'Review finding'),finding_identity->>'evidence',finding_identity->>'fix',finding_identity->>'verification',CASE WHEN coalesce(finding->>'code','') LIKE 'scope-%' OR finding->>'code'='ci-failure' THEN 'coordinator' ELSE 'reviewer' END,CASE WHEN coalesce(finding->>'code','') LIKE 'scope-%' OR finding->>'code'='ci-failure' THEN session_user ELSE j.reviewer END) ON CONFLICT(job,head,evidence_hash,finding_hash) DO NOTHING;
+        VALUES(fid,j.id,j.card,snap->>'repo',(snap->>'pr')::integer,snap->>'base',j.verdict->>'head',j.verdict->>'evidence',fhash,finding_identity->>'code',finding_identity->>'severity',coalesce(nullif(finding_identity->>'impact',''),nullif(finding_identity->>'location',''),'Review finding'),finding_identity->>'evidence',finding_identity->>'fix',finding_identity->>'verification',p_origin,CASE WHEN p_origin='coordinator' THEN session_user ELSE j.reviewer END) ON CONFLICT(job,head,evidence_hash,finding_hash) DO NOTHING;
         first_feedback:=coalesce(first_feedback,fid);
       END IF;
     END LOOP;
@@ -99,6 +101,7 @@ BEGIN
     PERFORM board_event(j.card,'review-rejected',j.reviewer,jsonb_build_object('job',j.id,'round',j.round,'feedback',first_feedback));
   END IF;
 END $$;
+REVOKE ALL ON FUNCTION review_save(bigint,jsonb,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_save(bigint,jsonb,text) TO sb_review_worker;
 
 CREATE FUNCTION review_correction_claim(p_host text,p_ttl integer DEFAULT 300) RETURNS TABLE(id bigint,feedback_id text,card text,builder text,persona text,runtime text,model text,host text,repo text,branch text,worktree text,common_dir text,original_run_id text,head text,base text,pr integer,evidence_hash text,lease_token text,fence bigint,transient_attempts integer) LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 DECLARE item review_corrections; token text;
@@ -182,11 +185,15 @@ DECLARE q review_corrections; c cards; bound_job bigint; latest_job bigint; BEGI
  UPDATE review_corrections target SET state='retry',lease_token=NULL,lease_until=NULL,transient_attempts=target.transient_attempts+1,available_at=now()+make_interval(secs=>p_delay),error=p_reason,updated_at=now() WHERE target.id=p_id; END $$;
 REVOKE ALL ON FUNCTION review_correction_retry(bigint,text,text,integer) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_retry(bigint,text,text,integer) TO sb_review_worker;
 
-CREATE FUNCTION review_correction_cancel(p_id bigint,p_reason text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+CREATE FUNCTION review_correction_cancel(p_id bigint,p_token text,p_fence bigint,p_run text,p_reason text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 DECLARE q review_corrections; c cards; r card_runs; bound_job bigint; latest_job bigint; current_attempt boolean;
 BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE;
  IF q.state IN ('review','cancelled','blocked') THEN RETURN; END IF;
  SELECT * INTO STRICT c FROM cards WHERE id=q.card FOR UPDATE;
+ IF q.lease_token IS DISTINCT FROM p_token OR q.fence IS DISTINCT FROM p_fence OR
+    (q.run_id IS NULL AND p_run IS NOT NULL) OR (q.run_id IS NOT NULL AND q.run_id IS DISTINCT FROM p_run) THEN
+   RAISE EXCEPTION 'review: stale correction callback';
+ END IF;
  SELECT * INTO r FROM card_runs WHERE card_id=q.card AND finished_at IS NULL FOR UPDATE;
  SELECT f.job INTO STRICT bound_job FROM review_feedback f WHERE f.id=q.feedback_id;
  SELECT max(j.id) INTO latest_job FROM review_jobs j WHERE j.card=q.card;
@@ -195,13 +202,17 @@ BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections
  UPDATE review_corrections SET state='cancelled',error=p_reason,updated_at=now() WHERE id=p_id;
  IF current_attempt THEN UPDATE cards SET status='blocked',block_kind='review-changes',block_reason=p_reason WHERE id=q.card; END IF;
 END $$;
-REVOKE ALL ON FUNCTION review_correction_cancel(bigint,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_cancel(bigint,text) TO sb_review_worker;
+REVOKE ALL ON FUNCTION review_correction_cancel(bigint,text,bigint,text,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_cancel(bigint,text,bigint,text,text) TO sb_review_worker;
 
-CREATE FUNCTION review_correction_reconcile(p_id bigint,p_reason text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+CREATE FUNCTION review_correction_reconcile(p_id bigint,p_token text,p_fence bigint,p_run text,p_reason text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 DECLARE q review_corrections; c cards; r card_runs; bound_job bigint; latest_job bigint; current_attempt boolean;
 BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE;
  IF q.state IN ('review','cancelled','blocked') THEN RETURN; END IF;
  SELECT * INTO STRICT c FROM cards WHERE id=q.card FOR UPDATE;
+ IF q.lease_token IS DISTINCT FROM p_token OR q.fence IS DISTINCT FROM p_fence OR
+    (q.run_id IS NULL AND p_run IS NOT NULL) OR (q.run_id IS NOT NULL AND q.run_id IS DISTINCT FROM p_run) THEN
+   RAISE EXCEPTION 'review: stale correction callback';
+ END IF;
  SELECT * INTO r FROM card_runs WHERE card_id=q.card AND finished_at IS NULL FOR UPDATE;
  SELECT f.job INTO STRICT bound_job FROM review_feedback f WHERE f.id=q.feedback_id;
  SELECT max(j.id) INTO latest_job FROM review_jobs j WHERE j.card=q.card;
@@ -209,13 +220,15 @@ BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections
  UPDATE review_corrections SET state='blocked',error=p_reason,updated_at=now() WHERE id=p_id;
  IF current_attempt THEN UPDATE cards SET status='blocked',block_kind='tool-error',block_reason=p_reason WHERE id=q.card; END IF;
 END $$;
-REVOKE ALL ON FUNCTION review_correction_reconcile(bigint,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_reconcile(bigint,text) TO sb_review_worker;
+REVOKE ALL ON FUNCTION review_correction_reconcile(bigint,text,bigint,text,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_reconcile(bigint,text,bigint,text,text) TO sb_review_worker;
 
-CREATE FUNCTION review_correction_finish(p_id bigint,p_run text,p_head text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+CREATE FUNCTION review_correction_finish(p_id bigint,p_run text,p_head text,p_completion_head text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 DECLARE q review_corrections; c cards; r card_runs; bound_job bigint; latest_job bigint;
 BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections WHERE id=p_id FOR UPDATE;
  IF q.run_id IS DISTINCT FROM p_run OR q.head IS DISTINCT FROM p_head THEN RAISE EXCEPTION 'review: stale or unknown correction run'; END IF;
- IF q.state IN ('review','cancelled') THEN RETURN; END IF; IF q.state<>'running' THEN RAISE EXCEPTION 'review: stale or unknown correction run'; END IF;
+ IF p_completion_head !~ '^[a-f0-9]{40}$' OR p_completion_head=p_head THEN RAISE EXCEPTION 'review: invalid trusted completion head'; END IF;
+ IF q.state='review' AND q.completion_head=p_completion_head THEN RETURN; END IF;
+ IF q.state='cancelled' THEN RETURN; END IF; IF q.state<>'running' OR q.completion_head IS NOT NULL THEN RAISE EXCEPTION 'review: stale or unknown correction run'; END IF;
  SELECT * INTO STRICT c FROM cards WHERE id=q.card FOR UPDATE;
  SELECT f.job INTO STRICT bound_job FROM review_feedback f WHERE f.id=q.feedback_id;
  SELECT max(j.id) INTO latest_job FROM review_jobs j WHERE j.card=q.card;
@@ -226,10 +239,10 @@ BEGIN PERFORM review_authorize(); SELECT * INTO STRICT q FROM review_corrections
    RETURN;
  END IF;
  UPDATE card_runs SET finished_at=now(),outcome='done' WHERE id=r.id;
- UPDATE review_corrections SET state='review',updated_at=now() WHERE id=p_id;
+ UPDATE review_corrections SET state='review',completion_head=p_completion_head,updated_at=now() WHERE id=p_id;
  UPDATE cards SET status='review' WHERE id=q.card AND status='running';
 END $$;
-REVOKE ALL ON FUNCTION review_correction_finish(bigint,text,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_finish(bigint,text,text) TO sb_review_worker;
+REVOKE ALL ON FUNCTION review_correction_finish(bigint,text,text,text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION review_correction_finish(bigint,text,text,text) TO sb_review_worker;
 
 -- Down Migration
 -- Forward only. Disabling corrections retains immutable feedback and queued evidence.
