@@ -36,6 +36,12 @@ export type FacebookCredential =
   | { kind: 'facebook-user'; expiresAt: Date }
   | { kind: 'facebook-system-user'; expiresAt: Date | null };
 
+function checkedNow(now: number): void {
+  if (!Number.isFinite(now) || !Number.isFinite(new Date(now).getTime())) {
+    throw new Error('invalid Facebook credential or permissions');
+  }
+}
+
 function checkedDate(expirySeconds: number, now: number): Date {
   const expiresAt = new Date(expirySeconds * 1000);
   if (expiresAt.getTime() <= now || !Number.isFinite(expiresAt.getTime())) {
@@ -49,6 +55,7 @@ function checkedDate(expirySeconds: number, now: number): Date {
  * be proved separately through the Facebook account lookup before storage.
  */
 export function validateFacebookUserToken(input: unknown, appId: string, now: number): { expiresAt: Date } {
+  checkedNow(now);
   const result = z.object({ data: FacebookUserTokenData }).safeParse(input);
   if (!result.success) throw new Error('unsupported Facebook token response');
   const data = result.data.data;
@@ -77,6 +84,7 @@ export function validateFacebookToken(
   now: number,
   assetId: string,
 ): FacebookCredential {
+  checkedNow(now);
   const type = (input as { data?: { type?: unknown } } | null)?.data?.type;
   if (type === 'USER') {
     return { kind: 'facebook-user', ...validateFacebookUserToken(input, appId, now) };

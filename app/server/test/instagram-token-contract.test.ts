@@ -68,6 +68,12 @@ describe('Facebook Unified token contract', () => {
     expect(() => validateFacebookUserToken(input, 'fixture-app', now)).toThrow();
   });
 
+  it.each([NaN, Infinity, -Infinity, 8.64e15 + 1])('refuses USER token with invalid clock: %s', (invalidNow) => {
+    expect(() => validateFacebookToken({
+      data: { ...user.data, expires_at: 1 },
+    }, 'fixture-app', invalidNow, 'asset-one')).toThrow();
+  });
+
   it('accepts SYSTEM_USER only when every required grant includes the intended asset', () => {
     expect(validateFacebookToken(systemUser, 'fixture-app', now, 'asset-one')).toEqual({
       kind: 'facebook-system-user',
@@ -122,6 +128,12 @@ describe('Facebook Unified token contract', () => {
       data: { ...systemUser.data, ...patch },
     }, 'fixture-app', now, assetId)).toThrow();
   });
+
+  it.each([NaN, Infinity, -Infinity, 8.64e15 + 1])('refuses SYSTEM_USER token with invalid clock: %s', (invalidNow) => {
+    expect(() => validateFacebookToken({
+      data: { ...systemUser.data, expires_at: 1 },
+    }, 'fixture-app', invalidNow, 'asset-one')).toThrow();
+  });
 });
 
 describe('shared social HTTP helpers', () => {
@@ -145,6 +157,30 @@ describe('shared social HTTP helpers', () => {
       expect((error as Error).message).not.toContain('authorization-code');
       return true;
     });
+  });
+
+  it.each([
+    ['code', 'a'],
+    ['code', 'ab'],
+    ['code', 'abc'],
+    ['input_token', 'a'],
+    ['input_token', 'ab'],
+    ['input_token', 'abc'],
+  ])('redacts short %s values wherever repeated: %s', async (parameter, secret) => {
+    const message = `error: ?${parameter}=${secret}&echo=${secret}`;
+    expect(redact(message)).toBe(`error: ?${parameter}=[redacted]&echo=[redacted]`);
+
+    const get = async () => { throw new Error(message); };
+    await expect(getJson(get, 'https://graph.example.test', 'debug token', [])).rejects.toSatisfy((error: unknown) => {
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as Error).message)
+        .toBe(`debug token: error: ?${parameter}=[redacted]&echo=[redacted]`);
+      return true;
+    });
+  });
+
+  it('leaves empty secret parameters empty without replacing unrelated text', () => {
+    expect(redact('callback?code=&input_token=&echo=visible')).toBe('callback?code=&input_token=&echo=visible');
   });
 
   it('preserves legacy redaction and utility behavior', () => {

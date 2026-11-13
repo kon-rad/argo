@@ -17,13 +17,33 @@ const SECRET_PARAMS = /([?&](?:access_token|input_token|code|key|client_secret|t
 /** Removes the given secrets and any token-shaped query parameter from a message. */
 export function redact(text: string, secrets: readonly (string | undefined)[] = []): string {
   // A value seen in a token parameter is a secret wherever else it appears in the message.
-  const seen = [...text.matchAll(SECRET_PARAMS)].flatMap((m) => {
+  const matches = [...text.matchAll(SECRET_PARAMS)];
+  const seen = matches.flatMap((m) => {
     const raw = m[0].slice(m[1]!.length);
     return [raw, decodeURIComponentSafe(raw)];
   });
-  let out = text.replace(SECRET_PARAMS, '$1[redacted]');
-  for (const s of [...secrets, ...seen]) if (s && s.length >= 4) out = out.split(s).join('[redacted]');
-  return out;
+  const values = [...new Set([
+    ...secrets.filter((s): s is string => Boolean(s && s.length >= 4)),
+    ...seen.filter((s) => s.length > 0),
+  ])].sort((a, b) => b.length - a.length);
+  const pattern = values.length > 0
+    ? new RegExp(values.map(escapeRegExp).join('|'), 'g')
+    : null;
+  const replaceSecrets = (value: string) => pattern ? value.replace(pattern, '[redacted]') : value;
+
+  let out = '';
+  let offset = 0;
+  for (const match of matches) {
+    const index = match.index!;
+    out += replaceSecrets(text.slice(offset, index));
+    out += `${match[1]}[redacted]`;
+    offset = index + match[0].length;
+  }
+  return out + replaceSecrets(text.slice(offset));
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function decodeURIComponentSafe(s: string): string {
