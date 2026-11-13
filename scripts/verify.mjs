@@ -398,7 +398,7 @@ export async function run({ repo, out, env, contractPath = CONTRACT_PATH, sandbo
       if (download) proxy = await downloadProxy(download.hosts);
       const childEnv = { ...base, ...(check.requires.includes('postgres') || pg.PGHOST ? pg : {}),
         ...(proxy ? { npm_config_registry: download.registry, npm_config_https_proxy: `http://127.0.0.1:${proxy.port}`, npm_config_proxy: `http://127.0.0.1:${proxy.port}`,
-          npm_config_ignore_scripts: 'true', npm_config_audit: 'false', npm_config_fund: 'false', npm_config_update_notifier: 'false', npm_config_strict_ssl: 'true', npm_config_userconfig: `${SANDBOX.home}/.npmrc-empty`, npm_config_globalconfig: `${SANDBOX.home}/.npmrc-empty` } : {}) };
+          npm_config_ignore_scripts: 'true', npm_config_audit: 'false', npm_config_fund: 'false', npm_config_update_notifier: 'false', npm_config_strict_ssl: 'true', npm_config_userconfig: `${SANDBOX.home}/.npmrc-user-empty`, npm_config_globalconfig: `${SANDBOX.home}/.npmrc-global-empty` } : {}) };
       r = await execute(check, { out, sandbox, childEnv });
       if (proxy) await proxy.close();
     }
