@@ -7,7 +7,8 @@ import type { ModuleName } from '../config.js';
  * spread over app.ts, App.tsx, the launcher, deploy.sh and four docs reads from it:
  * app.ts mounts `routes`, /api/meta serves `nav`, the launcher dispatches `cli`,
  * deploy.sh installs `timers` and `wrappers`, and the tests check that every file a
- * manifest names exists. Deleting a feature is deleting its folder.
+ * manifest names exists. A feature's manifest, routes, service and CLI live in
+ * its folder; migrations and its web page live in db/migrations and web/src/routes/<name>.
  *
  * The manifest (`<name>/manifest.ts`) is pure data so a CLI or a deploy step can read
  * it without loading the server; the routes (`<name>/routes.ts`) are joined to it in

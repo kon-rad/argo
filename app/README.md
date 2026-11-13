@@ -161,6 +161,10 @@ Everything beyond browse, search and the database page is a module. A module tha
 | `media` | A gallery of every image, video and audio file in the vault on `/media`, with a lightbox player; `.b2.md` stubs play from B2 where the original isn't on disk |
 | `garden` | A nightly gardener (`secondbrain garden`) that catalogues every folder as a shelf, archives stale projects, proposes stale areas, normalises names and writes a report; shadow mode by default (see `docs/garden.md`) |
 
+#### Where a feature lives
+
+A core feature owns its server code under `server/src/features/<name>/`: `manifest.ts` describes its navigation and operations, `routes.ts` mounts its real Express routers, `service.ts` or `service/` holds domain logic, and `cli.ts` implements its command line. Database migrations remain in `db/migrations/`, and the browser page remains in `web/src/routes/<name>/`.
+
 ### Agent ledger (every machine that runs agents)
 
 Each machine that runs Claude Code or Hermes keeps its own record of every turn (prompts, responses, thinking, tool calls and results, tokens, model, provider) in a local SQLite file, and syncs it to the server when it can reach it. Offline, nothing is lost: rows wait locally until the server confirms them. It runs on macOS, Linux and Windows with Node 22.5 or later and nothing else.
