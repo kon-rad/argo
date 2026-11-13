@@ -9,7 +9,7 @@ import { buildSystemPrompt, type Assembled, type Part, type PartStat } from './c
 import type { FetcherStat } from './fetchers.js';
 import { decide, findLocalRules, loadLocalRules, logBlock, toolPayload, type LocalRules } from './guard.js';
 import { runHooks, writeClaudeTranscript } from './hooks.js';
-import { buildModels, pickModel } from './models.js';
+import { buildModels, pickModel, recordedContextWindow } from './models.js';
 import { loadPersona, type Persona } from './persona.js';
 import { newSessionId, Session, TRACE_VERSION, ZERO_USAGE, type SessionLine, type UsageTotals } from './session.js';
 import { discoverSkills, type Skill } from './skills.js';
@@ -55,6 +55,12 @@ export interface ZenAgentOptions {
   thinking?: ThinkingLevel;
   /** A dispatcher's labels (run id, wake reasons, card, tier, ...), written into the trace's meta line as `dispatch`. */
   dispatch?: Record<string, unknown>;
+  /**
+   * How this run was started, written into the trace's meta line as `entrypoint`: `chat` (a person at the terminal),
+   * `run` (one prompt), `wake` (a card wake or lane), `serve` (the chat host), `subagent`. Lets a reader tell an
+   * interactive session from a headless one without guessing from the machine.
+   */
+  entrypoint?: 'chat' | 'run' | 'wake' | 'serve' | 'subagent';
   /** Fetched prompt parts (a thread, the tracker row, PR status, recall hits), built by `wakeContext` before the run. */
   parts?: Part[];
   /** What each fetcher did, for the trace; the parts' sizes land in `parts` like every other part. */
@@ -264,6 +270,9 @@ export class ZenAgent {
       resumed: opts.resume ?? null,
       workdir: cfg.workdir,
       dispatch: opts.dispatch ?? {},
+      entrypoint: opts.entrypoint ?? null,
+      // Record established capacity, never an assumed runtime planning default.
+      context_window: recordedContextWindow(this.models, this.model),
     });
   }
 
@@ -344,6 +353,7 @@ export class ZenAgent {
       task: undefined,
       handoff: undefined,
       dispatch: undefined,
+      entrypoint: 'subagent',
       parts: undefined,
       fetchers: undefined,
       resume: undefined,

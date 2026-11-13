@@ -2,6 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type RunningRow } from '../../lib/api.js';
 import { AgentAvatar } from '../../components/AgentAvatar.js';
+import { clock, zoned } from '../../lib/time.js';
+import { useAppTimezone } from '../../lib/useTimezone.js';
 
 /** `3 m 12 s`, `2 h 05 m`, `4 d 3 h`. */
 export function elapsedText(sec: number | null): string {
@@ -19,7 +21,7 @@ const KIND_HINT: Record<RunningRow['kind'], string> = {
   other: 'Agent processes that belong to no roster entry: scheduled cron runs, Remote Control, interactive sessions, zen-agent serve.',
 };
 
-function Group({ kind, rows }: { kind: RunningRow['kind']; rows: RunningRow[] }) {
+function Group({ kind, rows, tz }: { kind: RunningRow['kind']; rows: RunningRow[]; tz: string }) {
   if (!rows.length) return null;
   return (
     <section>
@@ -45,7 +47,7 @@ function Group({ kind, rows }: { kind: RunningRow['kind']; rows: RunningRow[] })
                 </td>
                 <td className="max-w-[16rem] truncate" title={r.model ?? ''}>{r.model ?? '-'}</td>
                 <td>{r.reason ? `${r.reason}${r.ref ? ` ${r.ref}` : ''}` : '-'}</td>
-                <td className="text-right tabular-nums" title={r.startedAt ? `since ${new Date(r.startedAt).toLocaleString()}` : ''}>{elapsedText(r.elapsedSec)}</td>
+                <td className="text-right tabular-nums" title={r.startedAt ? `since ${zoned(r.startedAt, tz, { seconds: true })}` : ''}>{elapsedText(r.elapsedSec)}</td>
                 <td className="text-right tabular-nums text-[var(--ink-dim)]">{r.pid ?? ''}</td>
                 <td className="font-mono text-xs text-[var(--ink-dim)]">{r.runId ?? ''}</td>
               </tr>
@@ -58,6 +60,7 @@ function Group({ kind, rows }: { kind: RunningRow['kind']; rows: RunningRow[] })
 }
 
 export default function Running() {
+  const { tz } = useAppTimezone();
   const q = useQuery({ queryKey: ['usage-running'], queryFn: () => api.usageRunning(), refetchInterval: 10_000 });
   const rows = q.data?.rows ?? [];
   const by = (k: RunningRow['kind']) => rows.filter((r) => r.kind === k);
@@ -65,14 +68,14 @@ export default function Running() {
   return (
     <div className="space-y-4">
       <div className="text-xs text-[var(--ink-dim)]">
-        {q.data ? <>Processes on <span className="font-mono">{q.data.host}</span>, read {new Date(q.data.at).toLocaleTimeString()}. Refreshes every 10 s.</> : 'Loading...'}
+        {q.data ? <>Processes on <span className="font-mono">{q.data.host}</span>, read {clock(q.data.at, tz)}. Refreshes every 10 s.</> : 'Loading...'}
         {cfg.length > 0 && <> Roster: {cfg.map(([rt, n]) => `${n} on ${rt}`).join(', ')}.</>}
       </div>
       {q.isError && <div className="text-sm text-red-600">The running list did not load.</div>}
       {q.data && rows.length === 0 && <div className="text-sm text-[var(--ink-dim)]">No agent is running right now.</div>}
-      <Group kind="bot" rows={by('bot')} />
-      <Group kind="lane" rows={by('lane')} />
-      <Group kind="other" rows={by('other')} />
+      <Group kind="bot" rows={by('bot')} tz={tz} />
+      <Group kind="lane" rows={by('lane')} tz={tz} />
+      <Group kind="other" rows={by('other')} tz={tz} />
     </div>
   );
 }

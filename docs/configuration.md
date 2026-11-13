@@ -215,11 +215,14 @@ Start with `secondbrain.json` containing `{}` and add only the sections you need
 
 The app loads `<vault>/secondbrain.json` once per server process. `SECONDBRAIN_SETTINGS` selects another file; a relative value is resolved against the vault root. Restart the app after edits. Commit non-secret instance settings to your private vault and sync them to other machines; keep credentials out of this file. For server provisioning, [plan and apply](#generated-config-plan-apply-upgrade) use the `server` block together with the engine's feature manifests. They do not create subscription logins or provider credentials.
 
+The `timezone` setting is an exception: the metadata endpoint rereads it without a restart; reload the page or refresh metadata after a change.
+
 The reference below lists shipped settings. It is not a generic registry for arbitrary subscription accounts or harnesses; a new integration still needs engine support.
 
 | Key | Module | Holds |
 |---|---|---|
 | `server.*` | server | The `server` block: `generate` (default `false`), `host`, `publicOrigin`, `user`, `dir`, `vaultDir`, `hermesHome`, and `backup` (`schedule`, `keepDaily`, `keepWeekly`). Source for `secondbrain plan\|apply`; see "Generated config" above |
+| `timezone` | core | The owner's current IANA time zone, e.g. `Asia/Singapore`. Usage buckets, session inspection, Running/Live, Org message/token times and TV episode labels use it. Default unset: each browser's own zone. Change it with `secondbrain timezone set <Area/City>`; no restart needed ([timezone.md](timezone.md)) |
 | `usage.subscriptions` | `usage` | Ordered quota panels: `codex`, `claude-code`. Default `[]`: no subscription readers are polled |
 | `usage.credits` | `usage` | Ordered prepaid credit panels: `openrouter`, `fal`, `gemini`. Default `[]` |
 | `usage.sections` | `usage` | Visible sections: `running`, `ledger`, `sessions`, `summaries`. Default all four; `[]` hides all four |
@@ -313,7 +316,19 @@ If the default `codex` command is absent from the app service's `PATH`, the quot
 
 Quota windows are identified by their reported duration, not by assuming `primary` means five hours: 300 minutes is five hours and 10,080 minutes is weekly. Other returned buckets/windows keep their own labels. Some plans report only a weekly window; the UI does not fabricate a missing five-hour quota. It shows used and remaining percentages, reset time, observation time, and unavailable or stale readings. A passed reset means the previous percentage is no longer current, not that a new reading is zero. Account limits apply to the authenticated account across its usage; they are distinct from tokens recorded on this installation.
 
-The Usage tabs sit at the top. Account contains subscription quotas, prepaid credits, agent selection and Telegram bot controls. Sessions uses the full remaining page and lists associated tickets as board links. Ticket associations come from recorded runs matched by host, session and runtime; unknown associations stay empty. Opening a session displays a chat with expandable thinking, tool inputs/results, session/message metadata and raw data. Transcript prose renders Markdown and links ticket IDs, known agent names, @mentions and resolved vault references. Literal tool output keeps its whitespace while linking references. Long transcripts still paginate and truncated output can load in full.
+The Usage tabs sit at the top. Account contains subscription quotas, prepaid credits, agent selection and Telegram bot controls. Sessions uses the full remaining page and lists associated tickets as board links. Its columns include:
+
+| Column | Meaning |
+|---|---|
+| Started | `YYYYMMDD HH:mm`, 24-hour, in the [shared time zone](timezone.md) |
+| Duration | Elapsed from the first to the last recorded step, not active working time |
+| Machine | The recorded host |
+| Type | `telegram`, `cli` (a person at a terminal), `headless` (`claude -p`, a card wake or a cron job), another recorded channel such as `web` or `remote-control`, or `unknown`. Recorded channels take precedence; matched runs and harness entrypoints provide the remaining classification. For example, Hermes `api_server` and zen-agent `serve` map to `web`. The machine never determines type |
+| Bot persona | The recorded run agent, session persona, channel persona, then recorded bot identity. A CLI session displays `none` only when no persona was recorded; other missing personas display `unknown` |
+| Session name | A one-line label under 100 characters: card title, skill with its start time, harness title, or first real request. AGENTS.md, system/environment blocks, local commands and transport wrappers are skipped; no transcript is sent to a model for naming |
+| Context | The latest recorded main-call prompt size over an independently recorded context window. Either unknown side is `?`; both unknown display `-`. Cumulative token totals and Codex usage deltas do not establish current occupancy, and capacity is never guessed from a model name |
+
+Type and persona filter like the other chips and live in the URL (`/usage?view=sessions&s_type=telegram&s_persona=<name>`). See [Zen session provenance](zen-session-metadata.md) for recorded entrypoints and capacities, including why runtime fallback windows remain unknown in metadata. Ticket associations come from recorded runs matched by host, session and runtime; unknown associations stay empty. Opening a session displays a chat with expandable thinking, tool inputs/results, session/message metadata and raw data. Transcript prose renders Markdown and links ticket IDs, known agent names, @mentions and resolved vault references. Literal tool output keeps its whitespace while linking references. Long transcripts still paginate and truncated output can load in full.
 
 Agent selection and Telegram bot controls live on the Usage Account tab when the agents module is enabled, rather than in desktop or mobile headers.
 
@@ -323,15 +338,24 @@ The authenticated Usage API provides `GET /api/usage/config` and `GET /api/usage
 
 Official Codex protocol reference: [account rate limits](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt). This UI reads limits; it does not increase them, buy resets, or enforce a separate local spending policy.
 
+### Native Codex conversation collection
+
+Conversation collection is separate from subscription quotas. On each Mac, from an engine checkout with app dependencies installed, use a unique host slug and your existing authenticated SSH upload destination:
+
+```sh
+USAGE_HOST=laptop-a USAGE_PUSH_HOST=my-server app/bin/install-usage-push-mac.sh
+app/bin/install-usage-push-mac.sh doctor
+```
+
+Use another slug, such as `laptop-b`, on the next Mac. The installer accepts `CODEX_HOME` (default `~/.codex`); prefix the install command with `CODEX_HOME=/path/to/codex-home` when needed. It persists that directory, `USAGE_HOST`, `USAGE_PUSH_HOST` and `USAGE_PUSH_STATE` (default `~/.local/share/secondbrain`) in the LaunchAgent. It runs immediately on load and every 60 seconds. The first upload includes locally available history. No client database credentials, API key or manual SQL host registration are required; the existing SSH identity authorizes upload to a server with the usage importer installed and migrations applied.
+
+Doctor checks saved local discovery, not remote connectivity. After upload, open Usage Sessions and filter harness to `codex` and host to your chosen slug, then open a session. Missing local usage remains unknown. `USAGE_PUSH_MAX_BYTES` remains a soft budget for whole Codex session replay. Follow the [native conversation setup](modules.md#native-codex-conversation-usage) for troubleshooting, disable/uninstall and redaction limits.
+
 ### Automatic review host settings
 
 Automatic review is off until the owner enables `review_policy` in PostgreSQL. The standalone worker receives `REVIEW_DB_URL` only in its dedicated service environment and takes an explicit owner-owned host JSON policy path. Repository mappings, required checks, the sole reviewer, note exclusions, subscription transport and registered deployment targets have no personal defaults. This service does not load the app's vault environment. See [automatic review setup](automatic-review.md).
 
-The opt-in Mac usage installer accepts `CODEX_HOME` (default `~/.codex`),
-`USAGE_HOST` (required unique host slug), `USAGE_PUSH_HOST` (required existing SSH
-destination), and `USAGE_PUSH_STATE` (default `~/.local/share/secondbrain`).
-It persists them in the LaunchAgent. See [native conversation setup](modules.md#native-codex-conversation-usage).
-`USAGE_PUSH_MAX_BYTES` remains a soft budget for whole Codex session replay.
+
 
 ### Codex quotas in a hardened server service
 

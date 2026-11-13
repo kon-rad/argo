@@ -35,6 +35,8 @@ interface Show { capabilities?: string[]; model_info?: Record<string, unknown> }
 
 const DEFAULT_CONTEXT = 32_000;
 const MAX_TOKENS = 8_192;
+// A cached catalogue only establishes capacity under the server setting that produced it.
+const discoveredCaps = new WeakMap<ProviderModelConfig[], number | null>();
 
 async function getJson<T>(f: typeof fetch, url: string, ms: number, init?: RequestInit): Promise<T> {
   const res = await f(url, { ...init, signal: AbortSignal.timeout(ms) });
@@ -107,9 +109,14 @@ export async function refreshMachines(
     Object.entries(machines).map(async ([name, m]) => {
       const found = await discoverMachine(m, f, ms);
       const id = machineProviderId(name);
-      if (found) known.set(id, found);
-      const config = machineProvider(name, m, found ?? known.get(id) ?? []);
-      (models as Registry).setProvider(customProvider(id, config));
+      const cap = Number.isFinite(m.contextWindow) && m.contextWindow! > 0 ? m.contextWindow! : null;
+      if (found) {
+        known.set(id, found);
+        discoveredCaps.set(found, cap);
+      }
+      const list = found ?? known.get(id) ?? [];
+      const config = machineProvider(name, m, list);
+      (models as Registry).setProvider(customProvider(id, config, cap !== null && discoveredCaps.get(list) === cap));
       out.set(id, { config, reachable: found !== null });
     }),
   );
