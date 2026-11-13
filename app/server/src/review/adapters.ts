@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
 import { parseCodexResult } from '../addons/dispatch/codex.js';
-import { childEnv, command } from './process.js';
+import { childEnv, command, SafeProcessError } from './process.js';
 import { Verdict, type Snapshot } from './gate.js';
 import { ChangedFile, checkPaths, collectCode } from './scope.js';
 import { evaluate, requireCapacity, scopeObservation } from './policy.js';
@@ -27,22 +27,48 @@ const Sha = z.string().regex(/^[a-f0-9]{40}$/);
 const PR = z.object({ number: z.number().int().positive(), body: z.string(), headRefOid: Sha, baseRefOid: Sha,
   mergeStateStatus:z.string(),mergeable:z.string(),isDraft:z.boolean(), reviewDecision:z.string().nullable(), isCrossRepository: z.boolean(), baseRefName: z.string(), headRefName: z.string(), state: z.enum(['OPEN','MERGED','CLOSED']), mergeCommit: z.object({ oid: Sha }).nullable(),
   statusCheckRollup: z.array(z.object({ name: z.string().optional(), context: z.string().optional(), status: z.string().optional(), conclusion: z.string().nullable().optional(), state: z.string().optional() }).passthrough()) }).passthrough();
+function branchBindsCard(branch: string, card: string): boolean {
+  const escaped = card.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^A-Za-z0-9_])${escaped}(?=$|[^A-Za-z0-9_])`).test(branch);
+}
 export class GitHub {
   constructor(readonly host: HostConfig, readonly repo: Repository) {}
-  gh(args: string[]): Promise<string> { return command(this.host.gh, args, this.host.home, childEnv(this.host.home, true)); }
+  gh(args: string[],timeout=120_000): Promise<string> { return command(this.host.gh, args, this.host.home, childEnv(this.host.home, true),timeout); }
   git(args: string[]): Promise<string> {
     return command(this.host.git, ['--git-dir', this.repo.gitDir, '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgSign=false', ...args], this.host.home, childEnv(this.host.home, true));
   }
-  async pr(card: string, pinned?: number): Promise<z.infer<typeof PR>> {
-    let number = pinned;
-    if (!number) {
-      const list = z.array(z.object({ number: z.number() })).parse(JSON.parse(await this.gh(['pr','list','--repo',this.repo.github,'--state','all','--search',card,'--json','number','--limit','3'])));
-      if (list.length !== 1) throw new Error('Unknown or ambiguous PR; link exactly one PR using the card id');
-      number = list[0]!.number;
+  async pr(card: string, pinned?: number, timeout=120_000): Promise<z.infer<typeof PR>> {
+    const view = async (number: number) => {
+      let p;
+      try{p=PR.parse(JSON.parse(await this.gh(['pr','view',String(number),'--repo',this.repo.github,'--json','number,body,headRefOid,baseRefOid,baseRefName,headRefName,isDraft,mergeStateStatus,mergeable,reviewDecision,isCrossRepository,state,mergeCommit,statusCheckRollup'],timeout)));}
+      catch(error){if(error instanceof SafeProcessError)throw error;throw new SafeProcessError('identity');}
+      if(p.number!==number)throw new SafeProcessError('identity');
+      return p;
+    };
+    const valid = (p: z.infer<typeof PR>) => !p.isCrossRepository && p.baseRefName===this.repo.base && p.state!=='CLOSED' && branchBindsCard(p.headRefName,card);
+    if (pinned) {
+      const p=await view(pinned);
+      if(!valid(p))throw new SafeProcessError('confirmed-stale',undefined,'PR is closed, unrelated or targets an unregistered base');
+      return p;
     }
-    const p = PR.parse(JSON.parse(await this.gh(['pr','view',String(number),'--repo',this.repo.github,'--json','number,body,headRefOid,baseRefOid,baseRefName,headRefName,isDraft,mergeStateStatus,mergeable,reviewDecision,isCrossRepository,state,mergeCommit,statusCheckRollup'])));
-    if (p.isCrossRepository || p.baseRefName !== this.repo.base || (!p.body.includes(card) && !p.headRefName.includes(card)) || p.state === 'CLOSED') throw new Error('PR is closed, unrelated or targets an unregistered base');
-    return p;
+    let list;
+    try{list=z.array(z.object({ number: z.number().int().positive() })).parse(JSON.parse(await this.gh(['pr','list','--repo',this.repo.github,'--state','all','--search',card,'--json','number','--limit','100'],timeout)));}
+    catch(error){if(error instanceof SafeProcessError)throw error;throw new SafeProcessError('identity');}
+    if(list.length===100)throw new SafeProcessError('identity',undefined,'PR search is truncated; exact card identity cannot be established');
+    const candidates=[];
+    for(const number of new Set(list.map(item=>item.number))){const p=await view(number);if(valid(p))candidates.push(p);}
+    if(candidates.length!==1)throw new SafeProcessError('identity',undefined,'Unknown or ambiguous PR; link exactly one PR using an exact card branch');
+    return candidates[0]!;
+  }
+  /** Revalidate a queued correction against the trusted live PR immediately before launch acknowledgement. */
+  async correction(card:string,number:number,head:string,base:string,timeout=120_000):Promise<void>{
+    const p=await this.pr(card,number,timeout);
+    if(p.state!=='OPEN' || p.headRefOid!==head || p.baseRefOid!==base)throw new SafeProcessError('confirmed-stale');
+  }
+  /** Bind a trusted local correction commit to the still-open registered PR immediately before submission. */
+  async correctionCompletion(card:string,number:number,head:string,base:string,branch:string,timeout=120_000):Promise<void>{
+    const p=await this.pr(card,number,timeout);
+    if(p.state!=='OPEN' || p.headRefOid!==head || p.baseRefOid!==base || p.headRefName!==branch)throw new SafeProcessError('confirmed-stale');
   }
   async threads(pr:number):Promise<{id:string;isResolved:boolean;isOutdated:boolean}[]> {
     const [owner,name]=this.repo.github.split('/');

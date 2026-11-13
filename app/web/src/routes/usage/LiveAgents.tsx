@@ -4,6 +4,8 @@ import { Link } from 'react-router-dom';
 import { api, type LiveAgent, type LiveMachine } from '../../lib/api.js';
 import { formatTokens } from './format.js';
 import { sessionLink } from './AgentSessions.js';
+import { clock } from '../../lib/time.js';
+import { useAppTimezone } from '../../lib/useTimezone.js';
 
 export const LIVE_POLL_MS = 5000;
 
@@ -109,6 +111,7 @@ function Machine({ m, onStop, stopping }: { m: LiveMachine; onStop: (a: LiveAgen
 
 export default function LiveAgents({ embedded = false }: { embedded?: boolean }) {
   const qc = useQueryClient();
+  const { tz } = useAppTimezone();
   const q = useQuery({ queryKey: ['usage-live'], queryFn: () => api.usageLive(), refetchInterval: LIVE_POLL_MS });
   const stop = useMutation({
     mutationFn: ({ a, force }: { a: LiveAgent; force: boolean }) => api.usageLiveStop(a.pid!, force, a.startedAt),
@@ -121,7 +124,7 @@ export default function LiveAgents({ embedded = false }: { embedded?: boolean })
         {!embedded && <Link className="text-sm underline" to="/usage">Usage</Link>}
         <h1 className="text-lg font-semibold">Running now <span className="font-normal text-[var(--ink-dim)]">({q.data?.total ?? '…'})</span></h1>
         <span className="text-xs text-[var(--ink-dim)]">
-          {q.data ? `Updated ${new Date(q.data.at).toLocaleTimeString()}, every ${LIVE_POLL_MS / 1000} s. Other machines show sessions active in the last 3 minutes, as of their last sync.` : 'Loading...'}
+          {q.data ? `Updated ${clock(q.data.at, tz)}, every ${LIVE_POLL_MS / 1000} s. Other machines show sessions active in the last 3 minutes, as of their last sync.` : 'Loading...'}
         </span>
       </div>
       {q.isError && <p className="text-sm text-red-600">The live list did not load.</p>}

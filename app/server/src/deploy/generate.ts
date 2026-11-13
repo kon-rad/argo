@@ -12,7 +12,8 @@
  * `secondbrain apply`. See docs/configuration.md.
  */
 import { basename, join } from 'node:path';
-import { enabledManifests } from '../features/registry.js';
+import { ALL_MANIFESTS, enabledManifests } from '../features/registry.js';
+import type { FeatureTimer } from '../features/types.js';
 import type { ServerSettings } from '../settings.js';
 
 export type { ServerSettings };
@@ -35,9 +36,75 @@ const SERVER_SECRET_KEYS = ['AUTH_PASSWORD_HASH', 'AUTH_TOTP_SECRET'] as const;
 /** The unit every server installs (the app itself), before any feature's timers. */
 const ALWAYS_UNITS = ['secondbrain'] as const;
 
+/** Recurring jobs that belong to the engine rather than one optional feature. */
+export const BASE_UNITS: readonly FeatureTimer[] = [
+  {
+    unit: 'secondbrain-db-backup',
+    summary: 'nightly database backup to object storage',
+    calendar: '*-*-* 03:30:00 UTC',
+    command: '/bin/bash @APP_DIR@/deploy/secondbrain-db-backup.sh',
+    description: 'Second Brain: pg_dump the secondbrain database to B2 (db-backups/secondbrain/server/)',
+    timerDescription: 'Second Brain database backup to B2, nightly 03:30 UTC',
+    persistent: true,
+    accuracySec: '1min',
+    environment: ['HOME=@APP_HOME@', 'DB_BACKUP_HOST=server', 'B2STORE=/usr/local/bin/b2store'],
+    service: {
+      after: ['network-online.target', 'postgresql.service'],
+      wants: ['network-online.target'],
+      requires: ['postgresql.service'],
+      workingDirectory: false,
+      directives: ['Nice=10', 'IOSchedulingClass=idle', 'TimeoutStartSec=1h'],
+    },
+  },
+  {
+    unit: 'secondbrain-vault-sync',
+    summary: 'commit, pull and push the server vault every 15 minutes',
+    calendar: '*:0/15',
+    command: '/usr/bin/python3 @APP_DIR@/vault-sync/sbsync.py run --vault @VAULT_DIR@',
+    description: 'Second Brain vault sync: commit what agents wrote, pull and push (docs/sync.md)',
+    timerDescription: 'Second Brain vault sync, every 15 minutes',
+    persistent: true,
+    randomizedDelaySec: 60,
+    environment: ['HOME=@APP_HOME@', 'SYNC_ROLE=agent', 'SYNC_ALERT=log'],
+    service: {
+      after: ['network-online.target'],
+      wants: ['network-online.target'],
+      workingDirectory: '@VAULT_DIR@',
+      directives: ['TimeoutStartSec=15min'],
+    },
+  },
+  {
+    unit: 'secondbrain-embed',
+    summary: 'embed changed vault notes nightly',
+    calendar: '*-*-* 02:30:00 UTC',
+    command: '/usr/bin/node @APP_DIR@/deploy/secondbrain-embed.mjs',
+    description: 'Second Brain: embed new and changed notes (vault_chunks) with the local Ollama model',
+    timerDescription: 'Second Brain embeddings, nightly 02:30 UTC (before the 03:30 backup)',
+    persistent: true,
+    accuracySec: '1min',
+    environment: ['HOME=@APP_HOME@', 'EMBED_BATCH_SIZE=4'],
+    service: {
+      after: ['network-online.target', 'postgresql.service', 'ollama.service'],
+      wants: ['network-online.target'],
+      requires: ['postgresql.service', 'ollama.service'],
+      directives: ['Nice=15', 'CPUQuota=100%', 'IOSchedulingClass=idle', 'TimeoutStartSec=3h'],
+    },
+  },
+];
+
+/** Every pair the generator knows how to render, used by tests and deploy tooling. */
+export const ALL_GENERATED_UNITS: readonly FeatureTimer[] = [
+  ...ALL_MANIFESTS.flatMap((manifest) => manifest.timers),
+  ...BASE_UNITS,
+];
+
 /** The systemd unit stems this install owns: the app service, then each enabled feature's timers. */
-export function unitStems(modules: ReadonlySet<string>): string[] {
-  return [...ALWAYS_UNITS, ...enabledManifests(modules).flatMap((m) => m.timers.map((t) => t.unit))];
+export function unitStems(modules: ReadonlySet<string>, baseUnits: ReadonlySet<string> = new Set()): string[] {
+  return [
+    ...ALWAYS_UNITS,
+    ...enabledManifests(modules).flatMap((m) => m.timers.map((t) => t.unit)),
+    ...BASE_UNITS.filter((unit) => baseUnits.has(unit.unit)).map((unit) => unit.unit),
+  ];
 }
 
 /** The env keys the generated `/etc/secondbrain/env` holds: the server block plus each enabled feature's `env`. */
@@ -90,6 +157,49 @@ export function renderUnit(template: string, subs: Record<string, string>): stri
   return out;
 }
 
+function execStart(command: string): string {
+  if (command.startsWith('/')) return command;
+  const [word, ...args] = command.split(' ');
+  const cli = ALL_MANIFESTS.flatMap((manifest) => manifest.cli).find((candidate) => candidate.command === word);
+  if (!cli) throw new Error(`generated unit command has no manifest CLI: ${command}`);
+  return `/usr/bin/node --no-warnings server/dist/${cli.entry}${args.length ? ` ${args.join(' ')}` : ''}`;
+}
+
+function renderService(timer: FeatureTimer): string {
+  const service = timer.service ?? {};
+  const lines = ['[Unit]', `Description=${timer.description}`];
+  if (service.after?.length) lines.push(`After=${service.after.join(' ')}`);
+  if (service.wants?.length) lines.push(`Wants=${service.wants.join(' ')}`);
+  if (service.requires?.length) lines.push(`Requires=${service.requires.join(' ')}`);
+  lines.push('', '[Service]', 'Type=oneshot', 'User=@APP_USER@', 'Group=@APP_USER@');
+  if (service.workingDirectory !== false) lines.push(`WorkingDirectory=${service.workingDirectory ?? '@APP_DIR@'}`);
+  lines.push('EnvironmentFile=/etc/secondbrain/env');
+  for (const value of timer.environment ?? []) lines.push(`Environment=${value}`);
+  lines.push(`ExecStart=${execStart(timer.command)}`);
+  lines.push(...(service.directives ?? []), 'PrivateTmp=true', 'NoNewPrivileges=true');
+  return `${lines.join('\n')}\n`;
+}
+
+function renderTimer(timer: FeatureTimer): string {
+  const lines = [
+    '[Unit]',
+    `Description=${timer.timerDescription ?? timer.summary}`,
+    '',
+    '[Timer]',
+    `OnCalendar=${timer.calendar}`,
+  ];
+  if (timer.accuracySec) lines.push(`AccuracySec=${timer.accuracySec}`);
+  if (timer.randomizedDelaySec !== undefined) lines.push(`RandomizedDelaySec=${timer.randomizedDelaySec}`);
+  if (timer.persistent) lines.push('Persistent=true');
+  lines.push('', '[Install]', 'WantedBy=timers.target');
+  return `${lines.join('\n')}\n`;
+}
+
+/** Render one generated half with placeholders intact; `planDeploy` applies server substitutions. */
+export function renderGeneratedUnit(timer: FeatureTimer, ext: 'service' | 'timer'): string {
+  return ext === 'service' ? renderService(timer) : renderTimer(timer);
+}
+
 export type PlannedFileKind = 'env' | 'unit';
 export type PlannedFileStatus = 'create' | 'update' | 'unchanged';
 
@@ -127,6 +237,10 @@ export interface PlanInput {
   read: (path: string) => string | undefined;
   /** The unit files already installed, so stale ones can be reported. */
   installed: string[];
+  /** Optional engine jobs selected by deploy flags, as unit stems. */
+  baseUnits?: ReadonlySet<string>;
+  /** A deploy can ask the generator to update units without replacing its hand-maintained env file. */
+  unitsOnly?: boolean;
 }
 
 export function planDeploy(input: PlanInput): DeployPlan {
@@ -137,14 +251,19 @@ export function planDeploy(input: PlanInput): DeployPlan {
     files.push({ kind, path, before, after, status: before === undefined ? 'create' : before === after ? 'unchanged' : 'update' });
   };
 
-  add('env', input.envPath, renderEnv(input.server, input.modules, input.values));
-  for (const stem of unitStems(input.modules)) {
-    // A unit may exist as a service only (the app) or as a service + timer (a feature's sweep).
-    for (const ext of ['service', 'timer']) {
-      const name = `${stem}.${ext}`;
-      const template = input.read(join(input.templateDir, name));
-      if (template === undefined) continue;
-      add('unit', join(input.unitDir, name), renderUnit(template, subs));
+  if (!input.unitsOnly) add('env', input.envPath, renderEnv(input.server, input.modules, input.values));
+
+  const appTemplate = input.read(join(input.templateDir, 'secondbrain.service'));
+  if (appTemplate !== undefined) add('unit', join(input.unitDir, 'secondbrain.service'), renderUnit(appTemplate, subs));
+
+  const selected = [
+    ...enabledManifests(input.modules).flatMap((manifest) => manifest.timers),
+    ...BASE_UNITS.filter((unit) => input.baseUnits?.has(unit.unit)),
+  ];
+  for (const timer of selected) {
+    for (const ext of ['service', 'timer'] as const) {
+      const name = `${timer.unit}.${ext}`;
+      add('unit', join(input.unitDir, name), renderUnit(renderGeneratedUnit(timer, ext), subs));
     }
   }
 

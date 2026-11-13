@@ -15,6 +15,26 @@ jobs:
   # it runs every repository check as a separate unprivileged user with loopback-only
   # egress, proves that boundary with an adversarial probe first, and uploads the
   # evidence from a directory that user cannot touch. See docs/verification.md.
+  hiring-desk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: addons/hiring-desk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: addons/hiring-desk/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pytest
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
   app:
     runs-on: ubuntu-latest
     timeout-minutes: 60

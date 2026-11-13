@@ -1,14 +1,22 @@
 # Time zone
 
-Status: **shared helpers and Usage consumers work**. The configured IANA location or UTC is kept in your vault's `secondbrain.json`.
+Status: **shared helpers, Usage and session inspection, Running/Live, Org, and TV work**. The configured IANA location or UTC is kept in your vault's `secondbrain.json`.
 
 ## What it does
 
 The CLI validates and saves the zone while preserving other settings and the file's owner, group and permissions.
 The metadata API returns the current validated value on each request, including changes made without a server restart.
 Shared frontend time helpers, Usage charts, credit/subscription dates and observation times, subscription resets
-and summaries consume that value. Session inspection, live/running views, TV and Org consumers follow in later
-integration slices.
+and summaries consume that value. The session list and session detail use the same effective zone for Started
+timestamps: `YYYYMMDD HH:mm` on a 24-hour clock. Duration is elapsed time from the first to the last recorded
+step, not time spent working. Context occupancy and capacity remain separate recorded values; missing values are
+shown as `?` on either side, or `-` when neither was recorded.
+Org message tooltips and board-token Made and Last seen values use the shared zone; token values include seconds and
+an absent Last seen remains `never`. TV uses it for the selected episode and episode-strip generated labels. These
+mounted views update when their cached metadata is refetched, including a cleared setting falling back to the browser.
+The Usage live view formats its Updated time in the shared zone. The legacy Running view does the same for its read
+time and includes a zoned, second-precision start time in each running-duration tooltip. Both mounted views update
+when their cached metadata is refetched, including a cleared setting falling back to the browser.
 
 | Setting | Metadata API value |
 |---|---|
@@ -17,6 +25,9 @@ integration slices.
 
 The server's own zone is never used: it says where the machine is, not where you are. Travel is never inferred.
 The Usage ledger shows the chosen zone and its source (`vault setting` or `this browser`).
+Usage charts bucket hours and days in that zone. When the effective zone changes after initial metadata loading,
+the selected bucket is recalculated and its old session interval is cleared. An initial bookmarked session range
+is preserved. See [Usage configuration](configuration.md#usage-page-providers-and-sections) for session filters.
 
 ## Change it
 

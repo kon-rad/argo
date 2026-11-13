@@ -79,8 +79,8 @@ nav:
       - Retrieval and the chat module: rag.md
       - Memory, and how to check it works: memory.md
       - Agent harness: agent-harness.md
+      - Zen session provenance: zen-session-metadata.md
       - The agent company: agent-company.md
-      - ENSv2 agent names: ensv2-agent-registration.md
       - org.yaml and wake rules: org-yaml.md
       - Deployment: deployment.md
       - Capability-aware verification: verification.md

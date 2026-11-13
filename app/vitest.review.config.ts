@@ -1,2 +1,2 @@
 import { defineConfig } from 'vitest/config';
-export default defineConfig({ test: { environment: 'node', include: ['server/test/review-unit.test.ts','server/test/review-scope.test.ts','server/test/codex-dispatch.test.ts','server/test/verification-runner.test.ts','server/test/verification-gate.test.ts','server/test/verification-artifact.test.ts'] } });
+export default defineConfig({ test: { environment: 'node', include: ['server/test/review-unit.test.ts','server/test/review-scope.test.ts','server/test/review-checks.test.ts','server/test/review-collection.test.ts','server/test/review-corrections.test.ts','server/test/review-db.test.ts','server/test/review-launch.test.ts','server/test/codex-dispatch.test.ts'] } });

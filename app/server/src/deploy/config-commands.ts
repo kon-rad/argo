@@ -26,6 +26,10 @@ export interface ConfigIo {
   write: (path: string, content: string) => void;
   /** The unit files already installed in `unitDir`. */
   listInstalled: () => string[];
+  /** Optional base jobs selected by deploy flags. */
+  baseUnits?: ReadonlySet<string>;
+  /** Update unit files but leave an existing machine env file alone. */
+  unitsOnly?: boolean;
   log: (line: string) => void;
   error: (line: string) => void;
 }
@@ -40,6 +44,8 @@ export function planFor(io: ConfigIo): DeployPlan {
     values: io.values,
     read: io.read,
     installed: io.listInstalled(),
+    baseUnits: io.baseUnits,
+    unitsOnly: io.unitsOnly,
   });
 }
 
