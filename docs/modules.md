@@ -234,6 +234,8 @@ A standard LinkedIn app gets a 60-day access token and **no refresh token** (Lin
 
 **Setting up Buffer.** Connect each account in Buffer once (the free plan has 3 channels and a lifetime limit on new connections, so don't connect test accounts). Instagram must be a Business or Creator account for automatic publishing. Put `BUFFER_API_KEY` in the server's env, then run `cli-social connect-buffer`: it adds one account per Instagram, YouTube and X channel and skips the rest.
 
+Instagram metrics can also use the social addon's authenticated [Unified Login connect page](social-metrics.md#unified-login) at `/socials/ig/auth`. It is experimental, accepts only verified expiring Facebook USER tokens for Page-linked assets, and requires private Facebook env configuration. The existing map timer collects its typed credentials; publishing providers are independent.
+
 ## uploads
 
 `MODULES=uploads`. Send files of 1 GB to 50 GB from any browser on `/uploads`, with a folder and a description, straight into the Backblaze B2 bucket your vault already uses. Design, setup (CORS rule, keys) and failure handling: [uploads.md](uploads.md).

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { json } from 'express';
 import { config } from '../../config.js';
 import type { FeatureRoutes } from '../../features/types.js';
+import { instagramUnifiedRoutes } from '../../metrics/social/unified.js';
 import { socialCallbackRouter, socialRouter, type SocialOptions } from '../../routes/social.js';
 import { bufferProvider } from '../../social/providers/buffer.js';
 import { linkedinProvider } from '../../social/providers/linkedin.js';
@@ -23,7 +24,7 @@ function defaultProviders(): Record<string, SocialProvider> {
  * parser sits in the raw group ahead of the global 1 MB one; the OAuth callback arrives without a
  * session cookie, so it sits ahead of the login gates; the rest is session-gated.
  */
-export const routes: FeatureRoutes = ({ opts }) => {
+export const routes: FeatureRoutes = ({ opts, vaultRoot, sessionGate }) => {
   const socialOpts: SocialOptions = {
     providers: defaultProviders(),
     tokenEncKey: config.socialTokenEncKey,
@@ -31,7 +32,14 @@ export const routes: FeatureRoutes = ({ opts }) => {
     xMaxChars: config.socialXMaxChars,
     ...opts.social,
   };
+  const ig = instagramUnifiedRoutes({
+    appId: config.facebookAppId, appSecret: config.facebookAppSecret,
+    configurationId: config.facebookLoginConfigId, publicOrigin: config.publicOrigin,
+    encKey: config.socialTokenEncKey, ...opts.instagramUnified,
+  }, vaultRoot, sessionGate);
   return [
+    { path: '/', router: ig.callback, mount: 'public' },
+    { path: '/api/social', router: ig.start },
     { path: '/api/social/posts', router: Router().use(json({ limit: '30mb' })), mount: 'raw' },
     { path: '/api/social', router: socialCallbackRouter(socialOpts), mount: 'public' },
     { path: '/api/social', router: socialRouter(socialOpts) },
