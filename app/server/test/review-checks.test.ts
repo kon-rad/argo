@@ -25,6 +25,13 @@ function fixture(checks: Snapshot['checks'], requiredChecks?: string[]) {
   return { s, job, io, calls };
 }
 
+function expectWaitingForCI(f: ReturnType<typeof fixture>) {
+  expect(f.job.state).toBe('reviewing');
+  expect(f.job.verdict).toBeNull();
+  expect(f.job.error).toMatch(/^Waiting for required CI:/);
+  expect(f.calls).toEqual({ review: 0, merge: 0, deploy: 0, complete: 0 });
+}
+
 describe('production check normalization', () => {
   it('retains all names and distinguishes optional skipped/neutral from failures', () => {
     expect(normalizeChecks([check('tests', 'SUCCESS'), check('deploy', 'SKIPPED'), check('advice', 'NEUTRAL')]))
@@ -61,13 +68,17 @@ describe('actual runReview configured-check authority', () => {
   ('stops required %s before model or shipping despite snapshot claiming no required checks', async conclusion => {
     const f = fixture(normalizeChecks([check('tests', conclusion)]), []);
     await runReview(f.job, ['tests'], f.io);
-    expect(f.job.state).toBe(['SKIPPED', 'NEUTRAL', 'NEW_CONCLUSION'].includes(conclusion) ? 'blocked' : 'rejected');
-    expect(f.calls).toEqual({ review: 0, merge: 0, deploy: 0, complete: 0 });
+    if (['SKIPPED', 'NEUTRAL', 'NEW_CONCLUSION'].includes(conclusion)) expectWaitingForCI(f);
+    else {
+      expect(f.job.state).toBe('rejected');
+      expect(f.job.verdict?.findings[0]?.code).toBe('ci-failure');
+      expect(f.calls).toEqual({ review: 0, merge: 0, deploy: 0, complete: 0 });
+    }
   });
   it.each(['missing', 'pending', 'unknown'])('stops %s configured CI', async state => {
     const checks = state === 'missing' ? [] : normalizeChecks([{ name: 'tests', ...(state === 'pending' ? { status: 'IN_PROGRESS' } : {}) }]);
     const f = fixture(checks, []); await runReview(f.job, ['tests'], f.io);
-    expect(f.job.state).toBe('blocked'); expect(f.calls).toEqual({ review: 0, merge: 0, deploy: 0, complete: 0 });
+    expectWaitingForCI(f);
   });
   it('preserves the terminal legacy ERROR rejection path without model or shipping', async () => {
     const f = fixture(normalizeChecks([{ context: 'tests', state: 'ERROR' }]), []);
@@ -77,7 +88,7 @@ describe('actual runReview configured-check authority', () => {
   it('does not allow snapshot metadata to substitute a different successful check', async () => {
     const f = fixture(normalizeChecks([check('optional', 'SUCCESS')]), ['optional']);
     await runReview(f.job, ['tests'], f.io);
-    expect(f.job.state).toBe('blocked'); expect(f.calls.review).toBe(0); expect(f.calls.merge).toBe(0);
+    expectWaitingForCI(f);
   });
   it('does not substitute snapshot names for an empty configured policy', async () => {
     const f = fixture(normalizeChecks([check('tests', 'SUCCESS')]), ['tests']);
