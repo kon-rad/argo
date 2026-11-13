@@ -26,7 +26,7 @@
     "staleHours": 36,
     "postDays": 90,
     "youtube": [{ "channelId": "UCxxxxxxxxxxxxxxxxxxxxxx", "key": "yt.example", "label": "YouTube @example" }],
-    "instagram": [{ "username": "example.studio" }],
+    "instagram": [{ "username": "example.studio", "login": "instagram" }],
     "x": [{ "handle": "example", "key": "x.example", "postIdsFile": "Areas/social/x-post-ids.txt" }],
     "linkedin": [{ "account": "me" }]
   },
