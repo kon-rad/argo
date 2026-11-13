@@ -2,7 +2,7 @@ import type pg from 'pg';
 import { evidence, runReview, type Job, type Snapshot, type Source } from './gate.js';
 import { GitHub, codexReview, deploy, type HostConfig } from './adapters.js';
 import { note, source, linkedNote, hasAcceptance, repositoryKey, builderIsReviewer } from './context.js';
-import { POLICY, evaluate, requireCapacity, scopeObservation } from './policy.js';
+import { CapacityError, POLICY, evaluate, requireCapacity, scopeObservation } from './policy.js';
 import { failure } from '../verification/contract.js';
 import type { Decision } from '../verification/evidence.js';
 import { GitHubVerificationSource, activation, integrationsAt, offState, verifyHead } from '../verification/github.js';
@@ -92,21 +92,27 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
         sources.push(source(`github:${repo.github}/pull/${p.number}`,{body:p.body,headRefName:p.headRefName,baseRefName:p.baseRefName,isDraft:p.isDraft,reviewDecision:p.reviewDecision,statusCheckRollup:p.statusCheckRollup,threads}));
         // After merge, retain the approved base even if the protected branch has advanced.
         const revision={...p,baseRefOid:p.mergeCommit && job.snapshot ? job.snapshot.base : p.baseRefOid};
-        const diff=await github.diff(revision), code=await github.code(revision);
-        if(repo.verification){
-          // Obtained from the configured workflow's run and artifact for this exact head, never from builder files.
-          const decision=await verifyHead(verifier,repo.verification,p.headRefOid);
-          verified.set(p.headRefOid,decision);
-          sources.push(source(`verification:${p.headRefOid}`,decision.record));
-        }
-        const current=await github.pr(job.card,p.number);
-        if(current.headRefOid!==p.headRefOid || current.baseRefOid!==p.baseRefOid)throw new Error('PR head or base changed during collection; retry with fresh evidence');
-        requireCapacity(evaluate(scopeObservation([],code,diff,0,sources.reduce((n,s)=>n+s.text.length,0)),'actual'));
-        sources.push(source(`github:diff:${p.headRefOid}`,diff,true,POLICY.diffChars));
-        for(const item of code)sources.push(source(item.ref,item.text));
-        return { repo:repo.github,pr:p.number,head:p.headRefOid,behind:p.state==='OPEN' && p.mergeStateStatus==='BEHIND',conflicting:p.state==='OPEN' && (p.mergeStateStatus==='DIRTY' || p.mergeable==='CONFLICTING'),draft:p.isDraft,unresolved:threads.filter(t=>!t.isResolved).length,changesRequested:p.reviewDecision==='CHANGES_REQUESTED',
+        const snapshot=(preflight?:Snapshot['preflight']):Snapshot=>({ repo:repo.github,pr:p.number,head:p.headRefOid,behind:p.state==='OPEN' && p.mergeStateStatus==='BEHIND',conflicting:p.state==='OPEN' && (p.mergeStateStatus==='DIRTY' || p.mergeable==='CONFLICTING'),draft:p.isDraft,unresolved:threads.filter(t=>!t.isResolved).length,changesRequested:p.reviewDecision==='CHANGES_REQUESTED',
           base:revision.baseRefOid,branch:p.baseRefName,merged:p.mergeCommit?.oid ?? null,
-          requiredChecks:[...repo.checks],checks:normalizeChecks(p.statusCheckRollup),sources };
+          requiredChecks:[...repo.checks],checks:normalizeChecks(p.statusCheckRollup),sources,...(preflight?{preflight}:{}) });
+        try{
+          const diff=await github.diff(revision), code=await github.code(revision);
+          if(repo.verification){
+            // Obtained from the configured workflow's run and artifact for this exact head, never from builder files.
+            const decision=await verifyHead(verifier,repo.verification,p.headRefOid);
+            verified.set(p.headRefOid,decision);
+            sources.push(source(`verification:${p.headRefOid}`,decision.record));
+          }
+          const current=await github.pr(job.card,p.number);
+          if(current.headRefOid!==p.headRefOid || current.baseRefOid!==p.baseRefOid)throw new Error('PR head or base changed during collection; retry with fresh evidence');
+          requireCapacity(evaluate(scopeObservation([],code,diff,0,sources.reduce((n,s)=>n+s.text.length,0)),'actual'));
+          sources.push(source(`github:diff:${p.headRefOid}`,diff,true,POLICY.diffChars));for(const item of code)sources.push(source(item.ref,item.text));return snapshot();
+        }catch(error){
+          if(!(error instanceof CapacityError))throw error;
+          const mapping:Record<string,string>={changedFiles:'scope-changed-files',reviewableFiles:'scope-reviewable-files',sources:'scope-sources',sourceChars:'scope-source-chars',diffChars:'scope-diff-chars',combinedChars:'scope-combined-chars'};
+          return snapshot(error.result.reasons.filter(r=>mapping[r.code]).map(r=>({code:mapping[r.code] as 'scope-changed-files',severity:'high' as const,location:'Review source capacity',evidence:`Observed ${r.observed}; allowed ${r.allowed}. Full independent model review did not run.`,impact:'This revision exceeds the deterministic reviewer capacity and is not accepted.',fix:r.action,verification:'Run review scope actual on the complete clean revision and record a passing result.'})));
+        }
+
       };
       await runReview(job,repo.checks,{
         gather,
