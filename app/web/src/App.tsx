@@ -10,7 +10,7 @@ import Sources from './routes/Sources.js';
 import Ring from './routes/Ring.js';
 import Agents, { OldCardLink } from './routes/agents/Agents.js';
 import Cron from './routes/Cron.js';
-import NavMenu, { type NavItem } from './components/NavMenu.js';
+import NavMenu, { currentItem, type NavItem } from './components/NavMenu.js';
 import { FEATURE_ROUTES } from './features.js';
 import MobileMenu, { MenuButton } from './components/MobileMenu.js';
 import Tv from './routes/Tv.js';
@@ -87,8 +87,10 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   const mobileMenuId = useId();
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const openChat = useCallback(() => setChatOpen(true), []);
   const sections = menus(modules, meta.data, openChat);
+  const here = currentItem(sections, location.pathname);
 
   async function logout(): Promise<void> {
     await api.logout().catch(() => {});
@@ -129,8 +131,13 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           Second Brain
         </Link>
 
-        {/* Phone: one menu button; the sections, search and status live in the slide-over below. */}
-        <MenuButton open={menuOpen} onToggle={() => setMenuOpen((o) => !o)} controls={mobileMenuId} />
+        {/* Phone: where you are, and one menu button; the sections, search and status live in the slide-over below. */}
+        {here && (
+          <span className="min-w-0 flex-1 truncate text-base text-[var(--ink-dim)] md:hidden">
+            {here.label}
+          </span>
+        )}
+        <MenuButton ref={menuButtonRef} open={menuOpen} onToggle={() => setMenuOpen((o) => !o)} controls={mobileMenuId} />
 
         {/* From md up this wrapper disappears (display: contents), so the desktop header is unchanged. */}
         <div className="hidden md:contents">
@@ -183,6 +190,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         id={mobileMenuId}
         open={menuOpen}
         onClose={closeMenu}
+        opener={menuButtonRef}
         sections={sections}
         search={<SearchBox inputRef={mobileSearchRef} onSubmit={(q) => navigate(`/search?q=${encodeURIComponent(q)}`)} />}
         footer={
@@ -198,7 +206,8 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         }
       />
 
-      <main className="min-h-0 flex-1">
+      {/* Phone: a page with no scroll box of its own scrolls here, under the header, never the whole document. */}
+      <main className="min-h-0 flex-1 max-md:overflow-y-auto">
         <Routes>
           <Route path="/" element={<Browse />} />
           <Route path="/file/*" element={<Browse />} />
@@ -246,7 +255,7 @@ function menus(modules: Set<string>, meta: AppMeta | undefined, openChat: () => 
   const declared = (section: FeatureNav['section']): NavItem[] =>
     (meta?.nav ?? []).filter((n) => n.section === section).map((n) => ({ to: n.path, label: n.label }));
   const vault: NavItem[] = [
-    { to: '/', label: 'Browse', end: true },
+    { to: '/', label: 'Browse', end: true, also: ['/file/*'] },
     ...declared('Vault'),
     // The chat panel opens over the current page rather than navigating; the header button does the same.
     // chat's menu entry is an action (it opens the panel), not a page link, so it stays here.
