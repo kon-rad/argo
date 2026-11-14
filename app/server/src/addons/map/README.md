@@ -8,7 +8,7 @@ List it in the vault's `secondbrain.json` `addons` (or `MODULES` in `.env`) to t
 |---|---|
 | Module | `map` |
 | CLI | `secondbrain map-build`, `metrics`, `backlinks` |
-| Timers (server) | `secondbrain-map-build`, `secondbrain-metrics` |
+| Timers (server) | `secondbrain-map-build`, `secondbrain-metrics`, `secondbrain-metrics-checkpoints` |
 | Env | `YOUTUBE_API_KEY`, `SOCIAL_TOKEN_ENC_KEY` (both optional, for social metrics) |
 | Docs | `docs/modules.md#map`, `docs/social-metrics.md` |
 

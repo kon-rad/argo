@@ -80,6 +80,7 @@ The app refuses to start in server mode without `AUTH_PASSWORD_HASH`, `AUTH_TOTP
 | `secondbrain-projects-render.timer` | Hourly | `projects` |
 | `secondbrain-map-build.timer` | Hourly at :20 | `map` |
 | `secondbrain-metrics.timer` | Daily 00:30 UTC | `map` |
+| `secondbrain-metrics-checkpoints.timer` | Hourly at :45 | `map` |
 | `secondbrain-livestream.timer` | Every minute | `livestream` |
 | `secondbrain-embed.timer` | Daily 02:30 UTC | `DEPLOY_EMBED=1` |
 | `secondbrain-db-backup.timer` | Daily 03:30 UTC | `DEPLOY_DB_BACKUP=1` |
