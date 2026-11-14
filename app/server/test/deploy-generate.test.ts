@@ -75,6 +75,7 @@ describe('env and unit generation (pure)', () => {
       'secondbrain-agents-sync',
       'secondbrain-map-build',
       'secondbrain-metrics',
+      'secondbrain-metrics-checkpoints',
       'secondbrain-livestream',
       'secondbrain-social',
       'secondbrain-garden',
