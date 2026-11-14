@@ -3,6 +3,10 @@ import { evidence, runReview, type Job, type Snapshot, type Source } from './gat
 import { GitHub, codexReview, deploy, type HostConfig } from './adapters.js';
 import { note, source, linkedNote, hasAcceptance, repositoryKey, builderIsReviewer } from './context.js';
 import { CapacityError, POLICY, evaluate, requireCapacity, scopeObservation } from './policy.js';
+import { failure } from '../verification/contract.js';
+import type { Decision } from '../verification/evidence.js';
+import { GitHubVerificationSource, activation, integrationsAt, offState, verifyHead } from '../verification/github.js';
+import { commandBytes, childEnv } from './process.js';
 
 type CheckRollup = { name?: string | null; context?: string | null; status?: string | null; conclusion?: string | null; state?: string | null };
 /** Preserve optional check outcomes for the reviewer; only configured required checks control readiness. */
@@ -50,6 +54,10 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
       if(job.snapshot && job.snapshot.repo!==repo.github){await save({state:'blocked',error:'Repository changed for active submission'});return {claimed:true,job};}
       await save({target:job.target});
       const github = new GitHub(host,repo);
+      const verifier = new GitHubVerificationSource(args=>github.gh(args),(args,max)=>commandBytes(host.gh,args,host.home,childEnv(host.home,true),300_000,max),args=>github.git(args),repo.github);
+      const verified = new Map<string,Decision>();
+      // Checks that passed in trusted evidence for the approved head (off-state checks count only from there).
+      const passedAt = (head?:string) => new Set(head ? verified.get(head)?.record.checks.filter(c=>c.status==='pass').map(c=>c.id) ?? [] : []);
       let pinned = job.snapshot?.pr;
       if (!pinned) {
         const prev = await client.query('SELECT snapshot FROM review_jobs WHERE card=$1 AND id<$2 AND snapshot IS NOT NULL ORDER BY id DESC LIMIT 1',[job.card,job.id]);
@@ -89,6 +97,12 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
           requiredChecks:[...repo.checks],checks:normalizeChecks(p.statusCheckRollup),sources,...(preflight?{preflight}:{}) });
         try{
           const diff=await github.diff(revision), code=await github.code(revision);
+          if(repo.verification){
+            // Obtained from the configured workflow's run and artifact for this exact head, never from builder files.
+            const decision=await verifyHead(verifier,repo.verification,p.headRefOid);
+            verified.set(p.headRefOid,decision);
+            sources.push(source(`verification:${p.headRefOid}`,decision.record));
+          }
           const current=await github.pr(job.card,p.number);
           if(current.headRefOid!==p.headRefOid || current.baseRefOid!==p.baseRefOid)throw new Error('PR head or base changed during collection; retry with fresh evidence');
           requireCapacity(evaluate(scopeObservation([],code,diff,0,sources.reduce((n,s)=>n+s.text.length,0)),'actual'));
@@ -113,6 +127,19 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
           return revision;
         },
         health:revision => deploy(host,job.target,'health',revision,String(job.id)),
+        ...(repo.verification ? {
+          verify:async (s:Snapshot) => ({ checks:[repo.verification!.workflow.job],
+            failures:verified.get(s.head)?.failures ?? [failure('evidence','not-collected',`no verification collected for ${s.head}`)] }),
+          // Off-state is judged against the deployment target itself, at the head before merge and the merge before deploy.
+          offState:async (revision:string) => {
+            if(revision!==job.snapshot?.head)await github.git(['fetch','--no-tags',`https://github.com/${repo.github}.git`,revision]);
+            return offState(repo.verification!,host.home,job.target,await integrationsAt(verifier,repo.verification!,revision,passedAt(job.snapshot?.head)));
+          },
+          activation:async (revision:string) => {
+            await github.git(['fetch','--no-tags',`https://github.com/${repo.github}.git`,revision]);
+            return activation(repo.verification!,host.home,revision,await integrationsAt(verifier,repo.verification!,revision,passedAt(job.snapshot?.head)));
+          },
+        } : {}),
         complete:async () => {
           // Ticket and evidence can change during deployment too. Keep actual shipping receipts if so.
           const current = await gather();

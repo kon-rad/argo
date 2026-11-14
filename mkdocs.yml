@@ -83,5 +83,6 @@ nav:
       - The agent company: agent-company.md
       - org.yaml and wake rules: org-yaml.md
       - Deployment: deployment.md
+      - Capability-aware verification: verification.md
       - Privacy (engine): privacy.md
       - zen-agent, the minimal agent harness: zen-agent.md

@@ -7,10 +7,13 @@ import { childEnv, command, SafeProcessError } from './process.js';
 import { Verdict, type Snapshot } from './gate.js';
 import { ChangedFile, checkPaths, collectCode } from './scope.js';
 import { evaluate, requireCapacity, scopeObservation } from './policy.js';
+import { VerificationPolicy } from '../verification/contract.js';
 
 export const Repository = z.object({ github: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
   gitDir: z.string().startsWith('/'), base: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9/_.-]*$/), target: z.string(), checks: z.array(z.string().min(1)).min(1),
-  notes: z.array(z.string()).min(1), noteRoots:z.array(z.string()).optional() }).strict();
+  notes: z.array(z.string()).min(1), noteRoots:z.array(z.string()).optional(),
+  /** Optional trusted verification policy (docs/verification.md). Absent keeps the previous CI-only gate. */
+  verification: VerificationPolicy.optional() }).strict();
 export type Repository = z.infer<typeof Repository>;
 export const HostConfig = z.object({
   repositories: z.record(z.string(), Repository),

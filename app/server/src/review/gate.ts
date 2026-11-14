@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import type { Failure } from '../verification/contract.js';
 
 const Sha = z.string().regex(/^[a-f0-9]{40}$/);
 export const Source = z.object({ ref: z.string(), revision: z.string(), text: z.string(), essential: z.boolean(), missing: z.boolean(), truncated: z.boolean(), redacted:z.boolean().optional() }).strict();
@@ -40,6 +41,23 @@ export interface GateIO {
   beforeShip?():Promise<void>;
   /** Owner-controlled switch, checked again immediately before each external write. */
   mayShip?(): Promise<boolean>;
+  /** Trusted exact-head verification (docs/verification.md). `checks` are the CI check names it classifies. */
+  verify?(s: Snapshot): Promise<{ failures: Failure[]; checks: string[] }>;
+  /** Before merging or deploying merge-disabled code: blockers until the target attests each flag is off. */
+  offState?(revision: string): Promise<string[]>;
+  /** After exact-revision health: activation still pending. Empty means the task may complete. */
+  activation?(revision: string): Promise<string[]>;
+}
+// Trust in the evidence comes first, then the environment, then what still needs outside validation.
+const PRIORITY: Failure['type'][] = ['verifier-trust', 'evidence', 'infrastructure', 'dependency', 'unknown', 'external-contract', 'authorization'];
+function verificationError(failures: Failure[]): string {
+  const ordered = [...failures].sort((a, b) => PRIORITY.indexOf(a.type) - PRIORITY.indexOf(b.type));
+  return 'Verification ' + ordered.slice(0, 5).map(f => `${f.type} -> ${f.route} [${f.code}]: ${f.detail.split('\n')[0]}`).join('; ');
+}
+function rejection(job: Job, s: Snapshot, findings: Verdict['findings'], rationale: string): Verdict {
+  const checked={status:'not-applicable' as const,evidence:[s.sources.find(x=>!x.missing)?.ref ?? 'preflight'],rationale};
+  return {decision:'reject',reviewer:job.reviewer,repo:s.repo,pr:s.pr,head:s.head,base:s.base,evidence:evidence(s),
+    categories:{security:checked,compatibility:checked,migrations:checked,regressions:checked,scope:checked,placeholders:checked,tests:{...checked,status:'checked'}},findings:findings.slice(0,30)};
 }
 export function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 export function evidence(s: Snapshot): string {
@@ -94,13 +112,25 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
       ready(s,checks);
     }
     if (!job.merged) {
+      // Verification precedes independent review. Each typed failure goes to its own route: typed assertions and
+      // contract errors return to the builder, every other failure is retained as a blocker and never a builder finding.
+      if (!job.verdict && !s.merged && io.verify) {
+        const v = await io.verify(s);
+        const mine = v.failures.filter(f => f.route === 'builder'), blockers = v.failures.filter(f => f.route !== 'builder');
+        if (!mine.length && blockers.length) throw new Error(verificationError(blockers));
+        if (mine.length) {
+          const findings = [...mine.map(f => ({ severity:'high' as const, location:`verification: ${f.check ?? f.code}`, evidence:f.detail,
+            impact:'Trusted verification failed on the exact submitted head',
+            fix:f.type==='assertion' ? 'Fix the failing assertion on the same PR branch' : 'Restore the verification contract to the installation minimum on the same PR branch',
+            verification:'Push the fix; the disposable verifier reruns the contract on the new head' })),
+            ...preflightFindings(s,checks).filter(p => !v.checks.some(name => p.location === `CI: ${name}`))];
+          await save({snapshot:s,verdict:rejection(job,s,findings,'Full review deferred because trusted verification reported failures the builder must fix'),state:'reviewing',
+            error:blockers.length ? `Retained blockers for other routes: ${verificationError(blockers)}`.slice(0,1000) : null});
+        }
+      }
       const problems = !s.merged ? preflightFindings(s,checks) : [];
       if (problems.length && !job.verdict) {
-        const ref=s.sources.find(x=>!x.missing)?.ref ?? 'preflight';
-        const checked={status:'not-applicable' as const,evidence:[ref],rationale:'Full review deferred because the PR failed the recorded readiness checks'};
-        const v:Verdict={decision:'reject',reviewer:job.reviewer,repo:s.repo,pr:s.pr,head:s.head,base:s.base,evidence:evidence(s),
-          categories:{security:checked,compatibility:checked,migrations:checked,regressions:checked,scope:checked,placeholders:checked,tests:{...checked,status:'checked'}},findings:problems};
-        await save({snapshot:s,verdict:v,state:'reviewing'});
+        await save({snapshot:s,verdict:rejection(job,s,problems,'Full review deferred because the PR failed the recorded readiness checks'),state:'reviewing'});
       }
       const waiting=checks.filter(name=>!s.checks.some(c=>c.name===name && c.state==='pass') && !s.checks.some(c=>c.name===name && c.state==='fail'));
       if(!s.merged && waiting.length && !problems.length && !job.verdict){await save({state:'reviewing',error:`Waiting for required CI: ${waiting.join(', ')}`});return;}
@@ -127,6 +157,10 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
         if (evidence(current) !== evidence(job.snapshot!)) {
           await save({ verdict: null, snapshot: null }); throw new Error('Revision or evidence changed; approval invalidated');
         }
+        const v = await io.verify?.(current);
+        if (v?.failures.length) { await save({ verdict: null, snapshot: null }); throw new Error(verificationError(v.failures)); }
+        const off = await io.offState?.(current.head) ?? [];
+        if (off.length) throw new Error(off.join('; ').slice(0,1000));
       }
       await save({ state: 'merging' });
       const revision = Sha.parse(await io.merge(job.snapshot!));
@@ -136,6 +170,9 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
     await io.verifyMerge(job.snapshot!,job.merged!);
     if (!job.deployed) {
       if (io.mayShip && !(await io.mayShip())) { await save({state:'merged',error:'Merge recorded; owner has deployment paused'}); return; }
+      // The target must still attest merge-disabled flags are off immediately before deployment.
+      const off = await io.offState?.(job.merged!) ?? [];
+      if (off.length) throw new Error(off.join('; ').slice(0,1000));
       await save({ state: 'deploying' });
       const revision = Sha.parse(await io.deploy(job.merged!));
       if (revision !== job.merged) throw new Error('Deploy receipt is for a different revision');
@@ -145,6 +182,9 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
     const verifiedHealth=job.deployed===job.merged && job.health===job.merged;
     if (!verifiedHealth && !(await io.health(job.merged!))) throw new Error('Health does not attest merged revision');
     await save({ health:job.merged, ...(job.state==='deployed' ? {} : {state:'deployed' as const}) });
+    // Merge and health never imply activation: merge-disabled and activation-pending stay open, not done.
+    const pending = io.activation ? await io.activation(job.merged!) : [];
+    if (pending.length) { await save({ state:'blocked', error:pending.join('; ').slice(0,1000) }); return; }
     await io.complete();
     await save({ state: 'done', error: null });
   } catch (error) {

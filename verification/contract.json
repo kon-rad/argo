@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "capabilities": ["postgres", "loopback-listeners", "dependency-download:npm"],
+  "checks": [
+    {
+      "id": "dependencies",
+      "covers": ["dependencies"],
+      "cwd": "app",
+      "argv": ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+      "requires": ["dependency-download:npm"],
+      "timeoutSeconds": 900,
+      "count": "none"
+    },
+    {
+      "id": "build",
+      "covers": ["build"],
+      "cwd": "app",
+      "argv": ["npm", "run", "build"],
+      "requires": [],
+      "timeoutSeconds": 900,
+      "count": "none"
+    },
+    {
+      "id": "tests",
+      "covers": ["unit", "migrations", "integration", "regression"],
+      "cwd": "app",
+      "argv": ["npm", "test", "--", "--reporter=default", "--reporter=json", "--outputFile.json={report}"],
+      "requires": ["postgres", "loopback-listeners"],
+      "timeoutSeconds": 1500,
+      "count": "required",
+      "report": "vitest-json"
+    }
+  ],
+  "externalIntegrations": []
+}
