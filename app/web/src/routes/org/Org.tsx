@@ -9,6 +9,7 @@ import { useStickToBottom } from '../../lib/useStickToBottom.js';
 import { ChatInput } from '../../components/ChatInput.js';
 import { VaultMarkdown } from '../../components/VaultMarkdown.js';
 import { AgentAvatar } from '../../components/AgentAvatar.js';
+import DataTable from '../../components/DataTable.js';
 import { teamColor } from '../../lib/teamColor.js';
 import { useAppTimezone } from '../../lib/useTimezone.js';
 
@@ -363,7 +364,7 @@ function Tokens() {
       <h2 className="mb-1 font-semibold tracking-tight">Board tokens</h2>
       <p className="mb-2 text-xs text-[var(--ink-dim)]">Machines and agent processes that reach the board over HTTPS, each as one roster member. Mint one on the server with <code>cli-board token create &lt;agent&gt; --label "where"</code>; revoking ends that machine's access at once.</p>
       {rows.length === 0 ? <p className="text-sm text-[var(--ink-faint)]">No tokens.</p> : (
-        <table className="w-full text-sm">
+        <DataTable label="Board tokens" phone="cards" className="w-full text-sm">
           <thead><tr className="text-left text-xs text-[var(--ink-dim)]"><th>Acts as</th><th>Label</th><th>Last seen</th><th>Made</th><th></th></tr></thead>
           <tbody>
             {rows.map((t) => (
@@ -372,7 +373,7 @@ function Tokens() {
                 <td>{t.label ?? '-'}</td>
                 <td>{when(t.last_seen_at)}</td>
                 <td>{when(t.created_at)}</td>
-                <td className="text-right">
+                <td className="text-right max-md:col-span-2">
                   {t.revoked_at ? <span className="text-xs">revoked</span> : (
                     <button type="button" onClick={() => revoke.mutate(t.id)} disabled={revoke.isPending} className="rounded border border-[var(--rule)] px-2 py-0.5 text-xs">revoke</button>
                   )}
@@ -380,7 +381,7 @@ function Tokens() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       )}
       {revoke.isError && <p className="mt-1 text-xs text-[var(--warn)]">{revoke.error.message}</p>}
     </section>

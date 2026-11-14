@@ -7,6 +7,7 @@ import { api, type OrgChart, type TaskLink } from '../lib/api.js';
 import { boardApi } from './board/api.js';
 import { projectsApi, STAGES, type Stage, type TrackerFeature, type TrackerItem, type TrackerProject, type TrackerReport } from './Projects.api.js';
 import { ago } from '../lib/time.js';
+import DataTable from '../components/DataTable.js';
 
 /**
  * The company view of every project: teams own projects, projects are made of
@@ -321,7 +322,7 @@ function Needs({ r }: { r: TrackerReport }) {
   });
   if (!r.needs_owner.length) return <p className="text-[var(--ink-dim)]">Nothing is waiting on you.</p>;
   return (
-    <table className="w-full text-sm">
+    <DataTable label="Needs you" phone="cards" className="w-full text-sm">
       <thead className="text-left text-xs text-[var(--ink-dim)]">
         <tr><th className="py-1">Priority</th><th>Project / feature</th><th>What you need to do</th><th>Due</th><th /></tr>
       </thead>
@@ -329,16 +330,16 @@ function Needs({ r }: { r: TrackerReport }) {
         {r.needs_owner.map((n) => (
           <tr key={`${n.project}/${n.feature ?? ''}`} className="border-t border-[var(--rule)]">
             <td className="py-2">{n.priority ?? ''}</td>
-            <td className="font-medium">{n.feature ? `${n.project} / ${n.title}` : n.title}</td>
-            <td>{n.detail}</td>
+            <td className="font-medium max-md:order-first max-md:col-span-2">{n.feature ? `${n.project} / ${n.title}` : n.title}</td>
+            <td className="max-md:col-span-2">{n.detail}</td>
             <td>{n.due ?? ''}</td>
-            <td className="text-right">
+            <td className="text-right max-md:col-span-2">
               <button type="button" className="text-xs text-[var(--accent)]" onClick={() => clear.mutate(n)}>done</button>
             </td>
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -405,7 +406,7 @@ function Divisions({ r }: { r: TrackerReport }) {
 
 function Goals({ r }: { r: TrackerReport }) {
   return (
-    <table className="w-full text-sm">
+    <DataTable label="Goals" phone="cards" className="w-full text-sm">
       <thead className="text-left text-xs text-[var(--ink-dim)]">
         <tr><th className="py-1">Goal</th><th>Horizon</th><th>Status</th><th>Due</th><th>Linked work</th></tr>
       </thead>
@@ -414,16 +415,16 @@ function Goals({ r }: { r: TrackerReport }) {
           const linked = [...g.projects, ...g.features];
           return (
             <tr key={g.code} className="border-t border-[var(--rule)] align-top">
-              <td className="py-2"><b>{g.code}</b> {g.goal}</td>
+              <td className="py-2 max-md:col-span-2"><b>{g.code}</b> {g.goal}</td>
               <td>{g.horizon}</td>
               <td>{g.status}</td>
               <td>{g.due ?? ''}</td>
-              <td>{linked.length ? linked.join(', ') : <span className="text-[var(--warn)]">nothing linked</span>}</td>
+              <td className="max-md:col-span-2">{linked.length ? linked.join(', ') : <span className="text-[var(--warn)]">nothing linked</span>}</td>
             </tr>
           );
         })}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
