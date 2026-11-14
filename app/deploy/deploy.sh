@@ -265,7 +265,9 @@ rollback() {
 # ---- build ----
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/data"
-if ! sudo -u "$APP_USER" bash -c "cd $APP_DIR && npm ci --no-audit --no-fund && npm run build"; then
+# Built beside the live tree and swapped in (deploy/build-release.sh): an in-place npm ci empties node_modules
+# under any CLI an agent runs meanwhile, and a failed build here leaves the running one whole.
+if ! sudo -u "$APP_USER" bash "$APP_DIR/deploy/build-release.sh" "$APP_DIR"; then
   echo "✗ the build failed"
   if rollback; then exit 3; fi
   exit 4
