@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ClassifyInput, ClassifyResult } from '../src/addons/classify/types.js';
 import { query } from '../src/db.js';
-import { createCard, getCard, moveCard, setOverride } from '../src/board.js';
+import { claimCard, createCard, getCard, moveCard, setOverride } from '../src/board.js';
 import { Dispatcher, inQuietHours, isProviderError, localTime, machineOf, parseRunResult, primaryReason, providerOf, routineDue, type Deps, type RunnerResult } from '../src/addons/dispatch/index.js';
-import { addWakeup, dm, getAgent, importOrg, openWakeups, post, unreadCounts } from '../src/org.js';
+import { addWakeup, claimWakeups, dm, getAgent, importOrg, openWakeups, post, unreadCounts } from '../src/org.js';
 import { parseSettings } from '../src/settings.js';
 import { truncateAll } from './helpers.js';
 
@@ -446,6 +446,100 @@ describe('tick', () => {
     const r = await h.d.tick();
     expect(r.released).toBe(1);
     expect(r.runs).toBe(1); // picked up again in the same tick
+  });
+});
+
+// A card's wake is consumed when its run ends; the triggers only wake on a state change, so before the reconcile pass
+// a card that stayed ready (or a todo card whose dependencies closed while it was not waiting) sat with nothing to wake it.
+describe('ready cards nothing woke (reconcile)', () => {
+  const taskWakes = async (card: string) => (await query<{ agent_name: string; open: boolean; claimed: boolean }>(
+    `SELECT agent_name, done_at IS NULL AS open, claimed_at IS NOT NULL AS claimed FROM org_wakeups WHERE reason = 'task' AND ref = $1 ORDER BY id`, [card])).rows;
+
+  it('an assigned ready card whose wake was consumed is woken once, run once, and not again inside the backoff', async () => {
+    const h = harness();
+    const card = await createCard('owner', { title: 'Write the brief', assignee: 'rune' });
+    expect(card.status).toBe('ready');
+    // The defect: the run ended an hour ago without finishing the card, so its only wake is done and it is still ready.
+    await query(`UPDATE org_wakeups SET claimed_at = now() - interval '1 hour', claimed_by = 'old-run', done_at = now() - interval '1 hour' WHERE ref = $1`, [card.id]);
+    expect(await openWakeups('rune')).toEqual([]);
+
+    const r = await h.d.tick();
+    expect(r).toMatchObject({ woken: 1, promoted: 0, runs: 1, errors: [] });
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]!.args.slice(0, 2)).toEqual(['wake', card.id]);
+    expect(await taskWakes(card.id)).toEqual([
+      { agent_name: 'rune', open: false, claimed: true },
+      { agent_name: 'rune', open: false, claimed: true },
+    ]);
+
+    // The fake run left the card ready again: the next tick is inside the backoff, so nothing is woken or run twice.
+    const again = await h.d.tick();
+    expect(again).toMatchObject({ woken: 0, runs: 0 });
+    expect(h.calls).toHaveLength(1);
+    expect((await getCard(card.id)).card.status).toBe('ready');
+  });
+
+  it('is idempotent: concurrent passes add one wakeup, one claim takes it, and an open wake or a live run owes nothing', async () => {
+    const h = harness();
+    const card = await createCard('owner', { title: 'Draft the post', assignee: 'bolt' });
+    await query(`UPDATE org_wakeups SET done_at = now() - interval '1 hour' WHERE ref = $1`, [card.id]);
+    const passes = await Promise.all([h.d.reconcile(), h.d.reconcile(), h.d.reconcile()]);
+    expect(passes.reduce((n, p) => n + p.woken, 0)).toBe(1);
+    expect((await taskWakes(card.id)).filter((w) => w.open)).toHaveLength(1);
+    // An open wake is enough: another pass adds nothing.
+    expect(await h.d.reconcile()).toEqual({ promoted: 0, woken: 0 });
+
+    // Two dispatchers claim at once: the wakeup goes to one of them.
+    const [a, b] = await Promise.all([claimWakeups('bolt', 'run-a'), claimWakeups('bolt', 'run-b')]);
+    expect(a.length + b.length).toBe(1);
+    // The card itself is claimed once, whichever lane asks first.
+    const [c1, c2] = await Promise.all([
+      claimCard(null, { agent: 'bolt', taskId: card.id, leaseMinutes: 5 }),
+      claimCard(null, { agent: 'bolt', taskId: card.id, leaseMinutes: 5 }),
+    ]);
+    expect([c1, c2].filter(Boolean)).toHaveLength(1);
+
+    // A ready card with an unfinished run (lease not yet reclaimed) is not woken either.
+    const other = await createCard('owner', { title: 'Check the links', assignee: 'bolt' });
+    await query(`UPDATE org_wakeups SET done_at = now() - interval '1 hour' WHERE ref = $1`, [other.id]);
+    await query(`INSERT INTO card_runs (card_id, agent_name, runtime, lease_until) VALUES ($1, 'bolt', 'zen-agent', now() + interval '1 hour')`, [other.id]);
+    expect((await h.d.reconcile()).woken).toBe(0);
+  });
+
+  it('wakes nobody for a held card, a human, a paused bot or a card nobody owns', async () => {
+    const h = harness();
+    const held = await createCard('owner', { title: 'Keeps failing', assignee: 'rune' });
+    // Three wakes this ready stint (the cap is two re-wakes): it waits for a person, even after the 24 h window.
+    await query(`UPDATE org_wakeups SET done_at = now() - interval '2 days' WHERE ref = $1`, [held.id]);
+    await query(`INSERT INTO org_wakeups (agent_name, reason, ref, created_at, done_at) VALUES
+                   ('rune', 'task', $1, now(), now() - interval '2 days'), ('rune', 'task', $1, now(), now() - interval '2 days')`, [held.id]);
+    await createCard('owner', { title: 'Nobody yet' });
+    const paused = await createCard('owner', { title: 'Paused bot', assignee: 'bolt' });
+    await query(`UPDATE org_wakeups SET done_at = now() - interval '1 hour' WHERE ref = $1`, [paused.id]);
+    await query(`UPDATE org_agents SET paused = true WHERE name = 'bolt'`);
+    expect(await h.d.reconcile()).toEqual({ promoted: 0, woken: 0 });
+  });
+
+  it('a todo card whose dependencies all closed while it was not waiting is promoted and woken; a backlog todo card is not', async () => {
+    const h = harness();
+    const first = await createCard('owner', { title: 'Collect the numbers' });
+    const next = await createCard('owner', { title: 'Write them up', assignee: 'rune', deps: [first.id] });
+    expect(next.status).toBe('todo');
+    // The dependency closes while the card is parked, so the trigger's promotion is refused; then a person puts it back.
+    await moveCard('owner', next.id, 'blocked', 'parked for a day');
+    await moveCard('owner', first.id, 'done', 'numbers in');
+    await moveCard('owner', next.id, 'todo', 'back in the queue');
+    expect((await getCard(next.id)).card.status).toBe('todo');
+    expect(await taskWakes(next.id)).toEqual([]);
+    await query(`INSERT INTO cards (id, board_slug, title, assignee, created_by) VALUES ('t_bac0106e', 'exo', 'Someday', 'rune', 'owner')`);
+
+    const r = await h.d.tick();
+    expect(r).toMatchObject({ promoted: 1, woken: 0, runs: 1, errors: [] });
+    expect((await getCard(next.id)).card.status).toBe('ready');
+    expect(h.calls[0]!.args.slice(0, 2)).toEqual(['wake', next.id]);
+    expect(await taskWakes(next.id)).toEqual([{ agent_name: 'rune', open: false, claimed: true }]);
+    expect((await getCard('t_bac0106e')).card.status).toBe('todo');
+    expect(await taskWakes('t_bac0106e')).toEqual([]);
   });
 });
 
