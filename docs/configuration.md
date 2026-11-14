@@ -117,7 +117,17 @@ These settings are optional strings in the global environment schema and are val
 | `DESK_USDC_ADDRESS` | unset | Verified ERC-20 USDC contract, required for the ERC-20 interface |
 | `DESK_RPC_URL` | unset | Server-only HTTP(S) RPC URL; never returned to the public client |
 | `DESK_PUBLIC_ORIGIN` | unset | Exact allowed HTTPS browser origin, without a trailing slash |
-| `DESK_RUNTIME_MODULE` | unset | Absolute path to a trusted server-only ES module exporting `createDeskRuntime` for live marketplace, identity, publication and worker services |
+| `DESK_RUNTIME_MODULE` | unset | Absolute trusted server ES module exporting `createCybazaarDependencies`; production rejects the legacy fully injected runtime |
+| `DESK_ARKIV_RPC_URL`, `DESK_ARKIV_CHAIN_ID` | unset | HTTPS Arkiv RPC and exact numeric network for finalized reads and writes |
+| `DESK_ARKIV_PRIVATE_KEY` | unset | Server-only master signer; never sent to a browser or worker |
+| `DESK_ARKIV_LIFETIME_BLOCKS` | unset | Immutable entity lifetime in blocks, 1 to 1,296,000 |
+| `DESK_BEE_URL`, `DESK_BEE_POSTAGE_BATCH_ID` | unset | Bee endpoint and funded postage batch for verified Markdown uploads |
+| `DESK_IDENTITY_RPC_URL`, `DESK_IDENTITY_CHAIN_ID`, `DESK_ERC8004_REGISTRY_ADDRESS` | unset | Finalized identity RPC and exact ERC-8004 deployment |
+| `DESK_ENS_RPC_URL`, `DESK_ENS_CHAIN_ID` | unset | Exact HTTPS endpoint and chain the operational ENS resolver must report |
+| `DESK_IDENTITY_METADATA_HOSTS` | unset | Comma-separated allowlist for HTTPS ERC-8004 metadata |
+| `DESK_TRANSPORT_TIMEOUT_MS` | unset | External-call bound, 100 to 30,000 ms |
+| `DESK_MAX_RESPONSE_BYTES`, `DESK_MAX_ARTIFACT_BYTES` | unset | RPC and public Markdown response limits |
+| `DESK_PUBLICATION_DESTINATION` | unset | Allowed release reference prefix; must be `swarm://` |
 
 The engine supplies a real JSON-RPC reader, the explicitly selected settlement adapter and PostgreSQL receipt reservation. The runtime module supplies the remaining production services through the existing Phase 1 contracts. All adapters must be live, including capabilities and provider wallet transaction preparation. This is a production composition boundary, not a shipped host runtime: a deployment without concrete live host services is blocked. See [desk boot contract](https://github.com/kon-rad/argo/blob/0c96d254d517e0203f4e98813cd95569336eb5d9/app/server/src/addons/desk/README.md#production-boot-contract).
 

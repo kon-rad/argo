@@ -35,12 +35,21 @@ export function encodeRecordAttributes(record, { domain, chainId, signer, idempo
   validateContext(record, { domain, chainId, signer });
   const json = canonicalJson(record), recordBytes = utf8.encode(json);
   if (recordBytes.length > 128 * 1024) throw new Error('Record exceeds Arkiv byte limit');
-  // Public SDK constructors validate the same field types/limits used in the ABI.
   const values = {
     'arkiv.schema': str(SCHEMA_TAG), domain: str(domain), recordType: str(record.type),
     record: bytes(recordBytes), idem: str(idempotencyHash(idempotencyKey)), recordDigest: str(recordHash(record)),
   };
   return Object.entries(values).map(([name, v]) => ({ name: toHex(name, { size: 32 }), typeId: v.type === 'bytes' ? 7 : 0x88, value: v.type === 'bytes' ? v.value : toHex(v.value) })).sort((a, b) => a.name.localeCompare(b.name));
+}
+/** SDK-native schema values for the server writer; canonical bytes match the ABI codec above. */
+export function sdkRecordValues(record, { domain, chainId, signer, idempotencyKey }) {
+  validateContext(record, { domain, chainId, signer });
+  const json = canonicalJson(record), recordBytes = utf8.encode(json);
+  if (recordBytes.length > 128 * 1024) throw new Error('Record exceeds Arkiv byte limit');
+  return {
+    domain, recordType: record.type, record: bytes(toHex(recordBytes)),
+    idem: idempotencyHash(idempotencyKey), recordDigest: recordHash(record),
+  };
 }
 /** Pure unsigned create. Caller must obtain authoritative record/context/nonce before review. */
 export function prepareRecordTransaction(record, context) {
