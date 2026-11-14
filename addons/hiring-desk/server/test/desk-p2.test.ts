@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fixtures } from '@secondbrain/desk-contracts/desk';
 import type { DeskRecord } from '@secondbrain/desk-contracts/desk';
-import { ArkivDeskPublicStore, type ArkivDeskClient, type ArkivPage, type ArkivRow, type ArkivWrite } from '../desk/public-store/arkiv.js';
-import { BeeHttpSwarmGateway, ReviewedSwarmPublisher, type PublicationEntry, type PublicationLedger, type SwarmGateway } from '../desk/publishing/swarm.js';
+import { ArkivDeskPublicStore, ArkivDeskSnapshots, type ArkivDeskClient, type ArkivPage, type ArkivRow, type ArkivWrite } from '../desk/public-store/arkiv.js';
+import { BeeHttpSwarmGateway, ReviewedSwarmPublisher, SwarmRequestDeskStore, type PublicationEntry, type PublicationLedger, type SwarmGateway } from '../desk/publishing/swarm.js';
 import { artifactDigest } from '@secondbrain/desk-contracts/desk';
 
 const row = (key: string, record: unknown, creator = 'wallet:client'): ArkivRow => ({ key, creator, createdAt: 100, expiresAt: 900, finalized: true, record });
@@ -18,12 +18,21 @@ describe('P2 Arkiv public store boundary', () => {
     const store = new ArkivDeskPublicStore({ domain: 'example-desk', chainId: 'arkiv:test', client, pageSize: 1, now: () => 150 });
     const result = await store.listJobs();
     expect(result.kind).toBe('ok');
-    if (result.kind === 'ok') expect(result.value.map(item => item.creator)).toEqual(['wallet:client', 'wallet:provider']);
+    if (result.kind === 'ok') expect(result.value.map(item => item.creator)).toEqual(['wallet:client']);
     expect(page.mock.calls.map(call => call[0])).toEqual([
       { afterKey: undefined, limit: 1 },
       { afterKey: 'a', limit: 1, atBlock: 12n },
       { afterKey: 'b', limit: 1, atBlock: 12n },
     ]);
+  });
+
+  it('builds a complete job snapshot while discovery returns jobs only', async () => {
+    const records = [row('acceptance-1', fixtures.acceptance), row('claim-1', fixtures.claim, 'wallet:provider'), row('delivery-1', fixtures.delivery, 'wallet:provider'), row('job-1', fixtures.job), row('offer-1', fixtures.offer, 'wallet:provider')];
+    const client: ArkivDeskClient = { page: vi.fn().mockResolvedValue({ rows: records, blockNumber: 12n, finalized: true }), get: vi.fn(), create: vi.fn(), findByIdempotencyKey: vi.fn(), confirmation: vi.fn() };
+    const store = new ArkivDeskPublicStore({ domain: 'example-desk', chainId: 'arkiv:test', client, now: () => 150 });
+    const result = await new ArkivDeskSnapshots(store).snapshot(fixtures.jobRef);
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') expect(result.value.map(value => (value.record as DeskRecord).type)).toEqual(['job', 'offer', 'acceptance', 'claim', 'delivery']);
   });
 
   it('fails closed when finality, pagination snapshot, creator, schema or expiry cannot be trusted', async () => {
@@ -54,29 +63,40 @@ describe('P2 Arkiv public store boundary', () => {
 });
 
 describe('P2 reviewed Swarm publisher', () => {
+  it('uploads and reads back job request Markdown before signer-owned Arkiv publication', async () => {
+    const bytes = new TextEncoder().encode(fixtures.job.brief);
+    const swarm: SwarmGateway = { upload: vi.fn().mockResolvedValue('c'.repeat(64)), download: vi.fn().mockResolvedValue(bytes) };
+    const underlying = { mode: 'live' as const, listJobs: vi.fn(), get: vi.fn(), confirmation: vi.fn(), publish: vi.fn().mockResolvedValue({ kind: 'ok', value: { status: 'confirmed' } }) };
+    const store = new SwarmRequestDeskStore(underlying, swarm);
+    expect(await store.publish(fixtures.job, 'request-one')).toMatchObject({ kind: 'ok' });
+    expect(underlying.publish).toHaveBeenCalledWith({ ...fixtures.job, brief: `swarm://${'c'.repeat(64)}` }, 'desk-job:request-one');
+    expect(store.serverAuthorized).toBe(true);
+    expect((await store.publish({ ...fixtures.job, brief: `swarm://${'d'.repeat(64)}` }, 'request-two')).kind).toBe('invalid-input');
+  });
+
   it('uses Bee postage headers and verifies content-addressed references on the HTTP adapter', async () => {
     const bytes = new TextEncoder().encode('# public result\n');
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ reference: 'b'.repeat(64) }), { status: 201 }))
-      .mockResolvedValueOnce(new Response(bytes, { status: 200 }));
-    const bee = new BeeHttpSwarmGateway('https://bee.example.test', 'batch-example', fetcher);
+      .mockResolvedValueOnce(new Response(bytes, { status: 200, headers: { 'Content-Type': 'text/markdown; charset=utf-8' } }));
+    const bee = new BeeHttpSwarmGateway('https://bee.example.test', 'b'.repeat(64), fetcher);
     const ref = await bee.upload(bytes, 'text/markdown; charset=utf-8');
     expect(ref).toBe('b'.repeat(64));
     expect(fetcher.mock.calls[0]?.[0]).toEqual(new URL('https://bee.example.test/bzz'));
-    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ method: 'POST', redirect: 'error', headers: { 'Swarm-Postage-Batch-Id': 'batch-example' } });
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ method: 'POST', redirect: 'error', headers: { 'Swarm-Postage-Batch-Id': 'b'.repeat(64) } });
     expect([...(fetcher.mock.calls[0]?.[1]?.body as Uint8Array)]).toEqual([...bytes]);
     expect(await bee.download(ref)).toEqual(bytes);
     expect(fetcher.mock.calls[1]?.[0]).toEqual(new URL(`https://bee.example.test/bzz/${ref}`));
     const credentialedBeeUrl = new URL('https://bee.example.test');
     credentialedBeeUrl.username = 'user';
     credentialedBeeUrl.password = 'pass';
-    expect(() => new BeeHttpSwarmGateway(credentialedBeeUrl.toString(), 'batch-example')).toThrow();
+    expect(() => new BeeHttpSwarmGateway(credentialedBeeUrl.toString(), 'b'.repeat(64))).toThrow();
   });
 
   it('uploads, reads back exact bytes, publishes one delivery, and reconciles retries', async () => {
     const bytes = new TextEncoder().encode('# Synthetic result\n');
     const hash = await artifactDigest(bytes);
-    const binding = { artifactHash: hash, mediaType: 'text/markdown', publicDestination: 'desk-public' };
+    const binding = { artifactHash: hash, mediaType: 'text/markdown', publicDestination: `swarm://${'a'.repeat(64)}` };
     let entry: PublicationEntry | null = null;
     const ledger: PublicationLedger = {
       reserve: vi.fn(async input => {
@@ -97,7 +117,7 @@ describe('P2 reviewed Swarm publisher', () => {
     };
     const publisher = new ReviewedSwarmPublisher({
       swarm, ledger, store, artifacts: { read: vi.fn().mockResolvedValue(bytes) }, claims: { provider: vi.fn().mockResolvedValue('wallet:provider') },
-      authorization: { verify: vi.fn().mockResolvedValue(true) }, domain: 'example-desk', chainId: 'arkiv:test', destination: 'desk-public',
+      authorization: { verify: vi.fn().mockResolvedValue(true) }, domain: 'example-desk', chainId: 'arkiv:test', destination: 'swarm://',
     });
     expect(await publisher.publish('arkiv:test/claim1', binding, 'release-1')).toMatchObject({ kind: 'ok', value: { status: 'confirmed' } });
     expect(swarm.upload).toHaveBeenCalledTimes(1);
@@ -110,19 +130,21 @@ describe('P2 reviewed Swarm publisher', () => {
 
   it('rejects changed bytes, unauthorized terms, encrypted refs, and destination drift', async () => {
     const bytes = new TextEncoder().encode('# result\n');
-    const binding = { artifactHash: await artifactDigest(bytes), mediaType: 'text/markdown', publicDestination: 'desk-public' };
+    const binding = { artifactHash: await artifactDigest(bytes), mediaType: 'text/markdown', publicDestination: `swarm://${'a'.repeat(64)}` };
     const swarm: SwarmGateway = { upload: vi.fn().mockResolvedValue('a'.repeat(64)), download: vi.fn().mockResolvedValue(bytes) };
     const entry: PublicationEntry = { key: 'release-1', claimRef: 'arkiv:test/claim1', binding, status: 'reserved' };
     const ledger: PublicationLedger = { reserve: vi.fn().mockResolvedValue({ kind: 'reserved', entry }), recordUpload: vi.fn().mockResolvedValue({ ...entry, publicRef: 'a'.repeat(64), status: 'uploaded' }), recordDelivery: vi.fn().mockResolvedValue(entry), get: vi.fn().mockResolvedValue(entry) };
     const store = { mode: 'live' as const, publish: vi.fn().mockResolvedValue({ kind: 'ok', value: { status: 'pending', ref: 'arkiv:arkiv:test/d1' } }), confirmation: vi.fn().mockResolvedValue({ kind: 'ok', value: { status: 'pending' } }) };
-    const publisher = new ReviewedSwarmPublisher({ swarm, ledger, store, artifacts: { read: vi.fn().mockResolvedValue(bytes) }, claims: { provider: vi.fn().mockResolvedValue('wallet:provider') }, authorization: { verify: vi.fn().mockResolvedValue(false) }, domain: 'example-desk', chainId: 'arkiv:test', destination: 'desk-public' });
+    const publisher = new ReviewedSwarmPublisher({ swarm, ledger, store, artifacts: { read: vi.fn().mockResolvedValue(bytes) }, claims: { provider: vi.fn().mockResolvedValue('wallet:provider') }, authorization: { verify: vi.fn().mockResolvedValue(false) }, domain: 'example-desk', chainId: 'arkiv:test', destination: 'swarm://' });
     expect((await publisher.publishApprovedBytes({ claimRef: entry.claimRef, binding, idempotencyKey: 'release-1', bytes: new TextEncoder().encode('mutated') })).kind).toBe('denied');
     expect((await publisher.publish(entry.claimRef, binding, 'release-1')).kind).toBe('denied');
-    const drift = { ...binding, publicDestination: 'other' };
-    expect((await publisher.publish(entry.claimRef, drift, 'release-1')).kind).toBe('invalid-input');
+    const drift = { ...binding, publicDestination: `swarm://${'c'.repeat(64)}` };
+    expect((await publisher.publish(entry.claimRef, drift, 'release-1')).kind).toBe('denied');
     expect(store.publish).not.toHaveBeenCalled();
 
-    const encrypted = new ReviewedSwarmPublisher({ swarm: { ...swarm, upload: vi.fn().mockResolvedValue('a'.repeat(64) + 'deadbeef') }, ledger, store, artifacts: { read: vi.fn().mockResolvedValue(bytes) }, claims: { provider: vi.fn().mockResolvedValue('wallet:provider') }, authorization: { verify: vi.fn().mockResolvedValue(true) }, domain: 'example-desk', chainId: 'arkiv:test', destination: 'desk-public' });
+    const encrypted = new ReviewedSwarmPublisher({ swarm: { ...swarm, upload: vi.fn().mockResolvedValue('a'.repeat(64) + 'deadbeef') }, ledger, store, artifacts: { read: vi.fn().mockResolvedValue(bytes) }, claims: { provider: vi.fn().mockResolvedValue('wallet:provider') }, authorization: { verify: vi.fn().mockResolvedValue(true) }, domain: 'example-desk', chainId: 'arkiv:test', destination: 'swarm://' });
     expect((await encrypted.publishApprovedBytes({ claimRef: entry.claimRef, binding, idempotencyKey: 'release-2', bytes })).kind).toBe('failed');
+    const mismatched = new ReviewedSwarmPublisher({ swarm: { ...swarm, upload: vi.fn().mockResolvedValue('b'.repeat(64)) }, ledger, store, artifacts: { read: vi.fn().mockResolvedValue(bytes) }, claims: { provider: vi.fn().mockResolvedValue('wallet:provider') }, authorization: { verify: vi.fn().mockResolvedValue(true) }, domain: 'example-desk', chainId: 'arkiv:test', destination: 'swarm://' });
+    expect((await mismatched.publishApprovedBytes({ claimRef: entry.claimRef, binding, idempotencyKey: 'release-3', bytes })).kind).toBe('denied');
   });
 });

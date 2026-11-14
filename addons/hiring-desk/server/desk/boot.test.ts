@@ -3,6 +3,8 @@ import { assertLiveDeskHost, bootDesk, reserveReleasedReceipt, type DeskHostRunt
 import { ArcJsonRpcReader } from './settlement/rpc.js';
 import { digest } from '@secondbrain/desk-contracts/desk';
 
+vi.mock('@secondbrain/desk-arkiv/server', () => ({ ServerArkivDeskClient: class {} }));
+
 const txHash = `0x${'a'.repeat(64)}`;
 const blockHash = `0x${'b'.repeat(64)}`;
 const token = '0x3600000000000000000000000000000000000000';
@@ -24,6 +26,17 @@ describe('desk production boot boundary', () => {
   it('leaves the server available when the optional module has no configuration', async () => {
     await expect(bootDesk(new Set(['desk']), {})).resolves.toBeUndefined();
     await expect(bootDesk(new Set(['desk']), { publicOrigin: 'https://client.example.com' })).resolves.toBeUndefined();
+  });
+  it('fails closed in production without concrete publication config and never echoes a signer', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    await expect(bootDesk(new Set(['desk']), {})).rejects.toThrow('production configuration missing or invalid');
+    const base = { domain: 'synthetic-desk', chainId: '5042002', publicOrigin: 'https://client.example.com', rpcUrl: 'https://rpc.example.com', runtimeModule: '/srv/example/desk-runtime.mjs', paymentInterface: 'arc:testnet:erc20-usdc:transfer:v1', usdcAddress: token };
+    await expect(bootDesk(new Set(['desk']), base, vi.fn(async () => ({ createDeskRuntime: vi.fn() })) as never, { query: vi.fn() as never, transact: vi.fn() as never })).rejects.toThrow('missing concrete Arkiv');
+    const secret = `0x${'9'.repeat(64)}`;
+    let message = '';
+    try { await bootDesk(new Set(['desk']), { ...base, arkivPrivateKey: secret }, vi.fn(async () => ({})) as never, { query: vi.fn() as never, transact: vi.fn() as never }); } catch (error) { message = String(error); }
+    expect(message).not.toContain(secret);
+    vi.unstubAllEnvs();
   });
   it('rejects a runtime module that does not export live host composition', async () => {
     const load = vi.fn(async () => ({}));

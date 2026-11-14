@@ -57,6 +57,7 @@ export const publicDeskRouter = (app: { locals: Record<string, unknown> }): Rout
   }));
   router.get('/jobs/:ref/payment', wrap(async (req, res) => { const outcome = await paymentStatus(controls(app), parseOr400(reference, req.params.ref)); res.status(outcome.status).json(outcome.body); }));
   for (const type of ['job', 'acceptance'] as const) router.post(type === 'job' ? '/jobs' : '/acceptances', wrap(async (req, res) => {
+    if ((controls(app).store as DeskPublicControls['store'] & { serverAuthorized?: boolean }).serverAuthorized) throw new PublicDeskError(403, 'denied', 'Signer-backed publication requires an operator session.');
     const body = parseOr400(publication, req.body); let record: DeskRecord;
     try { record = parseRecord(body.record); } catch { throw new HttpError(400, 'Invalid desk/v1 public record.'); }
     if (record.type !== type) throw new HttpError(400, `Expected a ${type} record.`);

@@ -8,11 +8,12 @@
     "./web": { "types": "./dist/web/Desk.d.ts", "import": "./dist/web/Desk.js" }
   },
   "scripts": {
-    "build": "npm -w @secondbrain/desk-contracts run build && tsc -p tsconfig.server.json && tsc -p tsconfig.web.json && vite build && npm -ws --if-present run build",
+    "build": "npm -w @secondbrain/desk-contracts run build && npm -w @secondbrain/desk-arkiv run build && tsc -p tsconfig.server.json && tsc -p tsconfig.web.json && vite build && npm -ws --if-present run build",
     "test": "vitest run && npm -ws --if-present test && python3 -m pytest worker"
   },
   "dependencies": {
     "@secondbrain/desk-contracts": "1.0.0",
+    "@secondbrain/desk-arkiv": "1.0.0",
     "@tanstack/react-query": "^5.102.2",
     "express": "^5.2.1",
     "pg": "^8.23.0",
