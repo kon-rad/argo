@@ -131,7 +131,7 @@ function FilterBar({ filters, facets, onAdd, onRemove, onClear }: {
   const chips = USAGE_DIMENSIONS.flatMap((d) => (filters[d] ?? []).map((v) => ({ d, v })));
   const values = dim ? (facets?.facets?.[dim] ?? []).filter((x) => !(filters[dim] ?? []).includes(x.value)) : [];
   return (
-    <div className="flex flex-wrap items-center gap-2 text-sm" aria-label="Filters">
+    <div className="flex flex-wrap items-center gap-2 text-sm" role="group" aria-label="Filters">
       <span className="text-xs text-[var(--ink-dim)]">Filter</span>
       {chips.map(({ d, v }) => (
         <span key={`${d}=${v}`} className="inline-flex items-center gap-1 rounded-full border border-[var(--rule)] bg-[var(--paper-sunk)] px-2 py-0.5 text-xs">
@@ -431,9 +431,12 @@ export default function Usage() {
   const labels: Record<UsageSection, string> = { running: 'Running now', ledger: 'Ledger', sessions: 'Sessions', summaries: 'Summaries' };
   return (
     <div className="flex h-full flex-col">
-      <div role="tablist" aria-label="Usage views" className="flex shrink-0 flex-wrap gap-1 border-b border-[var(--rule)] px-4 pt-2">
-        {sections.map((section) => tab(section, labels[section]))}
-        {tab('account', 'Account')}
+      <div className="flex shrink-0 flex-wrap gap-1 border-b border-[var(--rule)] px-4 pt-2">
+        <div role="tablist" aria-label="Usage views" className="flex flex-wrap gap-1">
+          {sections.map((section) => tab(section, labels[section]))}
+          {tab('account', 'Account')}
+        </div>
+        {/* A link to another page, so it sits beside the tab list, not in it. */}
         {sections.includes('running') && <RunningLink />}
       </div>
       {view && <div role="tabpanel" id={`usage-panel-${view}`} aria-labelledby={`usage-tab-${view}`} aria-label={view === 'account' ? 'Account' : labels[view]} className="min-h-0 flex-1">

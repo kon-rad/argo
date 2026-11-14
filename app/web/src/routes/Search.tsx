@@ -60,12 +60,13 @@ export default function Search() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-6">
-      <div className="mb-3 flex flex-wrap items-center gap-1">
+      <div className="mb-3 flex flex-wrap items-center gap-1" role="group" aria-label="Search in">
         {TABS.filter((t) => t.value === 'all' || available.includes(t.value as SearchScope)).map((t) => (
           <button
             key={t.value}
             type="button"
             title={t.hint}
+            aria-pressed={tab === t.value}
             onClick={() => setParam('scope', t.value === 'all' ? '' : t.value)}
             className={'rounded px-2.5 py-1 text-xs transition ' +
               (tab === t.value ? 'bg-[var(--accent)] text-[var(--paper)]' : 'border border-[var(--rule)] text-[var(--ink-dim)] hover:text-[var(--ink)]')}
@@ -74,12 +75,13 @@ export default function Search() {
           </button>
         ))}
         {(tab === 'all' || tab === 'notes') && (
-          <span className="ml-auto flex items-center gap-1">
+          <span className="ml-auto flex items-center gap-1" role="group" aria-label="Search mode">
             {MODES.map((m) => (
               <button
                 key={m.value}
                 type="button"
                 title={m.hint}
+                aria-pressed={mode === m.value}
                 onClick={() => setParam('mode', m.value === 'hybrid' ? '' : m.value)}
                 className={'rounded px-2 py-0.5 text-[11px] ' +
                   (mode === m.value ? 'border border-[var(--accent)] text-[var(--ink)]' : 'text-[var(--ink-faint)] hover:text-[var(--ink)]')}
