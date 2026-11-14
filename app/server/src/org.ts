@@ -5,6 +5,7 @@ import { agentSpecProblem } from './agent-spec.js';
 import { config } from './config.js';
 import { query, withTransaction, type TxClient } from './db.js';
 import { assignCard, BoardError, commentCard, createCard, flagCard, linkCards, moveCard, type Card, type Contract } from './board.js';
+import { ALIAS_ENDS, resolveTrackerRef, TrackerError, type TrackerRefInput } from './features/projects/service/index.js';
 
 /**
  * The agent company's message board: agents on teams, channels, DMs, messages,
@@ -21,6 +22,32 @@ import { assignCard, BoardError, commentCard, createCard, flagCard, linkCards, m
  */
 
 export class OrgError extends Error {}
+
+/**
+ * The area and project a caller named, for the commands that tag a card or a message. Until
+ * the aliases of the PARA rename end, an old `--project <area>` is read as the area and
+ * `--feature` as the project, each with a warning (resolveTrackerRef has the rules).
+ */
+export async function trackerRef(ref: TrackerRefInput, warn?: (line: string) => void): Promise<{ area?: string; project?: string }> {
+  try {
+    return await resolveTrackerRef(ref, { warn });
+  } catch (err) {
+    if (err instanceof TrackerError) throw new OrgError(err.message);
+    throw err;
+  }
+}
+
+/**
+ * For the commands that take an area and nothing below it (shared memory, ask-owner):
+ * `--area a`, or the old `--project a`, which always meant the same thing there.
+ */
+export function areaFlag(area: string | undefined, oldProject: string | undefined, warn: (line: string) => void = (l) => console.error(l), now = new Date()): string | undefined {
+  if (!oldProject) return area;
+  if (area) throw new OrgError('give the area once: --area <a> (--project is its old name here)');
+  if (now.toISOString().slice(0, 10) >= ALIAS_ENDS) throw new OrgError(`--project ${oldProject} ended on ${ALIAS_ENDS}. Use --area ${oldProject}.`);
+  warn(`warning: --project ${oldProject} is now --area ${oldProject}. The old spelling works until ${ALIAS_ENDS}.`);
+  return oldProject;
+}
 
 export const KINDS = ['message', 'status', 'decision', 'handoff', 'question-for-owner', 'standup', 'reflection', 'reply', 'ack'] as const;
 export type Kind = (typeof KINDS)[number];
@@ -131,13 +158,13 @@ export interface Message {
   mentions: string[];
   urgent: boolean;
   task_id: string | null;
+  area_slug: string | null;
   project_slug: string | null;
-  feature_slug: string | null;
   run_id: string | null;
   created_at: Date;
 }
 
-const MESSAGE_COLS = 'id, channel_slug, thread_id, author, kind, body, mentions, urgent, task_id, project_slug, feature_slug, run_id, created_at';
+const MESSAGE_COLS = 'id, channel_slug, thread_id, author, kind, body, mentions, urgent, task_id, area_slug, project_slug, run_id, created_at';
 
 // ---------------------------------------------------------------------------
 // Import: the compiled org file → agents, teams, channels, memberships
@@ -476,8 +503,8 @@ export interface PostOpts {
   kind?: Kind;
   thread?: number;
   task?: string;
+  area?: string;
   project?: string;
-  feature?: string;
   run?: string;
   mentions?: string[];
   urgent?: boolean;
@@ -485,9 +512,9 @@ export interface PostOpts {
 
 async function insertMessage(tx: TxClient, agent: Agent, channel: string, kind: Kind, body: string, opts: PostOpts): Promise<Message> {
   const { rows } = await tx.query<Message>(
-    `INSERT INTO org_messages (channel_slug, thread_id, author, kind, body, mentions, urgent, task_id, project_slug, feature_slug, run_id)
+    `INSERT INTO org_messages (channel_slug, thread_id, author, kind, body, mentions, urgent, task_id, area_slug, project_slug, run_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING ${MESSAGE_COLS}`,
-    [channel, opts.thread ?? null, agent.name, kind, body, opts.mentions ?? [], opts.urgent ?? false, opts.task ?? null, opts.project ?? null, opts.feature ?? null, opts.run ?? null],
+    [channel, opts.thread ?? null, agent.name, kind, body, opts.mentions ?? [], opts.urgent ?? false, opts.task ?? null, opts.area ?? null, opts.project ?? null, opts.run ?? null],
   );
   return rows[0]!;
 }
@@ -508,9 +535,9 @@ export async function post(agent: Agent, channel: string, body: string, opts: Po
   await assertMember(agent, channel, true);
   await checkThread(channel, opts.thread);
   const mentions = await resolveMentions(text, opts.mentions);
-  if (opts.project) {
-    const { rowCount } = await query(`SELECT 1 FROM projects WHERE slug = $1`, [opts.project]);
-    if (!rowCount) throw new OrgError(`no project "${opts.project}" in the tracker`);
+  if (opts.area) {
+    const { rowCount } = await query(`SELECT 1 FROM areas WHERE slug = $1`, [opts.area]);
+    if (!rowCount) throw new OrgError(`no area "${opts.area}" in the tracker`);
   }
   return withTransaction((tx) => insertMessage(tx, agent, channel, kind, text, { ...opts, mentions }));
 }
@@ -559,7 +586,7 @@ export async function handoff(from: Agent, channel: string, toName: string, body
 }
 
 /** Leads only. Lands in #leads for the stand-up; `urgent` also goes to the owner's phone (capped per day). */
-export async function askOwner(from: Agent, body: string, opts: { urgent?: boolean; task?: string; project?: string } = {}): Promise<Message> {
+export async function askOwner(from: Agent, body: string, opts: { urgent?: boolean; task?: string; area?: string } = {}): Promise<Message> {
   const text = Body.parse(body);
   if (from.runtime === 'human') throw new OrgError('you are the owner');
   if (!(await isLead(from.name))) throw new OrgError(`${from.name} is not a lead; DM your lead (${from.reports_to ?? 'unknown'}) and they can ask`);
@@ -571,7 +598,7 @@ export async function askOwner(from: Agent, body: string, opts: { urgent?: boole
     );
     if ((rows[0]?.n ?? 0) >= URGENT_PER_DAY) throw new OrgError(`${from.name} already sent ${URGENT_PER_DAY} urgent questions today; this one waits for the stand-up`);
   }
-  return withTransaction((tx) => insertMessage(tx, from, 'leads', 'question-for-owner', text, { urgent: opts.urgent ?? false, task: opts.task, project: opts.project, mentions: [] }));
+  return withTransaction((tx) => insertMessage(tx, from, 'leads', 'question-for-owner', text, { urgent: opts.urgent ?? false, task: opts.task, area: opts.area, mentions: [] }));
 }
 
 /** Leads only, once a day, in #<team>-standup. */
@@ -968,8 +995,8 @@ export async function messagesBy(agent: Agent, author: string, limit = 20): Prom
 }
 
 // ---------------------------------------------------------------------------
-// The work graph: kanban cards for bots, tagged with a tracker project and
-// feature (task_links); graph templates; the review loop.
+// The work graph: kanban cards for bots, tagged with a tracker area and
+// project (task_links); graph templates; the review loop.
 // Design: agent-company/work-graph-plan.md.
 // ---------------------------------------------------------------------------
 
@@ -978,8 +1005,8 @@ export interface TaskLink {
   task_id: string;
   board: string;
   title: string;
+  area_slug: string | null;
   project_slug: string | null;
-  feature_slug: string | null;
   assignee: string;
   created_by: string;
   rounds: number;
@@ -994,7 +1021,7 @@ export interface TaskLink {
 
 export function linkOfCard(c: Card): TaskLink {
   return {
-    task_id: c.id, board: c.board_slug, title: c.title, project_slug: c.project_slug, feature_slug: c.feature_slug, assignee: c.assignee ?? '', created_by: c.created_by,
+    task_id: c.id, board: c.board_slug, title: c.title, area_slug: c.area_slug, project_slug: c.project_slug, assignee: c.assignee ?? '', created_by: c.created_by,
     rounds: c.rounds, graph: c.graph, node: c.node, kind: c.kind, work_type: c.work_type, ship_now: c.ship_now, needs: c.needs, created_at: c.created_at,
   };
 }
@@ -1112,7 +1139,7 @@ export function checkRepo(caller: Agent, to: Agent, need: Capability | null, rep
     return VAULT_REPO;
   }
   if (repo === VAULT_REPO) {
-    throw new OrgError(`vault code is worked by a Claude Code session on the owner's machine, not by a bot: cli-org task create ${VAULT_ASSIGNEE} "<title>" --project <p> --repo vault`);
+    throw new OrgError(`vault code is worked by a Claude Code session on the owner's machine, not by a bot: cli-org task create ${VAULT_ASSIGNEE} "<title>" --area <a> --repo vault`);
   }
   if (need !== 'code' || (!repo && caller.runtime === 'human')) return repo;
   if (!repo) {
@@ -1141,16 +1168,16 @@ export async function assertMayAssign(caller: Agent, to: Agent): Promise<void> {
   throw new OrgError(`${caller.name} can't give ${to.name} a card: a lead assigns inside its team, a member only to itself; ask your lead or hand off on the board`);
 }
 
-async function assertProject(project: string | undefined, feature?: string): Promise<{ title: string; team_slug: string | null }> {
-  if (!project) {
-    if (feature) throw new OrgError('a feature needs its project: --project <slug>');
+async function assertProject(area: string | undefined, project?: string): Promise<{ title: string; team_slug: string | null }> {
+  if (!area) {
+    if (project) throw new OrgError('a project needs its area: --area <slug>');
     return { title: '', team_slug: null };
   }
-  const { rows } = await query<{ title: string; team_slug: string | null }>(`SELECT title, team_slug FROM projects WHERE slug = $1`, [project]);
-  if (!rows[0]) throw new OrgError(`no project "${project}" in the tracker (cli-projects list)`);
-  if (feature) {
-    const { rows: f } = await query<{ title: string }>(`SELECT title FROM features WHERE project_slug = $1 AND slug = $2`, [project, feature]);
-    if (!f[0]) throw new OrgError(`no feature "${project}/${feature}" in the tracker`);
+  const { rows } = await query<{ title: string; team_slug: string | null }>(`SELECT title, team_slug FROM areas WHERE slug = $1`, [area]);
+  if (!rows[0]) throw new OrgError(`no area "${area}" in the tracker (cli-areas list)`);
+  if (project) {
+    const { rows: f } = await query<{ title: string }>(`SELECT title FROM projects WHERE area_slug = $1 AND slug = $2`, [area, project]);
+    if (!f[0]) throw new OrgError(`no project "${area}/${project}" in the tracker`);
     return { title: f[0].title, team_slug: rows[0].team_slug };
   }
   return rows[0];
@@ -1160,8 +1187,8 @@ interface CardSpec {
   title: string;
   body?: string;
   contract?: Contract;
+  area?: string;
   project?: string;
-  feature?: string;
   board?: string;
   priority?: number;
   parents?: string[];
@@ -1178,8 +1205,8 @@ interface CardSpec {
 
 /** The lines at the top of a card's body that tell its bot how to finish: the one place the closing commands are written. */
 function cardHeader(caller: Agent, to: Agent, c: CardSpec): string {
-  const ref = c.project ? `${c.project}${c.feature ? `/${c.feature}` : ''}` : null;
-  const lines = [...(ref ? [`Project: ${ref}`] : [])];
+  const ref = c.area ? `${c.area}${c.project ? `/${c.project}` : ''}` : null;
+  const lines = [...(ref ? [`Area: ${ref}`] : [])];
   if (isVaultAssignee(to.name) || to.runtime === 'session') {
     lines.push(
       `Assigned by ${caller.name}. Repo: vault. Worked by a Claude Code session on the owner's machine; no bot wakes for it.`,
@@ -1189,7 +1216,7 @@ function cardHeader(caller: Agent, to: Agent, c: CardSpec): string {
     const channel = to.team_slug ?? 'all-hands';
     lines.push(
       `Assigned by ${caller.name}.${c.repo ? ` Repo: ${c.repo}.` : ''}${c.graph ? ` Graph ${c.graph}, node ${c.node}${c.kind && c.kind !== 'work' ? ` (${c.kind})` : ''}.` : ''}${c.rounds ? ` Round ${c.rounds}.` : ''}`,
-      `When done: cli-org post ${channel} "<what changed, with a path or command>" --kind status --task <this card>${ref ? ` --project ${c.project}${c.feature ? ` --feature ${c.feature}` : ''}` : ''}, then cli-board finish <this card> --done "<result>". Blocked: cli-board finish <this card> --blocked <kind> "<why>" and tell your lead.`,
+      `When done: cli-org post ${channel} "<what changed, with a path or command>" --kind status --task <this card>${ref ? ` --area ${c.area}${c.project ? ` --project ${c.project}` : ''}` : ''}, then cli-board finish <this card> --done "<result>". Blocked: cli-board finish <this card> --blocked <kind> "<why>" and tell your lead.`,
     );
   }
   if (c.extra) lines.push(c.extra);
@@ -1203,7 +1230,7 @@ function boardErr(err: unknown): never {
 
 /**
  * The one path that makes a card for a bot: the board function writes the record (status, dependencies, the
- * feature's owner, the wakeup when it is ready) and mints the card id.
+ * project's owner, the wakeup when it is ready) and mints the card id.
  */
 async function createBoardCard(caller: Agent, to: Agent | null, c: CardSpec): Promise<Card> {
   const title = c.title.trim().replace(/\s+/g, ' ');
@@ -1213,7 +1240,7 @@ async function createBoardCard(caller: Agent, to: Agent | null, c: CardSpec): Pr
   if (!BOARD_RE.test(board)) throw new OrgError(`bad board name "${board}"`);
   const body = to ? (c.body?.trim() ? `${cardHeader(caller, to, c)}\n\n${c.body.trim()}` : cardHeader(caller, to, c)) : c.body?.trim() || undefined;
   return createCard(caller.name, {
-    board, title, body, contract: c.contract, assignee: to?.name ?? null, project: c.project, feature: c.feature, kind: c.kind, work: checkWorkType(c.work) ?? undefined,
+    board, title, body, contract: c.contract, assignee: to?.name ?? null, area: c.area, project: c.project, kind: c.kind, work: checkWorkType(c.work) ?? undefined,
     needs: c.needs ?? undefined, repo: c.repo, priority: c.priority, deps: c.parents, graph: c.graph, node: c.node, rounds: c.rounds, shipNow: c.shipNow,
   }).catch(boardErr);
 }
@@ -1224,8 +1251,8 @@ export interface CreateTaskOpts {
   title: string;
   body?: string;
   contract?: Contract;
+  area?: string;
   project?: string;
-  feature?: string;
   board?: string;
   priority?: number;
   /** research | coding | design | media | writing | sales | education | ops; else the bot's default on /usage. */
@@ -1243,7 +1270,7 @@ export interface CreateTaskOpts {
 }
 
 /**
- * One card, one bot, one project. Writes the card through the board (the record, the feature's owner, the
+ * One card, one bot, one area. Writes the card through the board (the record, the project's owner, the
  * wakeup) and, when someone else gave the card, posts a note in the bot's team channel so the board carries the
  * conversation. The card is `ready` at once unless it waits for other cards; its lane claims it on the next tick.
  */
@@ -1254,7 +1281,7 @@ export async function createTask(caller: Agent, opts: CreateTaskOpts): Promise<{
   const need = to && isVaultAssignee(to.name) ? null : neededCapability(opts.type, opts.needs);
   if (to) await assertCapable(to, need);
   const repo = to ? checkRepo(caller, to, need, opts.repo) : opts.repo;
-  await assertProject(opts.project, opts.feature);
+  await assertProject(opts.area, opts.project);
   const extra = opts.shipNow ? 'Ship-now: the owner said to ship this without asking; `cli-org ship request` is approved on the spot.' : undefined;
   const card = await createBoardCard(caller, to, { ...opts, parents: opts.deps, work: opts.type, extra, repo, needs: need });
   const link = linkOfCard(card);
@@ -1265,19 +1292,19 @@ export async function createTask(caller: Agent, opts: CreateTaskOpts): Promise<{
 /** The note in the bot's team channel that makes the board carry the card. Nothing when a bot gives itself a card. */
 async function mentionCard(caller: Agent, to: Agent, link: TaskLink, run?: string): Promise<Message | null> {
   if (caller.name === to.name || !to.team_slug) return null;
-  const ref = link.project_slug ? ` (${link.project_slug}${link.feature_slug ? `/${link.feature_slug}` : ''})` : '';
+  const ref = link.area_slug ? ` (${link.area_slug}${link.project_slug ? `/${link.project_slug}` : ''})` : '';
   // A note, not a mention: the card wakes the bot when it is ready, and an @-mention made a second wake (for a `todo`
   // card, a wake with nothing to do yet). A handoff would also wake the lead.
   // The dispatch bot isn't in the other teams' channels: its note goes to #leads, where the bot's lead reads it.
   const channel = caller.runtime !== 'human' && caller.team_slug !== to.team_slug && (caller.capabilities ?? []).includes('dispatch') ? 'leads' : to.team_slug;
-  return post(caller, channel, `card ${link.task_id} for ${to.name}: ${link.title}${ref}`, { task: link.task_id, project: link.project_slug ?? undefined, feature: link.feature_slug ?? undefined, run });
+  return post(caller, channel, `card ${link.task_id} for ${to.name}: ${link.title}${ref}`, { task: link.task_id, area: link.area_slug ?? undefined, project: link.project_slug ?? undefined, run });
 }
 
 export interface AssignTaskOpts {
   taskId: string;
   assignee: string;
+  area?: string;
   project?: string;
-  feature?: string;
   board?: string;
   type?: string;
   needs?: string;
@@ -1288,7 +1315,7 @@ export interface AssignTaskOpts {
 
 /**
  * An existing card (one the owner made from the page, an unassigned one, or someone else's) becomes a bot's: the
- * board function moves the assignee and the feature's owner, the closing commands go in a comment, and the bot is
+ * board function moves the assignee and the project's owner, the closing commands go in a comment, and the bot is
  * noted in its team channel. The card keeps its status, so a `todo` card still waits for its parents and a `ready`
  * one wakes the bot now.
  */
@@ -1300,14 +1327,14 @@ export async function assignTask(caller: Agent, opts: AssignTaskOpts): Promise<{
   const need = isVaultAssignee(to.name) ? null : neededCapability(opts.type, opts.needs);
   await assertCapable(to, need);
   const repo = checkRepo(caller, to, need, opts.repo);
-  await assertProject(opts.project, opts.feature);
+  await assertProject(opts.area, opts.project);
   const { rows } = await query<Card>(`SELECT * FROM cards WHERE id = $1`, [opts.taskId]);
   const before = rows[0];
   if (!before) throw new OrgError(`no card ${opts.taskId} on the board (cli-board show ${opts.taskId})`);
   if (before.status === 'done' || before.status === 'archived') throw new OrgError(`card ${opts.taskId} is ${before.status}; give ${to.name} a new card instead`);
   if (before.status === 'running') throw new OrgError(`card ${opts.taskId} is running; wait for the worker or reclaim it first`);
-  const header = cardHeader(caller, to, { title: before.title, project: opts.project ?? before.project_slug ?? undefined, feature: opts.feature ?? (opts.project ? undefined : before.feature_slug ?? undefined), board: before.board_slug, repo });
-  const card = await assignCard(caller.name, opts.taskId, to.name, { project: opts.project, feature: opts.feature, work: checkWorkType(opts.type) ?? undefined, needs: need ?? undefined, repo: repo ?? undefined }).catch(boardErr);
+  const header = cardHeader(caller, to, { title: before.title, area: opts.area ?? before.area_slug ?? undefined, project: opts.project ?? (opts.area ? undefined : before.project_slug ?? undefined), board: before.board_slug, repo });
+  const card = await assignCard(caller.name, opts.taskId, to.name, { area: opts.area, project: opts.project, work: checkWorkType(opts.type) ?? undefined, needs: need ?? undefined, repo: repo ?? undefined }).catch(boardErr);
   await commentOnCard(caller.name, opts.taskId, header);
   if (opts.shipNow) await flagCard(caller.name, opts.taskId, { shipNow: true }).catch(boardErr);
   const link = linkOfCard({ ...card, repo: repo ?? card.repo, ship_now: card.ship_now || opts.shipNow === true });
@@ -1320,19 +1347,19 @@ async function commentOnCard(by: string, id: string, body: string): Promise<void
 }
 
 export interface TaskFilter {
+  area?: string;
   project?: string;
-  feature?: string;
   agent?: string;
   limit?: number;
 }
 
-/** Cards for bots with their project and feature, newest first (the task_links view over cards). */
+/** Cards for bots with their area and project, newest first (the task_links view over cards). */
 export async function listTasks(f: TaskFilter = {}): Promise<(TaskLink & { status: string })[]> {
   const { rows } = await query<TaskLink & { status: string }>(
     `SELECT l.*, c.status FROM task_links l JOIN cards c ON c.id = l.task_id
-      WHERE ($1::text IS NULL OR l.project_slug = $1) AND ($2::text IS NULL OR l.feature_slug = $2) AND ($3::text IS NULL OR l.assignee = $3)
+      WHERE ($1::text IS NULL OR l.area_slug = $1) AND ($2::text IS NULL OR l.project_slug = $2) AND ($3::text IS NULL OR l.assignee = $3)
       ORDER BY l.created_at DESC, l.task_id LIMIT $4`,
-    [f.project ?? null, f.feature ?? null, f.agent ?? null, Math.min(f.limit ?? 200, 1000)],
+    [f.area ?? null, f.project ?? null, f.agent ?? null, Math.min(f.limit ?? 200, 1000)],
   );
   return rows;
 }
@@ -1368,8 +1395,16 @@ export function loadGraphs(vaultRoot: string): Record<string, GraphTemplate> {
   }
 }
 
-function fill(text: string, vars: Record<string, string>): string {
-  return text.replace(/\{(title|project|feature)\}/g, (_, k: string) => vars[k] ?? '');
+/**
+ * Fills a template's placeholders: `{title}`, `{area}` and `{project}`. A template written before the PARA
+ * rename says `{project}/{feature}` for the same pair; one that never says `{area}` is read that way, so the
+ * existing templates keep producing the same text.
+ */
+function fill(text: string, vars: { title: string; area: string; project: string }, legacy: boolean): string {
+  const map: Record<string, string> = legacy
+    ? { title: vars.title, project: vars.area, feature: vars.project }
+    : { title: vars.title, area: vars.area, project: vars.project, feature: vars.project };
+  return text.replace(/\{(title|area|project|feature)\}/g, (_, k: string) => map[k] ?? '');
 }
 
 /** `lead`, `role:<word>` (a member of the team whose role contains it; the lead when none does) or a name. */
@@ -1394,8 +1429,8 @@ export async function resolveAssignee(spec: string, team: string | null, lead: s
 }
 
 export interface ApplyOpts {
-  project: string;
-  feature?: string;
+  area: string;
+  project?: string;
   team?: string;
   board?: string;
   dryRun?: boolean;
@@ -1412,16 +1447,17 @@ export interface PlannedCard {
 }
 
 /**
- * Applies a template for one project (and feature): one card per node, in
+ * Applies a template for one area (and project): one card per node, in
  * file order, each with its parents already created so the kanban keeps it in
  * todo until they finish. Only the root nodes' bots are mentioned; the rest
  * are woken by the dispatcher when their card becomes ready.
  */
 export async function applyGraph(caller: Agent, template: GraphTemplate, opts: ApplyOpts): Promise<{ cards: PlannedCard[]; message: Message | null }> {
-  const target = await assertProject(opts.project, opts.feature);
+  const target = await assertProject(opts.area, opts.project);
   const team = opts.team ?? target.team_slug;
   const lead = team ? ((await query<{ lead: string | null }>(`SELECT lead FROM teams WHERE slug = $1`, [team])).rows[0]?.lead ?? null) : null;
-  const vars = { title: target.title, project: opts.project, feature: opts.feature ?? '' };
+  const vars = { title: target.title, area: opts.area, project: opts.project ?? '' };
+  const legacy = !JSON.stringify(template).includes('{area}');
   const planned: PlannedCard[] = [];
   const agents = new Map<string, Agent>();
   for (const n of template.nodes) {
@@ -1431,7 +1467,7 @@ export async function applyGraph(caller: Agent, template: GraphTemplate, opts: A
     await assertMayAssign(caller, to);
     await assertCapable(to, nodeNeed(n.kind, n.work ?? template.work));
     for (const a of n.after) if (!planned.some((p) => p.node === a)) throw new OrgError(`graph ${template.name}: node ${n.id} is after unknown node ${a}`);
-    planned.push({ node: n.id, kind: n.kind, assignee: name, title: fill(n.title, vars), after: n.after, task_id: null });
+    planned.push({ node: n.id, kind: n.kind, assignee: name, title: fill(n.title, vars, legacy), after: n.after, task_id: null });
   }
   if (opts.dryRun) return { cards: planned, message: null };
   const ids = new Map<string, string>();
@@ -1439,9 +1475,9 @@ export async function applyGraph(caller: Agent, template: GraphTemplate, opts: A
     const card = planned[i]!;
     const { id: task_id } = await createBoardCard(caller, agents.get(card.assignee)!, {
       title: card.title,
-      body: n.body ? fill(n.body, vars) : undefined,
+      body: n.body ? fill(n.body, vars, legacy) : undefined,
+      area: opts.area,
       project: opts.project,
-      feature: opts.feature,
       board: opts.board,
       priority: n.priority,
       parents: n.after.map((a) => ids.get(a)!),
@@ -1461,8 +1497,8 @@ export async function applyGraph(caller: Agent, template: GraphTemplate, opts: A
   const channel = team ?? 'all-hands';
   if (caller.runtime === 'human' || caller.team_slug === channel) {
     // Names, not @-mentions: each card wakes its bot when it becomes ready, so a mention would only add a wake.
-    message = await post(caller, channel, `${roots.join(' ')}${roots.length ? ': ' : ''}graph ${template.name} for ${opts.project}${opts.feature ? `/${opts.feature}` : ''}: ${chain}`, {
-      project: opts.project, feature: opts.feature, run: opts.run, task: planned[0]?.task_id ?? undefined,
+    message = await post(caller, channel, `${roots.join(' ')}${roots.length ? ': ' : ''}graph ${template.name} for ${opts.area}${opts.project ? `/${opts.project}` : ''}: ${chain}`, {
+      area: opts.area, project: opts.project, run: opts.run, task: planned[0]?.task_id ?? undefined,
     });
   }
   return { cards: planned, message };
@@ -1503,15 +1539,15 @@ export async function redoTask(caller: Agent, reviewId: string, changes: string,
     await commentOnCard(caller.name, reviewId, note);
     let message: Message | null = null;
     if (lead && lead !== caller.name) message = await dm(caller, lead, `Card ${reviewId} (${reviewed.title}) failed review ${rounds - 1} times; it needs you. Last changes asked: ${text}`, { task: reviewId, run: runId });
-    else if (team) message = await post(caller, team, `Card ${reviewId} (${reviewed.title}) failed review ${rounds - 1} times; escalated. Last changes asked: ${text}`, { task: reviewId, project: review.project_slug ?? undefined, feature: review.feature_slug ?? undefined, run: runId });
+    else if (team) message = await post(caller, team, `Card ${reviewId} (${reviewed.title}) failed review ${rounds - 1} times; escalated. Last changes asked: ${text}`, { task: reviewId, area: review.area_slug ?? undefined, project: review.project_slug ?? undefined, run: runId });
     return { escalated: true, task_id: null, rounds, message };
   }
   const baseTitle = reviewed.title.replace(/ \(round \d+\)$/, '');
   const { id: task_id } = await createBoardCard(caller, builder, {
     title: `${baseTitle} (round ${rounds})`,
     body: `Changes requested by ${caller.name} on ${reviewId}:\n${text}`,
+    area: reviewed.area_slug ?? review.area_slug ?? undefined,
     project: reviewed.project_slug ?? review.project_slug ?? undefined,
-    feature: reviewed.feature_slug ?? review.feature_slug ?? undefined,
     board: reviewed.board_slug,
     graph: reviewed.graph ?? undefined,
     node: reviewed.node ?? undefined,
@@ -1531,7 +1567,7 @@ export async function redoTask(caller: Agent, reviewId: string, changes: string,
   await moveCard(caller.name, reviewId, 'blocked', `changes requested (round ${rounds}); waits for ${task_id}`, { blockKind: 'dependency', rounds }).catch(boardErr);
   let message: Message | null = null;
   if (team && (caller.runtime === 'human' || caller.team_slug === team)) {
-    message = await post(caller, team, `${builder.name}: round ${rounds} of ${baseTitle}: card ${task_id}. ${text.slice(0, 300)}`, { task: task_id, project: reviewed.project_slug ?? undefined, feature: reviewed.feature_slug ?? undefined, run: runId });
+    message = await post(caller, team, `${builder.name}: round ${rounds} of ${baseTitle}: card ${task_id}. ${text.slice(0, 300)}`, { task: task_id, area: reviewed.area_slug ?? undefined, project: reviewed.project_slug ?? undefined, run: runId });
   }
   return { escalated: false, task_id, rounds, message };
 }

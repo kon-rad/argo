@@ -144,9 +144,9 @@ export async function messagesBefore(m: MessageRow, n = 3): Promise<MessageRow[]
   return rows.reverse();
 }
 
-export async function taskLink(taskId: string): Promise<{ title: string; work_type: string | null; project_slug: string | null } | null> {
-  const { rows } = await query<{ title: string; work_type: string | null; project_slug: string | null }>(
-    `SELECT title, work_type, project_slug FROM task_links WHERE task_id = $1`, [taskId]);
+export async function taskLink(taskId: string): Promise<{ title: string; work_type: string | null; area_slug: string | null } | null> {
+  const { rows } = await query<{ title: string; work_type: string | null; area_slug: string | null }>(
+    `SELECT title, work_type, area_slug FROM task_links WHERE task_id = $1`, [taskId]);
   return rows[0] ?? null;
 }
 

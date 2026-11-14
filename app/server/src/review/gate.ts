@@ -45,7 +45,9 @@ export function digest(value: unknown): string { return createHash('sha256').upd
 export function evidence(s: Snapshot): string {
   const normalized=Snapshot.parse({...s,behind:s.behind??false,conflicting:s.conflicting??false});
   normalized.sources=normalized.sources.map(item=>{
-    if(item.redacted || !/^board:t_[a-f0-9]{6,32}:(?:project|feature)$/.test(item.ref))return item;
+    // The tracker rows of review_context: `area` and `project` since the PARA rename; `feature` is what a snapshot
+    // taken before it calls the project row.
+    if(item.redacted || !/^board:t_[a-f0-9]{6,32}:(?:area|project|feature)$/.test(item.ref))return item;
     try {
       const record:unknown=JSON.parse(item.text);
       if(!record || typeof record!=='object' || Array.isArray(record))return item;
