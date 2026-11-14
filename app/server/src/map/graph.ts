@@ -10,6 +10,10 @@ import type { Goal } from '../projects.js';
  * division) they move.
  */
 
+/**
+ * The kinds the map stores (map_nodes.kind has a CHECK on this list). Since the PARA rename a `project` node is a
+ * tracker area and a `feature` node is a project inside it: the stored names stayed, the page's labels moved.
+ */
 export type NodeKind = 'mission' | 'goal' | 'division' | 'project' | 'feature' | 'note' | 'metric';
 export type EdgeKind = 'link' | 'belongs' | 'goal';
 

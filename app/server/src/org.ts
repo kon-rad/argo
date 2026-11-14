@@ -535,10 +535,8 @@ export async function post(agent: Agent, channel: string, body: string, opts: Po
   await assertMember(agent, channel, true);
   await checkThread(channel, opts.thread);
   const mentions = await resolveMentions(text, opts.mentions);
-  if (opts.area) {
-    const { rowCount } = await query(`SELECT 1 FROM areas WHERE slug = $1`, [opts.area]);
-    if (!rowCount) throw new OrgError(`no area "${opts.area}" in the tracker`);
-  }
+  // A message's tag is an area, or a project with its area: say so here, before the database's own guards do.
+  await assertProject(opts.area, opts.project);
   return withTransaction((tx) => insertMessage(tx, agent, channel, kind, text, { ...opts, mentions }));
 }
 
@@ -582,6 +580,7 @@ export async function handoff(from: Agent, channel: string, toName: string, body
     throw new OrgError(`${to.name} is not in #${channel}; pick a channel you are both in`);
   });
   const mentions = await resolveMentions(text, [to.name]);
+  await assertProject(opts.area, opts.project);
   return withTransaction((tx) => insertMessage(tx, from, channel, 'handoff', text, { ...opts, mentions }));
 }
 
@@ -598,6 +597,7 @@ export async function askOwner(from: Agent, body: string, opts: { urgent?: boole
     );
     if ((rows[0]?.n ?? 0) >= URGENT_PER_DAY) throw new OrgError(`${from.name} already sent ${URGENT_PER_DAY} urgent questions today; this one waits for the stand-up`);
   }
+  await assertProject(opts.area);
   return withTransaction((tx) => insertMessage(tx, from, 'leads', 'question-for-owner', text, { urgent: opts.urgent ?? false, task: opts.task, area: opts.area, mentions: [] }));
 }
 
