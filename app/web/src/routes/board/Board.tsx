@@ -150,6 +150,8 @@ export default function Board() {
 
   if (cards.isError) return <p className="p-4 text-sm text-[var(--warn)]">⚠ {cards.error.message}</p>;
 
+  const columns = COLUMNS.map((col) => ({ ...col, rows: sortCards(list.filter((c) => col.statuses.includes(c.status)), sort) }));
+
   const select = (label: string, value: string | undefined, options: { value: string; label: string }[], onChange: (v: string) => void) => (
     <select value={value ?? ''} onChange={(e) => onChange(e.target.value)} aria-label={label} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
       <option value="">{label}</option>
@@ -183,11 +185,19 @@ export default function Board() {
           </button>
         </div>
         {showNew && <NewCard board={board} chart={chart.data ?? null} onCreated={(id) => { setShowNew(false); navigate(`/board/${id}${location.search}`); }} />}
-        <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3">
-          {COLUMNS.map((col) => {
-            const rows = sortCards(list.filter((c) => col.statuses.includes(c.status)), sort);
+        {/* Phone width: one column fills most of the screen and the next one shows at the edge; this goes straight to any of them. */}
+        <label className="flex items-center gap-2 border-b border-[var(--rule)] px-3 py-1 text-xs text-[var(--ink-dim)] md:hidden">
+          Column
+          <select aria-label="Jump to column" value="" className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1"
+            onChange={(e) => document.getElementById(`board-col-${e.target.value}`)?.scrollIntoView?.({ inline: 'start', block: 'nearest', behavior: 'smooth' })}>
+            <option value="" disabled>{columns.length} columns, swipe sideways or pick one</option>
+            {columns.map((col) => <option key={col.key} value={col.key}>{col.label} ({col.rows.length})</option>)}
+          </select>
+        </label>
+        <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3 max-md:snap-x max-md:snap-mandatory max-md:scroll-px-3">
+          {columns.map(({ rows, ...col }) => {
             return (
-              <section key={col.key} className="flex w-64 shrink-0 flex-col" aria-label={col.label}>
+              <section key={col.key} id={`board-col-${col.key}`} className="flex w-64 shrink-0 flex-col max-md:w-[82vw] max-md:snap-start" aria-label={col.label}>
                 <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--ink-dim)]">
                   {col.label} <span className="font-normal text-[var(--ink-faint)]">{rows.length}</span>
                   {col.key === 'done' && <span className="font-normal normal-case text-[var(--ink-faint)]"> · last 7 days</span>}
