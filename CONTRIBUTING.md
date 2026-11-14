@@ -76,6 +76,7 @@ Put a few fake notes in it. If you want a realistic shape, write fake notes in t
 |---|---|---|
 | App typecheck and build | `cd app && npm run build` | `app` job |
 | App tests (Vitest + Supertest, real Postgres with pgvector) | `cd app && npm test` | `app` job |
+| Table layouts in a browser at phone and desktop widths (when you touch a table or `index.css`) | `cd app && npm run e2e:install -w web && npm run e2e:tables -w web` | no |
 | Python tests (harness, vault CLI, add-ons) | `python3 -m pytest harness tools addons` | `python` job |
 | Leak check | `scripts/check-public.sh` | `leaks` job |
 | Secret scan over all history | `gitleaks detect --source . --log-opts=--all --redact` | `leaks` job |
