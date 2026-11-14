@@ -11,3 +11,6 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 *.icns
+app/web/e2e/test-results/
+app/web/e2e/shots/
+app/web/e2e/baseline/
