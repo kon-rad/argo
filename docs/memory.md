@@ -72,7 +72,7 @@ No automatic call to `recall` was found for an interactive Claude Code or Hermes
 
 ## How `cli-org recall` works
 
-`cli-org recall "<question>" [--project p] [--limit N] [--json]` merges three arms into one list, each hit labelled with its source:
+`cli-org recall "<question>" [--area a] [--limit N] [--json]` merges three arms into one list, each hit labelled with its source:
 
 | Arm | Label | How it matches |
 |---|---|---|
@@ -82,7 +82,7 @@ No automatic call to `recall` was found for an interactive Claude Code or Hermes
 
 **Why vector-only hits are not trusted.** On a vault embedded with `multilingual-e5-large-instruct`, cosine similarity does not separate good matches from noise: gibberish queries scored 0.80 to 0.85, an off-topic query 0.79, and a relevant query's best vector-only hit 0.82. No fixed floor works on that model, so recall asks for a second signal instead, a shared word. If your embedder spreads more widely, measure it (run a few nonsense queries and a few real ones through `hybridSearch`) and set `ORG_RECALL_MIN_SIMILARITY` above the nonsense scores.
 
-Writing: `cli-org remember "<subject>" "<claim>" --source <path|#message|t_card|url> [--project p] [--inferred] [--supersedes id]`. A bot may only insert rows as itself (row-level security: `author = org_me()`), cannot update or delete, A fact is retired with `cli-org forget <id> "<why>"`, which sets `valid_to`; only its author, the author's team lead or the owner may do it. Nothing is deleted, so history stays.
+Writing: `cli-org remember "<subject>" "<claim>" --source <path|#message|t_card|url> [--area a] [--inferred] [--supersedes id]`. A bot may only insert rows as itself (row-level security: `author = org_me()`), cannot update or delete, A fact is retired with `cli-org forget <id> "<why>"`, which sets `valid_to`; only its author, the author's team lead or the owner may do it. Nothing is deleted, so history stays.
 
 A row can carry `via <runtime>@<host>` (flag `--via` or `ORG_VIA`). A vault can give agents on other machines the same verbs through a thin wrapper that runs `cli-org` on the server.
 
@@ -90,7 +90,7 @@ A row can carry `via <runtime>@<host>` (flag `--via` or `ORG_VIA`). A vault can 
 
 | To see | Do this |
 |---|---|
-| Every shared fact, current and retired | `cli-org facts --all` (add `--json`, `--subject`, `--project`, `--author`) |
+| Every shared fact, current and retired | `cli-org facts --all` (add `--json`, `--subject`, `--area`, `--author`) |
 | Shared facts in the app | The `/org` page, Approvals tab, "Shared facts" list (current facts only, up to 100) |
 | One bot's memory | Open `.agents/org/memory/<bot>.md`, or the bot's page `/org/agents/<name>` (read-only) |
 | What `recall` returns for a question | `cli-org recall "<question>" --limit 8` and read the labels; add `--json` for scores |
