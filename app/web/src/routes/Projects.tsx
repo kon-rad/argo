@@ -3,7 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { api, STAGES, type OrgChart, type Stage, type TaskLink, type TrackerFeature, type TrackerItem, type TrackerProject, type TrackerReport } from '../lib/api.js';
+import { api, type OrgChart, type TaskLink } from '../lib/api.js';
+import { boardApi } from './board/api.js';
+import { projectsApi, STAGES, type Stage, type TrackerFeature, type TrackerItem, type TrackerProject, type TrackerReport } from './Projects.api.js';
 import { ago } from '../lib/time.js';
 
 /**
@@ -156,7 +158,7 @@ function GiveCard({ p, f, chart, onDone }: { p: TrackerProject; f: TrackerFeatur
   const [title, setTitle] = useState('');
   const chosen = bot || team?.lead || bots[0]?.name || '';
   const give = useMutation({
-    mutationFn: () => api.boardCreate({ title, assignee: chosen, project: p.slug, feature: f.slug }),
+    mutationFn: () => boardApi.create({ title, assignee: chosen, project: p.slug, feature: f.slug }),
     onSuccess: () => {
       setTitle('');
       onDone();
@@ -185,9 +187,9 @@ function FeatureCard({ p, f, cards }: { p: TrackerProject; f: TrackerFeature; ca
   const [check, setCheck] = useState('');
   const refresh = () => qc.invalidateQueries({ queryKey: ['projects'] });
   const mine = cards.links.filter((t) => t.project_slug === p.slug && t.feature_slug === f.slug);
-  const move = useMutation({ mutationFn: (stage: Stage) => api.setFeature(p.slug, f.slug, { stage }), onSuccess: refresh });
+  const move = useMutation({ mutationFn: (stage: Stage) => projectsApi.setFeature(p.slug, f.slug, { stage }), onSuccess: refresh });
   const verify = useMutation({
-    mutationFn: (result: 'pass' | 'fail') => api.verifyFeature(p.slug, f.slug, { kind: 'manual', check, result }),
+    mutationFn: (result: 'pass' | 'fail') => projectsApi.verifyFeature(p.slug, f.slug, { kind: 'manual', check, result }),
     onSuccess: () => {
       setVerifying(false);
       setCheck('');
@@ -314,7 +316,7 @@ function Needs({ r }: { r: TrackerReport }) {
   const qc = useQueryClient();
   const clear = useMutation({
     mutationFn: (n: TrackerItem) =>
-      n.feature ? api.setFeature(n.project, n.feature, { needs_owner: null }) : api.setProject(n.project, { needs_owner: null }),
+      n.feature ? projectsApi.setFeature(n.project, n.feature, { needs_owner: null }) : projectsApi.setProject(n.project, { needs_owner: null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
   });
   if (!r.needs_owner.length) return <p className="text-[var(--ink-dim)]">Nothing is waiting on you.</p>;
@@ -426,7 +428,7 @@ function Goals({ r }: { r: TrackerReport }) {
 }
 
 function FullReport() {
-  const md = useQuery({ queryKey: ['projects', 'markdown'], queryFn: api.projectsMarkdown });
+  const md = useQuery({ queryKey: ['projects', 'markdown'], queryFn: projectsApi.markdown });
   if (md.isError) return <p>⚠ {md.error.message}</p>;
   return <article className="prose max-w-none"><ReactMarkdown remarkPlugins={[remarkGfm]}>{md.data?.text ?? ''}</ReactMarkdown></article>;
 }
@@ -434,7 +436,7 @@ function FullReport() {
 export default function Projects() {
   const [params, setParams] = useSearchParams();
   const view = (VIEWS as readonly string[]).includes(params.get('view') ?? '') ? (params.get('view') as View) : 'overview';
-  const report = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, refetchInterval: 60_000 });
+  const report = useQuery({ queryKey: ['projects', 'report'], queryFn: projectsApi.report, refetchInterval: 60_000 });
   const r = report.data;
 
   return (

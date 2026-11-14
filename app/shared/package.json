@@ -1,0 +1,17 @@
+{
+  "name": "@secondbrain/contracts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "files": ["dist"],
+  "exports": {
+    "./search": { "types": "./dist/search.d.ts", "import": "./dist/search.js" },
+    "./board": { "types": "./dist/board.d.ts", "import": "./dist/board.js" },
+    "./projects": { "types": "./dist/projects.d.ts", "import": "./dist/projects.js" }
+  },
+  "scripts": {
+    "build": "node --input-type=commonjs -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json"
+  },
+  "dependencies": { "zod": "^4.4.3" },
+  "devDependencies": { "typescript": "^5.9.3" }
+}

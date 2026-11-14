@@ -8,6 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@secondbrain/contracts": "1.0.0",
     "@tanstack/react-query": "^5.102.2",
     "3d-force-graph": "^1.80.1",
     "react": "^19.2.8",

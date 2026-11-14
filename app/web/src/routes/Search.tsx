@@ -1,10 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import {
-  api, fileHref,
-  type AgentHit, type GlobalSearchResponse, type RecordHit, type SearchHit, type SearchMode, type SearchScope,
-} from '../lib/api.js';
+import { fileHref } from '../lib/http.js';
+import { searchApi, type AgentHit, type GlobalSearchResponse, type RecordHit, type SearchHit, type SearchMode, type SearchScope } from '../lib/searchApi.js';
 
 const PAGE = 25;
 const OVERVIEW = 5;
@@ -37,7 +35,7 @@ export default function Search() {
   const { data, isPending, error } = useQuery<GlobalSearchResponse>({
     queryKey: ['global-search', q, tab, mode, offset],
     queryFn: () =>
-      api.globalSearch(q, single ? [tab] : ['notes', 'records', 'agents'], mode, single ? offset : 0, single ? PAGE : OVERVIEW),
+      searchApi.globalSearch(q, single ? [tab] : ['notes', 'records', 'agents'], mode, single ? offset : 0, single ? PAGE : OVERVIEW),
     enabled: q.trim().length > 0,
   });
 

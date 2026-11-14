@@ -1,3 +1,16 @@
+/** @deprecated Moving into per-feature clients. Search, board, and projects have moved. */
+import { ApiError, json, request, url, type Params } from './http.js';
+import { searchApi } from './searchApi.js';
+import { boardApi } from '../routes/board/api.js';
+import { projectsApi } from '../routes/Projects.api.js';
+
+export { ApiError, AUTH_EXPIRED_EVENT, fileHref, request } from './http.js';
+export type { AgentHit, GlobalSearchResponse, RecordHit, SearchHit, SearchMode, SearchResponse, SearchScope, SearchSection } from '@secondbrain/contracts/search';
+export { BOARD_STATUSES } from '@secondbrain/contracts/board';
+export type { BoardCard, BoardCardDetail, BoardCardFilter, BoardContract, BoardInfo, BoardStatus, BoardToken, NewBoardCard } from '@secondbrain/contracts/board';
+export { STAGES } from '@secondbrain/contracts/projects';
+export type { Stage, TrackerFeature, TrackerGoal, TrackerItem, TrackerProject, TrackerReport, TrackerRollup, TrackerVerification } from '@secondbrain/contracts/projects';
+
 export interface TreeDir {
   name: string;
   path: string;
@@ -48,73 +61,6 @@ export interface FileResponse {
   tags: string[];
   links: OutLink[];
   backlinks: Backlink[];
-}
-
-export type SearchMode = 'keyword' | 'semantic' | 'hybrid';
-
-export interface SearchHit {
-  source_kind: string;
-  ref_id: string;
-  ref_path: string;
-  title: string | null;
-  snippet: string;
-  rank: number;
-  occurred_at: string;
-  /** Present in semantic and hybrid modes only. */
-  match_kind?: 'text' | 'filename' | 'semantic' | 'hybrid';
-  similarity?: number | null;
-  heading_path?: string | null;
-}
-
-export interface SearchResponse {
-  q: string;
-  mode: SearchMode;
-  results: SearchHit[];
-  total: number;
-  has_more: boolean;
-  /** Hybrid only: the vector branch was unreachable and this is keyword-only. */
-  degraded?: boolean;
-}
-
-export type SearchScope = 'notes' | 'records' | 'agents';
-
-export interface RecordHit {
-  table: string;
-  label: string;
-  id: string;
-  title: string;
-  snippet: string;
-  notes_path: string | null;
-}
-
-export interface AgentHit {
-  host: string;
-  source: string;
-  external_id: string;
-  harness: string | null;
-  session_title: string | null;
-  step: string | null;
-  role: string;
-  seq: number;
-  ts: string | null;
-  snippet: string;
-}
-
-export interface SearchSection<T> {
-  results: T[];
-  total: number;
-  has_more: boolean;
-  error?: string;
-  degraded?: boolean;
-}
-
-export interface GlobalSearchResponse {
-  q: string;
-  mode: SearchMode;
-  available: SearchScope[];
-  notes?: SearchSection<SearchHit>;
-  records?: SearchSection<RecordHit>;
-  agents?: SearchSection<AgentHit>;
 }
 
 export interface Run {
@@ -201,15 +147,6 @@ export interface FundOverview {
   warnings: string[];
   chainErrors: string[];
   asOf: string;
-}
-
-export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
 }
 
 export interface RingDay {
@@ -389,104 +326,6 @@ export interface TaskLink {
   kind?: string;
   work_type?: string | null;
   created_at: string;
-}
-
-// ---- the board module: the kanban record in the engine (/api/board) ----
-
-export const BOARD_STATUSES = ['triage', 'todo', 'scheduled', 'ready', 'running', 'review', 'blocked', 'done', 'archived'] as const;
-export type BoardStatus = (typeof BOARD_STATUSES)[number];
-
-export interface BoardContract {
-  objective?: string;
-  returns?: string[];
-  budget?: { turns?: number; tokens?: number; minutes?: number; wakes?: number };
-  scope?: string[];
-  verification?: string;
-}
-
-export interface BoardCard {
-  id: string;
-  board_slug: string;
-  title: string;
-  body: string | null;
-  contract: BoardContract;
-  status: BoardStatus;
-  priority: number;
-  assignee: string | null;
-  created_by: string;
-  project_slug: string | null;
-  feature_slug: string | null;
-  kind: string;
-  work_type: string | null;
-  needs: string | null;
-  ship_now: boolean;
-  repo: string | null;
-  graph: string | null;
-  node: string | null;
-  rounds: number;
-  scheduled_for: string | null;
-  block_kind: string | null;
-  block_reason: string | null;
-  result: string | null;
-  created_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-  updated_at: string;
-}
-
-export interface BoardCardDetail {
-  card: BoardCard;
-  comments: { id: number; author: string; body: string; created_at: string }[];
-  events: { id: number; kind: string; actor: string | null; payload: Record<string, unknown> | null; at: string }[];
-  depends_on: { id: string; title: string; status: string }[];
-  dependants: { id: string; title: string; status: string }[];
-  runs: { id: number; agent_name: string; runtime: string; claimed_at: string; lease_until: string; heartbeat_at: string | null; finished_at: string | null; outcome: string | null; tokens: number | null; turns: number | null }[];
-}
-
-export interface BoardInfo {
-  slug: string;
-  name: string;
-  team_slug: string | null;
-  open: number;
-}
-
-export interface BoardToken {
-  id: number;
-  agent_name: string;
-  label: string | null;
-  created_at: string;
-  last_seen_at: string | null;
-  revoked_at: string | null;
-}
-
-export interface BoardCardFilter {
-  board?: string;
-  status?: string;
-  assignee?: string;
-  project?: string;
-  feature?: string;
-  kind?: string;
-  q?: string;
-  /** Comma list of card ids or prefixes (t_1d4c0eff,2e5d). */
-  id?: string;
-  done_days?: number;
-}
-
-export interface NewBoardCard {
-  board?: string;
-  title: string;
-  body?: string;
-  contract?: BoardContract;
-  assignee?: string | null;
-  project?: string;
-  feature?: string;
-  kind?: string;
-  work?: string;
-  needs?: string;
-  repo?: string;
-  priority?: number;
-  deps?: string[];
-  ship_now?: boolean;
 }
 
 /** One line of a Claude Code stream-json log (or a line agent-hub added: "you", "hub"). */
@@ -738,127 +577,6 @@ export interface UsageMessage {
   is_sidechain: boolean; call: { model: string; input: number; cache_write: number; cache_read: number; output: number; action?: string | null; tool?: string | null; run_id?: string | null } | null;
 }
 
-type Params = Record<string, string | number | boolean | undefined>;
-
-function url(path: string, params?: Params): string {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params ?? {})) {
-    if (value !== undefined && value !== '') search.set(key, String(value));
-  }
-  const qs = search.toString();
-  return `/api${path}${qs ? `?${qs}` : ''}`;
-}
-
-/** Fired when any call answers 401, so the shell can swap to the login screen. */
-export type Stage = 'idea' | 'designing' | 'building' | 'testing' | 'live' | 'parked' | 'done';
-export const STAGES: Stage[] = ['idea', 'designing', 'building', 'testing', 'live', 'parked', 'done'];
-
-export interface TrackerVerification {
-  kind: string;
-  check: string;
-  result: 'pass' | 'fail';
-  evidence: string | null;
-  at: string;
-  by: string | null;
-}
-
-export interface TrackerFeature {
-  id: number;
-  slug: string;
-  title: string;
-  stage: Stage;
-  health: string | null;
-  owner: string | null;
-  goals: string[];
-  needs_owner: string | null;
-  blocked_on: string | null;
-  due: string | null;
-  shipped_at: string | null;
-  notes_path: string | null;
-  updated_at: string;
-  updated_by: string | null;
-  days_in_stage: number;
-  verification: TrackerVerification | null;
-  verifications_total: number;
-}
-
-export interface TrackerProject {
-  slug: string;
-  title: string;
-  team: string | null;
-  division: string | null;
-  area: string | null;
-  stage: Stage;
-  health: string | null;
-  priority: number | null;
-  goals: string[];
-  needs_owner: string | null;
-  blocked_on: string | null;
-  due: string | null;
-  devlog_path: string | null;
-  design_path: string | null;
-  updated_at: string;
-  days_in_stage: number;
-  next_action: string | null;
-  features: TrackerFeature[];
-  counts: Record<Stage, number>;
-  progress: number | null;
-}
-
-export interface TrackerItem {
-  project: string;
-  feature: string | null;
-  title: string;
-  detail: string;
-}
-
-export interface TrackerGoal {
-  code: string;
-  horizon: string;
-  goal: string;
-  due: string | null;
-  status: string;
-  projects: string[];
-  features: string[];
-}
-
-export interface TrackerRollup {
-  slug: string;
-  name: string;
-  projects: string[];
-  in_flight: number;
-  shipped_7d: number;
-  needs_owner: number;
-  stages: Record<Stage, number>;
-}
-
-export interface TrackerReport {
-  as_of: string | null;
-  generated_at: string;
-  totals: { projects: Record<Stage, number>; features: Record<Stage, number> };
-  needs_owner: (TrackerItem & { priority: number | null; due: string | null })[];
-  divisions: TrackerRollup[];
-  teams: (TrackerRollup & { lead: string | null })[];
-  goals: TrackerGoal[];
-  gaps: {
-    goals_uncovered: TrackerGoal[];
-    unverified_shipped: TrackerItem[];
-    failing: TrackerItem[];
-    testing_unverified: TrackerItem[];
-    stale: TrackerItem[];
-    overdue: TrackerItem[];
-    no_team: string[];
-    no_division: string[];
-    no_features: string[];
-  };
-  oldest: TrackerItem[];
-  backlog: { total: number; by_project: { project: string; count: number; oldest_days: number }[] };
-  moved_7d: { project: string; feature: string | null; title: string; from: string | null; to: string; at: string; by: string | null; note: string | null }[];
-  shipped_7d: TrackerItem[];
-  verified_7d: { pass: number; fail: number };
-  projects: TrackerProject[];
-}
-
 // ---- the chat module (/api/chat) ----
 
 export interface ChatProviderOption {
@@ -946,23 +664,6 @@ export interface ChatMessage {
   created_at: string;
 }
 
-export const AUTH_EXPIRED_EVENT = 'secondbrain:auth-expired';
-
-export async function request<T>(path: string, params?: Params, init?: RequestInit): Promise<T> {
-  const res = await fetch(url(path, params), { credentials: 'same-origin', ...init });
-  if (res.status === 401 && !path.startsWith('/auth/')) {
-    window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
-  }
-  if (!res.ok) {
-    // The server always answers with { error: { message } }; a proxy in front
-    // of it might not, so fall back to the status line rather than throwing
-    // inside the error path.
-    const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-    throw new ApiError(res.status, body?.error?.message ?? `${res.status} ${res.statusText}`);
-  }
-  return (await res.json()) as T;
-}
-
 export interface AuthState {
   /** False on a local install, where localhost is the boundary and there is no login. */
   required: boolean;
@@ -975,12 +676,6 @@ export interface FileSource {
   /** sha256 of the bytes on disk — sent back on save as the conflict check. */
   hash: string;
 }
-
-const json = (method: string, body: unknown): RequestInit => ({
-  method,
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(body),
-});
 
 export interface FriendlyStatus {
   status: 'running' | 'starting' | 'stopped';
@@ -1219,6 +914,27 @@ export interface MemoryCandidate {
 }
 
 export const api = {
+  search: searchApi.search,
+  globalSearch: searchApi.globalSearch,
+  projectsReport: projectsApi.report,
+  projectsMarkdown: projectsApi.markdown,
+  boardBoards: boardApi.boards,
+  boardCards: boardApi.cards,
+  boardCard: boardApi.card,
+  boardCreate: boardApi.create,
+  boardComment: boardApi.comment,
+  boardAssign: boardApi.assign,
+  boardMove: boardApi.move,
+  boardFinish: boardApi.finish,
+  boardTag: boardApi.tag,
+  boardFlags: boardApi.flags,
+  boardLink: boardApi.link,
+  boardLog: boardApi.log,
+  boardTokens: boardApi.tokens,
+  boardRevokeToken: boardApi.revokeToken,
+  setProject: projectsApi.setProject,
+  setFeature: projectsApi.setFeature,
+  verifyFeature: projectsApi.verifyFeature,
   memoryFacts: (params: { agent?: string; project?: string; subject?: string; author?: string; all?: boolean; limit?: number } = {}) =>
     request<{ facts: MemoryFact[] }>('/memory', params),
   memoryCandidates: (status: MemoryCandidate['status'] = 'proposed') => request<{ candidates: MemoryCandidate[] }>('/memory/candidates', { status }),
@@ -1245,10 +961,6 @@ export const api = {
     request<{ resolved: Record<string, string | null> }>(
       `/file/resolve?${new URLSearchParams(refs.map((ref) => ['ref', ref])).toString()}`,
     ),
-  search: (q: string, source?: string, offset = 0, limit = 25, mode: SearchMode = 'keyword') =>
-    request<SearchResponse>('/search', { q, source, offset, limit, mode }),
-  globalSearch: (q: string, scopes: SearchScope[], mode: SearchMode, offset = 0, limit = 10) =>
-    request<GlobalSearchResponse>('/search/global', { q, scopes: scopes.join(','), mode, offset, limit }),
   sources: () => request<{ sources: Source[] }>('/sources'),
   runs: (params: { active?: boolean; source_id?: number; limit?: number } = {}) =>
     request<{ runs: Run[] }>('/runs', {
@@ -1324,8 +1036,6 @@ export const api = {
   meta: () => request<AppMeta>('/meta'),
   syncState: () => request<SyncState>('/sync'),
   fund: (refresh = false) => request<FundOverview>('/fund', refresh ? { refresh: '1' } : undefined),
-  projectsReport: () => request<TrackerReport>('/projects/report'),
-  projectsMarkdown: () => request<{ text: string; as_of: string | null }>('/projects/report', { format: 'markdown' }),
   orgChart: () => request<OrgChart>('/org/chart'),
   orgChannels: () => request<{ channels: OrgChannel[] }>('/org/channels'),
   orgMembers: (slug: string) => request<{ members: OrgMember[] }>(`/org/channels/${encodeURIComponent(slug)}/members`),
@@ -1344,27 +1054,6 @@ export const api = {
   orgFacts: () => request<OrgFact[]>('/org/facts'),
   orgTasks: (f: { project?: string; feature?: string; agent?: string } = {}) => request<{ tasks: (TaskLink & { status?: string })[] }>('/org/tasks', f),
 
-  // The board module.
-  boardBoards: () => request<{ boards: BoardInfo[] }>('/board/boards'),
-  boardCards: (f: BoardCardFilter = {}) => request<{ cards: BoardCard[] }>('/board/cards', f as Params),
-  boardCard: (id: string) => request<BoardCardDetail>(`/board/cards/${id}`),
-  boardCreate: (c: NewBoardCard) => request<{ card: BoardCard; message: OrgMessage | null }>('/board/cards', undefined, json('POST', c)),
-  boardComment: (id: string, body: string) => request<{ comment: BoardCardDetail['comments'][number] }>(`/board/cards/${id}/comment`, undefined, json('POST', { body })),
-  boardAssign: (id: string, t: { assignee: string | null; project?: string; feature?: string }) => request<{ card: BoardCard }>(`/board/cards/${id}/assign`, undefined, json('POST', t)),
-  boardMove: (id: string, status: BoardStatus, note?: string) => request<{ card: BoardCard }>(`/board/cards/${id}/move`, undefined, json('POST', { status, note })),
-  boardFinish: (id: string, b: { outcome: 'done' | 'blocked' | 'partial' | 'budget'; result?: string; block_kind?: string }) => request<{ card: BoardCard }>(`/board/cards/${id}/finish`, undefined, json('POST', b)),
-  boardTag: (id: string, t: { project: string | null; feature?: string | null }) => request<{ card: BoardCard }>(`/board/cards/${id}/project`, undefined, json('POST', t)),
-  boardFlags: (id: string, b: { ship_now?: boolean; needs?: string }) => request<{ card: BoardCard }>(`/board/cards/${id}/flags`, undefined, json('POST', b)),
-  boardLink: (id: string, dependsOn: string) => request<{ ok: true }>(`/board/cards/${id}/link`, undefined, json('POST', { depends_on: dependsOn })),
-  boardLog: (id: string, offset: number) => request<EventPage>(`/board/cards/${id}/log`, { offset }),
-  boardTokens: () => request<{ tokens: BoardToken[] }>('/board/tokens'),
-  boardRevokeToken: (id: number) => request<{ ok: true }>(`/board/tokens/${id}/revoke`, undefined, { method: 'POST' }),
-  setProject: (slug: string, patch: Record<string, unknown>) =>
-    request<{ stage_changed: boolean }>(`/projects/${slug}`, undefined, json('PATCH', patch)),
-  setFeature: (slug: string, feature: string, patch: Record<string, unknown>) =>
-    request<{ stage_changed: boolean }>(`/projects/${slug}/features/${feature}`, undefined, json('PATCH', patch)),
-  verifyFeature: (slug: string, feature: string, v: { kind: string; check: string; result: 'pass' | 'fail'; evidence?: string }) =>
-    request<{ id: number }>(`/projects/${slug}/features/${feature}/verifications`, undefined, json('POST', v)),
   source: (path: string) => request<FileSource>('/file/source', { path }),
   save: (path: string, content: string, baseHash: string) =>
     request<{ path: string; hash: string; mtime: string; size_bytes: number }>(
@@ -1415,10 +1104,6 @@ export const EDITABLE_EXTS = new Set([
   '.md', '.markdown', '.txt', '.csv', '.tsv', '.json', '.yaml', '.yml', '.toml',
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.py', '.sh', '.css', '.html', '.xml', '.svg', '.sql',
 ]);
-
-/** Vault paths are slash-separated and go straight into the route. */
-export const fileHref = (path: string): string =>
-  `/file/${path.split('/').map(encodeURIComponent).join('/')}`;
 
 /** One tv module episode, as /api/tv/episodes lists it from the vault's episode notes. */
 export interface TvEpisode {
@@ -1475,7 +1160,6 @@ export interface MediaResponse {
 export const mediaApi = {
   list: (q: MediaQuery) => request<MediaResponse>('/media', { ...q }),
 };
-
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ['KB', 'MB', 'GB', 'TB'];

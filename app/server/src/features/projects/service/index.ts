@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import { z } from 'zod';
+import { FeaturePatchSchema, FeatureVerificationRequestSchema, ProjectPatchSchema } from '@secondbrain/contracts/projects';
 import { query, withTransaction, type TxClient } from '../../../db.js';
 import { settings } from '../../../settings.js';
 
@@ -23,8 +24,6 @@ const SHIPPED: readonly Stage[] = ['live', 'done'];
 export const STALE_DAYS = 7;
 
 const Slug = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'lowercase letters, digits and dashes');
-const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD');
-const GoalCode = z.string().regex(/^[WMQYT]\d{1,2}$/, 'a goal code like W1, M2, Q1, Y3');
 const Text = z.string().trim().min(1).max(2000);
 
 export const DivisionInput = z.object({
@@ -42,57 +41,13 @@ export const TeamInput = z.object({
   sort: z.number().int().optional(),
 });
 
-export const ProjectPatch = z
-  .object({
-    title: Text.max(200),
-    team: Slug.nullable(),
-    division: Slug.nullable(),
-    area: Text.max(100).nullable(),
-    stage: z.enum(STAGES),
-    health: z.enum(['green', 'yellow', 'red']).nullable(),
-    priority: z.number().int().positive().nullable(),
-    goals: z.array(GoalCode),
-    needs_owner: Text.nullable(),
-    blocked_on: Text.nullable(),
-    started: Day.nullable(),
-    due: Day.nullable(),
-    devlog_path: Text.nullable(),
-    design_path: Text.nullable(),
-    paths: z.array(z.string().max(300)),
-    repos: z.array(z.string().max(200)),
-    note: Text.max(500),
-  })
-  .partial()
-  .strict();
+export const ProjectPatch = ProjectPatchSchema;
 export type ProjectPatch = z.infer<typeof ProjectPatch>;
 
-export const FeaturePatch = z
-  .object({
-    title: Text.max(200),
-    stage: z.enum(STAGES),
-    health: z.enum(['green', 'yellow', 'red']).nullable(),
-    owner: Text.max(100).nullable(),
-    goals: z.array(GoalCode),
-    needs_owner: Text.nullable(),
-    blocked_on: Text.nullable(),
-    started: Day.nullable(),
-    due: Day.nullable(),
-    notes_path: Text.nullable(),
-    sort: z.number().int(),
-    note: Text.max(500),
-    /** Moving to live/done without a passing verification needs a reason. */
-    unverified: Text.max(500),
-  })
-  .partial()
-  .strict();
+export const FeaturePatch = FeaturePatchSchema;
 export type FeaturePatch = z.infer<typeof FeaturePatch>;
 
-export const VerificationInput = z.object({
-  kind: z.enum(['test', 'manual', 'deploy', 'review', 'metric']),
-  check: Text.max(500),
-  result: z.enum(['pass', 'fail']),
-  evidence: Text.max(4000).nullish(),
-});
+export const VerificationInput = FeatureVerificationRequestSchema;
 export type VerificationInput = z.infer<typeof VerificationInput>;
 
 export const Seed = z.object({
@@ -645,7 +600,7 @@ export interface Report {
   teams: (Rollup & { lead: string | null })[];
   goals: (Goal & { projects: string[]; features: string[] })[];
   gaps: {
-    goals_uncovered: Goal[];
+    goals_uncovered: (Goal & { projects: string[]; features: string[] })[];
     unverified_shipped: Item[];
     failing: Item[];
     testing_unverified: Item[];
