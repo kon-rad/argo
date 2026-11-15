@@ -211,6 +211,20 @@ it('imports an owner system-user token for a configured Unified asset and collec
   const r = await collectInstagram(account, s, { get, now: new Date(clock), encKey: key, env: {}, vaultRoot: root });
   expect(r.error).toBeUndefined(); expect(r.samples[0]?.value).toBe(42);
 });
+it('imports a business-assigned system-user token whose grants list no targets, proved by reading the asset', async () => {
+  debug = { ...sysUser(), granular_scopes: [{ scope: 'instagram_basic' }, { scope: 'instagram_manage_insights' }] };
+  await expect(importSystemUserToken(importOpts, root, 'example.one', token)).resolves.toEqual({ username: 'example.one', expiresAt: null });
+  expect(await loadToken('instagram', 'example.one', key)).toMatchObject({ tokenKind: 'facebook-system-user', assetId: '101', token });
+  const assetCall = get.mock.calls.find(([url]) => new URL(url).pathname.endsWith('/101'))!;
+  expect(assetCall[1]).toEqual({ Authorization: `Bearer ${token}` });
+});
+it('refuses a target-less system-user token when the token cannot read the asset, and stores nothing', async () => {
+  debug = { ...sysUser(), granular_scopes: [{ scope: 'instagram_basic' }, { scope: 'instagram_manage_insights' }] };
+  get.mockImplementationOnce(async () => ({ status: 200, body: JSON.stringify({ data: debug }) }))
+    .mockImplementationOnce(async () => ({ status: 400, body: JSON.stringify({ error: { message: 'Object does not exist, cannot be loaded due to missing permissions' } }) }));
+  await expect(importSystemUserToken(importOpts, root, 'example.one', token)).rejects.toThrow();
+  expect(await loadToken('instagram', 'example.one', key)).toBeNull();
+});
 it.each([
   ['user token', () => { debug = { is_valid: true, app_id: 'fake-app', type: 'USER', user_id: '301', expires_at: Math.floor(clock / 1000) + 3600, scopes: ['instagram_basic', 'instagram_manage_insights', 'pages_show_list', 'pages_read_engagement'] }; }, 'system-user'],
   ['asset not granted', () => { debug = sysUser(['102']); }, 'asset not selected'],
