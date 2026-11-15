@@ -38,6 +38,7 @@ Areas are what you run, projects are what you finish, the home note is what you 
 - **Stages are for projects.** `done` means the outcome was reached and `parked` means paused. An area is only `active` or `parked`.
 - **Change history.** Every change to an area or a project is kept in one log, `tracker_events`: who, how (`cli`, `api`, `board`), which field, the old and the new value. Database triggers write it, one row per changed column, so no command can forget to. The log is append-only. See [modules.md](modules.md#change-history).
 - **Home note frontmatter.** A home note says what it is: `kind: area` and `area: <slug>`, or `kind: project` with `area:` and `project:`. When the scanner sees the frontmatter of such a note change, it adds one row to the log per top-level key that differs (`kpis`, `links`, ...), with both values. Editing the body logs nothing: git keeps that. The first time a note is indexed is the baseline, not a change.
+- **The context pack and the weekly review.** `cli-areas show <area>` prints what the home note and the tracker say about an area in one page (links, style paths, goals, KPIs, roadmap, the last 14 days), for an agent about to work on it. `cli-areas review` writes the week's changes to `Areas/weekly-review/<week>.md` and leaves your `## Reflection` alone ([modules.md](modules.md#context-pack)).
 - **KPIs are optional.** An area defines them in its home note, and records readings with `cli-areas record <area> <kpi> <value>`:
 
   ```yaml
