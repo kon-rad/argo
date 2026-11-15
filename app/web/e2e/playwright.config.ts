@@ -10,6 +10,9 @@ export default defineConfig({
   testMatch: '**/*.pw.ts',
   // Traces and failure screenshots; gitignored like shots/.
   outputDir: '../test-results',
+  // A cold dev server sometimes holds a page's first load past networkidle;
+  // one retry, and the report names it flaky instead of passed.
+  retries: 1,
   use: { baseURL: process.env.BASE_URL ?? `http://${host}:5123` },
   reporter: [['list']],
 });
