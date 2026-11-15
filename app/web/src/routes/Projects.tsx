@@ -457,7 +457,7 @@ export default function Projects() {
               type="button"
               onClick={() => setParams(v === 'overview' ? {} : { view: v })}
               aria-current={v === view ? 'page' : undefined}
-              className={`rounded px-2 py-1 ${v === view ? 'bg-[var(--paper-sunk)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}
+              className={`shrink-0 rounded px-2 py-1 ${v === view ? 'bg-[var(--paper-sunk)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}
             >
               {VIEW_LABEL[v]}
               {v === 'needs' && r ? ` (${r.needs_owner.length})` : ''}

@@ -14,6 +14,8 @@ import { expect, test, type Page } from '@playwright/test';
  * run it against a running app:
  *   npm install --no-save @playwright/test && npx playwright install chromium
  *   BASE_URL=http://localhost:5123 npx playwright test -c web/e2e/playwright.config.ts
+ * When the browser runs elsewhere (a container), serve the app on 0.0.0.0 and
+ * set E2E_APP_HOST to the name the browser reaches this machine by.
  * (the optional pages only exist when their module is on; a route the app
  * answers "No such page" for is skipped).
  */
@@ -25,6 +27,9 @@ const ROUTES = [
   '/org', '/org/chart', '/org/live', '/org/approvals',
   '/board', '/usage', '/usage?view=account', '/usage/live', '/desk',
   '/media', '/uploads', '/fund', '/map', '/tv',
+  // Routes that need an id from the vault under test (a note path, a card id,
+  // an agent name), as a comma list: E2E_EXTRA_ROUTES=/board/t_123,/org/agents/x
+  ...(process.env.E2E_EXTRA_ROUTES ?? '').split(',').map((r) => r.trim()).filter(Boolean),
 ];
 const PHONES = [{ width: 375, height: 667 }, { width: 390, height: 844 }];
 const DESKTOP = { width: 1440, height: 900 };
@@ -77,11 +82,14 @@ for (const route of ROUTES) {
           if (r.height < 43.5) out.push(`${name(el)}: ${Math.round(r.height)}px tall`);
           if (['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName) && parseFloat(getComputedStyle(el).fontSize) < 16) out.push(`${name(el)}: font under 16px`);
           if ((r.left < -0.5 || r.right > window.innerWidth + 0.5) && !scrolls(el)) out.push(`${name(el)}: cut off at the screen edge`);
+          // A label wider than its own button (a squeezed tab) is drawn over its neighbour.
+          if (el.tagName === 'BUTTON' && el.scrollWidth > el.clientWidth + 1) out.push(`${name(el)}: label spills out (${el.scrollWidth} > ${el.clientWidth})`);
         }
         // Subnavigation: the links of every tab strip.
-        for (const el of document.querySelectorAll<HTMLElement>('main nav[aria-label] > a')) {
+        for (const el of document.querySelectorAll<HTMLElement>('main nav[aria-label] > a, main [role=tablist] > a')) {
           const r = el.getBoundingClientRect();
           if (r.height > 0 && r.height < 43.5) out.push(`${name(el)}: subnav link ${Math.round(r.height)}px tall`);
+          if (r.width > 0 && el.scrollWidth > el.clientWidth + 1) out.push(`${name(el)}: subnav label spills out`);
         }
         return out;
       });
