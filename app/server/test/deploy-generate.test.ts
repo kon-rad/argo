@@ -67,6 +67,7 @@ describe('env and unit generation (pure)', () => {
   it('renders every former deploy unit pair from manifests or the base table', () => {
     expect(ALL_GENERATED_UNITS.map((u) => u.unit)).toEqual([
       'secondbrain-projects-render',
+      'secondbrain-areas-review',
       'secondbrain-memory-capture',
       'secondbrain-board-reclaim',
       'secondbrain-usage-sync',
@@ -143,6 +144,25 @@ describe('env and unit generation (pure)', () => {
     expect(svc?.after).toContain('User=sb');
     expect(svc?.after).toContain('WorkingDirectory=/opt/sb');
     expect(svc?.after).not.toContain('@APP_USER@');
+  });
+
+  it('the weekly review timer is one of the projects feature units, Sunday 20:00 in the vault time zone', () => {
+    expect(unitStems(new Set(['projects']))).toEqual(['secondbrain', 'secondbrain-projects-render', 'secondbrain-areas-review']);
+    const unit = ALL_GENERATED_UNITS.find((candidate) => candidate.unit === 'secondbrain-areas-review')!;
+    for (const ext of ['service', 'timer'] as const) {
+      expect(renderGeneratedUnit(unit, ext)).toBe(readFileSync(resolve(here, 'fixtures/deploy-units', `secondbrain-areas-review.${ext}`), 'utf8'));
+    }
+    const planned = (timezone?: string | null): string => {
+      const plan = planDeploy({ ...io(memFs()), modules: new Set(['projects']), installed: [], timezone });
+      expect(plan.files.find((f) => f.path === '/etc/systemd/system/secondbrain-areas-review.service')?.after).toContain(
+        'ExecStart=/usr/bin/node --no-warnings server/dist/cli-areas.js review --week ending',
+      );
+      return plan.files.find((f) => f.path === '/etc/systemd/system/secondbrain-areas-review.timer')!.after;
+    };
+    expect(planned('Asia/Tokyo')).toContain('OnCalendar=Sun *-*-* 20:00:00 Asia/Tokyo\n');
+    // No zone configured: UTC, never the zone of the machine and never a placeholder.
+    expect(planned()).toContain('OnCalendar=Sun *-*-* 20:00:00 UTC\n');
+    expect(planned(null)).not.toContain('@');
   });
 
   it('apply writes the plan, then a second plan is all unchanged', () => {

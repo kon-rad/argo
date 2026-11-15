@@ -60,6 +60,7 @@ const io: ConfigIo = {
   },
   baseUnits: new Set((config.env.SB_CONFIG_BASE_UNITS ?? '').split(',').filter(Boolean)),
   unitsOnly,
+  timezone: settings().timezone ?? null,
   log: (line) => console.log(line),
   error: (line) => console.error(line),
 };
