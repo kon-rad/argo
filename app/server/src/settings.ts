@@ -276,7 +276,7 @@ const TelegramBot = z.object({
   agent: z.enum(['claude-code', 'hermes', 'zen-agent']),
   /** The bot's Telegram username, without @ (informational) */
   username: z.string().optional(),
-  /** Hermes: the profile whose gateway polls this bot ('main' for ~/.hermes). Unset: any profile */
+  /** Hermes: the profile whose gateway polls this bot. 'main' or unset means the main Hermes home. */
   profile: z.string().optional(),
   /** zen-agent: the persona the bridge runs */
   persona: z.string().optional(),
