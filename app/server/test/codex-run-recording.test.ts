@@ -86,13 +86,13 @@ describe('Codex host repair migration', () => {
   it('moves a mis-hosted run, attaches native calls, removes its summary, and is idempotent', async () => {
     await addHost('migration-a');
     await addHost('migration-b');
-    await query(`INSERT INTO archive_sessions (source, host, external_id, harness, started_at, ended_at)
-      VALUES ('codex', 'migration-b', 'migrated-session', 'codex', $1 - interval '1 minute', $1 + interval '1 minute'),
-             ('codex', 'migration-b', 'fallback-session', 'codex', $1 - interval '1 minute', $1 + interval '1 minute')`, [now]);
+    await query(`INSERT INTO archive_sessions (source, host, external_id, started_at, ended_at)
+      VALUES ('codex', 'migration-b', 'migrated-session', $1::timestamptz - interval '1 minute', $1::timestamptz + interval '1 minute'),
+             ('codex', 'migration-b', 'fallback-session', $1::timestamptz - interval '1 minute', $1::timestamptz + interval '1 minute')`, [now]);
     await query(`INSERT INTO usage_runs
       (host, run_id, session_id, log_path, runtime, started_at, ended_at)
-      VALUES ('migration-a', 'migrated-run', 'migrated-session', 'dispatch:migrated-run', 'codex', $1 - interval '1 minute', $1 + interval '1 minute'),
-             ('migration-a', 'fallback-migration', 'fallback-session', 'dispatch:fallback-migration', 'codex', $1 - interval '1 minute', $1 + interval '1 minute')`, [now]);
+      VALUES ('migration-a', 'migrated-run', 'migrated-session', 'dispatch:migrated-run', 'codex', $1::timestamptz - interval '1 minute', $1::timestamptz + interval '1 minute'),
+             ('migration-a', 'fallback-migration', 'fallback-session', 'dispatch:fallback-migration', 'codex', $1::timestamptz - interval '1 minute', $1::timestamptz + interval '1 minute')`, [now]);
     await query(`INSERT INTO usage_calls
       (source, host, call_id, session_external_id, ts, model, entrypoint, output_tokens, run_id)
       VALUES ('codex','migration-a','migrated-run','migrated-session',$1,'example-model','sdk-cli',70,'migrated-run'),
