@@ -10,7 +10,7 @@ export interface RuleContext {
   today: string;                                     // YYYY-MM-DD
   quarter: string;                                   // e.g. 2026Q4, where archived shelves go
   lastTouched: (dir: string) => string | null;       // ISO date of the last commit under dir, null when none
-  trackerStage: (slug: string) => string | null;     // projects.stage for a tracker slug, null when unknown
+  trackerStage: (slug: string) => string | null;     // the status of the tracker area with this slug (active | parked), null when unknown
   settings: GardenSettings;
 }
 

@@ -20,10 +20,11 @@ export async function loadGraphInput(vaultRoot: string): Promise<GraphInput> {
         WHERE l.target_file_id IS NOT NULL AND l.from_file_id <> l.target_file_id AND t.is_markdown`),
     query<{ slug: string; name: string }>(`SELECT slug, name FROM divisions ORDER BY sort, slug`),
     query<GraphInput['projects'][number]>(
-      `SELECT slug, title, division_slug, stage, goals, paths, design_path, devlog_path FROM projects
-        WHERE stage <> 'done' ORDER BY division_slug NULLS LAST, priority NULLS LAST, slug`),
-    query<{ id: number; project_slug: string; title: string; stage: string }>(
-      `SELECT id::int AS id, project_slug, title, stage FROM features WHERE stage NOT IN ('done') ORDER BY project_slug, sort, id`),
+      // Area nodes come from `areas`, project nodes from `projects`. The node's `stage` carries the area's status.
+      `SELECT slug, title, division_slug, status AS stage, goals, paths, design_path, devlog_path FROM areas
+        WHERE archived_at IS NULL ORDER BY division_slug NULLS LAST, priority NULLS LAST, slug`),
+    query<{ id: number; area_slug: string; title: string; stage: string }>(
+      `SELECT id::int AS id, area_slug, title, stage FROM projects WHERE stage NOT IN ('done') AND archived_at IS NULL ORDER BY area_slug, sort, id`),
   ]);
   // Division folders place notes outside every project folder; the mission
   // folders hang off the mission itself (both from secondbrain.json "map").

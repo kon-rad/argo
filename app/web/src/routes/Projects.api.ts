@@ -1,14 +1,15 @@
-import type { FeaturePatch, FeatureVerificationRequest, ProjectPatch, ProjectsMarkdownResponse, StageChangedResponse, TrackerReport, VerificationCreatedResponse } from '@secondbrain/contracts/projects';
+import type { AreaPatch, ProjectPatch, ProjectVerificationRequest, StageChangedResponse, TrackerMarkdownResponse, TrackerReport, VerificationCreatedResponse } from '@secondbrain/contracts/projects';
 import { json, request } from '../lib/http.js';
 
+/** The tracker's API: areas (what you run) under /areas, projects (what you finish) under /projects/<area>/<project>. */
 export const projectsApi = {
-  report: () => request<TrackerReport>('/projects/report'),
-  markdown: () => request<ProjectsMarkdownResponse>('/projects/report', { format: 'markdown' }),
-  setProject: (slug: string, patch: ProjectPatch) => request<StageChangedResponse>(`/projects/${slug}`, undefined, json('PATCH', patch)),
-  setFeature: (slug: string, feature: string, patch: FeaturePatch) => request<StageChangedResponse>(`/projects/${slug}/features/${feature}`, undefined, json('PATCH', patch)),
-  verifyFeature: (slug: string, feature: string, body: FeatureVerificationRequest) =>
-    request<VerificationCreatedResponse>(`/projects/${slug}/features/${feature}/verifications`, undefined, json('POST', body)),
+  report: () => request<TrackerReport>('/areas/report'),
+  markdown: () => request<TrackerMarkdownResponse>('/areas/report', { format: 'markdown' }),
+  setArea: (area: string, patch: AreaPatch) => request<StageChangedResponse>(`/areas/${area}`, undefined, json('PATCH', patch)),
+  setProject: (area: string, project: string, patch: ProjectPatch) => request<StageChangedResponse>(`/projects/${area}/${project}`, undefined, json('PATCH', patch)),
+  verifyProject: (area: string, project: string, body: ProjectVerificationRequest) =>
+    request<VerificationCreatedResponse>(`/projects/${area}/${project}/verifications`, undefined, json('POST', body)),
 };
 
 export { STAGES } from '@secondbrain/contracts/projects';
-export type { Stage, TrackerFeature, TrackerGoal, TrackerItem, TrackerProject, TrackerReport, TrackerRollup, TrackerVerification } from '@secondbrain/contracts/projects';
+export type { AreaStatus, Stage, TrackerArea, TrackerGoal, TrackerItem, TrackerProject, TrackerReport, TrackerRollup, TrackerVerification } from '@secondbrain/contracts/projects';

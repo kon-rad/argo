@@ -64,11 +64,15 @@ export function titleFor(dir: string): string {
 function parseMeta(raw: Record<string, unknown>, dir: string, kind: ShelfKind, today: string): { meta: ShelfMeta; foreign: Record<string, unknown> } {
   const meta = defaultMeta(dir, kind, today);
   const foreign: Record<string, unknown> = {};
+  let area: string | null = null;
   for (const [k, v] of Object.entries(raw)) {
     switch (k) {
       case 'shelf': break;                                  // always rewritten from the real path
       case 'status': if (typeof v === 'string' && STATUSES.has(v as ShelfStatus)) meta.status = v as ShelfStatus; break;
       case 'project': if (typeof v === 'string' && v.trim()) meta.project = v.trim(); break;
+      // A home note names its tracker area as `area:` (the PARA rename). The key is not the gardener's, so it is written
+      // back untouched; it also tells the gardener which area the shelf belongs to when `project:` does not.
+      case 'area': foreign[k] = v; if (typeof v === 'string' && v.trim()) area = v.trim(); break;
       case 'kind': if (typeof v === 'string' && KINDS.has(v as ShelfKind)) meta.kind = v as ShelfKind; break;
       case 'last_reviewed': if (v instanceof Date) meta.last_reviewed = v.toISOString().slice(0, 10); else if (typeof v === 'string' && v) meta.last_reviewed = v; break;
       case 'archive_after': if (typeof v === 'string' && /^(\d+d|never|default)$/.test(v)) meta.archive_after = v; break;
@@ -76,6 +80,7 @@ function parseMeta(raw: Record<string, unknown>, dir: string, kind: ShelfKind, t
       default: foreign[k] = v;
     }
   }
+  if (area && meta.project === 'none') meta.project = area;
   return { meta, foreign };
 }
 

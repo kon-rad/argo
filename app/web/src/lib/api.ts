@@ -9,7 +9,7 @@ export type { AgentHit, GlobalSearchResponse, RecordHit, SearchHit, SearchMode, 
 export { BOARD_STATUSES } from '@secondbrain/contracts/board';
 export type { BoardCard, BoardCardDetail, BoardCardFilter, BoardContract, BoardInfo, BoardStatus, BoardToken, NewBoardCard } from '@secondbrain/contracts/board';
 export { STAGES } from '@secondbrain/contracts/projects';
-export type { Stage, TrackerFeature, TrackerGoal, TrackerItem, TrackerProject, TrackerReport, TrackerRollup, TrackerVerification } from '@secondbrain/contracts/projects';
+export type { AreaStatus, Stage, TrackerArea, TrackerGoal, TrackerItem, TrackerProject, TrackerReport, TrackerRollup, TrackerVerification } from '@secondbrain/contracts/projects';
 
 export interface TreeDir {
   name: string;
@@ -311,13 +311,13 @@ export interface TelegramStatus {
   bots_distinct: boolean;
 }
 
-/** A card for a bot with its tracker project and feature (GET /api/org/tasks, read from the board's cards). */
+/** A card for a bot with its tracker area and project (GET /api/org/tasks, read from the board's cards). */
 export interface TaskLink {
   task_id: string;
   board: string;
   title: string;
+  area_slug: string | null;
   project_slug: string | null;
-  feature_slug: string | null;
   assignee: string;
   created_by: string;
   rounds: number;
@@ -452,11 +452,11 @@ export interface UsageCredits {
 }
 export interface UsageSeriesRow { bucket: string; key: string; input: number; cache_write: number; cache_read: number; output: number; calls: number }
 /** The labels every call carries (usage_facts); a filter is `dimension=a,b` and a group is one dimension. */
-export const USAGE_DIMENSIONS = ['agent', 'team', 'reason', 'action', 'work_type', 'project', 'feature', 'task', 'host', 'headless', 'surface', 'lane', 'model', 'provider', 'source'] as const;
+export const USAGE_DIMENSIONS = ['agent', 'team', 'reason', 'action', 'work_type', 'area', 'project', 'task', 'host', 'headless', 'surface', 'lane', 'model', 'provider', 'source'] as const;
 export type UsageDimension = (typeof USAGE_DIMENSIONS)[number];
 export type UsageFilters = Partial<Record<UsageDimension, string[]>>;
 export const USAGE_DIMENSION_LABELS: Record<UsageDimension, string> = {
-  agent: 'bot', team: 'team', reason: 'woken by', action: 'action', work_type: 'work', project: 'project', feature: 'feature', task: 'card',
+  agent: 'bot', team: 'team', reason: 'woken by', action: 'action', work_type: 'work', area: 'area', project: 'project', task: 'card',
   host: 'host', headless: 'headless', surface: 'surface', lane: 'lane', model: 'model', provider: 'provider', source: 'runtime',
 };
 export function usageFilterParams(f: UsageFilters): Record<string, string> {
@@ -470,7 +470,7 @@ export interface UsageSessionRow {
   started_at: string | null; ended_at: string | null;
   calls: number; input: number; cache_write: number; cache_read: number; output: number; cost_usd: number | null;
   task_id: string | null; lane: string | null; archive_id: number | null;
-  agent_name?: string | null; project_slug?: string | null; work_type?: string | null; runs?: number;
+  agent_name?: string | null; area_slug?: string | null; work_type?: string | null; runs?: number;
 }
 /** One headless run (claude-code or zen-agent): a bot's wake or a lane's card, with its labels and token sums (tokens null when its calls are not in yet). */
 export interface UsageRun {
@@ -479,7 +479,7 @@ export interface UsageRun {
   is_error: boolean | null; verify_name: string | null; verify_passed: boolean | null;
   verify_exit: number | null; verify_metric: number | null; verify_output: string | null;
   agent_name?: string | null; team_slug?: string | null; reason?: string | null; reasons?: { reason: string | null; ref: string | null }[];
-  work_type?: string | null; project_slug?: string | null; feature_slug?: string | null; card_title?: string | null; resumed?: boolean | null;
+  work_type?: string | null; area_slug?: string | null; project_slug?: string | null; card_title?: string | null; resumed?: boolean | null;
   surface?: string; calls?: number | null; input?: number | null; cache_write?: number | null; cache_read?: number | null; output?: number | null;
   /** 'claude-code' or 'zen-agent'; cost_usd is real dollars for an API runtime and null for the subscription. */
   runtime?: string; source?: string; tier?: string | null; outcome?: string | null; cost_usd?: number | null;
@@ -747,8 +747,8 @@ export interface OrgMessage {
   mentions: string[];
   urgent: boolean;
   task_id: string | null;
+  area_slug: string | null;
   project_slug: string | null;
-  feature_slug: string | null;
   run_id: string | null;
   created_at: string;
 }
@@ -830,7 +830,7 @@ export interface OrgFact {
   source: string;
   author: string;
   via: string | null;
-  project_slug: string | null;
+  area_slug: string | null;
   confidence: 'confirmed' | 'inferred';
   valid_from: string;
 }
@@ -886,7 +886,7 @@ export interface MemoryFact {
   source: string;
   author: string;
   via: string | null;
-  project_slug: string | null;
+  area_slug: string | null;
   agent: string | null;
   confidence: 'confirmed' | 'inferred';
   supersedes: number | null;
@@ -904,7 +904,7 @@ export interface MemoryCandidate {
   status: 'proposed' | 'promoted' | 'rejected';
   fact_id: number | null;
   agent: string | null;
-  project_slug: string | null;
+  area_slug: string | null;
   harness: string;
   host: string;
   external_id: string | null;
@@ -932,10 +932,10 @@ export const api = {
   boardLog: boardApi.log,
   boardTokens: boardApi.tokens,
   boardRevokeToken: boardApi.revokeToken,
+  setArea: projectsApi.setArea,
   setProject: projectsApi.setProject,
-  setFeature: projectsApi.setFeature,
-  verifyFeature: projectsApi.verifyFeature,
-  memoryFacts: (params: { agent?: string; project?: string; subject?: string; author?: string; all?: boolean; limit?: number } = {}) =>
+  verifyProject: projectsApi.verifyProject,
+  memoryFacts: (params: { agent?: string; area?: string; subject?: string; author?: string; all?: boolean; limit?: number } = {}) =>
     request<{ facts: MemoryFact[] }>('/memory', params),
   memoryCandidates: (status: MemoryCandidate['status'] = 'proposed') => request<{ candidates: MemoryCandidate[] }>('/memory/candidates', { status }),
   retireMemoryFact: (id: number, why: string) => request<{ id: number; status: 'retired' }>(`/memory/${id}/retire`, undefined, json('POST', { why })),
@@ -1052,7 +1052,7 @@ export const api = {
   orgDecide: (id: number, decision: 'approve' | 'deny', note?: string) =>
     request<OrgApproval>(`/org/approvals/${id}/${decision}`, undefined, json('POST', { note })),
   orgFacts: () => request<OrgFact[]>('/org/facts'),
-  orgTasks: (f: { project?: string; feature?: string; agent?: string } = {}) => request<{ tasks: (TaskLink & { status?: string })[] }>('/org/tasks', f),
+  orgTasks: (f: { area?: string; project?: string; agent?: string } = {}) => request<{ tasks: (TaskLink & { status?: string })[] }>('/org/tasks', f),
 
   source: (path: string) => request<FileSource>('/file/source', { path }),
   save: (path: string, content: string, baseHash: string) =>

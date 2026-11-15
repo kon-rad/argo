@@ -6,7 +6,8 @@ import { ageDays, formatValue, mapApi, nodeColor, type MapMetric } from '../lib/
 
 /**
  * Brain map: the second brain as one 3D scene. Mission at the centre, goals
- * and divisions on rings, projects and features around their division, the
+ * and divisions on rings, areas and their projects around their division (node kinds `project` and `feature`: the
+ * names the map stored before the PARA rename), the
  * vault's notes settled around them, and the live numbers as satellites.
  * `?kiosk=1` is the lean TV view for a Raspberry Pi.
  */
@@ -16,7 +17,7 @@ const KioskMap = lazy(() => import('../components/map/KioskMap.js'));
 const FullMap = lazy(() => import('../components/map/FullMap.js').then((m) => ({ default: m.FullMap })));
 
 const KIND_LABEL: Record<string, string> = {
-  mission: 'Mission', goal: 'Goal', division: 'Division', project: 'Project', feature: 'Feature', note: 'Note', metric: 'Metric',
+  mission: 'Mission', goal: 'Goal', division: 'Division', project: 'Area', feature: 'Project', note: 'Note', metric: 'Metric',
 };
 
 function Sparkline({ series }: { series: { day: string; value: number }[] }) {
@@ -129,7 +130,7 @@ function FullMapPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && matches[0]) { pick(matches[0].id); setSearch(''); } }}
-            placeholder="Find a note, project, goal..."
+            placeholder="Find a note, area, goal..."
             className="w-64 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1"
           />
           {matches.length > 0 && (
@@ -151,7 +152,7 @@ function FullMapPage() {
           </label>
         ))}
         <span className="text-xs text-[var(--ink-faint)]">
-          {counts['note'] ?? 0} notes · {counts['project'] ?? 0} projects · {counts['feature'] ?? 0} features
+          {counts['note'] ?? 0} notes · {counts['project'] ?? 0} areas · {counts['feature'] ?? 0} projects
           {graph.data ? ` · layout v${graph.data.version}` : ''}
         </span>
         <Link to="/map?kiosk=1" className="ml-auto underline">TV view</Link>
