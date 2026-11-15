@@ -195,7 +195,7 @@ export default function Board() {
             {columns.map((col) => <option key={col.key} value={col.key}>{col.label} ({col.rows.length})</option>)}
           </select>
         </label>
-        <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3 max-md:snap-x max-md:snap-mandatory max-md:scroll-px-3">
+        <div data-scroll-scope="board columns" className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3 max-md:snap-x max-md:snap-mandatory max-md:scroll-px-3">
           {columns.map(({ rows, ...col }) => {
             return (
               <section key={col.key} id={`board-col-${col.key}`} className="flex w-64 shrink-0 flex-col max-md:w-[82vw] max-md:snap-start" aria-label={col.label}>

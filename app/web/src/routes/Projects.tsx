@@ -450,14 +450,14 @@ export default function Projects() {
     <div className="h-full overflow-y-auto p-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold tracking-tight">Areas and projects</h1>
-        {/* Scrolls inside its own strip on a phone instead of widening the page. */}
-        <nav className="flex max-w-full gap-1 overflow-x-auto whitespace-nowrap text-sm" aria-label="Projects views">
+        {/* On a phone the tabs wrap onto a second line: every view stays in sight and no label is squeezed. */}
+        <nav className="flex max-w-full gap-1 overflow-x-auto whitespace-nowrap text-sm max-md:flex-wrap" aria-label="Projects views">
           {VIEWS.map((v) => (
             <button
               key={v}
               type="button"
               onClick={() => setParams(v === 'overview' ? {} : { view: v })}
-              className={`rounded px-2 py-1 ${v === view ? 'bg-[var(--paper-sunk)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}
+              className={`shrink-0 rounded px-2 py-1 max-md:min-h-11 ${v === view ? 'bg-[var(--paper-sunk)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}
             >
               {VIEW_LABEL[v]}
               {v === 'needs' && r ? ` (${r.needs_owner.length})` : ''}

@@ -86,7 +86,7 @@ export default function Summaries() {
         <p className="text-xs text-[var(--ink-dim)]">One record per finished agent session, any harness, any machine. The request, what was done, what was learned and what is open are written by a model; the outcome check, tokens, tool calls and files are counted from the transcript. For tokens by hour, model, provider and harness see <Link className="underline" to="/usage?view=ledger&group=provider">Usage</Link>.</p>
       </header>
 
-      <section aria-label="Overview" className="grid gap-3 sm:grid-cols-2">
+      <section aria-label="Overview" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
             <span><b>{o?.summarized ?? '…'}</b> summarized</span>

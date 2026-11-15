@@ -51,7 +51,13 @@ function CardTable({ label, className, children }: Props) {
   const ref = useRef<HTMLTableElement>(null);
   // No dependency list: rows come and go with every render of the page that owns them.
   useLayoutEffect(() => { if (ref.current) stampTable(ref.current); });
-  return <table ref={ref} aria-label={label} data-phone="cards" className={className}>{children}</table>;
+  // Above the phone breakpoint this is the plain table it always was, and a wide one scrolls in its own box rather
+  // than pushing the page sideways on a tablet or a narrow window. On a phone the cards fit, so nothing scrolls.
+  return (
+    <div className="overflow-x-auto max-md:overflow-x-visible">
+      <table ref={ref} aria-label={label} data-phone="cards" className={className}>{children}</table>
+    </div>
+  );
 }
 
 function ScrollTable({ label, className, frameClassName, scrollClassName, children }: Props) {
