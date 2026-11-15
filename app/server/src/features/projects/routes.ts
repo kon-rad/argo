@@ -20,10 +20,12 @@ import {
   VerificationInput,
 } from './service/index.js';
 import { config } from '../../config.js';
+import { areaPage, listAreas, projectPage } from './service/pages.js';
 import { renderMarkdown, renderStandup, renderTelegram } from './service/report.js';
 import { HttpError, parseOr400, wrap } from '../../routes/http.js';
 import type { FeatureRoutes } from '../types.js';
 import { ArchiveRequestSchema, KpiReadingRequestSchema } from '@secondbrain/contracts/projects';
+import type { AreaIndexResponse, AreaPage, ProjectListResponse, ProjectPage } from '@secondbrain/contracts/projects';
 import type { AreaContext, ArchivedResponse, KpiReadingCreatedResponse, StageChangedResponse, TrackerMarkdownResponse, TrackerReport, VerificationCreatedResponse } from '@secondbrain/contracts/projects';
 
 const Slug = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
@@ -31,7 +33,7 @@ const AreaParams = z.object({ area: Slug });
 const ProjectParams = z.object({ area: Slug, project: Slug });
 const Format = z.object({ format: z.enum(['json', 'markdown', 'standup', 'telegram']).default('json') });
 const Flag = z.enum(['1', 'true']).optional();
-const BoardQuery = z.object({ archived: Flag });
+const BoardQuery = z.object({ archived: Flag, view: z.enum(['board', 'index']).default('board') });
 const ListQuery = z.object({
   area: Slug.optional(),
   stage: z.enum(STAGES).optional(),
@@ -64,7 +66,9 @@ export function areasRouter(vaultRoot: string): Router {
   router.get(
     '/',
     wrap(async (req, res) => {
-      const { archived } = parseOr400(BoardQuery, req.query);
+      const { archived, view } = parseOr400(BoardQuery, req.query);
+      // The `/areas` page: one row per area, archived ones included (the page hides them behind a toggle).
+      if (view === 'index') return void res.json({ areas: await listAreas(vaultRoot) } satisfies AreaIndexResponse);
       res.json(await getBoard(vaultRoot, new Date(), { archived: Boolean(archived) }));
     }),
   );
@@ -78,6 +82,15 @@ export function areasRouter(vaultRoot: string): Router {
       const text = format === 'markdown' ? renderMarkdown(report) : format === 'standup' ? renderStandup(report) : renderTelegram(report);
       const response = { format, text, as_of: report.as_of } satisfies TrackerMarkdownResponse;
       res.json(response);
+    }),
+  );
+
+  // The area page: the tracker row with what the home note says (links, style, goals, KPIs), the roadmap and the recent history.
+  router.get(
+    '/:area',
+    wrap(async (req, res) => {
+      const { area } = parseOr400(AreaParams, req.params);
+      res.json((await tracked(() => areaPage(vaultRoot, area))) satisfies AreaPage);
     }),
   );
 
@@ -151,14 +164,14 @@ export function areasRouter(vaultRoot: string): Router {
  * `/api/projects`: what you finish. Projects across areas, and the writes that act on one
  * project, addressed as `/:area/:project`.
  */
-export function projectsRouter(): Router {
+export function projectsRouter(vaultRoot: string): Router {
   const router = Router();
 
   router.get(
     '/',
     wrap(async (req, res) => {
       const q = parseOr400(ListQuery, req.query);
-      res.json({ projects: await listProjects({ area: q.area, stage: q.stage, dueBefore: q.due_before, archived: Boolean(q.archived) }) });
+      res.json({ projects: await listProjects({ area: q.area, stage: q.stage, dueBefore: q.due_before, archived: Boolean(q.archived) }) } satisfies ProjectListResponse);
     }),
   );
 
@@ -168,6 +181,15 @@ export function projectsRouter(): Router {
     const q = req.originalUrl.indexOf('?');
     res.redirect(308, `/api/areas/report${q >= 0 ? req.originalUrl.slice(q) : ''}`);
   });
+
+  // The project page: outcome, stage history, verifications, next action and the start of its README.
+  router.get(
+    '/:area/:project',
+    wrap(async (req, res) => {
+      const { area, project } = parseOr400(ProjectParams, req.params);
+      res.json((await tracked(() => projectPage(vaultRoot, area, project))) satisfies ProjectPage);
+    }),
+  );
 
   router.patch(
     '/:area/:project',
@@ -234,5 +256,5 @@ export function projectsFeedRouter(vaultRoot: string, token: string | undefined)
 export const routes: FeatureRoutes = ({ vaultRoot, opts }) => [
   { path: '/api/feed', router: projectsFeedRouter(vaultRoot, opts.projectsFeedToken ?? config.projectsFeedToken), mount: 'public' },
   { path: '/api/areas', router: areasRouter(vaultRoot) },
-  { path: '/api/projects', router: projectsRouter() },
+  { path: '/api/projects', router: projectsRouter(vaultRoot) },
 ];

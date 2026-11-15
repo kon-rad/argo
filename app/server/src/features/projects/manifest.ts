@@ -4,7 +4,7 @@ export default defineFeature({
   name: 'projects',
   core: true,
   summary: 'A tracker of areas (what you run) and projects (what you finish): stages, verifications, archive, a kiosk feed and a rendered report',
-  nav: [{ section: 'Work', label: 'Projects', path: '/projects' }],
+  nav: [{ section: 'Work', label: 'Areas', path: '/areas' }, { section: 'Work', label: 'Projects', path: '/projects' }],
   cli: [
     { command: 'projects', entry: 'cli-projects.js', summary: 'projects: report | list | add | set | verify | archive | unarchive (projects help)' },
     { command: 'areas', entry: 'cli-areas.js', summary: 'areas: list | show | review | report | render | add | set | archive | unarchive | record | team | division | import (areas help)' },

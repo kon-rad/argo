@@ -87,6 +87,81 @@ export type KpiReadingRequest = z.infer<typeof KpiReadingRequestSchema>;
 export const KpiReadingCreatedResponseSchema = z.object({ id: z.number().int() });
 export type KpiReadingCreatedResponse = z.infer<typeof KpiReadingCreatedResponseSchema>;
 
+// ---------------------------------------------------------------- the area and project pages
+
+/** One KPI of an area: its definition (the home note's `kpis:` frontmatter) with its readings, oldest first. */
+export const AreaKpiSchema = z.object({
+  key: z.string(), name: z.string(), unit: z.string().nullable(), target: z.number().nullable(), by: z.string().nullable(),
+  /** `down` when a lower value is better (a cost, a response time). */
+  direction: z.enum(['up', 'down']),
+  latest: z.object({ value: z.number(), at: z.string() }).nullable(),
+  /** Null when there is no target or no reading to compare. */
+  on_target: z.boolean().nullable(),
+  readings: z.array(z.object({ value: z.number(), at: z.string() })),
+});
+export type AreaKpi = z.infer<typeof AreaKpiSchema>;
+/** One row of `/areas`. `kpis` is null when the area defines none. */
+export const AreaIndexRowSchema = z.object({
+  slug: z.string(), title: z.string(), status: AreaStatusSchema, division: z.string().nullable(), division_name: z.string().nullable(),
+  team: z.string().nullable(), team_name: z.string().nullable(), owner: z.string().nullable(), health: z.string().nullable(), needs_owner: z.string().nullable(),
+  description: z.string().nullable(), archived_at: z.string().nullable(), updated_at: z.string(), active_projects: z.number().int(),
+  kpis: z.object({ total: z.number().int(), with_target: z.number().int(), on_target: z.number().int() }).nullable(),
+});
+export type AreaIndexRow = z.infer<typeof AreaIndexRowSchema>;
+export const AreaIndexResponseSchema = z.object({ areas: z.array(AreaIndexRowSchema) });
+export type AreaIndexResponse = z.infer<typeof AreaIndexResponseSchema>;
+/** A link as the page shows it: `href` for the web, `path` for a note or a folder in the vault, neither for plain text. */
+export const AreaLinkSchema = z.object({ text: z.string(), href: z.string().nullable(), path: z.string().nullable() });
+export type AreaLink = z.infer<typeof AreaLinkSchema>;
+export const AreaLinkGroupSchema = z.object({ group: z.string(), items: z.array(AreaLinkSchema) });
+export type AreaLinkGroup = z.infer<typeof AreaLinkGroupSchema>;
+/** A project as a list shows it (`GET /api/projects`, an area's roadmap). */
+export const ProjectRowSchema = z.object({
+  area: z.string(), slug: z.string(), title: z.string(), outcome: z.string().nullable(), next_action: z.string().nullable(), stage: StageSchema, owner: z.string().nullable(),
+  due: z.string().nullable(), needs_owner: z.string().nullable(), notes_path: z.string().nullable(), archived_at: z.string().nullable(), updated_at: z.string(),
+});
+export type ProjectRow = z.infer<typeof ProjectRowSchema>;
+export const ProjectListResponseSchema = z.object({ projects: z.array(ProjectRowSchema) });
+export type ProjectListResponse = z.infer<typeof ProjectListResponseSchema>;
+/** One row of the change history, as a page lists it. A `created` row carries no values. */
+export const TrackerEventSchema = z.object({
+  id: z.number().int(), at: z.string(), actor: z.string(), source: z.string(), kind: z.string(), field: z.string().nullable(),
+  from: z.unknown(), to: z.unknown(), note: z.string().nullable(), project: z.string().nullable(), project_title: z.string().nullable(),
+});
+export type TrackerEvent = z.infer<typeof TrackerEventSchema>;
+/** `GET /api/areas/:area`: everything the area page shows. A section the area does not have is null or empty. */
+export const AreaPageSchema = z.object({
+  area: z.object({
+    slug: z.string(), title: z.string(), status: AreaStatusSchema, division: z.string().nullable(), division_name: z.string().nullable(),
+    team: z.string().nullable(), team_name: z.string().nullable(), owner: z.string().nullable(), members: z.array(z.string()), health: z.string().nullable(),
+    needs_owner: z.string().nullable(), home_path: z.string().nullable(), archived_at: z.string().nullable(), updated_at: z.string(),
+  }),
+  /** The home note: its path, its `description` and the first section of its body. Null when the area has none that can be read. */
+  home: z.object({ path: z.string(), description: z.string().nullable(), excerpt: z.string().nullable() }).nullable(),
+  links: z.array(AreaLinkGroupSchema),
+  style: z.object({
+    guide: z.object({ path: z.string(), markdown: z.string().nullable(), truncated: z.boolean() }).nullable(),
+    assets: z.object({ path: z.string(), images: z.array(z.object({ path: z.string(), name: z.string() })), more: z.number().int() }).nullable(),
+    other: z.array(AreaLinkGroupSchema),
+  }).nullable(),
+  goals: z.array(z.object({ code: z.string().nullable(), text: z.string() })),
+  kpis: z.array(AreaKpiSchema),
+  roadmap: z.array(ProjectRowSchema),
+  recent: z.array(TrackerEventSchema),
+});
+export type AreaPage = z.infer<typeof AreaPageSchema>;
+/** `GET /api/projects/:area/:project`: everything the project page shows. */
+export const ProjectPageSchema = z.object({
+  project: ProjectRowSchema.extend({
+    area_title: z.string(), health: z.string().nullable(), blocked_on: z.string().nullable(), started: z.string().nullable(), shipped_at: z.string().nullable(),
+    /** True when the project is hidden because its area is archived, not the project itself. */
+    area_archived: z.boolean(),
+  }),
+  stages: z.array(z.object({ from: z.string().nullable(), to: z.string(), at: z.string(), by: z.string().nullable(), note: z.string().nullable() })),
+  verifications: z.array(TrackerVerificationSchema),
+  readme: z.object({ path: z.string(), excerpt: z.string().nullable() }).nullable(),
+});
+export type ProjectPage = z.infer<typeof ProjectPageSchema>;
 /**
  * The context pack of an area (`cli-areas show`, `GET /api/areas/:slug/context`): what an agent with a ticket on it
  * reads first. `links`, `style` and `goals` are the home note's frontmatter as the owner wrote it; paths, never file

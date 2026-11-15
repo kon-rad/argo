@@ -62,7 +62,7 @@ afterEach(() => {
 
 describe('Projects page', () => {
   it('overview shows needs-you and the gaps', async () => {
-    mount('/projects');
+    mount('/projects?view=overview');
     expect(await screen.findByRole('heading', { name: 'Needs you (1)' })).toBeTruthy();
     expect(screen.getAllByText(/Write the README pitch/).length).toBeGreaterThan(0);
     expect(screen.getByText(/W2 Livestream/)).toBeTruthy();
