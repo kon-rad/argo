@@ -90,7 +90,7 @@ export function instagramUnifiedRoutes(o: InstagramUnifiedOptions, vaultRoot: st
       const debug = await getJson<unknown>(get,
         `${base}/debug_token?input_token=${encodeURIComponent(token)}`, 'Facebook token validation', [token, appToken], { Authorization: `Bearer ${appToken}` });
       const credential = validateFacebookToken(debug, o.appId!, now(), attempt.asset_id);
-      // A system-user token already proved the selected asset through granular_scopes.
+      // A system-user token's asset is proved by the profile read below (granular target_ids are checked when Meta lists them).
       // For a USER token, /me/accounts proves management of the Page-linked IG asset, not just knowledge of its ID.
       let url: string | undefined = credential.kind === 'facebook-user' ? `${base}/me/accounts?fields=id,instagram_business_account&limit=100` : undefined;
       let owned = credential.kind === 'facebook-system-user';
@@ -124,7 +124,8 @@ export interface SystemUserImportOptions { appId?: string; appSecret?: string; e
  * configured Unified account. The login dialog cannot install an app into the
  * business that owns it, so this is the owner's own-business route. It applies
  * the same checks as the callback: debug_token says SYSTEM_USER for this app,
- * both scopes target this asset, and the asset resolves to this username.
+ * both scopes are granted (and target this asset when Meta lists targets), and
+ * reading the asset with the token resolves to this username.
  * USER tokens are refused here; they need the callback's Page ownership proof.
  */
 export async function importSystemUserToken(o: SystemUserImportOptions, vaultRoot: string, username: string, raw: string): Promise<{ username: string; expiresAt: Date | null }> {
