@@ -299,7 +299,7 @@ function UsageLedger({ claudeConfigured, onSelectBucketZone }: { claudeConfigure
 
       <section>
         <h2 className="text-sm font-semibold">Runs (bots and lanes)</h2>
-        <p className="text-xs text-[var(--ink-dim)]">One row per headless run (<code>claude -p</code> or zen-agent). Click a bot, reason, project or work type to filter on it. Cost is shown only where the runtime priced the run itself.</p>
+        <p className="text-xs text-[var(--ink-dim)]">One row per headless run (<code>claude -p</code> or zen-agent). Click a bot, reason, area or work type to filter on it. Cost is shown only where the runtime priced the run itself.</p>
         <DataTable label="Runs" phone="cards" className="w-full text-sm">
           <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
             <th>When</th><th>Who</th><th>Woken by</th><th>Card</th><th>Project</th><th>Work</th>
@@ -315,7 +315,7 @@ function UsageLedger({ claudeConfigured, onSelectBucketZone }: { claudeConfigure
                   <td>{w ? <Pick dim={w.dim} value={w.value} onPick={addFilter}>{r.agent_name ? <Link className="inline-flex items-center gap-1 underline" to={`/org/agents/${r.agent_name}`} onClick={(e) => e.stopPropagation()}><AgentAvatar name={r.agent_name} size={16} />{r.agent_name}</Link> : r.lane}</Pick> : ''}{r.resumed ? <span className="text-xs text-[var(--ink-faint)]" title="resumed its session"> ↻</span> : null}</td>
                   <td><Pick dim="reason" value={r.reason} onPick={addFilter} /></td>
                   <td>{r.task_id ? <Link className="underline" to={`/board/${r.task_id}`} title={r.card_title ?? ''}>{r.task_id}</Link> : ''}</td>
-                  <td><Pick dim="project" value={r.project_slug} onPick={addFilter}>{r.project_slug}{r.feature_slug ? `/${r.feature_slug}` : ''}</Pick></td>
+                  <td><Pick dim="area" value={r.area_slug} onPick={addFilter}>{r.area_slug}{r.project_slug ? `/${r.project_slug}` : ''}</Pick></td>
                   <td><Pick dim="work_type" value={r.work_type} onPick={addFilter} /></td>
                   <td className="text-right">{t === null ? '' : formatTokens(t)}</td>
                   <td className="text-right">{r.output == null ? '' : formatTokens(Number(r.output))}</td>

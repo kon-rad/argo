@@ -22,7 +22,7 @@ const EXACT: Record<string, Reply> = {
   'GET /file': fx.fileResponse,
   'GET /file/resolve': { resolved: {} },
   // projects
-  'GET /projects/report': (url: URL) => (url.searchParams.get('format') === 'markdown' ? fx.projectsMarkdown : fx.projectsReport),
+  'GET /areas/report': (url: URL) => (url.searchParams.get('format') === 'markdown' ? fx.projectsMarkdown : fx.projectsReport),
   'GET /org/tasks': { tasks: [] },
   // board
   'GET /board/boards': fx.boardBoards,

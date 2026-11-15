@@ -40,9 +40,9 @@ A first skill most people write: a weekly review that reads the week's dev logs 
 
 **Dev logs** are the record humans read. Per project, under `Projects/<project>/`: a design note, a `dev-log/README.md` that starts with the six-field `Resume` block, and one dated entry per session that says what changed, why, what broke, how it was tested, which commits. The format is in the "Dev logs" section of [`AGENTS.base.md`](https://github.com/kon-rad/argo/blob/main/vault-template/AGENTS.base.md); the gate enforces the entry, not the quality, so read them.
 
-**The tracker** (`MODULES=projects`) is the record agents update. Projects and features with stages (`idea`, `designing`, `building`, `testing`, `live`, `parked`, `done`), and verifications: a feature goes `live` or `done` only after a passing check is recorded. Agents use `cli-projects` (`report`, `list`, `add`, `set`, `verify`, `render`), and the `company-report` skill teaches them when: at the end of any build session, and whenever you ask "how are the projects?" or "what's blocked on me?". `cli-projects render` writes a markdown report into the vault, so the tracker is searchable like everything else, and a goals table in `goalsFile` ties features to goals.
+**The tracker** (`MODULES=projects`) is the record agents update. Areas (what you run, `active` or `parked`) hold projects (what you finish) with stages (`idea`, `designing`, `building`, `testing`, `live`, `parked`, `done`), and verifications: a project goes `live` or `done` only after a passing check is recorded. Agents use `cli-projects` (`report`, `list`, `add`, `set`, `verify`, `archive`) and `cli-areas` (`list`, `add`, `set`, `archive`, `render`), and the `company-report` skill teaches them when: at the end of any build session, and whenever you ask "how are the projects?" or "what's blocked on me?". `cli-areas render` writes a markdown report into the vault, so the tracker is searchable like everything else, and a goals table in `goalsFile` ties features to goals.
 
-Turn it on, then ask your agent for a company report. The first one is empty; `cli-projects import` brings in what already exists.
+Turn it on, then ask your agent for a company report. The first one is empty; `cli-areas import` brings in what already exists.
 
 ## Layer 3: a company of agents (the `org` module)
 

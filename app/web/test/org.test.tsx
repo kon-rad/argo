@@ -23,7 +23,7 @@ const CHANNELS = {
   ],
 };
 const msg = (id: number, channel_slug: string, author: string, body: string, extra: Record<string, unknown> = {}) => ({
-  id, channel_slug, thread_id: null, author, kind: 'message', body, mentions: [], urgent: false, task_id: null, project_slug: null, feature_slug: null, run_id: null,
+  id, channel_slug, thread_id: null, author, kind: 'message', body, mentions: [], urgent: false, task_id: null, area_slug: null, project_slug: null, run_id: null,
   created_at: '2026-10-15T04:22:00Z', ...extra,
 });
 const MESSAGES: Record<string, unknown[]> = {
@@ -86,9 +86,9 @@ function mount(path: string, over: MountOptions = {}, qc = new QueryClient({ def
       if (u.pathname === '/api/org/dm') return Response.json(msg(6, 'dm:atlas:owner', 'owner', 'hi'), { status: 201 });
       if (u.pathname === '/api/org/agents/atlas') return Response.json(over.agentPage ?? AGENT_PAGE);
       if (u.pathname === '/api/board/cards' && init?.method === 'POST') return Response.json({ card: { id: 't_new000', title: 'Ship it', status: 'ready', assignee: 'atlas' }, message: null }, { status: 201 });
-      if (u.pathname === '/api/board/cards') return Response.json({ cards: [{ id: 't_abc123', board_slug: 'exo', title: 'Wire the tasks route', status: 'ready', assignee: 'atlas', project_slug: 'secondbrain-app', feature_slug: 'org-page', created_by: 'owner', kind: 'work', priority: 3, contract: {}, created_at: '2026-10-15T05:00:00Z' }] });
-      if (u.pathname === '/api/org/tasks') return Response.json({ tasks: [{ task_id: 't_abc123', board: 'exo', title: 'Wire the tasks route', project_slug: 'secondbrain-app', feature_slug: 'org-page', assignee: 'atlas', created_by: 'owner', rounds: 0, created_at: '2026-10-15T05:00:00Z' }] });
-      if (u.pathname === '/api/projects/report') return Response.json({ projects: [{ slug: 'secondbrain-app', title: 'Second Brain app', team: 'platform', features: [{ slug: 'org-page', title: 'The /org page' }] }] });
+      if (u.pathname === '/api/board/cards') return Response.json({ cards: [{ id: 't_abc123', board_slug: 'exo', title: 'Wire the tasks route', status: 'ready', assignee: 'atlas', area_slug: 'secondbrain-app', project_slug: 'org-page', created_by: 'owner', kind: 'work', priority: 3, contract: {}, created_at: '2026-10-15T05:00:00Z' }] });
+      if (u.pathname === '/api/org/tasks') return Response.json({ tasks: [{ task_id: 't_abc123', board: 'exo', title: 'Wire the tasks route', area_slug: 'secondbrain-app', project_slug: 'org-page', assignee: 'atlas', created_by: 'owner', rounds: 0, created_at: '2026-10-15T05:00:00Z' }] });
+      if (u.pathname === '/api/areas/report') return Response.json({ areas: [{ slug: 'secondbrain-app', title: 'Second Brain app', team: 'platform', status: 'active', projects: [{ slug: 'org-page', title: 'The /org page' }] }] });
       return Response.json({ error: { message: `unexpected ${url}` } }, { status: 404 });
     }),
   );
@@ -277,7 +277,7 @@ describe('Org page', () => {
     // The finished wakes behind the memory file.
     expect(screen.getByText('Episodes (1)')).toBeTruthy();
     expect(rows.some((t) => /request changes · corrected · 14 turns · \$0\.4200/.test(t))).toBe(true);
-    // Cards come from the link rows even when the kanban (agent-hub) is unreachable, with their project and feature.
+    // Cards come from the link rows even when the kanban (agent-hub) is unreachable, with their area and project.
     expect(screen.getByRole('link', { name: 'Wire the tasks route' }).getAttribute('href')).toBe('/board/t_abc123');
     expect(screen.getByRole('link', { name: 'secondbrain-app/org-page' })).toBeTruthy();
     fireEvent.change(screen.getByLabelText('DM atlas'), { target: { value: 'hold the deploy' } });
@@ -295,18 +295,18 @@ describe('Org page', () => {
     expect(screen.getByText('No finished wakes recorded yet.')).toBeTruthy();
   });
 
-  it('gives a bot a card from its page: one card, one bot, one project', async () => {
+  it('gives a bot a card from its page: one card, one bot, one area', async () => {
     const calls = mount('/org/agents/atlas');
     await screen.findByText('Head of Platform');
     const give = screen.getByRole('button', { name: 'Give card' }) as HTMLButtonElement;
     fireEvent.change(screen.getByLabelText('Card for atlas'), { target: { value: 'Ship it' } });
-    expect(give.disabled).toBe(false); // a project is optional on the engine's board
+    expect(give.disabled).toBe(false); // an area is optional on the engine's board
     await waitFor(() => expect(screen.getByRole('option', { name: 'secondbrain-app' })).toBeTruthy());
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'secondbrain-app' } });
-    fireEvent.change(screen.getByLabelText('Feature'), { target: { value: 'org-page' } });
+    fireEvent.change(screen.getByLabelText('Area'), { target: { value: 'secondbrain-app' } });
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'org-page' } });
     fireEvent.click(give);
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')).toBe(true));
-    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')!.init?.body))).toEqual({ title: 'Ship it', assignee: 'atlas', project: 'secondbrain-app', feature: 'org-page' });
+    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')!.init?.body))).toEqual({ title: 'Ship it', assignee: 'atlas', area: 'secondbrain-app', project: 'org-page' });
     expect(await screen.findByText('card t_new000 created')).toBeTruthy();
   });
 

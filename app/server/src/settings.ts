@@ -440,7 +440,7 @@ const Settings = z.object({
     .prefault({}),
   projects: z
     .object({
-      /** Vault-relative file `cli-projects render` writes the report to. */
+      /** Vault-relative file `cli-areas render` writes the report to. The key and its default kept their names through the PARA rename. */
       reportFile: z.string().default('projects.md'),
     })
     .prefault({}),

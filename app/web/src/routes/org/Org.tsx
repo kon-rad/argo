@@ -72,9 +72,9 @@ function MessageCard({ m, teams, tz, showChannel, big }: { m: OrgMessage; teams:
         <span className="text-xs text-[var(--ink-faint)]" title={zoned(m.created_at, tz)}>{ago(m.created_at)}</span>
         <span className="text-xs text-[var(--ink-faint)]">#{m.id}</span>
         {m.task_id && <Link to={`/board/${m.task_id}`} className="text-xs text-[var(--accent)]">task {m.task_id}</Link>}
-        {m.project_slug && (
+        {m.area_slug && (
           <Link to="/projects?view=board" className="text-xs text-[var(--accent)]">
-            {m.project_slug}{m.feature_slug ? ` / ${m.feature_slug}` : ''}
+            {m.area_slug}{m.project_slug ? ` / ${m.project_slug}` : ''}
           </Link>
         )}
       </div>
@@ -465,13 +465,13 @@ function AgentPage() {
   const page = useQuery({ queryKey: ['org', 'agent', name], queryFn: () => api.orgAgent(name), refetchInterval: 15_000 });
   // The agent's cards on the engine's board (board module); without it the section says so.
   const board = useQuery({ queryKey: ['board', 'cards', { assignee: name }], queryFn: () => api.boardCards({ assignee: name, done_days: 30 }), retry: false, staleTime: 30_000 });
-  const projects = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, retry: false });
+  const areas = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, retry: false });
   const [dmText, setDmText] = useState('');
   const [cardTitle, setCardTitle] = useState('');
+  const [cardArea, setCardArea] = useState('');
   const [cardProject, setCardProject] = useState('');
-  const [cardFeature, setCardFeature] = useState('');
   const giveCard = useMutation({
-    mutationFn: () => api.boardCreate({ title: cardTitle, assignee: name, project: cardProject || undefined, feature: cardFeature || undefined }),
+    mutationFn: () => api.boardCreate({ title: cardTitle, assignee: name, area: cardArea || undefined, project: cardProject || undefined }),
     onSuccess: () => {
       setCardTitle('');
       void qc.invalidateQueries({ queryKey: ['org'] });
@@ -490,9 +490,9 @@ function AgentPage() {
   const p = page.data;
   if (!p) return null;
   const episodes = p.episodes ?? [];
-  const cardRows = (board.data?.cards ?? []).map((c) => ({ id: c.id, title: c.title, status: c.status, link: c.project_slug ? { project_slug: c.project_slug, feature_slug: c.feature_slug } : null }));
-  const projectList = projects.data?.projects ?? [];
-  const featureList = projectList.find((pr) => pr.slug === cardProject)?.features ?? [];
+  const cardRows = (board.data?.cards ?? []).map((c) => ({ id: c.id, title: c.title, status: c.status, link: c.area_slug ? { area_slug: c.area_slug, project_slug: c.project_slug } : null }));
+  const areaList = areas.data?.areas ?? [];
+  const projectList = areaList.find((pr) => pr.slug === cardArea)?.projects ?? [];
   const section = (title: string, children: React.ReactNode) => (
     <section className="rounded border border-[var(--rule)] p-3">
       <h2 className="mb-2 font-semibold tracking-tight">{title}</h2>
@@ -544,14 +544,14 @@ function AgentPage() {
             if (cardTitle.trim()) giveCard.mutate();
           }}
         >
-          <input aria-label={`Card for ${name}`} className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-sm" placeholder={`Give ${name} a card (one card, one bot, one project)`} maxLength={200} value={cardTitle} onChange={(e) => setCardTitle(e.target.value)} />
-          <select aria-label="Project" className="rounded border border-[var(--rule)] bg-transparent px-1 py-1 text-xs" value={cardProject} onChange={(e) => { setCardProject(e.target.value); setCardFeature(''); }}>
-            <option value="">project…</option>
-            {projectList.map((pr) => <option key={pr.slug} value={pr.slug}>{pr.slug}</option>)}
+          <input aria-label={`Card for ${name}`} className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-sm" placeholder={`Give ${name} a card (one card, one bot, one area)`} maxLength={200} value={cardTitle} onChange={(e) => setCardTitle(e.target.value)} />
+          <select aria-label="Area" className="rounded border border-[var(--rule)] bg-transparent px-1 py-1 text-xs" value={cardArea} onChange={(e) => { setCardArea(e.target.value); setCardProject(''); }}>
+            <option value="">area…</option>
+            {areaList.map((pr) => <option key={pr.slug} value={pr.slug}>{pr.slug}</option>)}
           </select>
-          <select aria-label="Feature" className="rounded border border-[var(--rule)] bg-transparent px-1 py-1 text-xs" value={cardFeature} onChange={(e) => setCardFeature(e.target.value)} disabled={!cardProject}>
-            <option value="">feature (optional)</option>
-            {featureList.map((f) => <option key={f.slug} value={f.slug}>{f.slug}</option>)}
+          <select aria-label="Project" className="rounded border border-[var(--rule)] bg-transparent px-1 py-1 text-xs" value={cardProject} onChange={(e) => setCardProject(e.target.value)} disabled={!cardArea}>
+            <option value="">project (optional)</option>
+            {projectList.map((f) => <option key={f.slug} value={f.slug}>{f.slug}</option>)}
           </select>
           <button type="submit" disabled={!cardTitle.trim() || giveCard.isPending} className="rounded bg-[var(--accent)] px-3 py-1 text-sm font-medium text-white disabled:opacity-50">Give card</button>
           {giveCard.isError && <span className="self-center text-xs text-[var(--warn)]">{giveCard.error.message}</span>}
@@ -575,7 +575,7 @@ function AgentPage() {
               <li key={t.id}>
                 <Link className="text-[var(--accent)]" to={`/board/${t.id}`}>{t.title}</Link>
                 <span className="text-xs text-[var(--ink-dim)]"> {t.status}</span>
-                {t.link?.project_slug && <span className="text-xs text-[var(--ink-dim)]"> · <Link className="text-[var(--accent)]" to="/projects?view=board">{t.link.project_slug}{t.link.feature_slug ? `/${t.link.feature_slug}` : ''}</Link></span>}
+                {t.link?.area_slug && <span className="text-xs text-[var(--ink-dim)]"> · <Link className="text-[var(--accent)]" to="/projects?view=board">{t.link.area_slug}{t.link.project_slug ? `/${t.link.project_slug}` : ''}</Link></span>}
               </li>
             ))}
           </ul>

@@ -80,7 +80,7 @@ async function table(name: string, phone: 'cards' | 'scroll', columns: string[])
 describe('table views on a phone, from the app data shapes', () => {
   it('Projects, Needs you: one card per item, with its action', async () => {
     open('/projects?view=needs');
-    const t = await table('Needs you', 'cards', ['Priority', 'Project / feature', 'What you need to do', 'Due', '']);
+    const t = await table('Needs you', 'cards', ['Priority', 'Area / project', 'What you need to do', 'Due', '']);
     for (const row of t.tBodies[0]!.rows) expect(within(row).getByRole('button', { name: 'done' })).toBeTruthy();
   });
 

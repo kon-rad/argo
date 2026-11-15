@@ -5,7 +5,7 @@
  * the browser checks pin the clock to NOW.
  */
 import type { BoardCard, BoardInfo, BoardToken } from '@secondbrain/contracts/board';
-import type { ProjectsMarkdownResponse, Stage, TrackerFeature, TrackerProject, TrackerReport } from '@secondbrain/contracts/projects';
+import type { Stage, TrackerArea, TrackerMarkdownResponse, TrackerProject, TrackerReport } from '@secondbrain/contracts/projects';
 import type {
   AgentSessionFacets, AgentSessionRow, AgentSummary, AppMeta, AuthState, CronJob, CronJobDetail, DbQueryResult, DbTable, FileResponse,
   FundOverview, LiveNow, OrgApproval, OrgChart, OrgChartAgent, OrgWakeRow, RingDay, RingNight, RingOverview, RunningNow, Source,
@@ -101,23 +101,25 @@ export const fileResponse = {
 const zeroStages = (): Record<Stage, number> => ({ idea: 0, designing: 0, building: 0, testing: 0, live: 0, parked: 0, done: 0 });
 const stages = (counts: Partial<Record<Stage, number>>): Record<Stage, number> => ({ ...zeroStages(), ...counts });
 
-const feature = (id: number, slug: string, title: string, stage: Stage, extra: Partial<TrackerFeature> = {}): TrackerFeature => ({
-  id, slug, title, stage, health: null, owner: null, goals: [], needs_owner: null, blocked_on: null, started: null, due: null, shipped_at: null,
-  notes_path: null, updated_at: '2026-11-12T10:00:00Z', updated_by: null, days_in_stage: 3, last_activity: '2026-11-12T10:00:00Z',
+const feature = (id: number, slug: string, title: string, stage: Stage, extra: Partial<TrackerProject> = {}): TrackerProject => ({
+  id, area: '', slug, title, outcome: null, next_action: null, stage, health: null, owner: null, goals: [], needs_owner: null, blocked_on: null, started: null, due: null, shipped_at: null,
+  notes_path: null, archived_at: null, updated_at: '2026-11-12T10:00:00Z', updated_by: null, days_in_stage: 3, last_activity: '2026-11-12T10:00:00Z',
   verification: null, verifications_total: 0, ...extra,
 });
 
-const project = (slug: string, title: string, stage: Stage, features: TrackerFeature[], extra: Partial<TrackerProject> = {}): TrackerProject => {
+/** An area and the projects inside it. `stage` is the old project stage; an area is parked or active. */
+const project = (slug: string, title: string, stage: Stage, features: TrackerProject[], extra: Partial<TrackerArea> & { area?: string; due?: string } = {}): TrackerArea => {
   const counts = zeroStages();
   for (const f of features) counts[f.stage] += 1;
+  const { area: _home, due: _due, ...rest } = extra;
   return {
-    slug, title, team: null, division: null, area: null, stage, health: null, priority: null, goals: [], needs_owner: null, blocked_on: null,
-    started: null, due: null, devlog_path: null, design_path: null, paths: [], repos: [], updated_at: '2026-11-13T08:00:00Z', updated_by: null,
-    days_in_stage: 5, next_action: null, features, counts, progress: features.length ? (counts.live + counts.done) / features.length : null, ...extra,
+    slug, title, team: null, division: null, status: stage === 'parked' ? 'parked' : 'active', health: null, priority: null, goals: [], needs_owner: null, blocked_on: null,
+    started: null, devlog_path: null, design_path: null, home_path: null, paths: [], repos: [], archived_at: null, updated_at: '2026-11-13T08:00:00Z', updated_by: null,
+    next_action: null, projects: features.map((f) => ({ ...f, area: slug })), counts, progress: features.length ? (counts.live + counts.done) / features.length : null, ...rest,
   };
 };
 
-const projects: TrackerProject[] = [
+const areas: TrackerArea[] = [
   project('garden-app', 'Garden app for shared household beds', 'building', [
     feature(1, 'seed-catalogue-import', 'Seed catalogue import from the spreadsheet', 'live', {
       health: 'green', owner: 'ada', goals: ['Q4'], started: '2026-10-20', shipped_at: '2026-11-11T15:00:00Z', notes_path: 'Projects/garden-app/Import.md',
@@ -148,12 +150,12 @@ const projects: TrackerProject[] = [
   project('bike-route-planner', 'Bike route planner', 'parked', [feature(10, 'elevation-profile', 'Elevation profile', 'parked')], { team: 'product' }),
 ];
 
-const item = (p: string, f: string | null, title: string, detail: string) => ({ project: p, feature: f, title, detail });
+const item = (a: string, p: string | null, title: string, detail: string) => ({ area: a, project: p, title, detail });
 
 export const projectsReport = {
   as_of: '2026-11-14T11:30:00Z',
   generated_at: '2026-11-14T11:30:05Z',
-  totals: { projects: stages({ idea: 1, designing: 1, building: 1, testing: 1, live: 1, parked: 1 }), features: stages({ idea: 1, designing: 2, building: 1, testing: 1, live: 3, parked: 1, done: 1 }) },
+  totals: { areas: { active: 5, parked: 1 }, projects: stages({ idea: 1, designing: 2, building: 1, testing: 1, live: 3, parked: 1, done: 1 }) },
   needs_owner: [
     { ...item('garden-app', null, 'Garden app for shared household beds', 'Approve the beta tester list. Twenty-five people replied to the form; eight of them share a household, so decide whether a household counts once or per person before the invites go out on Friday.'), priority: 1, due: '2026-11-15' },
     { ...item('garden-app', 'watering-reminders-on-the-phone', 'Watering reminders on the phone, with a quiet period at night', 'Choose the wording of the notification permission prompt. Two drafts are in the design note. The shorter one tested better with three people but does not mention the quiet period.'), priority: 1, due: '2026-11-21' },
@@ -163,39 +165,39 @@ export const projectsReport = {
     { ...item('reading-notes-archive', null, 'Reading notes archive with full text search', 'Say whether scanned books are in scope. If they are, the archive needs text recognition first and the estimate doubles.'), priority: null, due: null },
   ],
   divisions: [
-    { slug: 'apps', name: 'Apps', projects: ['garden-app', 'recipe-box-importer', 'reading-notes-archive'], in_flight: 2, shipped_7d: 2, needs_owner: 4, stages: stages({ idea: 1, building: 1, testing: 1 }) },
-    { slug: 'education', name: 'Education', projects: ['workshop-signups', 'household-budget-sheet'], in_flight: 1, shipped_7d: 1, needs_owner: 2, stages: stages({ designing: 1, live: 1 }) },
+    { slug: 'apps', name: 'Apps', areas: ['garden-app', 'recipe-box-importer', 'reading-notes-archive'], in_flight: 2, shipped_7d: 2, needs_owner: 4, statuses: { active: 2, parked: 0 } },
+    { slug: 'education', name: 'Education', areas: ['workshop-signups', 'household-budget-sheet'], in_flight: 1, shipped_7d: 1, needs_owner: 2, statuses: { active: 2, parked: 0 } },
   ],
   teams: [
-    { slug: 'product', name: 'Product', lead: 'ada', projects: ['garden-app', 'recipe-box-importer', 'bike-route-planner'], in_flight: 2, shipped_7d: 2, needs_owner: 3, stages: stages({ building: 1, testing: 1, parked: 1 }) },
-    { slug: 'growth', name: 'Growth', lead: null, projects: ['workshop-signups', 'household-budget-sheet'], in_flight: 1, shipped_7d: 1, needs_owner: 2, stages: stages({ designing: 1, live: 1 }) },
+    { slug: 'product', name: 'Product', lead: 'ada', areas: ['garden-app', 'recipe-box-importer', 'bike-route-planner'], in_flight: 2, shipped_7d: 2, needs_owner: 3, statuses: { active: 2, parked: 0 } },
+    { slug: 'growth', name: 'Growth', lead: null, areas: ['workshop-signups', 'household-budget-sheet'], in_flight: 1, shipped_7d: 1, needs_owner: 2, statuses: { active: 2, parked: 0 } },
   ],
   goals: [
-    { code: 'Y1', horizon: 'year', goal: 'A thousand households keep their garden, recipes and budget in apps they own', due: '2026-12-31', status: 'on track', projects: ['garden-app', 'recipe-box-importer', 'household-budget-sheet'], features: [] },
-    { code: 'Q4', horizon: 'quarter', goal: 'Public beta of the garden app with 25 testers who finish onboarding without help', due: '2026-12-05', status: 'at risk', projects: ['garden-app'], features: ['garden-app/seed-catalogue-import', 'garden-app/watering-reminders-on-the-phone'] },
-    { code: 'M11', horizon: 'month', goal: 'Reminders work on two phones', due: '2026-11-30', status: 'on track', projects: [], features: ['garden-app/watering-reminders-on-the-phone'] },
-    { code: 'M12', horizon: 'month', goal: 'December workshop sold out from the waiting list', due: null, status: 'not started', projects: ['workshop-signups'], features: ['workshop-signups/waiting-list'] },
-    { code: 'W46', horizon: 'week', goal: 'Twenty sample recipe cards read with fewer than two mistakes each', due: '2026-11-15', status: 'behind', projects: ['recipe-box-importer'], features: ['recipe-box-importer/photo-to-recipe'] },
-    { code: 'W47', horizon: 'week', goal: 'Decide the sync rule for shared beds', due: '2026-11-22', status: 'not started', projects: [], features: [] },
+    { code: 'Y1', horizon: 'year', goal: 'A thousand households keep their garden, recipes and budget in apps they own', due: '2026-12-31', status: 'on track', areas: ['garden-app', 'recipe-box-importer', 'household-budget-sheet'], projects: [] },
+    { code: 'Q4', horizon: 'quarter', goal: 'Public beta of the garden app with 25 testers who finish onboarding without help', due: '2026-12-05', status: 'at risk', areas: ['garden-app'], projects: ['garden-app/seed-catalogue-import', 'garden-app/watering-reminders-on-the-phone'] },
+    { code: 'M11', horizon: 'month', goal: 'Reminders work on two phones', due: '2026-11-30', status: 'on track', areas: [], projects: ['garden-app/watering-reminders-on-the-phone'] },
+    { code: 'M12', horizon: 'month', goal: 'December workshop sold out from the waiting list', due: null, status: 'not started', areas: ['workshop-signups'], projects: ['workshop-signups/waiting-list'] },
+    { code: 'W46', horizon: 'week', goal: 'Twenty sample recipe cards read with fewer than two mistakes each', due: '2026-11-15', status: 'behind', areas: ['recipe-box-importer'], projects: ['recipe-box-importer/photo-to-recipe'] },
+    { code: 'W47', horizon: 'week', goal: 'Decide the sync rule for shared beds', due: '2026-11-22', status: 'not started', areas: [], projects: [] },
   ],
   gaps: {
-    goals_uncovered: [{ code: 'W47', horizon: 'week', goal: 'Decide the sync rule for shared beds', due: '2026-11-22', status: 'not started', projects: [], features: [] }],
+    goals_uncovered: [{ code: 'W47', horizon: 'week', goal: 'Decide the sync rule for shared beds', due: '2026-11-22', status: 'not started', areas: [], projects: [] }],
     unverified_shipped: [item('workshop-signups', 'waiting-list', 'Waiting list with an automatic invite when a seat opens', 'live since 2026-11-12, no verification')],
     failing: [item('recipe-box-importer', 'photo-to-recipe', 'Photo of a handwritten card to a structured recipe', 'last check failed on 2026-11-10')],
     testing_unverified: [],
     stale: [item('bike-route-planner', null, 'Bike route planner', 'no activity for 40 days')],
     overdue: [item('recipe-box-importer', 'photo-to-recipe', 'Photo of a handwritten card to a structured recipe', 'due 2026-11-09')],
-    no_team: ['reading-notes-archive'], no_division: ['bike-route-planner'], no_features: ['reading-notes-archive'],
+    no_team: ['reading-notes-archive'], no_division: ['bike-route-planner'], no_projects: ['reading-notes-archive'],
   },
   oldest: [item('garden-app', 'shared-beds', 'Shared beds between two households', 'designing for 21 days')],
-  backlog: { total: 9, by_project: [{ project: 'garden-app', count: 5, oldest_days: 12 }, { project: 'recipe-box-importer', count: 4, oldest_days: 30 }] },
+  backlog: { total: 9, by_area: [{ area: 'garden-app', count: 5, oldest_days: 12 }, { area: 'recipe-box-importer', count: 4, oldest_days: 30 }] },
   moved_7d: [
-    { project: 'garden-app', feature: 'seed-catalogue-import', title: 'Seed catalogue import from the spreadsheet', from: 'testing', to: 'live', at: '2026-11-11T15:00:00Z', by: 'ada', note: 'import log attached' },
-    { project: 'workshop-signups', feature: null, title: 'Workshop sign-up page and waiting list', from: null, to: 'live', at: '2026-11-12T09:00:00Z', by: null, note: null },
+    { area: 'garden-app', project: 'seed-catalogue-import', title: 'Seed catalogue import from the spreadsheet', from: 'testing', to: 'live', at: '2026-11-11T15:00:00Z', by: 'ada', note: 'import log attached' },
+    { area: 'workshop-signups', project: null, title: 'Workshop sign-up page and waiting list', from: null, to: 'live', at: '2026-11-12T09:00:00Z', by: null, note: null },
   ],
   shipped_7d: [item('garden-app', 'seed-catalogue-import', 'Seed catalogue import from the spreadsheet', 'live'), item('workshop-signups', 'waiting-list', 'Waiting list with an automatic invite when a seat opens', 'live')],
   verified_7d: { pass: 3, fail: 1 },
-  projects,
+  areas,
 } satisfies TrackerReport;
 
 export const projectsMarkdown = {
@@ -216,7 +218,7 @@ export const projectsMarkdown = {
     '| Bike route planner | parked | product | | | | | |',
     '',
   ].join('\n'),
-} satisfies ProjectsMarkdownResponse;
+} satisfies TrackerMarkdownResponse;
 
 // ---- board ----
 
@@ -228,7 +230,7 @@ export const boardBoards = {
 } satisfies { boards: BoardInfo[] };
 
 const card = (id: string, title: string, status: BoardCard['status'], extra: Partial<BoardCard> = {}): BoardCard => ({
-  id, board_slug: 'main', title, body: null, contract: {}, status, priority: 2, assignee: null, created_by: 'owner', project_slug: null, feature_slug: null,
+  id, board_slug: 'main', title, body: null, contract: {}, status, priority: 2, assignee: null, created_by: 'owner', area_slug: null, project_slug: null,
   kind: 'task', work_type: null, needs: null, ship_now: false, repo: null, graph: null, node: null, rounds: 0, scheduled_for: null, block_kind: null,
   block_reason: null, result: null, created_at: '2026-11-12T09:00:00Z', started_at: null, completed_at: null, updated_at: '2026-11-13T09:00:00Z', ...extra,
 });
@@ -237,19 +239,19 @@ export const boardCards = {
   cards: [
     card('t_0a11', 'Sort the inbox of testers who replied to the beta form and mark shared households', 'triage', { priority: 1, created_by: 'ada' }),
     card('t_0a12', 'Idea: export a bed as a printable planting plan', 'triage', { kind: 'idea' }),
-    card('t_0b21', 'Write the two drafts of the notification permission prompt', 'todo', { assignee: 'brook', project_slug: 'garden-app', feature_slug: 'watering-reminders-on-the-phone', work_type: 'design', priority: 1 }),
-    card('t_0b22', 'Collect twenty more handwritten sample cards', 'todo', { assignee: 'ada', project_slug: 'recipe-box-importer', feature_slug: 'photo-to-recipe', needs: 'owner' }),
-    card('t_0c31', 'Send the workshop reminder', 'scheduled', { assignee: 'cyd', project_slug: 'workshop-signups', scheduled_for: '2026-11-20T08:00:00Z', kind: 'routine' }),
-    card('t_0d41', 'Quiet period at night for reminders, with the hours in settings', 'ready', { assignee: 'brook', project_slug: 'garden-app', feature_slug: 'watering-reminders-on-the-phone', work_type: 'build', repo: 'garden-app', contract: { objective: 'No reminder fires between 22:00 and 07:00 local time', verification: 'unit test on the scheduler', budget: { turns: 40, minutes: 30 } } }),
-    card('t_0d42', 'Fix the unit conversion rounding for teaspoons', 'ready', { assignee: 'ada', project_slug: 'recipe-box-importer', feature_slug: 'unit-conversion', work_type: 'fix', priority: 3 }),
-    card('t_0e51', 'Reminder scheduler: one row per bed and day, idempotent on retry', 'running', { assignee: 'brook', project_slug: 'garden-app', feature_slug: 'watering-reminders-on-the-phone', work_type: 'build', repo: 'garden-app', rounds: 2, started_at: '2026-11-14T11:20:00Z', ship_now: true }),
-    card('t_0e52', 'Research: how other planners handle two writers on one bed', 'running', { assignee: 'cyd', project_slug: 'garden-app', feature_slug: 'shared-beds', work_type: 'research', started_at: '2026-11-14T10:05:00Z' }),
-    card('t_0f61', 'Seed catalogue import: write rejected rows to a review file', 'review', { assignee: 'ada', project_slug: 'garden-app', feature_slug: 'seed-catalogue-import', work_type: 'build', repo: 'garden-app', rounds: 1, result: 'Branch pushed; 14 tests pass; needs approve.' }),
-    card('t_0g71', 'Photo to recipe: accuracy on cursive handwriting', 'blocked', { assignee: 'ada', project_slug: 'recipe-box-importer', feature_slug: 'photo-to-recipe', block_kind: 'needs-owner', block_reason: 'Only six cursive samples exist; twenty are needed for a meaningful number.' }),
-    card('t_0g72', 'Shared beds: decide the sync rule', 'blocked', { project_slug: 'garden-app', feature_slug: 'shared-beds', block_kind: 'decision', block_reason: 'Waiting for the research card', priority: 1 }),
-    card('t_0h81', 'Waiting list invite when a seat opens', 'done', { assignee: 'cyd', project_slug: 'workshop-signups', feature_slug: 'waiting-list', completed_at: '2026-11-12T09:00:00Z', result: 'Shipped and checked on a test seat.' }),
-    card('t_0h82', 'Monthly roll-up sketch', 'done', { assignee: 'dell', project_slug: 'household-budget-sheet', completed_at: '2026-11-10T16:00:00Z' }),
-    card('t_0i91', 'Old elevation profile spike', 'archived', { project_slug: 'bike-route-planner', completed_at: '2026-10-05T16:00:00Z' }),
+    card('t_0b21', 'Write the two drafts of the notification permission prompt', 'todo', { assignee: 'brook', area_slug: 'garden-app', project_slug: 'watering-reminders-on-the-phone', work_type: 'design', priority: 1 }),
+    card('t_0b22', 'Collect twenty more handwritten sample cards', 'todo', { assignee: 'ada', area_slug: 'recipe-box-importer', project_slug: 'photo-to-recipe', needs: 'owner' }),
+    card('t_0c31', 'Send the workshop reminder', 'scheduled', { assignee: 'cyd', area_slug: 'workshop-signups', scheduled_for: '2026-11-20T08:00:00Z', kind: 'routine' }),
+    card('t_0d41', 'Quiet period at night for reminders, with the hours in settings', 'ready', { assignee: 'brook', area_slug: 'garden-app', project_slug: 'watering-reminders-on-the-phone', work_type: 'build', repo: 'garden-app', contract: { objective: 'No reminder fires between 22:00 and 07:00 local time', verification: 'unit test on the scheduler', budget: { turns: 40, minutes: 30 } } }),
+    card('t_0d42', 'Fix the unit conversion rounding for teaspoons', 'ready', { assignee: 'ada', area_slug: 'recipe-box-importer', project_slug: 'unit-conversion', work_type: 'fix', priority: 3 }),
+    card('t_0e51', 'Reminder scheduler: one row per bed and day, idempotent on retry', 'running', { assignee: 'brook', area_slug: 'garden-app', project_slug: 'watering-reminders-on-the-phone', work_type: 'build', repo: 'garden-app', rounds: 2, started_at: '2026-11-14T11:20:00Z', ship_now: true }),
+    card('t_0e52', 'Research: how other planners handle two writers on one bed', 'running', { assignee: 'cyd', area_slug: 'garden-app', project_slug: 'shared-beds', work_type: 'research', started_at: '2026-11-14T10:05:00Z' }),
+    card('t_0f61', 'Seed catalogue import: write rejected rows to a review file', 'review', { assignee: 'ada', area_slug: 'garden-app', project_slug: 'seed-catalogue-import', work_type: 'build', repo: 'garden-app', rounds: 1, result: 'Branch pushed; 14 tests pass; needs approve.' }),
+    card('t_0g71', 'Photo to recipe: accuracy on cursive handwriting', 'blocked', { assignee: 'ada', area_slug: 'recipe-box-importer', project_slug: 'photo-to-recipe', block_kind: 'needs-owner', block_reason: 'Only six cursive samples exist; twenty are needed for a meaningful number.' }),
+    card('t_0g72', 'Shared beds: decide the sync rule', 'blocked', { area_slug: 'garden-app', project_slug: 'shared-beds', block_kind: 'decision', block_reason: 'Waiting for the research card', priority: 1 }),
+    card('t_0h81', 'Waiting list invite when a seat opens', 'done', { assignee: 'cyd', area_slug: 'workshop-signups', project_slug: 'waiting-list', completed_at: '2026-11-12T09:00:00Z', result: 'Shipped and checked on a test seat.' }),
+    card('t_0h82', 'Monthly roll-up sketch', 'done', { assignee: 'dell', area_slug: 'household-budget-sheet', completed_at: '2026-11-10T16:00:00Z' }),
+    card('t_0i91', 'Old elevation profile spike', 'archived', { area_slug: 'bike-route-planner', completed_at: '2026-10-05T16:00:00Z' }),
   ],
 } satisfies { cards: BoardCard[] };
 
@@ -310,8 +312,8 @@ export const dbSchema = {
     { name: 'usage_runs_with_labels', kind: 'view', rows: null, note: 'Each headless run joined to its card, project and feature labels.', columns: [
       { name: 'run_id', type: 'text', nullable: false, default: null, generated: false, pk: false, references: null },
       { name: 'agent_name', type: 'text', nullable: true, default: null, generated: false, pk: false, references: null },
+      { name: 'area_slug', type: 'text', nullable: true, default: null, generated: false, pk: false, references: null },
       { name: 'project_slug', type: 'text', nullable: true, default: null, generated: false, pk: false, references: null },
-      { name: 'feature_slug', type: 'text', nullable: true, default: null, generated: false, pk: false, references: null },
       { name: 'started_at', type: 'timestamp with time zone', nullable: true, default: null, generated: false, pk: false, references: null },
       { name: 'duration_ms', type: 'integer', nullable: true, default: null, generated: false, pk: false, references: null },
       { name: 'output_tokens', type: 'bigint', nullable: true, default: null, generated: false, pk: false, references: null },
@@ -427,8 +429,8 @@ const facets: Record<UsageDimension, UsageFacetValue[]> = {
   reason: [facet('task', 260, 6_100_000, 120_000), facet('routine', 90, 1_400_000, 30_000), facet('mention', 50, 900_000, 20_000), facet('dm', 33, 520_800, 19_650)],
   action: [facet('edit', 180, 3_900_000, 80_000), facet('read', 150, 3_000_000, 40_000), facet('post', 60, 700_000, 30_000)],
   work_type: [facet('build', 240, 5_600_000, 110_000), facet('research', 61, 902_300, 18_900), facet('design', 40, 800_000, 20_000), facet('fix', 22, 410_000, 9_000)],
-  project: [facet('garden-app', 320, 7_100_000, 150_000), facet('recipe-box-importer', 70, 1_300_000, 26_000), facet('workshop-signups', 31, 432_800, 10_550)],
-  feature: [facet('watering-reminders-on-the-phone', 190, 4_400_000, 92_000), facet('seed-catalogue-import', 90, 1_900_000, 40_000), facet('shared-beds', 40, 800_000, 18_000)],
+  area: [facet('garden-app', 320, 7_100_000, 150_000), facet('recipe-box-importer', 70, 1_300_000, 26_000), facet('workshop-signups', 31, 432_800, 10_550)],
+  project: [facet('watering-reminders-on-the-phone', 190, 4_400_000, 92_000), facet('seed-catalogue-import', 90, 1_900_000, 40_000), facet('shared-beds', 40, 800_000, 18_000)],
   task: [facet('t_0e51', 120, 2_800_000, 61_000), facet('t_0f61', 90, 1_900_000, 40_000), facet('t_0e52', 61, 902_300, 18_900)],
   host: [facet('server-a', 380, 8_000_000, 170_000), facet('laptop', 97, 2_170_800, 50_150)],
   headless: [facet('true', 433, 8_920_800, 189_650), facet('false', 44, 1_250_000, 30_500)],
@@ -450,14 +452,14 @@ export const usageRuns = {
     run('5b0c7a52-1111-4a6e-9c11-000000000001', {
       run_id: 'run-0e51-2', task_id: 't_0e51', lane: 'product', board: 'main', started_at: '2026-11-14T11:20:00Z', ended_at: '2026-11-14T11:41:30Z', duration_ms: 1_290_000, num_turns: 38,
       subtype: 'success', is_error: false, verify_name: 'npm test', verify_passed: true, verify_exit: 0, verify_metric: 195, verify_output: '195 passed', agent_name: 'brook', team_slug: 'product',
-      reason: 'task', reasons: [{ reason: 'task', ref: 't_0e51' }], work_type: 'build', project_slug: 'garden-app', feature_slug: 'watering-reminders-on-the-phone',
+      reason: 'task', reasons: [{ reason: 'task', ref: 't_0e51' }], work_type: 'build', area_slug: 'garden-app', project_slug: 'watering-reminders-on-the-phone',
       card_title: 'Reminder scheduler: one row per bed and day, idempotent on retry', resumed: true, surface: 'cli', calls: 52, input: 18_200, cache_write: 96_000, cache_read: 1_840_000, output: 31_400,
       runtime: 'zen-agent', source: 'zen-agent', tier: 'large', outcome: 'done', cost_usd: 1.2345, compactions: 1, blocked: 0,
     }),
     run('5b0c7a52-2222-4a6e-9c11-000000000002', {
       run_id: 'run-0f61-1', task_id: 't_0f61', board: 'main', started_at: '2026-11-14T09:02:00Z', ended_at: '2026-11-14T09:10:00Z', duration_ms: 480_000, num_turns: 21, subtype: 'success', is_error: false,
       verify_name: 'import fixture check with the rejected rows file', verify_passed: false, verify_exit: 1, verify_metric: null, verify_output: '2 rows missing', agent_name: 'ada', team_slug: 'product',
-      reason: 'task', work_type: 'build', project_slug: 'garden-app', feature_slug: 'seed-catalogue-import', card_title: 'Seed catalogue import: write rejected rows to a review file',
+      reason: 'task', work_type: 'build', area_slug: 'garden-app', project_slug: 'seed-catalogue-import', card_title: 'Seed catalogue import: write rejected rows to a review file',
       calls: 30, input: 9_100, cache_write: 41_000, cache_read: 720_000, output: 12_800, runtime: 'claude-code', source: 'claude-code',
     }),
     run('5b0c7a52-3333-4a6e-9c11-000000000003', {
@@ -466,7 +468,7 @@ export const usageRuns = {
     }),
     run('5b0c7a52-4444-4a6e-9c11-000000000004', {
       lane: 'growth', task_id: 't_0h82', started_at: '2026-11-13T16:40:00Z', ended_at: '2026-11-13T16:58:00Z', duration_ms: 1_080_000, num_turns: 17, work_type: 'design',
-      project_slug: 'household-budget-sheet', card_title: 'Monthly roll-up sketch', model: LONG_MODEL, calls: 19, input: 4_000, cache_write: 12_000, cache_read: 260_000, output: 8_900, runtime: 'zen-agent', tier: null, cost_usd: 0.0412,
+      area_slug: 'household-budget-sheet', card_title: 'Monthly roll-up sketch', model: LONG_MODEL, calls: 19, input: 4_000, cache_write: 12_000, cache_read: 260_000, output: 8_900, runtime: 'zen-agent', tier: null, cost_usd: 0.0412,
     }),
     run('5b0c7a52-5555-4a6e-9c11-000000000005', { host: 'laptop', run_id: 'run-routine-standup', started_at: '2026-11-14T08:00:00Z', agent_name: 'dell', team_slug: 'growth', reason: 'routine', calls: null }),
     run('5b0c7a52-6666-4a6e-9c11-000000000006'),
