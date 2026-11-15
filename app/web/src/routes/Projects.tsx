@@ -5,37 +5,27 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api, type OrgChart, type TaskLink } from '../lib/api.js';
 import { boardApi } from './board/api.js';
-import { projectsApi, STAGES, type AreaStatus, type Stage, type TrackerArea, type TrackerItem, type TrackerProject, type TrackerReport } from './Projects.api.js';
+import { projectsApi, STAGES, type Stage, type TrackerArea, type TrackerItem, type TrackerProject, type TrackerReport } from './Projects.api.js';
 import { ago } from '../lib/time.js';
+import ProjectList from './areas/ProjectList.js';
+import { STAGE_LABEL as LABEL, StatusChip } from './areas/parts.js';
 
 /**
- * The company view of the tracker: teams own areas (what you run, no end date), an area
+ * `/projects`. The default view is the list of projects across areas (./areas/ProjectList);
+ * the other tabs are the company view of the tracker: teams own areas (what you run, no end date), an area
  * holds projects (what you finish), each project moves idea (backlog) → designing →
  * building → testing → live, and nothing counts as shipped without a passing
  * verification. Data: the tracker tables, via /api/areas/report.
  */
 
-const LABEL: Record<Stage, string> = {
-  idea: 'Backlog', designing: 'Designing', building: 'Building', testing: 'Testing', live: 'Live', parked: 'Parked', done: 'Done',
-};
 const COLUMNS: Stage[] = ['idea', 'designing', 'building', 'testing', 'live'];
-const VIEWS = ['overview', 'divisions', 'board', 'needs', 'teams', 'goals', 'report'] as const;
+const VIEWS = ['list', 'overview', 'divisions', 'board', 'needs', 'teams', 'goals', 'report'] as const;
 type View = (typeof VIEWS)[number];
 const VIEW_LABEL: Record<View, string> = {
-  overview: 'Overview', divisions: 'Divisions', board: 'Board', needs: 'Needs you', teams: 'Teams', goals: 'Goals', report: 'Full report',
+  list: 'Projects', overview: 'Overview', divisions: 'Divisions', board: 'Board', needs: 'Needs you', teams: 'Teams', goals: 'Goals', report: 'Full report',
 };
 
-const chip = 'inline-block rounded border px-1.5 py-0.5 text-xs';
 const fileLink = (path: string | null) => (path ? `/file/${path}` : null);
-
-function StatusChip({ status }: { status: AreaStatus }) {
-  return <span className={`${chip} ${status === 'active' ? 'border-[var(--accent)]' : 'border-[var(--rule)] text-[var(--ink-dim)]'}`}>{status === 'active' ? 'Active' : 'Parked'}</span>;
-}
-
-function StageChip({ stage }: { stage: Stage }) {
-  const strong = stage === 'testing' || stage === 'live';
-  return <span className={`${chip} ${strong ? 'border-[var(--accent)]' : 'border-[var(--rule)] text-[var(--ink-dim)]'}`}>{LABEL[stage]}</span>;
-}
 
 /** Segmented by project stage; the text says the same thing, so color is never the only signal. */
 function Progress({ p }: { p: TrackerArea }) {
@@ -441,21 +431,22 @@ function FullReport() {
 
 export default function Projects() {
   const [params, setParams] = useSearchParams();
-  const view = (VIEWS as readonly string[]).includes(params.get('view') ?? '') ? (params.get('view') as View) : 'overview';
+  const view = (VIEWS as readonly string[]).includes(params.get('view') ?? '') ? (params.get('view') as View) : 'list';
   const report = useQuery({ queryKey: ['projects', 'report'], queryFn: projectsApi.report, refetchInterval: 60_000 });
   const r = report.data;
 
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
-        <h1 className="text-lg font-semibold tracking-tight">Areas and projects</h1>
+        <h1 className="text-lg font-semibold tracking-tight">Projects</h1>
+        <Link to="/areas" className="text-sm text-[var(--accent)] hover:underline">Areas</Link>
         {/* Scrolls inside its own strip on a phone instead of widening the page. */}
         <nav className="flex max-w-full gap-1 overflow-x-auto whitespace-nowrap text-sm" aria-label="Projects views">
           {VIEWS.map((v) => (
             <button
               key={v}
               type="button"
-              onClick={() => setParams(v === 'overview' ? {} : { view: v })}
+              onClick={() => setParams(v === 'list' ? {} : { view: v })}
               aria-current={v === view ? 'page' : undefined}
               className={`shrink-0 rounded px-2 py-1 ${v === view ? 'bg-[var(--paper-sunk)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}
             >
@@ -467,7 +458,8 @@ export default function Projects() {
         <span className="ml-auto text-xs text-[var(--ink-faint)]">{r?.as_of ? `updated ${ago(r.as_of)}` : ''}</span>
       </div>
       {report.isError && <p>⚠ {report.error.message}</p>}
-      {r && r.areas.length === 0 && (
+      {view === 'list' && <ProjectList />}
+      {r && view !== 'list' && r.areas.length === 0 && (
         <p className="mb-3 text-sm text-[var(--ink-dim)]">
           No areas in this database yet. Add one with `cli-areas add`, then its projects with `cli-projects add`, or point this app at the database that holds the tracker.
         </p>

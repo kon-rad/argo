@@ -18,12 +18,22 @@ import { expect, test, type Page } from '@playwright/test';
  * set E2E_APP_HOST to the name the browser reaches this machine by.
  * (the optional pages only exist when their module is on; a route the app
  * answers "No such page" for is skipped).
+ *
+ * The area and project pages need a slug: E2E_AREA (default `example`) and
+ * E2E_PROJECT (default `example-project`) name an area and one of its projects
+ * in the database the app runs on. Without them the pages are checked in their
+ * "no such area" state. web/e2e/seed-areas.mjs fills a scratch database and a
+ * scratch vault with made-up ones that have every section.
  */
+
+const AREA = process.env.E2E_AREA ?? 'example';
+const PROJECT = process.env.E2E_PROJECT ?? 'example-project';
 
 const ROUTES = [
   '/', '/search?q=test', '/vector-search', '/database', '/sources', '/cron', '/ring', '/memory',
   '/agents/chat', '/agents/zen', '/agents/history',
-  '/projects', '/projects?view=board', '/projects?view=needs', '/projects?view=teams', '/projects?view=goals', '/projects?view=report',
+  '/areas', `/areas/${AREA}`, `/projects/${AREA}/${PROJECT}`,
+  '/projects', '/projects?view=overview', '/projects?view=divisions', '/projects?view=board', '/projects?view=needs', '/projects?view=teams', '/projects?view=goals', '/projects?view=report',
   '/org', '/org/chart', '/org/live', '/org/approvals',
   '/board', '/usage', '/usage?view=account', '/usage/live', '/desk',
   '/media', '/uploads', '/fund', '/map', '/tv',

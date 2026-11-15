@@ -9,13 +9,18 @@ import {
   aliasStillWorks, AREA_FIELDS, consoleIo, EXIT_ALIAS_ENDED, parseArgs, patchFrom, printError, target, text, whoAmI, writeIfChanged,
   type Args, type CliIo,
 } from './cli-shared.js';
-import { buildReport, getBoard, importSeed, removeArea, setAreaArchived, TrackerError, upsertArea, upsertDivision, upsertTeam } from './service/index.js';
+import {
+  buildAreaContext, buildReport, buildWeeklyReview, getBoard, importSeed, inVault, mergeReview, recordKpi, removeArea, renderContextText, renderReviewBlock,
+  resolveWeek, setAreaArchived, TrackerError, upsertArea, upsertDivision, upsertTeam, withTrackerSource,
+} from './service/index.js';
 import { renderMarkdown, renderStandup, renderTelegram } from './service/report.js';
 
 const USAGE = `cli-areas: the areas of the tracker (Postgres). Areas are what you run: they have no end date.
 The finite work inside an area is its projects: see cli-projects.
 
   list [--archived]                                  areas with their projects, one line each
+  show <area> [--project P] [--format text|json]     the context pack: what it is, links, style paths, goals, KPIs, roadmap, the last 14 days
+  review [--week YYYY-Www|ending]                    write the weekly review to <areas.reviewDir>/<week>.md (default: this week)
   report [--format markdown|standup|telegram|json]   the company report (default: telegram)
   render [path]                                      write the markdown report to projects.reportFile (only if it changed)
   add <area> --title T [fields]                      a new area (starts active)
@@ -23,6 +28,8 @@ The finite work inside an area is its projects: see cli-projects.
   archive <area> [--note "why"]                      hide it and its projects from every active view; deletes nothing
   archive <area> --purge [--into A] [--yes]          delete it and its projects for good, re-tag its memory facts to A; dry run without --yes
   unarchive <area> [--note "why"]                    bring it back as it was
+  record <area> <kpi> <value> [--at D] [--note "why"]
+                                                     one KPI reading; <kpi> is a key from the kpis: frontmatter of the area's home note
   team <team> --name N [--mission M] [--lead L] [--members a,b]
   division <division> --name N [--mission M] [--head H] [--sort N]
   import <file.json>                                 teams + areas + projects, idempotent
@@ -47,7 +54,12 @@ function areaPatch(opts: Args['opts'], io: CliIo): Record<string, unknown> | nul
   return patch;
 }
 
-export async function runAreasCli(argv: string[], io: CliIo = consoleIo()): Promise<number> {
+/** Everything this CLI writes is recorded in the change history with the source `cli`. */
+export function runAreasCli(argv: string[], io: CliIo = consoleIo()): Promise<number> {
+  return withTrackerSource('cli', () => areasCli(argv, io));
+}
+
+async function areasCli(argv: string[], io: CliIo): Promise<number> {
   const [cmd, ...rest] = argv;
   const { pos, opts } = parseArgs(rest);
   const by = whoAmI(opts);
@@ -75,6 +87,32 @@ export async function runAreasCli(argv: string[], io: CliIo = consoleIo()): Prom
           io.out(`  ${a.slug}/${p.slug} [${p.stage} ${p.days_in_stage}d${p.archived_at ? ' archived' : ''}]${v}${p.needs_owner ? ` NEEDS: ${p.needs_owner}` : ''}  ${p.title}`);
         }
       }
+      return 0;
+    }
+    case 'show': {
+      // `show <area>/<project>` reads the same as `show <area> --project <project>`.
+      const { area, project } = target(pos[0]);
+      const format = z.enum(['text', 'json']).parse(text(opts.format) ?? 'text');
+      const ctx = await buildAreaContext(vault, area, { project: text(opts.project) ?? project, now: io.now });
+      io.out(format === 'json' ? JSON.stringify(ctx, null, 2) : renderContextText(ctx).trimEnd());
+      return 0;
+    }
+    case 'review': {
+      const s = settings(vault);
+      const timezone = s.timezone ?? 'UTC';
+      const dir = inVault(s.areas.reviewDir);
+      if (!dir) throw new TrackerError(`areas.reviewDir is a folder inside the vault, relative to its root (got "${s.areas.reviewDir}")`);
+      const week = resolveWeek(text(opts.week), io.now, timezone);
+      const review = await buildWeeklyReview(vault, week, { now: io.now, timezone });
+      const path = join(vault, dir, `${week}.md`);
+      let existing: string | null = null;
+      try {
+        existing = readFileSync(path, 'utf8');
+      } catch {
+        // no review for this week yet
+      }
+      const changed = writeIfChanged(path, mergeReview(existing, renderReviewBlock(review), review));
+      io.out(`${changed ? 'wrote' : 'unchanged'} ${path} (${review.areas.length} with changes, ${review.quiet.length} quiet)`);
       return 0;
     }
     case 'add': {
@@ -118,6 +156,16 @@ export async function runAreasCli(argv: string[], io: CliIo = consoleIo()): Prom
       if (project) throw new TrackerError(`unarchive takes <area>; for a project use: cli-projects unarchive ${area}/${project}`);
       const r = await setAreaArchived(area, false, by, text(opts.note));
       io.out(r.changed ? `unarchived area ${area}` : `${area} was not archived`);
+      return 0;
+    }
+    case 'record': {
+      const [ref, key, value] = pos;
+      const { area, project } = target(ref);
+      if (project) throw new TrackerError('record takes <area>: a KPI belongs to an area');
+      if (!key || value === undefined) throw new TrackerError('record <area> <kpi> <value> [--at D] [--note "why"]');
+      if (!/^-?\d+(\.\d+)?$/.test(value)) throw new TrackerError(`the value is a number, e.g. 42 or 3.5 (got "${value}")`);
+      const r = await recordKpi(vault, area, { key, value: Number(value), at: text(opts.at), note: text(opts.note) }, by);
+      io.out(`recorded ${area} ${key} = ${value} (reading ${r.id})`);
       return 0;
     }
     case 'team': {

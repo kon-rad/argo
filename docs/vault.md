@@ -36,6 +36,22 @@ Areas are what you run, projects are what you finish, the home note is what you 
 - **Project folders.** When an area has a home, `cli-projects add <area>/<project> --outcome "..."` also creates `<home>/projects/<project>/README.md` with frontmatter (`kind: project`, `area`, `project`, `outcome`) and records it as the project's notes. A README that already exists is never overwritten. Top-level `Projects/` stays for work that belongs to no area.
 - **Archive.** `cli-areas archive <area>` and `cli-projects archive <area>/<project>` hide a row from every active view (`--archived` shows them) and delete nothing: the stage and the history stay, and `unarchive` brings it back as it was. Archiving an area hides its projects with it. Real deletion is `archive --purge --yes`.
 - **Stages are for projects.** `done` means the outcome was reached and `parked` means paused. An area is only `active` or `parked`.
+- **Change history.** Every change to an area or a project is kept in one log, `tracker_events`: who, how (`cli`, `api`, `board`), which field, the old and the new value. Database triggers write it, one row per changed column, so no command can forget to. The log is append-only. See [modules.md](modules.md#change-history).
+- **Home note frontmatter.** A home note says what it is: `kind: area` and `area: <slug>`, or `kind: project` with `area:` and `project:`. When the scanner sees the frontmatter of such a note change, it adds one row to the log per top-level key that differs (`kpis`, `links`, ...), with both values. Editing the body logs nothing: git keeps that. The first time a note is indexed is the baseline, not a change.
+- **The context pack and the weekly review.** `cli-areas show <area>` prints what the home note and the tracker say about an area in one page (links, style paths, goals, KPIs, roadmap, the last 14 days), for an agent about to work on it. `cli-areas review` writes the week's changes to `Areas/weekly-review/<week>.md` and leaves your `## Reflection` alone ([modules.md](modules.md#context-pack)).
+- **KPIs are optional.** An area defines them in its home note, and records readings with `cli-areas record <area> <kpi> <value>`:
+
+  ```yaml
+  ---
+  area: newsletter
+  kind: area
+  kpis:
+    - {key: subscribers, name: Subscribers, unit: people, target: 1000}
+  ---
+  ```
+
+  A key that is not in `kpis:` is refused, with the list of the keys that are, so a typo never starts a second series. An area with no `kpis:` has no KPIs anywhere. A KPI where lower is better (a cost, a response time) says `direction: down`, so "at target" is judged the right way round.
+- **The area page reads the home note.** `/areas/<area>` shows `description`, `links` (websites, repos, socials, anything else, as given), `style.guide` (rendered), the images in the `style.assets` folder, `goals` and `kpis`, next to the roadmap and the recent history from the tracker. Every key is optional, and a section with nothing in it is not drawn. See [modules.md](modules.md#the-area-page).
 
 The tracker was renamed to these words in one step (what it called a project is an area, what it called a feature is a project). The old commands keep working for 14 days, each with a warning that names the new one: see [modules.md](modules.md#projects).
 

@@ -19,6 +19,9 @@ export const Verdict = z.object({
   findings: z.array(Finding).max(30),
 }).strict();
 export type Verdict = z.infer<typeof Verdict>;
+/** The shape the reviewer model is asked for. `code` is set by the gate, never by the model, and the model's strict
+ *  output schema must list every property as required: an optional `code` made the provider refuse every review. */
+export const ReviewerVerdict = Verdict.extend({ findings: z.array(Finding.omit({ code: true })).max(30) });
 export interface Job {
   id: number; card: string; builder: string; reviewer: string; target: string; round: number;
   state: 'queued' | 'reviewing' | 'approved' | 'merging' | 'merged' | 'deploying' | 'deployed' | 'blocked' | 'rejected' | 'done';

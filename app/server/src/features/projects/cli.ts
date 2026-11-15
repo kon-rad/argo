@@ -7,7 +7,7 @@ import {
   type CliIo,
 } from './cli-shared.js';
 import {
-  addVerification, createProjectNote, listProjects, removeProject, setProjectArchived, STAGES, TrackerError, upsertProject, type Stage,
+  addVerification, createProjectNote, listProjects, removeProject, setProjectArchived, STAGES, TrackerError, upsertProject, withTrackerSource, type Stage,
 } from './service/index.js';
 
 export { ALIAS_ENDS, parseArgs, patchFrom, writeIfChanged } from './cli-shared.js';
@@ -43,7 +43,12 @@ async function forward(old: string, verb: string, rest: string[], io: CliIo, hin
   return runAreasCli([verb, ...rest], io);
 }
 
-export async function runProjectsCli(argv: string[], io: CliIo = consoleIo()): Promise<number> {
+/** Everything this CLI writes is recorded in the change history with the source `cli`. */
+export function runProjectsCli(argv: string[], io: CliIo = consoleIo()): Promise<number> {
+  return withTrackerSource('cli', () => projectsCli(argv, io));
+}
+
+async function projectsCli(argv: string[], io: CliIo): Promise<number> {
   const [cmd, ...rest] = argv;
   const { pos, opts } = parseArgs(rest);
   const by = whoAmI(opts);

@@ -30,7 +30,7 @@ import ShortcutsHelp from './components/ShortcutsHelp.js';
 import ChatButton from './components/chat/ChatButton.js';
 // Markdown rendering and the stream client are only needed once the panel opens.
 const ChatPanel = lazy(() => import('./components/chat/ChatPanel.js'));
-import { available, HELP_CODE, isChord, isKey, target } from './lib/shortcuts.js';
+import { available, availableGo, goStep, HELP_CODE, isChord, isKey, target } from './lib/shortcuts.js';
 
 const navClass = ({ isActive }: { isActive: boolean }): string =>
   `px-2 py-1 rounded ${isActive ? 'text-[var(--ink)] bg-[var(--paper-sunk)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
@@ -77,6 +77,9 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
   const modules = new Set(meta.data?.modules ?? []);
   const moduleKey = (meta.data?.modules ?? []).join(',');
   const shortcuts = useMemo(() => available(new Set(moduleKey.split(','))), [moduleKey]);
+  const goShortcuts = useMemo(() => availableGo(new Set(moduleKey.split(','))), [moduleKey]);
+  // When `g` was last pressed, for the `g a` style sequences.
+  const goArmedAt = useRef<number | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const closeChat = useCallback(() => setChatOpen(false), []);
@@ -107,7 +110,19 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         searchRef.current?.select();
         return;
       }
-      if (event.repeat || !isChord(event)) return;
+      if (event.repeat) return;
+      if (!isChord(event)) {
+        // `g` then a letter, no modifier held: g a opens the areas.
+        if (event.defaultPrevented) return;
+        const step = goStep(event, goArmedAt.current, Date.now(), goShortcuts);
+        goArmedAt.current = step.armedAt;
+        if (step.to) {
+          event.preventDefault();
+          setHelpOpen(false);
+          navigate(step.to);
+        }
+        return;
+      }
       if (isKey(event, HELP_CODE)) {
         event.preventDefault();
         setHelpOpen((o) => !o);
@@ -122,7 +137,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [navigate, shortcuts]);
+  }, [navigate, shortcuts, goShortcuts]);
 
   return (
     <div className="flex h-full flex-col">
@@ -177,7 +192,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {/* chat module: the assistant over the vault, in a panel over any page. */}
           {modules.has('chat') && <ChatButton open={chatOpen} onClick={() => setChatOpen((o) => !o)} />}
-          <ShortcutsHelp shortcuts={shortcuts} open={helpOpen} onOpenChange={setHelpOpen} build={meta.data} />
+          <ShortcutsHelp shortcuts={shortcuts} go={goShortcuts} open={helpOpen} onOpenChange={setHelpOpen} build={meta.data} />
         </div>
         </div>
       </header>

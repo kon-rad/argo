@@ -147,7 +147,7 @@ Everything beyond browse, search and the database page is a module. A module tha
 |---|---|
 | `ring` | The Ring page: wearable ring data a client pushes in |
 | `agents` | Agents and Cron pages over an agent-hub (Claude chats and Hermes history) and over `zen-agent serve` (zen-agent chats with a live trace; `ZEN_AGENT_URL`, `ZEN_AGENT_TOKEN`) |
-| `projects` | A tracker of areas and projects (divisions, stages, verifications, archive) on `/projects`, `cli-areas` and `cli-projects`, a kiosk feed and a rendered markdown report |
+| `projects` | A tracker of areas and projects (divisions, stages, verifications, archive) on `/areas` and `/projects`, `cli-areas` and `cli-projects`, a kiosk feed and a rendered markdown report |
 | `org` | An agent company's message board on `/org` (`cli-org`): channels, DMs, wakeups for a dispatcher, row-level security per agent |
 | `board` | The kanban board on `/board` (`cli-board`): cards next to the tracker and the org, written through `board_*` SQL functions, claimed and finished by lanes, reachable from any machine with a per-device token (see `docs/board-design.md`) |
 | `usage` | A ledger on `/usage`, with manifest-selected Claude Code/Codex subscription quotas, API credit balances and configurable sections; also the ingest route each machine's agent ledger syncs to (below) |
@@ -200,6 +200,7 @@ Settings that don't fit one env line live in the vault, in `secondbrain.json` at
 | `uploads.destinations`, `uploads.m1Dir` | uploads | Folder presets for the Uploads page (label, vault path, keywords) and where the second machine files its copy |
 | `usage.subscriptions`, `usage.credits`, `usage.sections` | usage | Which subscription quotas, prepaid balances and page sections appear; provider lists default to empty |
 | `projects.reportFile` | projects | Where `cli-areas render` writes the report (default `projects.md`) |
+| `areas.reviewDir` | projects | Folder `cli-areas review` writes the weekly review to (default `Areas/weekly-review`) |
 | `garden.*` | garden | Shelf roots, archive folder, catalog and report paths, age thresholds, caps, pinned shelves, `apply` |
 
 Then `secondbrain scan` to build the index and `secondbrain embed` to build the vector index. Every setting: [docs/configuration.md](../docs/configuration.md).
