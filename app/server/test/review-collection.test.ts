@@ -22,7 +22,7 @@ it('requests an immutable aggregate diff with the same flags as actual admission
   expect(await github.diff(revision)).toBe('net diff');
   expect(github.git).toHaveBeenCalledWith(['fetch', '--no-tags', 'https://github.com/example/engine.git', head, base]);
   expect(github.git).toHaveBeenCalledWith(['diff', '--name-only', '--no-renames', '-z', base, head, '--']);
-  expect(github.git).toHaveBeenCalledWith(['diff', '--no-ext-diff', '--no-textconv', '--binary', base, head, '--']);
+  expect(github.git).toHaveBeenCalledWith(['diff', '--no-ext-diff', '--no-textconv', '--binary', base, head, '--'], 64_000_000);
   expect(github.gh).not.toHaveBeenCalled();
 });
 

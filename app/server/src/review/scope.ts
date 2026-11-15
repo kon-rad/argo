@@ -43,9 +43,11 @@ export function immediateImports(path: string, text: string, tracked: Set<string
   return [...found];
 }
 /** Shared exact-revision selector. Imports are one level from changed head sources only. */
-export async function collectCode(files: ChangedFile[], head: string, base: string, tracked: Set<string>, read: (revision: string, path: string) => Promise<string>, exclude: string[] = []): Promise<CodeSource[]> {
+export async function collectCode(files: ChangedFile[], head: string, base: string, tracked: Set<string>, read: (revision: string, path: string) => Promise<string>, exclude: string[] = [], enforce = true): Promise<CodeSource[]> {
   checkPaths(files, exclude);
-  requireCapacity(evaluate(scopeObservation(files, [], ''), 'actual'));
+  // The planning CLI stops at its budgets; the gate (enforce=false) reads every source and reviews in passes.
+  const capacity = (result: Parameters<typeof requireCapacity>[0]) => { if (enforce) requireCapacity(result); };
+  capacity(evaluate(scopeObservation(files, [], ''), 'actual'));
   const selected = new Map(files.filter(f => reviewable(f.path)).map(f => [f.path, f.status === 'removed' ? base : head]));
   const result = new Map<string, CodeSource>();
   const add = async (path: string, revision: string) => {
@@ -61,9 +63,9 @@ export async function collectCode(files: ChangedFile[], head: string, base: stri
     }
   }
   // Check the import count before reading additional source material.
-  requireCapacity(evaluate({ ...scopeObservation(files, [...result.values()], ''), sources: selected.size }, 'actual'));
+  capacity(evaluate({ ...scopeObservation(files, [...result.values()], ''), sources: selected.size }, 'actual'));
   for (const [path, revision] of selected) await add(path, revision);
   const sources = [...result.values()];
-  requireCapacity(evaluate(scopeObservation(files, sources, ''), 'actual'));
+  capacity(evaluate(scopeObservation(files, sources, ''), 'actual'));
   return sources;
 }
