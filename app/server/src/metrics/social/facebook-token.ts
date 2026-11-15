@@ -72,8 +72,11 @@ export function validateFacebookUserToken(input: unknown, appId: string, now: nu
 /**
  * Validate the two locally supported Facebook Unified token contracts.
  *
- * SYSTEM_USER permissions must each name the intended asset in target_ids. A
- * grant without target_ids cannot prove account selection and is refused. Zero
+ * SYSTEM_USER: when a required grant lists target_ids it must include the
+ * intended asset, otherwise the token is refused. Meta omits target_ids for a
+ * system user whose assets are assigned in Business Settings; such a grant is
+ * accepted here, and the caller must prove access by reading the asset with the
+ * token before storing it (both callers do: GET /{asset}?fields=id,username). Zero
  * means no limit for SYSTEM_USER expiry and data-access expiry; every non-zero
  * limit is enforced. USER asset ownership is intentionally outside this pure
  * token check and must be established through the account lookup before use.
@@ -99,7 +102,7 @@ export function validateFacebookToken(
   }
   for (const scope of SYSTEM_USER_SCOPES) {
     const grant = data.granular_scopes.find((candidate) => candidate.scope === scope);
-    if (!grant?.target_ids?.includes(assetId)) {
+    if (!grant || (grant.target_ids && !grant.target_ids.includes(assetId))) {
       throw new Error('asset not selected for this credential');
     }
   }

@@ -5,7 +5,7 @@ import { sessionCookieHash } from '../../auth/router.js';
 import { query } from '../../db.js';
 import { settings } from '../../settings.js';
 import type { HttpGet } from '../collect.js';
-import { fetchGet, getJson } from './http.js';
+import { fetchGet, getJson, redact } from './http.js';
 import { validateFacebookToken } from './facebook-token.js';
 import { saveToken } from './tokens.js';
 
@@ -90,7 +90,7 @@ export function instagramUnifiedRoutes(o: InstagramUnifiedOptions, vaultRoot: st
       const debug = await getJson<unknown>(get,
         `${base}/debug_token?input_token=${encodeURIComponent(token)}`, 'Facebook token validation', [token, appToken], { Authorization: `Bearer ${appToken}` });
       const credential = validateFacebookToken(debug, o.appId!, now(), attempt.asset_id);
-      // A system-user token already proved the selected asset through granular_scopes.
+      // A system-user token's asset is proved by the profile read below (granular target_ids are checked when Meta lists them).
       // For a USER token, /me/accounts proves management of the Page-linked IG asset, not just knowledge of its ID.
       let url: string | undefined = credential.kind === 'facebook-user' ? `${base}/me/accounts?fields=id,instagram_business_account&limit=100` : undefined;
       let owned = credential.kind === 'facebook-system-user';
@@ -115,4 +115,40 @@ export function instagramUnifiedRoutes(o: InstagramUnifiedOptions, vaultRoot: st
     }
   });
   return { start, callback };
+}
+
+export interface SystemUserImportOptions { appId?: string; appSecret?: string; encKey?: string; get?: HttpGet; now?: () => number }
+
+/**
+ * Store a system-user token the owner generated in Business Settings for a
+ * configured Unified account. The login dialog cannot install an app into the
+ * business that owns it, so this is the owner's own-business route. It applies
+ * the same checks as the callback: debug_token says SYSTEM_USER for this app,
+ * both scopes are granted (and target this asset when Meta lists targets), and
+ * reading the asset with the token resolves to this username.
+ * USER tokens are refused here; they need the callback's Page ownership proof.
+ */
+export async function importSystemUserToken(o: SystemUserImportOptions, vaultRoot: string, username: string, raw: string): Promise<{ username: string; expiresAt: Date | null }> {
+  if (!o.appId || !o.appSecret || !o.encKey) throw new Error('FACEBOOK_APP_ID, FACEBOOK_APP_SECRET and SOCIAL_TOKEN_ENC_KEY must be set');
+  const s = settings(vaultRoot).socialMetrics;
+  const account = s.instagram.find(a => a.username.toLowerCase() === username.toLowerCase());
+  if (!account || account.login !== 'unified' || !account.assetId) throw new Error(`@${username} needs "login": "unified" and an assetId in socialMetrics.instagram`);
+  const token = raw.trim();
+  if (!token || /\s/.test(token)) throw new Error('expected one token on stdin');
+  const get = o.get ?? fetchGet, now = o.now ?? Date.now;
+  const base = `https://graph.facebook.com/${s.instagramApiVersion}`;
+  const appToken = `${o.appId}|${o.appSecret}`;
+  const secrets = [token, o.appSecret, appToken];
+  try {
+    const debug = await getJson<unknown>(get, `${base}/debug_token?input_token=${encodeURIComponent(token)}`, 'Facebook token validation', secrets, { Authorization: `Bearer ${appToken}` });
+    const credential = validateFacebookToken(debug, o.appId, now(), account.assetId);
+    if (credential.kind !== 'facebook-system-user') throw new Error('not a system-user token; connect user tokens from the authenticated app');
+    const profile = await getJson<{ id?: string; username?: string }>(get, `${base}/${account.assetId}?fields=id,username`, 'Instagram asset', secrets, { Authorization: `Bearer ${token}` });
+    const actual = profile.username?.toLowerCase();
+    if (profile.id !== account.assetId || actual !== account.username.toLowerCase()) throw new Error(`asset ${account.assetId} is @${actual ?? '?'}, not @${account.username.toLowerCase()}; not stored`);
+    await saveToken('instagram', actual, token, o.encKey, { tokenKind: credential.kind, assetId: account.assetId, expiresAt: credential.expiresAt, refreshedAt: new Date(now()) });
+    return { username: actual, expiresAt: credential.expiresAt };
+  } catch (err) {
+    throw new Error(redact((err as Error).message, secrets));
+  }
 }
