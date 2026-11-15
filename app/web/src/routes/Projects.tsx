@@ -5,14 +5,14 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api, type OrgChart, type TaskLink } from '../lib/api.js';
 import { boardApi } from './board/api.js';
-import { projectsApi, STAGES, type Stage, type TrackerFeature, type TrackerItem, type TrackerProject, type TrackerReport } from './Projects.api.js';
+import { projectsApi, STAGES, type AreaStatus, type Stage, type TrackerArea, type TrackerItem, type TrackerProject, type TrackerReport } from './Projects.api.js';
 import { ago } from '../lib/time.js';
 
 /**
- * The company view of every project: teams own projects, projects are made of
- * features, each feature moves idea (backlog) → designing → building →
- * testing → live, and nothing counts as shipped without a passing
- * verification. Data: the tracker tables, via /api/projects/report.
+ * The company view of the tracker: teams own areas (what you run, no end date), an area
+ * holds projects (what you finish), each project moves idea (backlog) → designing →
+ * building → testing → live, and nothing counts as shipped without a passing
+ * verification. Data: the tracker tables, via /api/areas/report.
  */
 
 const LABEL: Record<Stage, string> = {
@@ -28,15 +28,19 @@ const VIEW_LABEL: Record<View, string> = {
 const chip = 'inline-block rounded border px-1.5 py-0.5 text-xs';
 const fileLink = (path: string | null) => (path ? `/file/${path}` : null);
 
+function StatusChip({ status }: { status: AreaStatus }) {
+  return <span className={`${chip} ${status === 'active' ? 'border-[var(--accent)]' : 'border-[var(--rule)] text-[var(--ink-dim)]'}`}>{status === 'active' ? 'Active' : 'Parked'}</span>;
+}
+
 function StageChip({ stage }: { stage: Stage }) {
   const strong = stage === 'testing' || stage === 'live';
   return <span className={`${chip} ${strong ? 'border-[var(--accent)]' : 'border-[var(--rule)] text-[var(--ink-dim)]'}`}>{LABEL[stage]}</span>;
 }
 
-/** Segmented by feature stage; the text says the same thing, so color is never the only signal. */
-function Progress({ p }: { p: TrackerProject }) {
-  const total = p.features.length - p.counts.parked;
-  if (total <= 0) return <span className="text-xs text-[var(--ink-faint)]">no features listed</span>;
+/** Segmented by project stage; the text says the same thing, so color is never the only signal. */
+function Progress({ p }: { p: TrackerArea }) {
+  const total = p.projects.length - p.counts.parked;
+  if (total <= 0) return <span className="text-xs text-[var(--ink-faint)]">no projects listed</span>;
   const seg = (n: number, cls: string) => (n ? <div className={cls} style={{ width: `${(n / total) * 100}%` }} /> : null);
   return (
     <div className="flex items-center gap-2">
@@ -57,8 +61,8 @@ function Items({ items, empty = 'None.' }: { items: TrackerItem[]; empty?: strin
   return (
     <ul className="space-y-1 text-sm">
       {items.map((i) => (
-        <li key={`${i.project}/${i.feature ?? ''}/${i.detail}`}>
-          <span className="font-medium">{i.feature ? `${i.project} / ${i.title}` : i.title}</span>
+        <li key={`${i.area}/${i.project ?? ''}/${i.detail}`}>
+          <span className="font-medium">{i.project ? `${i.area} / ${i.title}` : i.title}</span>
           <span className="text-[var(--ink-dim)]">: {i.detail}</span>
         </li>
       ))}
@@ -84,13 +88,13 @@ function Overview({ r }: { r: TrackerReport }) {
       {sub && <div className="text-xs text-[var(--ink-faint)]">{sub}</div>}
     </div>
   );
-  const inFlight = r.totals.features.designing + r.totals.features.building + r.totals.features.testing;
+  const inFlight = r.totals.projects.designing + r.totals.projects.building + r.totals.projects.testing;
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
-        {tile('projects', r.projects.length, `${r.totals.projects.building} building · ${r.totals.projects.live} live`)}
-        {tile('features in flight', inFlight, `${r.totals.features.testing} in testing`)}
-        {tile('backlog', r.backlog.total, 'features in idea')}
+        {tile('areas', r.areas.length, `${r.totals.areas.active} active · ${r.totals.areas.parked} parked`)}
+        {tile('projects in flight', inFlight, `${r.totals.projects.testing} in testing`)}
+        {tile('backlog', r.backlog.total, 'projects in idea')}
         {tile('shipped, 7 days', r.shipped_7d.length, `${r.moved_7d.length} stage moves`)}
         {tile('checks, 7 days', `${r.verified_7d.pass} / ${r.verified_7d.fail}`, 'passed / failed')}
         {tile('needs you', r.needs_owner.length)}
@@ -115,7 +119,7 @@ function Overview({ r }: { r: TrackerReport }) {
             <Items items={g.stale} />
             <div><b>Overdue:</b></div>
             <Items items={g.overdue} />
-            {g.no_features.length > 0 && <div><b>Active projects with no features:</b> {g.no_features.join(', ')}</div>}
+            {g.no_projects.length > 0 && <div><b>Active areas with no projects:</b> {g.no_projects.join(', ')}</div>}
           </div>
         </Section>
         <Section title="Oldest work in flight">
@@ -126,7 +130,7 @@ function Overview({ r }: { r: TrackerReport }) {
             <ul className="space-y-1 text-sm">
               {r.moved_7d.map((m, i) => (
                 <li key={i}>
-                  <span className="text-[var(--ink-faint)]">{ago(m.at)}</span> <b>{m.feature ? `${m.project} / ${m.title}` : m.title}</b>{' '}
+                  <span className="text-[var(--ink-faint)]">{ago(m.at)}</span> <b>{m.project ? `${m.area} / ${m.title}` : m.title}</b>{' '}
                   {m.from ?? 'new'} → {m.to}
                   {m.by && <span className="text-[var(--ink-faint)]"> · {m.by}</span>}
                   {m.note && <span className="text-[var(--ink-dim)]"> · {m.note}</span>}
@@ -150,15 +154,15 @@ function useCards() {
   return { links: links.data?.tasks ?? [], status, chart: chart.data ?? null };
 }
 
-/** "Give to…": one card, one bot, tagged with this project and feature. The team's lead is the default. */
-function GiveCard({ p, f, chart, onDone }: { p: TrackerProject; f: TrackerFeature; chart: OrgChart | null; onDone: () => void }) {
+/** "Give to…": one card, one bot, tagged with this area and project. The team's lead is the default. */
+function GiveCard({ p, f, chart, onDone }: { p: TrackerArea; f: TrackerProject; chart: OrgChart | null; onDone: () => void }) {
   const bots = (chart?.agents ?? []).filter((a) => a.runtime !== 'human');
   const team = chart?.teams.find((t) => t.slug === p.team);
   const [bot, setBot] = useState('');
   const [title, setTitle] = useState('');
   const chosen = bot || team?.lead || bots[0]?.name || '';
   const give = useMutation({
-    mutationFn: () => boardApi.create({ title, assignee: chosen, project: p.slug, feature: f.slug }),
+    mutationFn: () => boardApi.create({ title, assignee: chosen, area: p.slug, project: f.slug }),
     onSuccess: () => {
       setTitle('');
       onDone();
@@ -180,16 +184,16 @@ function GiveCard({ p, f, chart, onDone }: { p: TrackerProject; f: TrackerFeatur
   );
 }
 
-function FeatureCard({ p, f, cards }: { p: TrackerProject; f: TrackerFeature; cards: ReturnType<typeof useCards> }) {
+function ProjectCard({ p, f, cards }: { p: TrackerArea; f: TrackerProject; cards: ReturnType<typeof useCards> }) {
   const qc = useQueryClient();
   const [verifying, setVerifying] = useState(false);
   const [giving, setGiving] = useState(false);
   const [check, setCheck] = useState('');
   const refresh = () => qc.invalidateQueries({ queryKey: ['projects'] });
-  const mine = cards.links.filter((t) => t.project_slug === p.slug && t.feature_slug === f.slug);
-  const move = useMutation({ mutationFn: (stage: Stage) => projectsApi.setFeature(p.slug, f.slug, { stage }), onSuccess: refresh });
+  const mine = cards.links.filter((t) => t.area_slug === p.slug && t.project_slug === f.slug);
+  const move = useMutation({ mutationFn: (stage: Stage) => projectsApi.setProject(p.slug, f.slug, { stage }), onSuccess: refresh });
   const verify = useMutation({
-    mutationFn: (result: 'pass' | 'fail') => projectsApi.verifyFeature(p.slug, f.slug, { kind: 'manual', check, result }),
+    mutationFn: (result: 'pass' | 'fail') => projectsApi.verifyProject(p.slug, f.slug, { kind: 'manual', check, result }),
     onSuccess: () => {
       setVerifying(false);
       setCheck('');
@@ -200,6 +204,8 @@ function FeatureCard({ p, f, cards }: { p: TrackerProject; f: TrackerFeature; ca
   return (
     <div className="rounded border border-[var(--rule)] bg-[var(--paper)] p-2 text-sm">
       <div className="font-medium">{f.needs_owner && <span title={f.needs_owner}>⚑ </span>}{f.title}</div>
+      {f.outcome && f.outcome !== f.title && <div className="text-xs text-[var(--ink-dim)]">Outcome: {f.outcome}</div>}
+      {f.next_action && <div className="text-xs text-[var(--ink-dim)]">Next: {f.next_action}</div>}
       <div className="text-xs text-[var(--ink-dim)]">
         {f.days_in_stage}d in stage{f.owner && ` · ${f.owner}`}{f.due && ` · due ${f.due}`}
       </div>
@@ -267,20 +273,20 @@ function FeatureCard({ p, f, cards }: { p: TrackerProject; f: TrackerFeature; ca
 function Board({ r }: { r: TrackerReport }) {
   const cards = useCards();
   const [showClosed, setShowClosed] = useState(false);
-  const projects = r.projects.filter((p) => showClosed || !['parked', 'done'].includes(p.stage));
+  const areas = r.areas.filter((p) => showClosed || p.status === 'active');
   return (
     <div className="space-y-4">
       <label className="text-xs text-[var(--ink-dim)]">
-        <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} /> show parked and done projects
+        <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} /> show parked areas
       </label>
-      {projects.map((p) => {
+      {areas.map((p) => {
         const hidden = p.counts.parked + p.counts.done;
         return (
           <section key={p.slug} className="rounded border border-[var(--rule)]">
             <header className="flex flex-wrap items-center gap-2 border-b border-[var(--rule)] px-3 py-2">
               {p.priority && <span className="text-xs text-[var(--ink-faint)]">#{p.priority}</span>}
               <span className="font-semibold">{p.title}</span>
-              <StageChip stage={p.stage} />
+              <StatusChip status={p.status} />
               {p.team && <span className="text-xs text-[var(--ink-dim)]">team {p.team}</span>}
               {p.health && <span className="text-xs text-[var(--ink-dim)]">health {p.health}</span>}
               {p.goals.length > 0 && <span className="text-xs text-[var(--ink-dim)]">goals {p.goals.join(', ')}</span>}
@@ -299,7 +305,7 @@ function Board({ r }: { r: TrackerReport }) {
                 <div key={s} className="min-w-0">
                   <div className="mb-1 text-xs font-medium text-[var(--ink-dim)]">{LABEL[s]} ({p.counts[s]})</div>
                   <div className="space-y-2">
-                    {p.features.filter((f) => f.stage === s).map((f) => <FeatureCard key={f.id} p={p} f={f} cards={cards} />)}
+                    {p.projects.filter((f) => f.stage === s).map((f) => <ProjectCard key={f.id} p={p} f={f} cards={cards} />)}
                   </div>
                 </div>
               ))}
@@ -316,20 +322,20 @@ function Needs({ r }: { r: TrackerReport }) {
   const qc = useQueryClient();
   const clear = useMutation({
     mutationFn: (n: TrackerItem) =>
-      n.feature ? projectsApi.setFeature(n.project, n.feature, { needs_owner: null }) : projectsApi.setProject(n.project, { needs_owner: null }),
+      n.project ? projectsApi.setProject(n.area, n.project, { needs_owner: null }) : projectsApi.setArea(n.area, { needs_owner: null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
   });
   if (!r.needs_owner.length) return <p className="text-[var(--ink-dim)]">Nothing is waiting on you.</p>;
   return (
     <table className="w-full text-sm">
       <thead className="text-left text-xs text-[var(--ink-dim)]">
-        <tr><th className="py-1">Priority</th><th>Project / feature</th><th>What you need to do</th><th>Due</th><th /></tr>
+        <tr><th className="py-1">Priority</th><th>Area / project</th><th>What you need to do</th><th>Due</th><th /></tr>
       </thead>
       <tbody>
         {r.needs_owner.map((n) => (
-          <tr key={`${n.project}/${n.feature ?? ''}`} className="border-t border-[var(--rule)]">
+          <tr key={`${n.area}/${n.project ?? ''}`} className="border-t border-[var(--rule)]">
             <td className="py-2">{n.priority ?? ''}</td>
-            <td className="font-medium">{n.feature ? `${n.project} / ${n.title}` : n.title}</td>
+            <td className="font-medium">{n.project ? `${n.area} / ${n.title}` : n.title}</td>
             <td>{n.detail}</td>
             <td>{n.due ?? ''}</td>
             <td className="text-right">
@@ -346,17 +352,17 @@ function Teams({ r }: { r: TrackerReport }) {
   return (
     <div className="grid gap-3 md:grid-cols-2">
       {r.teams.map((t) => {
-        const ps = r.projects.filter((p) => p.team === t.slug);
+        const ps = r.areas.filter((p) => p.team === t.slug);
         return (
           <Section key={t.slug} title={t.name}>
             <div className="mb-2 text-xs text-[var(--ink-dim)]">
-              lead {t.lead ?? 'none'} · {t.in_flight} features in flight · {t.shipped_7d} shipped this week
+              lead {t.lead ?? 'none'} · {t.in_flight} projects in flight · {t.shipped_7d} shipped this week
             </div>
             <ul className="space-y-1 text-sm">
               {ps.map((p) => (
                 <li key={p.slug} className="flex items-center gap-2">
-                  <StageChip stage={p.stage} /> <span className="font-medium">{p.title}</span>
-                  <span className="text-xs text-[var(--ink-dim)]">{p.features.length} features</span>
+                  <StatusChip status={p.status} /> <span className="font-medium">{p.title}</span>
+                  <span className="text-xs text-[var(--ink-dim)]">{p.projects.length} projects</span>
                 </li>
               ))}
             </ul>
@@ -368,17 +374,17 @@ function Teams({ r }: { r: TrackerReport }) {
   );
 }
 
-/** The org chart: corporation → divisions → projects (with their team) → feature mix. */
+/** The org chart: corporation → divisions → areas (with their team) → project mix. */
 function Divisions({ r }: { r: TrackerReport }) {
-  const unassigned = r.projects.filter((p) => !p.division);
-  const block = (key: string, title: string, sub: string, ps: TrackerProject[]) => (
+  const unassigned = r.areas.filter((p) => !p.division);
+  const block = (key: string, title: string, sub: string, ps: TrackerArea[]) => (
     <Section key={key} title={title}>
       <div className="mb-2 text-xs text-[var(--ink-dim)]">{sub}</div>
       <ul className="space-y-2 text-sm">
         {ps.map((p) => (
           <li key={p.slug}>
             <div className="flex flex-wrap items-center gap-2">
-              <StageChip stage={p.stage} /> <span className="font-medium">{p.title}</span>
+              <StatusChip status={p.status} /> <span className="font-medium">{p.title}</span>
               {p.team && <span className="text-xs text-[var(--ink-dim)]">team {p.team}</span>}
               {p.needs_owner && <span className="text-xs text-[var(--warn)]">⚑ {p.needs_owner}</span>}
             </div>
@@ -394,11 +400,11 @@ function Divisions({ r }: { r: TrackerReport }) {
         block(
           d.slug,
           d.name,
-          `${d.projects.length} projects · ${d.in_flight} features in flight · ${d.shipped_7d} shipped this week · ${d.needs_owner} need you`,
-          r.projects.filter((p) => p.division === d.slug),
+          `${d.areas.length} areas · ${d.in_flight} projects in flight · ${d.shipped_7d} shipped this week · ${d.needs_owner} need you`,
+          r.areas.filter((p) => p.division === d.slug),
         ),
       )}
-      {unassigned.length > 0 && block('none', 'No division yet', `${unassigned.length} projects`, unassigned)}
+      {unassigned.length > 0 && block('none', 'No division yet', `${unassigned.length} areas`, unassigned)}
     </div>
   );
 }
@@ -411,7 +417,7 @@ function Goals({ r }: { r: TrackerReport }) {
       </thead>
       <tbody>
         {r.goals.filter((g) => !g.code.startsWith('T')).map((g) => {
-          const linked = [...g.projects, ...g.features];
+          const linked = [...g.areas, ...g.projects];
           return (
             <tr key={g.code} className="border-t border-[var(--rule)] align-top">
               <td className="py-2"><b>{g.code}</b> {g.goal}</td>
@@ -442,7 +448,7 @@ export default function Projects() {
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
-        <h1 className="text-lg font-semibold tracking-tight">Projects</h1>
+        <h1 className="text-lg font-semibold tracking-tight">Areas and projects</h1>
         {/* Scrolls inside its own strip on a phone instead of widening the page. */}
         <nav className="flex max-w-full gap-1 overflow-x-auto whitespace-nowrap text-sm" aria-label="Projects views">
           {VIEWS.map((v) => (
@@ -460,9 +466,9 @@ export default function Projects() {
         <span className="ml-auto text-xs text-[var(--ink-faint)]">{r?.as_of ? `updated ${ago(r.as_of)}` : ''}</span>
       </div>
       {report.isError && <p>⚠ {report.error.message}</p>}
-      {r && r.projects.length === 0 && (
+      {r && r.areas.length === 0 && (
         <p className="mb-3 text-sm text-[var(--ink-dim)]">
-          No projects in this database yet. Add one with `cli-projects add-project`, or point this app at the database that holds the tracker.
+          No areas in this database yet. Add one with `cli-areas add`, then its projects with `cli-projects add`, or point this app at the database that holds the tracker.
         </p>
       )}
       {r && view === 'overview' && <Overview r={r} />}

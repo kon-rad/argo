@@ -85,7 +85,7 @@ A write is attributed to the identity the door supplies. There is no `--author`:
 cli-board boards                                   # every board and its open-card count
 cli-board list --board exo
 cli-board list --status ready --assignee rune
-cli-board list --project secondbrain-app --feature board
+cli-board list --area secondbrain-app --project board
 cli-board list --q "vault token"                   # full-text search over title and body
 cli-board list --all                               # include done and archived
 cli-board list --board exo --json
@@ -101,7 +101,7 @@ Card ids are `t_` plus hex and stay stable, so a link or an id in an old message
 
 ```bash
 cli-board create "Add a cli-board token check to the smoke test" \
-  --board exo --to sable --project secondbrain-app --feature board \
+  --board exo --to sable --area secondbrain-app --project board \
   --kind build --type ops --needs deploy --repo secondbrain \
   --body "What, why, and the one check that proves it."
 ```
@@ -111,7 +111,7 @@ cli-board create "Add a cli-board token check to the smoke test" \
 The same card through the company layer, which adds the capability rule and the project's team channel:
 
 ```bash
-cli-org task create sable "Fix the token check" --project secondbrain-app --feature board \
+cli-org task create sable "Fix the token check" --area secondbrain-app --project board \
   --type ops --needs deploy --repo secondbrain --body "..."
 ```
 
@@ -121,7 +121,7 @@ cli-org task create sable "Fix the token check" --project secondbrain-app --feat
 
 ```bash
 cli-board comment t_abc123 "Reproduced on the third try; logs in /tmp/run.log."
-cli-board assign t_abc123 sable --project secondbrain-app --feature board
+cli-board assign t_abc123 sable --area secondbrain-app --project board
 cli-board assign t_abc123 m4 --repo vault          # a coding card names its repo (the vault session takes vault work)
 cli-board assign t_abc123 none                     # unassign, back into the pool
 cli-board redo t_review123 "tighten the error handling"   # changes requested: a new round for the builder

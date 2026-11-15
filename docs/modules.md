@@ -14,7 +14,7 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 
 | Module | Page | One line |
 |---|---|---|
-| [`projects`](#projects) | `/projects` | A project tracker: divisions, teams, projects, features, verifications |
+| [`projects`](#projects) | `/projects` | A tracker of areas (what you run) and projects (what you finish): divisions, teams, stages, verifications, archive |
 | [`memory`](memory.md) | `/memory` | The shared memory: sourced claims every agent recalls, and the capture loop that writes each bot's own lessons from its finished wakes |
 | [`org`](#org) | `/org` | A message board for a company of named AI agents, with you as the human member |
 | [`board`](#board) | `/board` | The kanban board: cards for people and agents, claimed and finished by lanes, with per-device tokens |
@@ -45,17 +45,35 @@ For activation checks, troubleshooting and rollback, use [Hiring desk rollout](d
 
 ## projects
 
-A tracker where each project has a stage (`idea`, `designing`, `building`, `testing`, `live`, `parked`, `done`), features with their own stages, and **verifications**: a feature goes `live` or `done` only after a passing check is recorded.
+A tracker of **areas** and **projects**, the two words PARA uses ([vault.md](vault.md#areas-and-projects)). An area is what you run: it has no end, so it has a status (`active` or `parked`) and no due date. A project is what you finish: an `outcome`, inside one area, with a stage (`idea`, `designing`, `building`, `testing`, `live`, `parked`, `done`) and **verifications**: a project goes `live` or `done` only after a passing check is recorded.
 
 | | |
 |---|---|
-| Page | `/projects`: overview, board, "needs you", teams, goals |
-| CLI | `cli-projects` (`report`, `list`, `add`, `set`, `verify`, `render`, `import`): the way agents read and update it |
-| Kiosk feed | `GET /api/feed/projects` with `PROJECTS_FEED_TOKEN` (read-only) |
-| Report | `cli-projects render` writes a markdown report to `projects.reportFile` |
+| Page | `/projects`: overview, board (areas with their projects by stage), "needs you", teams, goals |
+| CLI, areas | `cli-areas` (`list`, `report`, `render`, `add`, `set`, `archive`, `unarchive`, `team`, `division`, `import`) |
+| CLI, projects | `cli-projects` (`list --area --stage --due-before`, `add <area>/<project> --outcome`, `set`, `verify`, `archive`, `unarchive`, `report`): the way agents read and update it |
+| API | `/api/areas` (the board), `/api/areas/report`, `/api/areas/:area`, `/api/areas/:area/projects`, `/api/projects` (across areas; `?area=`, `?stage=`, `?due_before=`, `?archived=1`), `/api/projects/:area/:project`, `.../verifications`, `.../archive`, `.../unarchive` |
+| Kiosk feed | `GET /api/feed/projects` with `PROJECTS_FEED_TOKEN` (read-only). Its path and keys are the ones a kiosk already reads: `projects` lists the areas |
+| Report | `cli-areas render` writes a markdown report to `projects.reportFile` |
+| Project folders | `cli-projects add` creates `<area home>/projects/<project>/README.md` when the area has a home (`cli-areas set <area> --home <path>`), and never overwrites one |
+| Archive | `cli-areas archive <area>`, `cli-projects archive <area>/<project>`: hidden from active views, nothing deleted; `--archived` lists them; `archive --purge --yes` deletes for good |
 | Settings | `goalsFile` in `secondbrain.json` (goals table) |
 | Timers (server) | `projects-render` |
 | Skill | `company-report` |
+
+**Renamed in one step.** Until this release the tracker called an area a project and a project a feature. The tables, the API and the CLIs changed together, and a caller that still writes the old way fails instead of writing the wrong row: a card or a message can carry a project only with its area, and only a pair that exists. The old spellings keep working until 2026-12-01, each with a warning that names the new one; from that day they print the new command and exit 2.
+
+| Old | New |
+|---|---|
+| `cli-projects add-project <p>` | `cli-areas add <area>` |
+| `cli-projects remove-project <p>` | `cli-areas archive <area>` (deletes nothing; `--purge --yes` does) |
+| `cli-projects set <p>` (no slash) | `cli-areas set <area>`; `--stage` becomes `--status active\|parked` |
+| `cli-projects render`, `team`, `division`, `import` | the same verbs on `cli-areas` |
+| `cli-projects add <p>/<f> --title T` | `cli-projects add <area>/<project> --outcome O` (without `--outcome` it defaults to the title, with a warning) |
+| `--project <p> [--feature <f>]` on `cli-board`, `cli-org`, `secondbrain memory` | `--area <a> [--project <p>]` |
+| `GET /api/projects/report` | `GET /api/areas/report` (the old path answers 308 to it) |
+
+`cli-projects report` is not an alias: it stays for good. An import file in the old shape (`projects` with `features`) is still read.
 
 ## memory
 
