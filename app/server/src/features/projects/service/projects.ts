@@ -3,7 +3,7 @@ import { dirname, join, normalize } from 'node:path';
 import type { z } from 'zod';
 import { ProjectPatchSchema, ProjectVerificationRequestSchema } from '@secondbrain/contracts/projects';
 import { query, withTransaction } from '../../../db.js';
-import { assignments, day, iso, isoOrNull, recordArchive, SHIPPED, Slug, TrackerError, type Stage } from './common.js';
+import { assignments, day, insertion, iso, isoOrNull, SHIPPED, Slug, stamp, TrackerError, type Stage } from './common.js';
 
 /**
  * Projects: what you finish. A project is an outcome with an end, inside one area, and it
@@ -50,8 +50,23 @@ export async function upsertProject(
       `SELECT id, stage, shipped_at FROM projects WHERE area_slug = $1 AND slug = $2 FOR UPDATE`,
       [areaSlug, slug],
     );
-    let created = false;
-    let from: Stage | null = cur.rows[0]?.stage ?? null;
+    const from: Stage | null = cur.rows[0]?.stage ?? null;
+    const to = patch.stage;
+    const moving = to !== undefined && to !== from;
+    let note = patch.note ?? null;
+    /** The gate: shipping needs a passing newest verification, or the reason it has none, which goes into the note. */
+    const gate = (newest: 'pass' | 'fail' | undefined): void => {
+      if (newest === 'pass') return;
+      if (!patch.unverified) {
+        throw new TrackerError(
+          `${areaSlug}/${slug} can't move to ${to}: ${newest ? 'its newest verification failed' : 'it has no verification'}. ` +
+            `Record one (verify --pass with the check you ran), or pass unverified with the reason.`,
+          409,
+        );
+      }
+      note = `UNVERIFIED: ${patch.unverified}${note ? ` · ${note}` : ''}`;
+    };
+
     if (!cur.rows[0]) {
       if (!opts.create) throw new TrackerError(`no project "${areaSlug}/${slug}" (add it first)`, 404);
       if (!patch.title) throw new TrackerError('a new project needs a title');
@@ -59,13 +74,21 @@ export async function upsertProject(
       // still takes one (an old `--project <area>`), so the two namespaces stay apart.
       const clash = await tx.query(`SELECT 1 FROM areas WHERE slug = $1`, [slug]);
       if (clash.rowCount) throw new TrackerError(`"${slug}" is the name of an area; give the project a different slug`);
+      // The row is not there yet, so the gate reads the evidence that comes with it.
+      if (to && SHIPPED.includes(to)) gate(newestResult(opts.evidence ?? []));
+      // One INSERT with every field and the stage it starts in, so the history holds one
+      // `created` row, which the stage history shows as the project's first stage.
+      await stamp(tx, by, [opts.imported ? 'imported' : 'added', note].filter(Boolean).join(' · '));
+      const { names, marks, vals } = insertion({ ...patch, outcome: patch.outcome ?? patch.title, stage: to ?? 'idea' }, PROJECT_COLS, 4);
+      if (to === 'live' && !opts.imported) {
+        names.push('shipped_at');
+        marks.push('CURRENT_DATE');
+      }
       cur = await tx.query(
-        `INSERT INTO projects (area_slug, slug, title, outcome, stage, updated_by) VALUES ($1,$2,$3,$4,'idea',$5)
+        `INSERT INTO projects (${['area_slug', 'slug', 'updated_by', ...names].join(', ')}) VALUES (${['$1', '$2', '$3', ...marks].join(', ')})
          RETURNING id, stage, shipped_at`,
-        [areaSlug, slug, patch.title, patch.outcome ?? patch.title, by],
+        [areaSlug, slug, by, ...vals],
       );
-      created = true;
-      from = null;
       for (const v of opts.evidence ?? []) {
         await tx.query(
           `INSERT INTO verifications (project_id, kind, check_run, result, evidence, at, by)
@@ -73,55 +96,56 @@ export async function upsertProject(
           [cur.rows[0]!.id, v.kind, v.check, v.result, v.evidence ?? null, v.at ?? null, by],
         );
       }
+      await tx.query(`UPDATE areas SET updated_at = now(), updated_by = $2 WHERE slug = $1`, [areaSlug, by]);
+      return { id: cur.rows[0]!.id, created: true, stage_changed: false };
     }
-    const project = cur.rows[0]!;
-    const to = patch.stage;
-    const moving = to !== undefined && to !== from;
 
-    let note = patch.note ?? null;
+    const project = cur.rows[0];
     if (moving && SHIPPED.includes(to) && !(from && SHIPPED.includes(from))) {
-      const v = await tx.query<{ result: string }>(
+      const v = await tx.query<{ result: 'pass' | 'fail' }>(
         `SELECT result FROM verifications WHERE project_id = $1 ORDER BY at DESC, id DESC LIMIT 1`,
         [project.id],
       );
-      const passed = v.rows[0]?.result === 'pass';
-      if (!passed && !patch.unverified) {
-        throw new TrackerError(
-          `${areaSlug}/${slug} can't move to ${to}: ${v.rows[0] ? 'its newest verification failed' : 'it has no verification'}. ` +
-            `Record one (verify --pass with the check you ran), or pass unverified with the reason.`,
-          409,
-        );
-      }
-      if (!passed) note = `UNVERIFIED: ${patch.unverified}${note ? ` · ${note}` : ''}`;
+      gate(v.rows[0]?.result);
     }
 
+    // The triggers write one history row per column this changes (a stage move is the `stage` row); the note goes on each.
+    await stamp(tx, by, note);
     const { sets, vals } = assignments(patch, PROJECT_COLS, 3);
     if (moving && to === 'live' && !project.shipped_at && !opts.imported) sets.push('shipped_at = CURRENT_DATE');
     await tx.query(
       `UPDATE projects SET ${[...sets, 'updated_at = now()', 'updated_by = $2'].join(', ')} WHERE id = $1`,
       [project.id, by, ...vals],
     );
-    if (moving || created) {
-      await tx.query(
-        `INSERT INTO stage_changes (area_slug, project_id, from_stage, to_stage, by, note) VALUES ($1,$2,$3,$4,$5,$6)`,
-        [areaSlug, project.id, from, to ?? 'idea', by, created ? [opts.imported ? 'imported' : 'added', note].filter(Boolean).join(' · ') : note],
-      );
-    }
     await tx.query(`UPDATE areas SET updated_at = now(), updated_by = $2 WHERE slug = $1`, [areaSlug, by]);
-    return { id: project.id, created, stage_changed: moving && !created ? true : false };
+    return { id: project.id, created: false, stage_changed: moving };
   });
+}
+
+/** The result of the newest of these, as the gate's query would order them once stored (`at`, then the order given). */
+function newestResult(evidence: (VerificationInput & { at?: string })[]): 'pass' | 'fail' | undefined {
+  const now = Date.now();
+  let best: { t: number; result: 'pass' | 'fail' } | undefined;
+  for (const v of evidence) {
+    const t = v.at ? Date.parse(v.at) : now;
+    if (!best || t >= best.t) best = { t, result: v.result };
+  }
+  return best?.result;
 }
 
 export async function addVerification(areaSlug: string, projectSlug: string, raw: VerificationInput, by: string): Promise<number> {
   const v = VerificationInput.parse(raw);
-  const p = await query<{ id: number }>(`SELECT id FROM projects WHERE area_slug = $1 AND slug = $2`, [areaSlug, projectSlug]);
-  if (!p.rows[0]) throw new TrackerError(`no project "${areaSlug}/${projectSlug}"`, 404);
-  const { rows } = await query<{ id: number }>(
-    `INSERT INTO verifications (project_id, kind, check_run, result, evidence, by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-    [p.rows[0].id, v.kind, v.check, v.result, v.evidence ?? null, by],
-  );
-  await query(`UPDATE projects SET updated_at = now(), updated_by = $2 WHERE id = $1`, [p.rows[0].id, by]);
-  return rows[0]!.id;
+  return withTransaction(async (tx) => {
+    const p = await tx.query<{ id: number }>(`SELECT id FROM projects WHERE area_slug = $1 AND slug = $2`, [areaSlug, projectSlug]);
+    if (!p.rows[0]) throw new TrackerError(`no project "${areaSlug}/${projectSlug}"`, 404);
+    await stamp(tx, by);
+    const { rows } = await tx.query<{ id: number }>(
+      `INSERT INTO verifications (project_id, kind, check_run, result, evidence, by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [p.rows[0].id, v.kind, v.check, v.result, v.evidence ?? null, by],
+    );
+    await tx.query(`UPDATE projects SET updated_at = now(), updated_by = $2 WHERE id = $1`, [p.rows[0].id, by]);
+    return rows[0]!.id;
+  });
 }
 
 /** Archives or unarchives a project. Its stage is untouched, so unarchiving brings it back as it was. Idempotent. */
@@ -139,8 +163,8 @@ export async function setProjectArchived(
     );
     if (!cur.rows[0]) throw new TrackerError(`no project "${areaSlug}/${slug}"`, 404);
     if (Boolean(cur.rows[0].archived_at) === archived) return { archived, changed: false };
+    await stamp(tx, by, note ?? null);
     await tx.query(`UPDATE projects SET archived_at = ${archived ? 'now()' : 'NULL'}, updated_at = now(), updated_by = $2 WHERE id = $1`, [cur.rows[0].id, by]);
-    await recordArchive(tx, areaSlug, cur.rows[0].id, archived, by, note ?? null);
     return { archived, changed: true };
   });
 }
@@ -197,7 +221,7 @@ export async function listProjects(f: { area?: string; stage?: Stage; dueBefore?
 }
 
 /** A vault-relative path, or null when it would leave the vault. */
-function inVault(rel: string): string | null {
+export function inVault(rel: string): string | null {
   const clean = normalize(rel).replace(/^\/+/, '');
   return clean === '' || clean === '.' || clean.startsWith('..') ? null : clean;
 }
@@ -252,6 +276,9 @@ export async function createProjectNote(
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
     }
   }
-  await query(`UPDATE projects SET notes_path = $3, updated_at = now(), updated_by = $4 WHERE area_slug = $1 AND slug = $2`, [areaSlug, slug, rel, by]);
+  await withTransaction(async (tx) => {
+    await stamp(tx, by);
+    await tx.query(`UPDATE projects SET notes_path = $3, updated_at = now(), updated_by = $4 WHERE area_slug = $1 AND slug = $2`, [areaSlug, slug, rel, by]);
+  });
   return { path: rel, written };
 }

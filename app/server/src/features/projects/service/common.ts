@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { query, type TxClient } from '../../../db.js';
 
@@ -97,23 +98,43 @@ export async function divisionMustExist(tx: TxClient, division: string | null | 
   if (!rowCount) throw new TrackerError(`no division "${division}"`);
 }
 
+/** The same patch as the column list, the placeholders and the values of an INSERT. */
+export function insertion(patch: Record<string, unknown>, cols: Record<string, string>, first: number) {
+  const names: string[] = [];
+  const marks: string[] = [];
+  const vals: unknown[] = [];
+  for (const [k, col] of Object.entries(cols)) {
+    if (patch[k] === undefined) continue;
+    vals.push(patch[k]);
+    names.push(col);
+    marks.push(`$${first + vals.length - 1}`);
+  }
+  return { names, marks, vals };
+}
+
 /**
- * Archiving hides a row from every active view without deleting it or its history, and
- * is separate from stage and status: unarchiving brings the row back as it was. Each
- * change writes a `stage_changes` row (`archived` or `unarchived`) so the history shows it.
+ * The change history (`tracker_events`) is written by database triggers on `areas` and
+ * `projects`, one row per changed column, so no write path can forget it. What a trigger
+ * cannot know is who is writing and how. Every write path says so for its transaction:
+ * `stamp` sets `app.actor`, `app.source` and `app.note`, which the triggers read. A write
+ * that skips this is still logged, with the actor `unknown`.
+ *
+ * The source is `api` unless the code runs inside `withTrackerSource` (the CLIs wrap
+ * themselves in `cli`). `stage_changes` is a view over the log, so the stage history, the
+ * verify gate and the report read what they always read.
  */
-export async function recordArchive(
-  tx: TxClient,
-  area: string,
-  projectId: number | null,
-  archived: boolean,
-  by: string,
-  note: string | null,
-): Promise<void> {
-  await tx.query(
-    `INSERT INTO stage_changes (area_slug, project_id, from_stage, to_stage, by, note) VALUES ($1,$2,NULL,$3,$4,$5)`,
-    [area, projectId, archived ? 'archived' : 'unarchived', by, note],
-  );
+export type TrackerSource = 'cli' | 'api';
+const sourceStore = new AsyncLocalStorage<TrackerSource>();
+export const withTrackerSource = <T>(source: TrackerSource, fn: () => Promise<T>): Promise<T> => sourceStore.run(source, fn);
+export const trackerSource = (): TrackerSource => sourceStore.getStore() ?? 'api';
+
+/** Names the writer of this transaction. `note` goes on every history row the transaction writes from here on. */
+export async function stamp(tx: TxClient, actor: string, note?: string | null): Promise<void> {
+  await tx.query(`SELECT set_config('app.actor', $1, true), set_config('app.source', $2, true), set_config('app.note', $3, true)`, [
+    actor,
+    trackerSource(),
+    note ?? '',
+  ]);
 }
 
 /** pg turns a DATE into local midnight; read it back with local fields, or toISOString shifts it a day east of UTC. */

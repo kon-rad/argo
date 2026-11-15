@@ -288,7 +288,10 @@ describe('the report', () => {
     // An old in-flight project: no activity for 10 days.
     await upsertProject('lifeos', 'mcp', { stage: 'designing' }, 't');
     await query(`UPDATE projects SET updated_at = now() - interval '10 days' WHERE slug = 'mcp'`);
-    await query(`UPDATE stage_changes SET at = now() - interval '10 days' WHERE project_id = (SELECT id FROM projects WHERE slug = 'mcp')`);
+    // The history is append-only, so backdating it takes the guard off for a moment (tests only).
+    await query(`ALTER TABLE tracker_events DISABLE TRIGGER tracker_events_append_only`);
+    await query(`UPDATE tracker_events SET at = now() - interval '10 days' WHERE project_id = (SELECT id FROM projects WHERE slug = 'mcp')`);
+    await query(`ALTER TABLE tracker_events ENABLE TRIGGER tracker_events_append_only`);
 
     const r = await buildReport(vault);
     expect(r.totals.areas).toEqual({ active: 1, parked: 0 });
