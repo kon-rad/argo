@@ -49,7 +49,8 @@ Areas are what you run, projects are what you finish, the home note is what you 
   ---
   ```
 
-  A key that is not in `kpis:` is refused, with the list of the keys that are, so a typo never starts a second series. An area with no `kpis:` has no KPIs anywhere.
+  A key that is not in `kpis:` is refused, with the list of the keys that are, so a typo never starts a second series. An area with no `kpis:` has no KPIs anywhere. A KPI where lower is better (a cost, a response time) says `direction: down`, so "at target" is judged the right way round.
+- **The area page reads the home note.** `/areas/<area>` shows `description`, `links` (websites, repos, socials, anything else, as given), `style.guide` (rendered), the images in the `style.assets` folder, `goals` and `kpis`, next to the roadmap and the recent history from the tracker. Every key is optional, and a section with nothing in it is not drawn. See [modules.md](modules.md#the-area-page).
 
 The tracker was renamed to these words in one step (what it called a project is an area, what it called a feature is a project). The old commands keep working for 14 days, each with a warning that names the new one: see [modules.md](modules.md#projects).
 

@@ -14,7 +14,7 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 
 | Module | Page | One line |
 |---|---|---|
-| [`projects`](#projects) | `/projects` | A tracker of areas (what you run) and projects (what you finish): divisions, teams, stages, verifications, archive |
+| [`projects`](#projects) | `/areas`, `/projects` | A tracker of areas (what you run) and projects (what you finish): divisions, teams, stages, verifications, archive |
 | [`memory`](memory.md) | `/memory` | The shared memory: sourced claims every agent recalls, and the capture loop that writes each bot's own lessons from its finished wakes |
 | [`org`](#org) | `/org` | A message board for a company of named AI agents, with you as the human member |
 | [`board`](#board) | `/board` | The kanban board: cards for people and agents, claimed and finished by lanes, with per-device tokens |
@@ -49,10 +49,11 @@ A tracker of **areas** and **projects**, the two words PARA uses ([vault.md](vau
 
 | | |
 |---|---|
-| Page | `/projects`: overview, board (areas with their projects by stage), "needs you", teams, goals |
+| Pages | `/areas`: the active areas by division, with open project count, owner and KPI health; parked and archived areas behind toggles. `/areas/<area>`: the area's home page (below). `/projects`: projects across areas, filtered by area, stage and due date (`?area=&stage=&due=overdue\|week\|month\|none&archived=1`); its other tabs are the overview, the board (areas with their projects by stage), "needs you", teams and goals. `/projects/<area>/<project>`: outcome, stage history, verifications, next action, the start of its README. An old `/projects/<area>` link redirects to `/areas/<area>` |
+| Keys | `g` then `a` opens `/areas`, `g` then `p` opens `/projects` (no modifier, not while typing in a field) |
 | CLI, areas | `cli-areas` (`list`, `report`, `render`, `add`, `set`, `archive`, `unarchive`, `record`, `team`, `division`, `import`) |
 | CLI, projects | `cli-projects` (`list --area --stage --due-before`, `add <area>/<project> --outcome`, `set`, `verify`, `archive`, `unarchive`, `report`): the way agents read and update it |
-| API | `/api/areas` (the board), `/api/areas/report`, `/api/areas/:area`, `/api/areas/:area/projects`, `POST /api/areas/:area/kpis` (one KPI reading: `{ key, value, at?, note? }`), `/api/projects` (across areas; `?area=`, `?stage=`, `?due_before=`, `?archived=1`), `/api/projects/:area/:project`, `.../verifications`, `.../archive`, `.../unarchive` |
+| API | `/api/areas` (the board; `?view=index` is the list behind `/areas`), `/api/areas/report`, `/api/areas/:area` (`GET` is the area page: the row, the home note's links, style, goals and KPIs with readings, the roadmap, 14 days of history; `PATCH` sets fields), `/api/areas/:area/projects`, `POST /api/areas/:area/kpis` (one KPI reading: `{ key, value, at?, note? }`), `/api/projects` (across areas; `?area=`, `?stage=`, `?due_before=`, `?archived=1`), `/api/projects/:area/:project` (`GET` is the project page; `PATCH` sets fields), `.../verifications`, `.../archive`, `.../unarchive` |
 | Kiosk feed | `GET /api/feed/projects` with `PROJECTS_FEED_TOKEN` (read-only). Its path and keys are the ones a kiosk already reads: `projects` lists the areas |
 | Report | `cli-areas render` writes a markdown report to `projects.reportFile` |
 | Project folders | `cli-projects add` creates `<area home>/projects/<project>/README.md` when the area has a home (`cli-areas set <area> --home <path>`), and never overwrites one |
@@ -62,6 +63,24 @@ A tracker of **areas** and **projects**, the two words PARA uses ([vault.md](vau
 | Skill | `company-report` |
 | Change history | `tracker_events`: every change to an area or a project, frontmatter changes of home notes, KPI readings (below) |
 | KPIs | `cli-areas record <area> <kpi> <value> [--at D] [--note "why"]`; the keys are the `kpis:` frontmatter of the area's home note |
+
+### The area page
+
+`/areas/<area>` joins the tracker row with the area's home note ([vault.md](vault.md#areas-and-projects)). Areas differ, so every section below the header is drawn only when the area has it.
+
+| Section | From |
+|---|---|
+| Header | The row: title, status, health, division, team and its members; the owner is the team's lead. The description is the home note's `description:` |
+| About | The first section of the home note's body |
+| Links | `links:` as given. A URL opens outside, a path opens the note, `owner/name` under `repos` is read as a GitHub repository, anything else is text |
+| Style and assets | `style.guide` rendered as markdown, the images in `style.assets` shown inline (up to 48), other `style:` keys listed. Both are read from the index, so a path the scanner does not index shows nothing |
+| Goals | `goals:` of the home note, then the goal codes on the row with their text from `goalsFile` |
+| KPIs | `kpis:` with the latest reading, the target and a small trend of the last 30 readings. Hidden when the area defines none |
+| Roadmap | The open projects (`idea` to `testing`) by due date: outcome, stage, due, next action |
+| Recent activity | The last 14 days of `tracker_events` for the area and its projects |
+| Archive | Asks for a note, which goes into the change history; an archived area shows Unarchive |
+
+"Active projects" on `/areas` counts the same open stages. "At target" compares a KPI's latest reading with its `target`; add `direction: down` to a KPI where lower is better.
 
 ### Change history
 
