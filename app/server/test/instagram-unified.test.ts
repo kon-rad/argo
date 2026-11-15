@@ -14,6 +14,7 @@ import { loadToken, saveToken } from '../src/metrics/social/tokens.js';
 import { collectInstagram } from '../src/metrics/social/instagram.js';
 import { socialAccounts } from '../src/metrics/social/accounts.js';
 import { parseSettings, resetSettings } from '../src/settings.js';
+import { importSystemUserToken } from '../src/metrics/social/unified.js';
 import { truncateAll } from './helpers.js';
 
 const origin = 'https://brain.example.com';
@@ -192,4 +193,47 @@ it('never refreshes a Unified credential as legacy or seeds a Unified account th
   const unified = parseSettings({ socialMetrics: { instagram: configs } }).socialMetrics;
   await expect(seedInstagramToken(unified, 'example.one', token, d)).rejects.toThrow('Unified');
   await expect(loadToken('instagram', 'example.one', 'b'.repeat(64))).rejects.toThrow();
+});
+
+const sysUser = (targets: string[] = ['101'], scopes = ['instagram_basic', 'instagram_manage_insights']) => ({ is_valid: true, app_id: 'fake-app', type: 'SYSTEM_USER', user_id: '501', expires_at: 0, scopes,
+  granular_scopes: scopes.map(scope => ({ scope, target_ids: targets })) });
+const importOpts = { appId: 'fake-app', appSecret: 'fake-app-secret', encKey: key, get, now: () => clock };
+it('imports an owner system-user token for a configured Unified asset and collects with it', async () => {
+  debug = sysUser();
+  await expect(importSystemUserToken(importOpts, root, 'Example.One', `  ${token}\n`)).resolves.toEqual({ username: 'example.one', expiresAt: null });
+  const stored = await loadToken('instagram', 'example.one', key);
+  expect(stored).toMatchObject({ tokenKind: 'facebook-system-user', assetId: '101', token, expiresAt: null });
+  const debugCall = get.mock.calls.find(([url]) => url.includes('/debug_token'))!;
+  expect(debugCall[1]).toEqual({ Authorization: 'Bearer fake-app|fake-app-secret' });
+  const s = parseSettings({ socialMetrics: { instagram: configs } }).socialMetrics;
+  const account = socialAccounts(s)[0]!;
+  if (account.platform !== 'instagram') throw new Error('fixture');
+  const r = await collectInstagram(account, s, { get, now: new Date(clock), encKey: key, env: {}, vaultRoot: root });
+  expect(r.error).toBeUndefined(); expect(r.samples[0]?.value).toBe(42);
+});
+it.each([
+  ['user token', () => { debug = { is_valid: true, app_id: 'fake-app', type: 'USER', user_id: '301', expires_at: Math.floor(clock / 1000) + 3600, scopes: ['instagram_basic', 'instagram_manage_insights', 'pages_show_list', 'pages_read_engagement'] }; }, 'system-user'],
+  ['asset not granted', () => { debug = sysUser(['102']); }, 'asset not selected'],
+  ['missing insights scope', () => { debug = sysUser(['101'], ['instagram_basic']); }, 'permissions'],
+  ['other app', () => { debug = { ...sysUser(), app_id: 'other-app' }; }, 'permissions'],
+])('refuses a system-user import with %s and stores nothing', async (_name, arrange, message) => {
+  debug = sysUser(); arrange();
+  await expect(importSystemUserToken(importOpts, root, 'example.one', token)).rejects.toThrow(message);
+  expect(await loadToken('instagram', 'example.one', key)).toBeNull();
+});
+it('refuses a system-user import for an unconfigured or legacy account, a username mismatch, or missing secrets', async () => {
+  debug = sysUser(['102']);
+  await writeFile(join(root, 'secondbrain.json'), JSON.stringify({ socialMetrics: { instagram: [{ username: 'example.one', login: 'unified', assetId: '102' }, { username: 'legacy.one' }] } }));
+  resetSettings();
+  await expect(importSystemUserToken(importOpts, root, 'example.one', token)).rejects.toThrow('not stored');
+  await expect(importSystemUserToken(importOpts, root, 'legacy.one', token)).rejects.toThrow('assetId');
+  await expect(importSystemUserToken(importOpts, root, 'nobody', token)).rejects.toThrow('assetId');
+  await expect(importSystemUserToken({ ...importOpts, encKey: undefined }, root, 'example.one', token)).rejects.toThrow('SOCIAL_TOKEN_ENC_KEY');
+  await expect(importSystemUserToken(importOpts, root, 'example.one', 'two tokens')).rejects.toThrow('one token');
+  expect(await loadToken('instagram', 'example.one', key)).toBeNull();
+});
+it('redacts the token and app secret from import errors', async () => {
+  get.mockRejectedValueOnce(new Error('boom fake-app-secret ' + token));
+  const err = await importSystemUserToken(importOpts, root, 'example.one', token).catch(e => e as Error);
+  expect(err.message).not.toContain(token); expect(err.message).not.toContain('fake-app-secret');
 });

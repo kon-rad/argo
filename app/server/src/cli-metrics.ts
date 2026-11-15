@@ -9,6 +9,7 @@ import { fetchGet } from './metrics/social/http.js';
 import { seedInstagramToken } from './metrics/social/instagram.js';
 import { recordLinkedIn } from './metrics/social/manual.js';
 import { formatSocialReport, socialReport } from './metrics/social/report.js';
+import { importSystemUserToken } from './metrics/social/unified.js';
 import type { SocialDeps } from './metrics/social/types.js';
 import { settings } from './settings.js';
 
@@ -18,11 +19,12 @@ import { settings } from './settings.js';
 // `cli-metrics list`                 latest value and age of every metric
 // `cli-metrics social [--days N] [--top N] [--json]`  follower deltas and top posts, with freshness
 // `cli-metrics social linkedin <account> [--followers N] [--post URL [--views N] [--likes N] [--comments N] [--shares N] [--reach N]] [--date YYYY-MM-DD]`
-// `cli-metrics social token instagram <username>`     store a long-lived token read from stdin (encrypted)
+// `cli-metrics social token instagram <username> [--system-user]`  store a token read from stdin (encrypted);
+//                                    --system-user: a Business Settings system-user token for a Unified account
 const USAGE = `usage: cli-metrics collect [--dry-run] | set <metric> <value> | list
        cli-metrics social [--days N] [--top N] [--json]
        cli-metrics social linkedin <account> [--followers N] [--post URL [--views N] [--likes N] [--comments N] [--shares N] [--reach N]] [--date YYYY-MM-DD]
-       cli-metrics social token instagram <username>   (token on stdin)`;
+       cli-metrics social token instagram <username> [--system-user]   (token on stdin)`;
 
 const [cmd, ...args] = process.argv.slice(2);
 let code = 1;
@@ -91,9 +93,16 @@ try {
     console.log(`recorded LinkedIn ${account}${flag('date') ? ` for ${flag('date')}` : ''}`);
     code = 0;
   } else if (cmd === 'social' && args[0] === 'token') {
-    if (args[1] !== 'instagram' || !args[2]) throw new Error(USAGE);
-    const r = await seedInstagramToken(social, args[2], await readStdin(), socialDeps());
-    console.log(`stored an encrypted token for @${r.username} (followers ${r.followers ?? 'unknown'}); it is refreshed by the metrics timer`);
+    const username = args[2];
+    if (args[1] !== 'instagram' || !username || username.startsWith('--')) throw new Error(USAGE);
+    if (args.includes('--system-user')) {
+      const r = await importSystemUserToken({ appId: config.facebookAppId, appSecret: config.facebookAppSecret, encKey: config.socialTokenEncKey },
+        config.vaultRoot, username, await readStdin());
+      console.log(`stored an encrypted system-user token for @${r.username} (${r.expiresAt ? `expires ${r.expiresAt.toISOString()}` : 'no expiry'})`);
+    } else {
+      const r = await seedInstagramToken(social, username, await readStdin(), socialDeps());
+      console.log(`stored an encrypted token for @${r.username} (followers ${r.followers ?? 'unknown'}); it is refreshed by the metrics timer`);
+    }
     code = 0;
   } else if (cmd === 'social') {
     const days = intFlag('days') ?? 7;
