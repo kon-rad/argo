@@ -97,11 +97,23 @@ describe('Facebook Unified token contract', () => {
     });
   });
 
+  it('accepts a business-assigned SYSTEM_USER whose grants list no target_ids (caller proves the asset)', () => {
+    expect(validateFacebookToken({
+      data: { ...systemUser.data, granular_scopes: [
+        { scope: 'instagram_basic' },
+        { scope: 'instagram_manage_insights' },
+      ] },
+    }, 'fixture-app', now, 'asset-one')).toEqual({ kind: 'facebook-system-user', expiresAt: null });
+  });
+
   it.each([
     ['cross-account asset', 'asset-two', {}],
-    ['missing target ids', 'asset-one', { granular_scopes: [
+    ['missing required grant', 'asset-one', { granular_scopes: [
       { scope: 'instagram_basic' },
-      { scope: 'instagram_manage_insights' },
+    ] }],
+    ['listed targets exclude the asset on one grant', 'asset-one', { granular_scopes: [
+      { scope: 'instagram_basic' },
+      { scope: 'instagram_manage_insights', target_ids: ['asset-two'] },
     ] }],
     ['missing basic asset grant', 'asset-one', { granular_scopes: [
       { scope: 'instagram_basic', target_ids: ['asset-two'] },
