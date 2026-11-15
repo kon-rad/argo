@@ -48,7 +48,7 @@ describe('PR size never rejects a review', () => {
     expect(passes.length).toBeGreaterThan(1);
     for (const p of passes) {
       expect(p.snapshot.sources.map(x => x.ref)).toEqual(expect.arrayContaining(['ticket', 'note:t_123abc/RESULT.md']));
-      expect(p.snapshot.sources.reduce((n, x) => n + x.text.length, 0)).toBeLessThanOrEqual(PASS_CHARS);
+      expect(p.snapshot.sources.reduce((n, x) => n + Buffer.byteLength(JSON.stringify(x.text)), 0)).toBeLessThanOrEqual(PASS_CHARS);
       expect(p.snapshot.sources.some(x => x.truncated)).toBe(false);
       expect(p.snapshot).toMatchObject({ repo: s.repo, pr: s.pr, head, base });
     }
@@ -59,6 +59,15 @@ describe('PR size never rejects a review', () => {
     expect(passes.flatMap(p => p.files)).toHaveLength(97);
     // A file's diff rides with its source.
     for (const p of passes) for (const d of p.snapshot.sources.filter(x => x.ref === `github:diff:${head}`).flatMap(x => splitDiff(x.text))) expect(p.files).toContain(d.path);
+  });
+
+  it('budgets a pass by the bytes actually sent, so escaped newlines and quotes cannot overflow the reviewer transport', () => {
+    const s = large(2, 20);
+    // 260k raw characters each, 520k once JSON-escaped: two of them fit the budget raw but not as sent.
+    for (const name of ['q1', 'q2']) s.sources.push(src(`github:source:${head}:src/${name}.ts`, '"\n'.repeat(130_000)));
+    const passes = partition(s);
+    expect(passes.length).toBeGreaterThan(1);
+    expect(passes.find(p => p.files.includes('src/q1.ts'))!.files).not.toContain('src/q2.ts');
   });
 
   it('gives a file larger than a whole pass its own pass, uncut', () => {

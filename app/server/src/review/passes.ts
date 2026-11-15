@@ -1,13 +1,15 @@
 import { Verdict, type Snapshot, type Source } from './gate.js';
 import { POLICY } from './policy.js';
 
-/** One reviewer call carries at most this much text. Size never rejects a PR: a larger one is reviewed in several passes. */
+/** One reviewer call carries at most this much source text, measured as it is sent (JSON-escaped bytes), so a pass
+ *  stays inside the reviewer transport's input bound. Size never rejects a PR: a larger one is reviewed in several passes. */
 export const PASS_CHARS = POLICY.combinedChars;
 const MIN_CODE_CHARS = 100_000, PARALLEL = 3;
 const isDiff = (s: Source) => s.ref.startsWith('github:diff:');
 const isCode = (s: Source) => s.ref.startsWith('github:source:');
 /** `github:source:<40-hex revision>:<path>` */
 const codePath = (ref: string) => ref.slice('github:source:'.length + 41);
+const sent = (text: string) => Buffer.byteLength(JSON.stringify(text));
 
 /** The aggregate diff as one chunk per file, in Git's order. Joining the chunks returns the input. */
 export function splitDiff(diff: string): { path: string; text: string }[] {
@@ -28,14 +30,14 @@ type Unit = { path: string; chars: number; diff: string[]; code: Source[] };
  * one call is returned unchanged.
  */
 export function partition(s: Snapshot, budget = PASS_CHARS): { snapshot: Snapshot; files: string[] }[] {
-  const size = (list: Source[]) => list.reduce((n, x) => n + x.text.length, 0);
+  const size = (list: Source[]) => list.reduce((n, x) => n + sent(x.text), 0);
   if (size(s.sources) <= budget) return [{ snapshot: s, files: [] }];
   const context = s.sources.filter(x => !isDiff(x) && !isCode(x));
   const room = Math.max(MIN_CODE_CHARS, budget - size(context));
   const units = new Map<string, Unit>();
   const unit = (path: string) => { if (!units.has(path)) units.set(path, { path, chars: 0, diff: [], code: [] }); return units.get(path)!; };
-  for (const d of s.sources.filter(isDiff)) for (const chunk of splitDiff(d.text)) { const u = unit(chunk.path); u.diff.push(chunk.text); u.chars += chunk.text.length; }
-  for (const c of s.sources.filter(isCode)) { const u = unit(codePath(c.ref)); u.code.push(c); u.chars += c.text.length; }
+  for (const d of s.sources.filter(isDiff)) for (const chunk of splitDiff(d.text)) { const u = unit(chunk.path); u.diff.push(chunk.text); u.chars += sent(chunk.text); }
+  for (const c of s.sources.filter(isCode)) { const u = unit(codePath(c.ref)); u.code.push(c); u.chars += sent(c.text); }
   const groups: Unit[][] = [];
   let used = 0;
   for (const u of [...units.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)) {
