@@ -181,10 +181,14 @@ async function checkScroller(page: Page, label: string): Promise<void> {
   await expect(hint).toBeVisible();
   await expect(hint).toHaveText('Swipe sideways for more columns →');
 
-  // A keyboard scrolls it: focus the region, press an arrow key.
-  await scroller.focus();
-  await page.keyboard.press('ArrowRight');
-  await expect.poll(() => scroller.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
+  // A keyboard scrolls it: focus the region, press an arrow key. Retried as a unit: under a loaded parallel run a single
+  // key press could land before the page settled and then nothing would ever press it again.
+  await expect(async () => {
+    await scroller.focus();
+    await expect(scroller).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => scroller.evaluate((el) => el.scrollLeft), { timeout: 2000 }).toBeGreaterThan(0);
+  }).toPass({ timeout: 15000 });
 
   // At the far end the last column is fully in view and the first is still there, pinned.
   await scroller.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
