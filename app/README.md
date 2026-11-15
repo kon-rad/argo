@@ -94,12 +94,14 @@ Never hide a column to make a table fit. A small table that fits a phone as it i
 
 Vitest 4 + Supertest, running against a **real** `secondbrain_test` database — no mocked `pg`. The schema is rebuilt from migrations on every run.
 
-The table layouts are also checked in a real browser, at 375, 390 and 1440 px, with no server and no database (Vite plus fake `/api` answers from `web/test/fixtures/`). Not part of `npm test` or CI:
+The table layouts are also checked in a real browser, at 375, 390, 800 and 1440 px, with no server and no database (Vite plus fake `/api` answers from `web/test/fixtures/`). Besides each table, every view must not scroll sideways: any box inside `<main>` that does has to hold one table, code block or tab strip, or carry `data-scroll-scope` (the board's columns). Not part of `npm test` or CI:
 
 ```sh
 npm run e2e:install -w web   # once: a headless Chromium inside node_modules
 npm run e2e:tables -w web    # screenshots land in web/e2e/shots/
 ```
+
+With a Playwright server elsewhere (`PW_TEST_CONNECT_WS_ENDPOINT`, say a browser in a container), set `TABLES_BROWSER_HOST` to the name that browser reaches this machine by: Vite then listens on every interface and allows that host. To compare desktop pixels with another revision, see the top of `web/e2e/mobile-tables.pw.ts`.
 
 ---
 
