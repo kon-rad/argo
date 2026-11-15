@@ -5,7 +5,7 @@ import { fileHref, rawUrl } from '../../lib/api.js';
 import { ApiError } from '../../lib/http.js';
 import { ago } from '../../lib/time.js';
 import { projectsApi, type AreaKpi, type AreaPage as AreaPageData, type ProjectRow } from '../Projects.api.js';
-import { ArchiveButton, ArchivedChip, eventText, LinkGroups, Section, StageChip, StatusChip } from './parts.js';
+import { ArchiveButton, MD, ArchivedChip, eventText, LinkGroups, Section, StageChip, StatusChip } from './parts.js';
 
 /**
  * `/areas/<slug>`: the area's home page. The header and the roadmap come from the tracker;
@@ -100,7 +100,7 @@ function Body({ d }: { d: AreaPageData }) {
       <div className="space-y-3">
         {d.home?.excerpt && (
           <Section title="About">
-            <VaultMarkdown text={d.home.excerpt} />
+            <VaultMarkdown text={d.home.excerpt} className={MD} />
           </Section>
         )}
         {!d.home && (
@@ -126,7 +126,7 @@ function Body({ d }: { d: AreaPageData }) {
                   </div>
                   {d.style.guide.markdown !== null ? (
                     <div className="max-h-[32rem] overflow-y-auto rounded bg-[var(--paper-sunk)] p-3">
-                      <VaultMarkdown text={d.style.guide.markdown} />
+                      <VaultMarkdown text={d.style.guide.markdown} className={MD} />
                       {d.style.guide.truncated && <p className="mt-2 text-xs text-[var(--ink-dim)]">Cut here. Open the note for the rest.</p>}
                     </div>
                   ) : (

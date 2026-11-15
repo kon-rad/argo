@@ -18,7 +18,8 @@ import { expect, test } from '@playwright/test';
  * The area and project pages need a slug: E2E_AREA (default `example`) and
  * E2E_PROJECT (default `example-project`) name an area and one of its projects
  * in the database the app runs on. Without them the pages are checked in their
- * "no such area" state.
+ * "no such area" state. web/e2e/seed-areas.mjs fills a scratch database and a
+ * scratch vault with made-up ones that have every section.
  */
 
 const AREA = process.env.E2E_AREA ?? 'example';

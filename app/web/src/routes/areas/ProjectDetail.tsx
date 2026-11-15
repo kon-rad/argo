@@ -5,7 +5,7 @@ import { fileHref } from '../../lib/api.js';
 import { ApiError } from '../../lib/http.js';
 import { ago } from '../../lib/time.js';
 import { projectsApi, type ProjectPage } from '../Projects.api.js';
-import { ArchiveButton, ArchivedChip, Section, StageChip } from './parts.js';
+import { ArchiveButton, MD, ArchivedChip, Section, StageChip } from './parts.js';
 
 /**
  * `/projects/<area>/<slug>`: one project. Its outcome (what done means), its stage and how
@@ -75,7 +75,7 @@ function Body({ d }: { d: ProjectPage }) {
                     <span className="text-[var(--ink-dim)]">({v.kind})</span> {v.check}
                     <span className="text-[var(--ink-faint)]"> · {ago(v.at)}{v.by ? ` · ${v.by}` : ''}</span>
                   </div>
-                  {v.evidence && <pre className="mt-1 max-w-full overflow-x-auto rounded bg-[var(--paper-sunk)] p-2 text-xs whitespace-pre-wrap">{v.evidence}</pre>}
+                  {v.evidence && <pre className="mt-1 max-w-full overflow-x-auto rounded bg-[var(--paper-sunk)] p-2 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">{v.evidence}</pre>}
                 </li>
               ))}
             </ul>
@@ -86,7 +86,7 @@ function Body({ d }: { d: ProjectPage }) {
 
         {d.readme && (
           <Section title="README" aside={<Link to={fileHref(d.readme.path)} className="break-all text-[var(--accent)] underline">{d.readme.path}</Link>}>
-            {d.readme.excerpt ? <VaultMarkdown text={d.readme.excerpt} /> : <p className="text-sm text-[var(--ink-dim)]">The note has no text under its title yet.</p>}
+            {d.readme.excerpt ? <VaultMarkdown text={d.readme.excerpt} className={MD} /> : <p className="text-sm text-[var(--ink-dim)]">The note has no text under its title yet.</p>}
           </Section>
         )}
       </div>

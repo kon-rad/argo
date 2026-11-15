@@ -10,6 +10,9 @@ export const STAGE_LABEL: Record<Stage, string> = {
   idea: 'Backlog', designing: 'Designing', building: 'Building', testing: 'Testing', live: 'Live', parked: 'Parked', done: 'Done',
 };
 
+/** Markdown from a note, inside a page: a long path or token wraps instead of pushing the page sideways on a phone. */
+export const MD = 'prose max-w-none text-sm [overflow-wrap:anywhere]';
+
 export const chip = 'inline-block rounded border px-1.5 py-0.5 text-xs whitespace-nowrap';
 
 export function StatusChip({ status }: { status: AreaStatus }) {
