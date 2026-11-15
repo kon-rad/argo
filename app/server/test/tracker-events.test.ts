@@ -56,41 +56,41 @@ describe('tracker_events: the triggers', () => {
   it('writes exactly one row per changed column, with the actor, the old and the new value', async () => {
     await seed();
     const before = await lastId();
-    await upsertProject('lifeos', 'core', { stage: 'testing', due: '2026-12-31', next_action: 'write the test', title: 'Core', note: 'endpoints done' }, 'dax');
+    await upsertProject('lifeos', 'core', { stage: 'testing', due: '2026-12-31', next_action: 'write the test', title: 'Core', note: 'endpoints done' }, 'builder');
     expect(await events(`e.id > ${before}`)).toEqual([
-      { actor: 'dax', source: 'api', area_slug: 'lifeos', project: 'core', kind: 'changed', field: 'due', from_value: null, to_value: '2026-12-31', note: 'endpoints done' },
-      { actor: 'dax', source: 'api', area_slug: 'lifeos', project: 'core', kind: 'changed', field: 'next_action', from_value: null, to_value: 'write the test', note: 'endpoints done' },
-      { actor: 'dax', source: 'api', area_slug: 'lifeos', project: 'core', kind: 'stage', field: 'stage', from_value: 'building', to_value: 'testing', note: 'endpoints done' },
+      { actor: 'builder', source: 'api', area_slug: 'lifeos', project: 'core', kind: 'changed', field: 'due', from_value: null, to_value: '2026-12-31', note: 'endpoints done' },
+      { actor: 'builder', source: 'api', area_slug: 'lifeos', project: 'core', kind: 'changed', field: 'next_action', from_value: null, to_value: 'write the test', note: 'endpoints done' },
+      { actor: 'builder', source: 'api', area_slug: 'lifeos', project: 'core', kind: 'stage', field: 'stage', from_value: 'building', to_value: 'testing', note: 'endpoints done' },
     ]);
     // Three columns changed (the title was set to what it was): three rows, and none for updated_at or updated_by,
     // on the project or on the area the write touches.
     expect(await count(`id > ${before}`)).toBe(3);
 
     // Writing the same values again changes no column, so it writes nothing.
-    await upsertProject('lifeos', 'core', { stage: 'testing', due: '2026-12-31' }, 'dax');
+    await upsertProject('lifeos', 'core', { stage: 'testing', due: '2026-12-31' }, 'builder');
     expect(await count(`id > ${before}`)).toBe(3);
 
     // One column of an area: one row.
-    await upsertArea('lifeos', { priority: 1 }, 'orin');
+    await upsertArea('lifeos', { priority: 1 }, 'lead');
     expect(await events(`e.id > ${before + 3}`)).toEqual([
-      { actor: 'orin', source: 'api', area_slug: 'lifeos', project: null, kind: 'changed', field: 'priority', from_value: 2, to_value: 1, note: null },
+      { actor: 'lead', source: 'api', area_slug: 'lifeos', project: null, kind: 'changed', field: 'priority', from_value: 2, to_value: 1, note: null },
     ]);
-    await upsertArea('lifeos', { status: 'parked', note: 'paused' }, 'orin');
+    await upsertArea('lifeos', { status: 'parked', note: 'paused' }, 'lead');
     expect((await events(`e.id > ${before + 4}`)).map((r) => [r.kind, r.field, r.from_value, r.to_value, r.note])).toEqual([['stage', 'status', 'active', 'parked', 'paused']]);
   });
 
   it('records archive and unarchive as their own kinds, and a verification writes no event', async () => {
     await seed();
     const before = await lastId();
-    await setProjectArchived('lifeos', 'core', true, 'dax', 'superseded');
-    await setProjectArchived('lifeos', 'core', false, 'dax');
-    await setAreaArchived('lifeos', true, 'dax');
-    await addVerification('lifeos', 'core', { kind: 'test', check: 'npm test', result: 'pass' }, 'dax');
+    await setProjectArchived('lifeos', 'core', true, 'builder', 'superseded');
+    await setProjectArchived('lifeos', 'core', false, 'builder');
+    await setAreaArchived('lifeos', true, 'builder');
+    await addVerification('lifeos', 'core', { kind: 'test', check: 'npm test', result: 'pass' }, 'builder');
     const rows = await events(`e.id > ${before}`);
     expect(rows.map((r) => [r.kind, r.project, r.field, r.actor, r.note])).toEqual([
-      ['archived', 'core', 'archived_at', 'dax', 'superseded'],
-      ['unarchived', 'core', 'archived_at', 'dax', null],
-      ['archived', null, 'archived_at', 'dax', null],
+      ['archived', 'core', 'archived_at', 'builder', 'superseded'],
+      ['unarchived', 'core', 'archived_at', 'builder', null],
+      ['archived', null, 'archived_at', 'builder', null],
     ]);
     expect(rows[0]!.from_value).toBeNull();
     expect(typeof rows[0]!.to_value).toBe('string');
@@ -99,13 +99,13 @@ describe('tracker_events: the triggers', () => {
 
   it('names the CLI as the source, and the --by as the actor', async () => {
     const root = mkdtempSync(join(tmpdir(), 'sb-events-'));
-    expect(await runAreasCli(['add', 'lifeos', '--title', 'LifeOS', '--by', 'konrad'], io(root))).toBe(0);
-    expect(await runProjectsCli(['add', 'lifeos/core', '--outcome', 'The core answers', '--by', 'dax'], io(root))).toBe(0);
-    expect(await runProjectsCli(['set', 'lifeos/core', '--stage', 'designing', '--by', 'dax'], io(root))).toBe(0);
+    expect(await runAreasCli(['add', 'lifeos', '--title', 'LifeOS', '--by', 'ada'], io(root))).toBe(0);
+    expect(await runProjectsCli(['add', 'lifeos/core', '--outcome', 'The core answers', '--by', 'builder'], io(root))).toBe(0);
+    expect(await runProjectsCli(['set', 'lifeos/core', '--stage', 'designing', '--by', 'builder'], io(root))).toBe(0);
     expect((await events()).map((r) => [r.kind, r.actor, r.source])).toEqual([
-      ['created', 'konrad', 'cli'],
-      ['created', 'dax', 'cli'],
-      ['stage', 'dax', 'cli'],
+      ['created', 'ada', 'cli'],
+      ['created', 'builder', 'cli'],
+      ['stage', 'builder', 'cli'],
     ]);
   });
 
@@ -126,13 +126,13 @@ describe('tracker_events: the triggers', () => {
 
   it('the board names the actor when a card makes its assignee the owner of a project', async () => {
     await seed();
-    await query(`INSERT INTO org_agents (name, runtime, role, org_version) VALUES ('owner', 'human', 'CEO', 'v'), ('dax', 'claude-code', 'Engineer', 'v')`);
+    await query(`INSERT INTO org_agents (name, runtime, role, org_version) VALUES ('owner', 'human', 'CEO', 'v'), ('builder', 'claude-code', 'Engineer', 'v')`);
     const before = await lastId();
     const { rows } = await query<{ id: string }>(
-      `SELECT id FROM board_card_create('owner', 'exo', 'build it', NULL, '{}', 'dax', 'lifeos', 'core', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false)`,
+      `SELECT id FROM board_card_create('owner', 'exo', 'build it', NULL, '{}', 'builder', 'lifeos', 'core', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false)`,
     );
     expect(await events(`e.id > ${before}`)).toEqual([
-      { actor: 'owner', source: 'board', area_slug: 'lifeos', project: 'core', kind: 'changed', field: 'owner', from_value: null, to_value: 'dax', note: `card ${rows[0]!.id}` },
+      { actor: 'owner', source: 'board', area_slug: 'lifeos', project: 'core', kind: 'changed', field: 'owner', from_value: null, to_value: 'builder', note: `card ${rows[0]!.id}` },
     ]);
   });
 });
@@ -212,11 +212,11 @@ describe('stage_changes as a view', () => {
     await query(`TRUNCATE stage_changes`);
     await query(
       `INSERT INTO stage_changes (id, area_slug, project_id, from_stage, to_stage, at, by, note) VALUES
-         (3,  'lifeos', NULL, NULL,       'active',     '2026-01-05T10:00:00Z', 'konrad',    'added'),
-         (4,  'lifeos', $1,   NULL,       'idea',       '2026-01-05T10:01:00Z', 'konrad',    'imported · from the old list'),
-         (7,  'lifeos', $1,   'idea',     'building',   '2026-02-01T09:00:00Z', 'dax',       NULL),
-         (8,  'lifeos', $1,   'building', 'live',       '2026-03-01T09:00:00Z', 'dax',       'UNVERIFIED: shipped before the tracker · hotfix'),
-         (9,  'lifeos', $1,   NULL,       'archived',   '2026-04-01T09:00:00Z', 'konrad',    'superseded'),
+         (3,  'lifeos', NULL, NULL,       'active',     '2026-01-05T10:00:00Z', 'ada',    'added'),
+         (4,  'lifeos', $1,   NULL,       'idea',       '2026-01-05T10:01:00Z', 'ada',    'imported · from the old list'),
+         (7,  'lifeos', $1,   'idea',     'building',   '2026-02-01T09:00:00Z', 'builder',       NULL),
+         (8,  'lifeos', $1,   'building', 'live',       '2026-03-01T09:00:00Z', 'builder',       'UNVERIFIED: shipped before the tracker · hotfix'),
+         (9,  'lifeos', $1,   NULL,       'archived',   '2026-04-01T09:00:00Z', 'ada',    'superseded'),
          (12, 'lifeos', $1,   NULL,       'unarchived', '2026-04-02T09:00:00Z', NULL,        NULL),
          (13, 'beta',   NULL, 'testing',  'active',     '2026-05-01T09:00:00Z', 'migration', 'para-rename: stage was testing, due 2026-12-01'),
          (20, 'beta',   NULL, 'active',   'parked',     '2026-06-01T09:00:00Z', NULL,        'paused')`,
@@ -233,21 +233,21 @@ describe('stage_changes as a view', () => {
     expect(await columns()).toEqual(cols);
     // In the log they are stage rows (and archive rows), marked as migrated, under the same ids.
     expect((await query(`SELECT id::int, kind, source, actor FROM tracker_events ORDER BY id`)).rows).toEqual([
-      { id: 3, kind: 'stage', source: 'migration', actor: 'konrad' },
-      { id: 4, kind: 'stage', source: 'migration', actor: 'konrad' },
-      { id: 7, kind: 'stage', source: 'migration', actor: 'dax' },
-      { id: 8, kind: 'stage', source: 'migration', actor: 'dax' },
-      { id: 9, kind: 'archived', source: 'migration', actor: 'konrad' },
+      { id: 3, kind: 'stage', source: 'migration', actor: 'ada' },
+      { id: 4, kind: 'stage', source: 'migration', actor: 'ada' },
+      { id: 7, kind: 'stage', source: 'migration', actor: 'builder' },
+      { id: 8, kind: 'stage', source: 'migration', actor: 'builder' },
+      { id: 9, kind: 'archived', source: 'migration', actor: 'ada' },
       { id: 12, kind: 'unarchived', source: 'migration', actor: 'unknown' },
       { id: 13, kind: 'stage', source: 'migration', actor: 'migration' },
       { id: 20, kind: 'stage', source: 'migration', actor: 'unknown' },
     ]);
 
     // New rows carry on after the old ids, and read through the view like the old ones.
-    await upsertProject('lifeos', 'core', { stage: 'testing' }, 'dax');
+    await upsertProject('lifeos', 'core', { stage: 'testing' }, 'builder');
     const after = await all();
     expect(after.slice(0, 8)).toEqual(before);
-    expect(after.slice(8)).toMatchObject([{ id: 21, area_slug: 'lifeos', project_id: core, from_stage: 'building', to_stage: 'testing', by: 'dax', note: null }]);
+    expect(after.slice(8)).toMatchObject([{ id: 21, area_slug: 'lifeos', project_id: core, from_stage: 'building', to_stage: 'testing', by: 'builder', note: null }]);
 
     // ---- down and up once more: nothing the view shows is lost either way
     await migrate(DOWN);
@@ -258,17 +258,17 @@ describe('stage_changes as a view', () => {
 
   it('shows what the application writes now in the shape it always had', async () => {
     await seed();
-    await upsertProject('lifeos', 'core', { stage: 'testing', due: '2026-12-31', note: 'endpoints done' }, 'dax');
-    await upsertProject('lifeos', 'core', { stage: 'done', unverified: 'shipped before the tracker' }, 'dax');
-    await setProjectArchived('lifeos', 'core', true, 'konrad', 'superseded');
+    await upsertProject('lifeos', 'core', { stage: 'testing', due: '2026-12-31', note: 'endpoints done' }, 'builder');
+    await upsertProject('lifeos', 'core', { stage: 'done', unverified: 'shipped before the tracker' }, 'builder');
+    await setProjectArchived('lifeos', 'core', true, 'ada', 'superseded');
     await query(`UPDATE areas SET status = 'parked' WHERE slug = 'lifeos'`);
     expect((await query(`SELECT p.slug, s.from_stage, s.to_stage, s.by, s.note FROM stage_changes s LEFT JOIN projects p ON p.id = s.project_id ORDER BY s.id`)).rows).toEqual([
       { slug: null, from_stage: null, to_stage: 'active', by: 'seed', note: 'added' },
       { slug: 'core', from_stage: null, to_stage: 'building', by: 'seed', note: 'added' },
       // The due date changed in the same write: it is in tracker_events, and not a stage change.
-      { slug: 'core', from_stage: 'building', to_stage: 'testing', by: 'dax', note: 'endpoints done' },
-      { slug: 'core', from_stage: 'testing', to_stage: 'done', by: 'dax', note: 'UNVERIFIED: shipped before the tracker' },
-      { slug: 'core', from_stage: null, to_stage: 'archived', by: 'konrad', note: 'superseded' },
+      { slug: 'core', from_stage: 'building', to_stage: 'testing', by: 'builder', note: 'endpoints done' },
+      { slug: 'core', from_stage: 'testing', to_stage: 'done', by: 'builder', note: 'UNVERIFIED: shipped before the tracker' },
+      { slug: 'core', from_stage: null, to_stage: 'archived', by: 'ada', note: 'superseded' },
       { slug: null, from_stage: 'active', to_stage: 'parked', by: null, note: null },
     ]);
   });
@@ -350,15 +350,15 @@ describe('KPI readings', () => {
     await seed();
     await upsertArea('lifeos', { home_path: 'Areas/lifeos' }, 'seed');
     const out: string[] = [];
-    expect(await runAreasCli(['record', 'lifeos', 'paying-users', '12', '--at', '2026-11-01', '--note', 'from the dashboard', '--by', 'konrad'], io(root, out))).toBe(0);
+    expect(await runAreasCli(['record', 'lifeos', 'paying-users', '12', '--at', '2026-11-01', '--note', 'from the dashboard', '--by', 'ada'], io(root, out))).toBe(0);
     expect(out[0]).toMatch(/^recorded lifeos paying-users = 12 \(reading \d+\)$/);
-    expect(await runAreasCli(['record', 'lifeos', 'paying-users', '17.5', '--by', 'konrad'], io(root, out))).toBe(0);
+    expect(await runAreasCli(['record', 'lifeos', 'paying-users', '17.5', '--by', 'ada'], io(root, out))).toBe(0);
     expect((await query(`SELECT area_slug, project_id, kpi_key, value::text, to_char(at, 'YYYY-MM-DD') AS day, source, actor, note FROM kpi_readings ORDER BY id LIMIT 1`)).rows).toEqual([
-      { area_slug: 'lifeos', project_id: null, kpi_key: 'paying-users', value: '12', day: '2026-11-01', source: 'cli', actor: 'konrad', note: 'from the dashboard' },
+      { area_slug: 'lifeos', project_id: null, kpi_key: 'paying-users', value: '12', day: '2026-11-01', source: 'cli', actor: 'ada', note: 'from the dashboard' },
     ]);
     expect(await events(`e.kind = 'kpi_reading'`)).toEqual([
-      { actor: 'konrad', source: 'kpi', area_slug: 'lifeos', project: null, kind: 'kpi_reading', field: 'paying-users', from_value: null, to_value: 12, note: 'from the dashboard' },
-      { actor: 'konrad', source: 'kpi', area_slug: 'lifeos', project: null, kind: 'kpi_reading', field: 'paying-users', from_value: 12, to_value: 17.5, note: null },
+      { actor: 'ada', source: 'kpi', area_slug: 'lifeos', project: null, kind: 'kpi_reading', field: 'paying-users', from_value: null, to_value: 12, note: 'from the dashboard' },
+      { actor: 'ada', source: 'kpi', area_slug: 'lifeos', project: null, kind: 'kpi_reading', field: 'paying-users', from_value: 12, to_value: 17.5, note: null },
     ]);
   });
 
@@ -366,24 +366,24 @@ describe('KPI readings', () => {
     const root = vaultWithKpis();
     await seed();
     await upsertArea('lifeos', { home_path: 'Areas/lifeos/README.md' }, 'seed');
-    await expect(recordKpi(root, 'lifeos', { key: 'payng-users', value: 12 }, 'konrad')).rejects.toThrow(
+    await expect(recordKpi(root, 'lifeos', { key: 'payng-users', value: 12 }, 'ada')).rejects.toThrow(
       'lifeos has no KPI "payng-users". Known keys: paying-users, mrr (the kpis: frontmatter of Areas/lifeos/README.md)',
     );
     await expect(runAreasCli(['record', 'lifeos', 'churn', '3'], io(root))).rejects.toThrow(/Known keys: paying-users, mrr/);
     await expect(runAreasCli(['record', 'lifeos', 'mrr', 'lots'], io(root))).rejects.toThrow(/the value is a number/);
-    await expect(recordKpi(root, 'lifeos', { key: 'mrr', value: 1, at: 'yesterday-ish' }, 'konrad')).rejects.toThrow(/not a date/);
-    await expect(recordKpi(root, 'nope', { key: 'mrr', value: 1 }, 'konrad')).rejects.toThrow(/no area "nope"/);
+    await expect(recordKpi(root, 'lifeos', { key: 'mrr', value: 1, at: 'yesterday-ish' }, 'ada')).rejects.toThrow(/not a date/);
+    await expect(recordKpi(root, 'nope', { key: 'mrr', value: 1 }, 'ada')).rejects.toThrow(/no area "nope"/);
     // Nothing was stored, and nothing logged.
     expect((await query(`SELECT count(*)::int AS n FROM kpi_readings`)).rows[0]).toEqual({ n: 0 });
     expect(await count(`kind = 'kpi_reading'`)).toBe(0);
 
     // An area with no home note, or a home note with no kpis, has no KPIs to record.
     await upsertArea('bare', { title: 'Bare' }, 'seed', { create: true });
-    await expect(recordKpi(root, 'bare', { key: 'mrr', value: 1 }, 'konrad')).rejects.toThrow(/bare has no home note/);
+    await expect(recordKpi(root, 'bare', { key: 'mrr', value: 1 }, 'ada')).rejects.toThrow(/bare has no home note/);
     mkdirSync(join(root, 'Areas/bare'), { recursive: true });
     writeFileSync(join(root, 'Areas/bare/README.md'), '---\narea: bare\nkind: area\n---\n');
     await upsertArea('bare', { home_path: 'Areas/bare' }, 'seed');
-    await expect(recordKpi(root, 'bare', { key: 'mrr', value: 1 }, 'konrad')).rejects.toThrow(/defines none in its kpis: frontmatter/);
+    await expect(recordKpi(root, 'bare', { key: 'mrr', value: 1 }, 'ada')).rejects.toThrow(/defines none in its kpis: frontmatter/);
   });
 
   it('POST /api/areas/:area/kpis records a reading, and answers 400 with the known keys for an unknown one', async () => {
