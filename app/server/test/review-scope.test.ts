@@ -47,7 +47,7 @@ describe('one review capacity policy', () => {
     expect(reviewable('deps.lock')).toBe(false);
     expect(scopeObservation(changed, code, '').changedFiles).toBe(6);
   });
-  it('gathers only immediate imports, deduplicates and applies the same limits in the public adapter', async () => {
+  it('gathers only immediate imports and deduplicates; the public adapter collects a PR of any size', async () => {
     const texts: Record<string, string> = { 'src/f0.ts': "import './one.js'; import './two.js';", 'src/one.ts': "import './deep.js';", 'src/two.ts': 'test', 'src/deep.ts': 'deep' };
     const read = async (_r: string, p: string) => texts[p]!;
     const code = await collectCode(files(1), head, base, new Set(Object.keys(texts)), read);
@@ -58,8 +58,9 @@ describe('one review capacity policy', () => {
     github.gh = async () => JSON.stringify([files(changed).map(f => ({ filename: f.path, status: f.status }))]);
     github.git = async () => '';
     expect(await github.code({ number: 1, headRefOid: head, baseRefOid: base })).toHaveLength(30);
-    changed = 31;
-    await expect(github.code({ number: 1, headRefOid: head, baseRefOid: base })).rejects.toThrow(/reviewableFiles/);
+    // The gate's adapter never refuses on size (large PRs are reviewed in passes); the budgets below are planning advice only.
+    changed = 131;
+    expect(await github.code({ number: 1, headRefOid: head, baseRefOid: base })).toHaveLength(131);
     expect(evaluate(scopeObservation(files(101), [], ''), 'actual').status).toBe('decompose');
     expect(evaluate({ ...scopeObservation([], [], ''), sources: 81 }, 'actual').status).toBe('decompose');
   });

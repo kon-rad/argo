@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
-/** Hard capacities are reviewer contracts, never plan-controlled settings. */
+/** Budgets, never plan-controlled. combinedChars is what one reviewer call holds; the rest is planning advice for the scope CLI.
+ *  None of them rejects a PR: the gate reviews a larger change in several passes (review/passes.ts). */
 export const POLICY = Object.freeze({ version: 1, changedFiles: 100, reviewableFiles: 30, sources: 80,
   sourceChars: 80_000, diffChars: 250_000, combinedChars: 500_000, softTarget: 24 });
 export const policyHash = createHash('sha256').update(JSON.stringify(POLICY)).digest('hex');
