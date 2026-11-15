@@ -24,6 +24,8 @@ when their cached metadata is refetched, including a cleared setting falling bac
 | Not set (the default), or not a valid zone | `null`, for browser-zone fallback in frontend consumers |
 
 The server's own zone is never used: it says where the machine is, not where you are. Travel is never inferred.
+The [weekly review](modules.md#weekly-review) cuts its week at midnight in this zone, and its Sunday 20:00 timer is
+generated with it (UTC when unset); a changed zone reaches the timer on the next deploy or `secondbrain apply`.
 The Usage ledger shows the chosen zone and its source (`vault setting` or `this browser`).
 Usage charts bucket hours and days in that zone. When the effective zone changes after initial metadata loading,
 the selected bucket is recalculated and its old session interval is cleared. An initial bookmarked session range

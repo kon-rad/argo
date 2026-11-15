@@ -249,6 +249,7 @@ The reference below lists shipped settings. It is not a generic registry for arb
 | `tv.shows` | `tv` | `{ "slug": "Show name" }` |
 | `livestream.youtube`, `.twitch`, `.kick` | `livestream` | Your channel handle on each platform |
 | `fund.dir`, `fund.txService`, `fund.explorer` | `fund` | Vault folder of the fund's state (default `fund`), the Safe Transaction Service URL and the block explorer for its chain (defaults: Base) |
+| `areas.reviewDir` | `projects` | Vault folder `cli-areas review` and its Sunday timer write the weekly review to, one file per ISO week (default `Areas/weekly-review`) ([modules.md](modules.md#weekly-review)) |
 | `projects.reportFile` | `projects` | Where `cli-areas render` writes the markdown report (default `projects.md`). The key and its default kept their names when the tracker was renamed to areas and projects ([modules.md](modules.md#projects)) |
 | `summaries.chain`, `summaries.minSteps`, `summaries.quietMinutes`, `summaries.maxInputChars` | `usage` | Which providers write session summaries and in what order, the shortest session worth summarizing, how long a session must be quiet, and how much transcript is sent. Defaults in `app/config/summaries.json`; see [summaries.md](summaries.md) |
 | `chat.defaultProvider` | `chat` | The preset provider the chat starts on, when its key is set |

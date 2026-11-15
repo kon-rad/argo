@@ -10,7 +10,8 @@ import {
   type Args, type CliIo,
 } from './cli-shared.js';
 import {
-  buildReport, getBoard, importSeed, recordKpi, removeArea, setAreaArchived, TrackerError, upsertArea, upsertDivision, upsertTeam, withTrackerSource,
+  buildAreaContext, buildReport, buildWeeklyReview, getBoard, importSeed, inVault, mergeReview, recordKpi, removeArea, renderContextText, renderReviewBlock,
+  resolveWeek, setAreaArchived, TrackerError, upsertArea, upsertDivision, upsertTeam, withTrackerSource,
 } from './service/index.js';
 import { renderMarkdown, renderStandup, renderTelegram } from './service/report.js';
 
@@ -18,6 +19,8 @@ const USAGE = `cli-areas: the areas of the tracker (Postgres). Areas are what yo
 The finite work inside an area is its projects: see cli-projects.
 
   list [--archived]                                  areas with their projects, one line each
+  show <area> [--project P] [--format text|json]     the context pack: what it is, links, style paths, goals, KPIs, roadmap, the last 14 days
+  review [--week YYYY-Www|ending]                    write the weekly review to <areas.reviewDir>/<week>.md (default: this week)
   report [--format markdown|standup|telegram|json]   the company report (default: telegram)
   render [path]                                      write the markdown report to projects.reportFile (only if it changed)
   add <area> --title T [fields]                      a new area (starts active)
@@ -84,6 +87,32 @@ async function areasCli(argv: string[], io: CliIo): Promise<number> {
           io.out(`  ${a.slug}/${p.slug} [${p.stage} ${p.days_in_stage}d${p.archived_at ? ' archived' : ''}]${v}${p.needs_owner ? ` NEEDS: ${p.needs_owner}` : ''}  ${p.title}`);
         }
       }
+      return 0;
+    }
+    case 'show': {
+      // `show <area>/<project>` reads the same as `show <area> --project <project>`.
+      const { area, project } = target(pos[0]);
+      const format = z.enum(['text', 'json']).parse(text(opts.format) ?? 'text');
+      const ctx = await buildAreaContext(vault, area, { project: text(opts.project) ?? project, now: io.now });
+      io.out(format === 'json' ? JSON.stringify(ctx, null, 2) : renderContextText(ctx).trimEnd());
+      return 0;
+    }
+    case 'review': {
+      const s = settings(vault);
+      const timezone = s.timezone ?? 'UTC';
+      const dir = inVault(s.areas.reviewDir);
+      if (!dir) throw new TrackerError(`areas.reviewDir is a folder inside the vault, relative to its root (got "${s.areas.reviewDir}")`);
+      const week = resolveWeek(text(opts.week), io.now, timezone);
+      const review = await buildWeeklyReview(vault, week, { now: io.now, timezone });
+      const path = join(vault, dir, `${week}.md`);
+      let existing: string | null = null;
+      try {
+        existing = readFileSync(path, 'utf8');
+      } catch {
+        // no review for this week yet
+      }
+      const changed = writeIfChanged(path, mergeReview(existing, renderReviewBlock(review), review));
+      io.out(`${changed ? 'wrote' : 'unchanged'} ${path} (${review.areas.length} with changes, ${review.quiet.length} quiet)`);
       return 0;
     }
     case 'add': {
