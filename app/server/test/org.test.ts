@@ -77,7 +77,7 @@ describe('cli helpers', () => {
   it('formats a message for a model to read', () => {
     const s = formatMessage({
       id: 7, channel_slug: 'platform', thread_id: 3, author: 'rune', kind: 'status', body: 'ran tests\n12 pass', mentions: [], urgent: false,
-      task_id: 't_1', project_slug: null, feature_slug: null, run_id: null, created_at: new Date('2026-10-15T01:02:03Z'),
+      task_id: 't_1', area_slug: null, project_slug: null, run_id: null, created_at: new Date('2026-10-15T01:02:03Z'),
     });
     expect(s).toBe('#platform 7 2026-10-15 01:02 rune [status] (re:3 task t_1)\n  ran tests\n  12 pass');
   });
@@ -279,7 +279,7 @@ describe('DMs, handoffs, mentions and the wakeups they insert', () => {
   });
 
   it('a post with an unknown project is refused', async () => {
-    await expect(post(await getAgent('atlas'), 'platform', 'x', { project: 'nope' })).rejects.toThrow(/no project "nope"/);
+    await expect(post(await getAgent('atlas'), 'platform', 'x', { area: 'nope' })).rejects.toThrow(/no area "nope"/);
   });
 });
 

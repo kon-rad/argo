@@ -54,7 +54,7 @@ describe('summaries api', () => {
     const f = (await query(`INSERT INTO agent_summary_facts (summary_id, subject, claim) VALUES ($1,'billing','Discount codes are deduplicated.') RETURNING *`, [summary])).rows[0];
     expect(f.status).toBe('promoted');
     const fact = (await query(`SELECT * FROM memory_facts WHERE id=$1`, [f.fact_id])).rows[0];
-    expect(fact).toMatchObject({subject:'billing', claim:'Discount codes are deduplicated.', author:'summarizer', confidence:'inferred', project_slug:null});
+    expect(fact).toMatchObject({subject:'billing', claim:'Discount codes are deduplicated.', author:'summarizer', confidence:'inferred', area_slug:null});
     expect(fact.source).toMatch(/^agent-summary:\d+ \(session droplet\/a\)$/);
     await request(app).post(`/api/summaries/facts/${f.id}/promote`).send({}).expect(410);
     await request(app).post(`/api/summaries/facts/${f.id}/reject`).send({}).expect(410);

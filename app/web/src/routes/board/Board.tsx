@@ -5,14 +5,14 @@ import { ChatInput } from '../../components/ChatInput.js';
 import EventFeed from '../../components/EventFeed.js';
 import { VaultMarkdown } from '../../components/VaultMarkdown.js';
 import { api, type OrgChart } from '../../lib/api.js';
-import { projectsApi, type TrackerProject } from '../Projects.api.js';
+import { projectsApi, type TrackerArea } from '../Projects.api.js';
 import { boardApi, BOARD_STATUSES, type BoardCard, type BoardCardDetail, type BoardStatus } from './api.js';
 import { useEventLog } from '../../lib/useEventLog.js';
 import { CardNotes, useCardNotesFor } from '../../components/CardNotes.js';
 
 /**
  * The board module's page: the kanban record in the engine (docs/board-design.md). Columns over the card statuses,
- * filters by board, project, assignee and kind, a card panel with its contract, comments, dependencies and runs. Live
+ * filters by board, area, assignee and kind, a card panel with its contract, comments, dependencies and runs. Live
  * through the server's SSE feed (pg_notify), so nothing polls. Writes act as the owner.
  */
 
@@ -72,16 +72,16 @@ export function AgentChip({ name, chart }: { name: string | null; chart?: OrgCha
   );
 }
 
-/** The tracker's projects a card can be tagged with: everything but parked and done, by slug. */
-function useTrackerProjects(): TrackerProject[] {
+/** The tracker's areas a card can be tagged with: the active ones, by slug, each with its projects. */
+function useTrackerAreas(): TrackerArea[] {
   const report = useQuery({ queryKey: ['projects', 'report'], queryFn: projectsApi.report, staleTime: 60_000, retry: false });
-  return useMemo(() => (report.data?.projects ?? []).filter((p) => p.stage !== 'parked' && p.stage !== 'done').sort((a, b) => a.slug.localeCompare(b.slug)), [report.data]);
+  return useMemo(() => (report.data?.areas ?? []).filter((a) => a.status === 'active').sort((a, b) => a.slug.localeCompare(b.slug)), [report.data]);
 }
 
-export function ProjectChip({ project, feature, to }: { project: string; feature: string | null; to: string }) {
+export function ProjectChip({ area, project, to }: { area: string; project: string | null; to: string }) {
   return (
-    <Link to={to} title={`Cards in ${project}`} className="truncate rounded bg-[var(--paper-sunk)] px-1.5 py-0.5 font-medium text-[var(--accent)] hover:underline">
-      {project}{feature ? `/${feature}` : ''}
+    <Link to={to} title={`Cards in ${area}`} className="truncate rounded bg-[var(--paper-sunk)] px-1.5 py-0.5 font-medium text-[var(--accent)] hover:underline">
+      {area}{project ? `/${project}` : ''}
     </Link>
   );
 }
@@ -116,7 +116,8 @@ export default function Board() {
   const { cardId } = useParams();
   const [params, setParams] = useSearchParams();
   const board = params.get('board') ?? undefined;
-  const project = params.get('project') ?? undefined;
+  // `?project=<area>` is the link shape from before the PARA rename; old bookmarks keep working.
+  const area = params.get('area') ?? params.get('project') ?? undefined;
   const assignee = params.get('assignee') ?? undefined;
   const kind = params.get('kind') ?? undefined;
   const q = params.get('q') ?? '';
@@ -133,19 +134,19 @@ export default function Board() {
   const boards = useQuery({ queryKey: ['board', 'boards'], queryFn: boardApi.boards, staleTime: 60_000 });
   const chart = useQuery({ queryKey: ['org', 'chart'], queryFn: api.orgChart, staleTime: 60_000, retry: false });
   const cards = useQuery({
-    queryKey: ['board', 'cards', { board, project, assignee, kind, q, ids }],
-    queryFn: () => boardApi.cards({ board, project, assignee, kind, q: q.trim() || undefined, id: ids }),
+    queryKey: ['board', 'cards', { board, area, assignee, kind, q, ids }],
+    queryFn: () => boardApi.cards({ board, area, assignee, kind, q: q.trim() || undefined, id: ids }),
     refetchInterval: live ? false : 15_000,
   });
   const list = cards.data?.cards ?? [];
   const notes = useCardNotesFor(list.map((c) => ({ id: c.id, text: [c.title, c.body, c.result].filter(Boolean).join('\n\n') })));
-  const tracker = useTrackerProjects();
-  // The tracker's live projects, plus any slug a loaded card still carries (a parked project's card stays filterable).
-  const projects = useMemo(
-    () => [...new Set([...tracker.map((p) => p.slug), ...list.map((c) => c.project_slug).filter((p): p is string => !!p)])].sort(),
+  const tracker = useTrackerAreas();
+  // The tracker's live areas, plus any slug a loaded card still carries (a parked area's card stays filterable).
+  const areas = useMemo(
+    () => [...new Set([...tracker.map((p) => p.slug), ...list.map((c) => c.area_slug).filter((p): p is string => !!p)])].sort(),
     [tracker, list],
   );
-  const projectHref = (slug: string): string => `/board?${new URLSearchParams({ project: slug }).toString()}`;
+  const projectHref = (slug: string): string => `/board?${new URLSearchParams({ area: slug }).toString()}`;
   const assignees = useMemo(() => [...new Set(list.map((c) => c.assignee ?? 'none'))].sort(), [list]);
 
   if (cards.isError) return <p className="p-4 text-sm text-[var(--warn)]">⚠ {cards.error.message}</p>;
@@ -163,7 +164,7 @@ export default function Board() {
       <div className="flex min-w-0 flex-1 flex-col max-md:overflow-y-auto">
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--rule)] px-3 py-2 text-sm">
           {select('All boards', board, (boards.data?.boards ?? []).map((b) => ({ value: b.slug, label: `${b.name} (${b.open})` })), (v) => set('board', v))}
-          {select('Any project', project, projects.map((p) => ({ value: p, label: p })), (v) => set('project', v))}
+          {select('Any area', area, areas.map((p) => ({ value: p, label: p })), (v) => set('area', v))}
           {select('Anyone', assignee, assignees.map((a) => ({ value: a, label: a })), (v) => set('assignee', v))}
           {select('Any kind', kind, KINDS.map((k) => ({ value: k, label: k })), (v) => set('kind', v))}
           <select value={sort} onChange={(e) => set('sort', e.target.value === 'newest' ? '' : e.target.value)} aria-label="Sort by" className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
@@ -209,7 +210,7 @@ export default function Board() {
                       {/* Outside the button so the id selects like text and the chip is a real link. */}
                       <div className="flex min-w-0 items-center gap-1.5 px-2 pb-1.5 text-[0.65rem] text-[var(--ink-faint)]">
                         <span className="select-all font-mono">{c.id}</span>
-                        {c.project_slug && <ProjectChip project={c.project_slug} feature={c.feature_slug} to={projectHref(c.project_slug)} />}
+                        {c.area_slug && <ProjectChip area={c.area_slug} project={c.project_slug} to={projectHref(c.area_slug)} />}
                       </div>
                       <CardNotes refs={notes.refsByTask.get(c.id) ?? []} resolved={notes.resolved} />
                     </li>
@@ -230,17 +231,17 @@ function NewCard({ board, chart, onCreated }: { board: string | undefined; chart
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [assignee, setAssignee] = useState('');
+  const [area, setArea] = useState('');
   const [project, setProject] = useState('');
-  const [feature, setFeature] = useState('');
   const [kind, setKind] = useState('work');
   const [priority, setPriority] = useState(3);
-  const projects = useTrackerProjects();
-  const features = projects.find((p) => p.slug === project)?.features ?? [];
+  const areas = useTrackerAreas();
+  const projects = areas.find((p) => p.slug === area)?.projects ?? [];
   const bots = (chart?.agents ?? []).filter((a) => a.runtime !== 'human');
   const byRuntime = new Map<string, typeof bots>();
   for (const b of bots) byRuntime.set(b.runtime, [...(byRuntime.get(b.runtime) ?? []), b]);
   const create = useMutation({
-    mutationFn: () => boardApi.create({ board, title, body: body || undefined, assignee: assignee || null, project: project || undefined, feature: feature || undefined, kind, priority }),
+    mutationFn: () => boardApi.create({ board, title, body: body || undefined, assignee: assignee || null, area: area || undefined, project: project || undefined, kind, priority }),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ['board'] });
       onCreated(r.card.id);
@@ -259,13 +260,13 @@ function NewCard({ board, chart, onCreated }: { board: string | undefined; chart
             <optgroup key={rt} label={rt}>{list.map((a) => <option key={a.name} value={a.name}>{a.name}{a.team_slug ? ` · ${a.team_slug}` : ''} — {a.role.slice(0, 40)}</option>)}</optgroup>
           ))}
         </select>
-        <select aria-label="Project" value={project} onChange={(e) => { setProject(e.target.value); setFeature(''); }} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
-          <option value="">project (optional)</option>
-          {projects.map((p) => <option key={p.slug} value={p.slug}>{p.slug}</option>)}
+        <select aria-label="Area" value={area} onChange={(e) => { setArea(e.target.value); setProject(''); }} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
+          <option value="">area (optional)</option>
+          {areas.map((p) => <option key={p.slug} value={p.slug}>{p.slug}</option>)}
         </select>
-        <select aria-label="Feature" value={feature} onChange={(e) => setFeature(e.target.value)} disabled={!project} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
-          <option value="">feature (optional)</option>
-          {features.map((f) => <option key={f.slug} value={f.slug}>{f.slug}</option>)}
+        <select aria-label="Project" value={project} onChange={(e) => setProject(e.target.value)} disabled={!area} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
+          <option value="">project (optional)</option>
+          {projects.map((f) => <option key={f.slug} value={f.slug}>{f.slug}</option>)}
         </select>
         <select aria-label="Kind" value={kind} onChange={(e) => setKind(e.target.value)} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
           {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
@@ -322,18 +323,18 @@ function CardPanel({ id, chart, onClose }: { id: string; chart: OrgChart | null;
   const finish = useMutation({ mutationFn: (outcome: 'done' | 'partial') => boardApi.finish(id, { outcome }), onSuccess: refresh });
   const assign = useMutation({ mutationFn: (to: string | null) => boardApi.assign(id, { assignee: to }), onSuccess: () => { setAssignee(null); refresh(); } });
   const flag = useMutation({ mutationFn: (ship_now: boolean) => boardApi.flags(id, { ship_now }), onSuccess: refresh });
-  const tag = useMutation({ mutationFn: (t: { project: string | null; feature: string | null }) => boardApi.tag(id, t), onSuccess: refresh });
+  const tag = useMutation({ mutationFn: (t: { area: string | null; project: string | null }) => boardApi.tag(id, t), onSuccess: refresh });
   const err = [send, move, finish, assign, flag, tag].find((m) => m.isError)?.error;
   const bots = (chart?.agents ?? []).filter((a) => a.runtime !== 'human');
-  const tracker = useTrackerProjects();
+  const tracker = useTrackerAreas();
   const [copied, setCopied] = useState(false);
   const copy = (): void => {
     void navigator.clipboard?.writeText(id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => undefined);
   };
-  // The card's own project stays in the list even when the tracker parked it, so the select shows the truth.
-  const projectOptions = c?.project_slug && !tracker.some((p) => p.slug === c.project_slug) ? [c.project_slug, ...tracker.map((p) => p.slug)] : tracker.map((p) => p.slug);
-  const featureOptions = tracker.find((p) => p.slug === c?.project_slug)?.features.map((f) => f.slug) ?? [];
-  if (c?.feature_slug && !featureOptions.includes(c.feature_slug)) featureOptions.unshift(c.feature_slug);
+  // The card's own area stays in the list even when the tracker parked it, so the select shows the truth.
+  const areaOptions = c?.area_slug && !tracker.some((p) => p.slug === c.area_slug) ? [c.area_slug, ...tracker.map((p) => p.slug)] : tracker.map((p) => p.slug);
+  const projectOptions = tracker.find((p) => p.slug === c?.area_slug)?.projects.map((f) => f.slug) ?? [];
+  if (c?.project_slug && !projectOptions.includes(c.project_slug)) projectOptions.unshift(c.project_slug);
   return (
     <aside className="flex w-full max-w-xl shrink-0 flex-col border-l border-[var(--rule)] max-md:fixed max-md:inset-0 max-md:z-20 max-md:max-w-none max-md:bg-[var(--paper)]" aria-label="Card">
       <div className="flex items-center gap-2 border-b border-[var(--rule)] px-3 py-2">
@@ -352,22 +353,22 @@ function CardPanel({ id, chart, onClose }: { id: string; chart: OrgChart | null;
             <h2 className="text-base font-semibold">{c.ship_now && <span title="ship-now">🚀 </span>}{c.title}</h2>
             <p className="text-xs text-[var(--ink-dim)]">
               {c.board_slug} · {c.kind}{c.work_type ? ` · ${c.work_type}` : ''}{c.needs ? ` · needs ${c.needs}` : ''} · p{c.priority} · by {c.created_by} {age(c.created_at)} ago
-              {c.project_slug && <> · <Link className="text-[var(--accent)]" to={`/projects?view=board`}>{c.project_slug}{c.feature_slug ? `/${c.feature_slug}` : ''}</Link></>}
+              {c.area_slug && <> · <Link className="text-[var(--accent)]" to={`/projects?view=board`}>{c.area_slug}{c.project_slug ? `/${c.project_slug}` : ''}</Link></>}
               {c.repo && <> · repo {c.repo}</>}{c.graph && <> · {c.graph}/{c.node}</>}{c.rounds ? <> · round {c.rounds}</> : null}
             </p>
-            <div className="flex flex-wrap items-center gap-2 text-xs" aria-label="Project">
-              <span className="text-[var(--ink-dim)]">Project</span>
-              <select aria-label="Card project" value={c.project_slug ?? ''}
-                onChange={(e) => tag.mutate({ project: e.target.value || null, feature: null })}
+            <div className="flex flex-wrap items-center gap-2 text-xs" aria-label="Area">
+              <span className="text-[var(--ink-dim)]">Area</span>
+              <select aria-label="Card area" value={c.area_slug ?? ''}
+                onChange={(e) => tag.mutate({ area: e.target.value || null, project: null })}
                 className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1">
                 <option value="">none</option>
-                {projectOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+                {areaOptions.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
-              <select aria-label="Card feature" value={c.feature_slug ?? ''} disabled={!c.project_slug}
-                onChange={(e) => tag.mutate({ project: c.project_slug, feature: e.target.value || null })}
+              <select aria-label="Card project" value={c.project_slug ?? ''} disabled={!c.area_slug}
+                onChange={(e) => tag.mutate({ area: c.area_slug, project: e.target.value || null })}
                 className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1">
-                <option value="">no feature</option>
-                {featureOptions.map((f) => <option key={f} value={f}>{f}</option>)}
+                <option value="">no project</option>
+                {projectOptions.map((f) => <option key={f} value={f}>{f}</option>)}
               </select>
             </div>
             {c.block_reason && <p className="rounded border border-[var(--warn)] p-2 text-sm">⛔ {c.block_kind}: {c.block_reason}</p>}

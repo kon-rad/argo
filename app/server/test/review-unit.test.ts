@@ -270,7 +270,7 @@ it('restores deployed state after health failure before SQL completion without r
   f.io.health=health;await runReview(f.job,['test'],f.io);
   expect(f.job.state).toBe('done');expect(f.counts()).toEqual({reviews:1,merges:1,deploys:1,completions:1});
 });
-it.each(['project','feature'])('ignores only board %s audit stamps while retaining meaningful evidence',kind=>{
+it.each(['area','project','feature'])('ignores only board %s audit stamps while retaining meaningful evidence',kind=>{
   const project={title:'Platform',owner:'lead',stage:'building',updated_at:'before',updated_by:'writer'};
   const snap=(data:unknown,ref=`board:t_123abc:${kind}`)=>({...snapshot(),sources:[source(ref,data)]});
   const original=snap(project),before=structuredClone(original);

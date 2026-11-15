@@ -24,8 +24,8 @@ export async function buildDigest(hours = 24, maxChars = 6000): Promise<string> 
   const { rows } = await query<Row>(
     // card_project: the tracker project of the card a bot run worked on, when the session ran one.
     `SELECT s.id, s.harness, s.host, s.project, s.started_at, s.request, s.done, s.learned, s.open_items, s.outcome, s.metrics,
-            (SELECT tl.project_slug FROM usage_runs r JOIN task_links tl ON tl.task_id = r.task_id
-              WHERE r.host = s.host AND r.session_id = a.external_id AND tl.project_slug IS NOT NULL LIMIT 1) AS card_project
+            (SELECT tl.area_slug FROM usage_runs r JOIN task_links tl ON tl.task_id = r.task_id
+              WHERE r.host = s.host AND r.session_id = a.external_id AND tl.area_slug IS NOT NULL LIMIT 1) AS card_project
        FROM agent_summaries s JOIN archive_sessions a ON a.id = s.session_id
       WHERE s.status = 'ok' AND coalesce(s.ended_at, s.started_at, s.updated_at) >= now() - make_interval(hours => $1)
       ORDER BY coalesce(s.ended_at, s.started_at) DESC LIMIT 300`, [hours]);

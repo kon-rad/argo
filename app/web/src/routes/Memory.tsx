@@ -90,7 +90,7 @@ export default function Memory() {
             <p className="mt-1 text-xs text-[var(--ink-faint)]">
               #{f.id}
               {f.agent ? ` · ${f.agent}'s` : ''}
-              {f.project_slug ? ` · ${f.project_slug}` : ''} · {f.confidence} · by {f.author}
+              {f.area_slug ? ` · ${f.area_slug}` : ''} · {f.confidence} · by {f.author}
               {f.via ? ` via ${f.via}` : ''} · <SourceLink source={f.source} />
             </p>
             <button

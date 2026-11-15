@@ -63,8 +63,8 @@ CREATE TABLE cards (
   priority      smallint NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
   assignee      text REFERENCES org_agents(name) ON UPDATE CASCADE,   -- NULL: unassigned
   created_by    text NOT NULL REFERENCES org_agents(name) ON UPDATE CASCADE,
-  project_slug  text REFERENCES projects(slug) ON UPDATE CASCADE ON DELETE SET NULL,
-  feature_slug  text,
+  area_slug     text REFERENCES areas(slug) ON UPDATE CASCADE ON DELETE SET NULL,
+  project_slug  text,                           -- a project of that area; never set without area_slug (a check and a composite FK to projects)
   kind          text NOT NULL DEFAULT 'work' CHECK (kind IN ('work','spec','build','review','verify','doc','status','improve','revert')),
   work_type     text CHECK (work_type IN ('research','coding','design','media','writing','sales','education','ops')),
   needs         text CHECK (needs IN ('code','review','merge','deploy','m1','web')),
@@ -85,7 +85,7 @@ CREATE TABLE cards (
 );
 CREATE INDEX cards_board_status_idx ON cards (board_slug, status, priority, created_at);
 CREATE INDEX cards_assignee_idx     ON cards (assignee) WHERE status NOT IN ('done','archived');
-CREATE INDEX cards_project_idx      ON cards (project_slug, feature_slug);
+CREATE INDEX cards_area_project_idx ON cards (area_slug, project_slug);
 CREATE INDEX cards_tsv_idx          ON cards USING gin (tsv);
 
 CREATE TABLE card_comments (
@@ -237,11 +237,11 @@ Errors use the app's `{ error: { message } }` shape. Nothing here is new machine
 ### 5.2 CLI: `cli-board` (also `secondbrain board`)
 
 ```
-cli-board list [--board b] [--status s] [--assignee a] [--project p] [--json]
+cli-board list [--board b] [--status s] [--assignee a] [--area a] [--project p] [--json]
 cli-board show <card> [--json]
-cli-board create "<title>" --to <agent> --project p [--feature f] [--kind k] [--type work] [--needs cap] [--repo r] [--priority N] [--after t_…]... [--body "..."] [--contract file.json] [--ship-now] [--json]
+cli-board create "<title>" --to <agent> --area a [--project p] [--kind k] [--type work] [--needs cap] [--repo r] [--priority N] [--after t_…]... [--body "..."] [--contract file.json] [--ship-now] [--json]
 cli-board comment <card> "<body>"
-cli-board assign <card> <agent> [--project p --feature f]
+cli-board assign <card> <agent> [--area a --project p]
 cli-board move <card> <status> ["<note>"]
 cli-board link <card> --after <card>
 cli-board claim --runtime <r> [--agent a] [--json]
