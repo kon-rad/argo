@@ -86,3 +86,51 @@ export const KpiReadingRequestSchema = z.object({
 export type KpiReadingRequest = z.infer<typeof KpiReadingRequestSchema>;
 export const KpiReadingCreatedResponseSchema = z.object({ id: z.number().int() });
 export type KpiReadingCreatedResponse = z.infer<typeof KpiReadingCreatedResponseSchema>;
+
+/**
+ * The context pack of an area (`cli-areas show`, `GET /api/areas/:slug/context`): what an agent with a ticket on it
+ * reads first. `links`, `style` and `goals` are the home note's frontmatter as the owner wrote it; paths, never file
+ * contents. `kpis` and `goals` are absent when the home note defines none. Each list is cut, with its `*_total` next to it.
+ */
+export const AreaContextKpiSchema = z.object({
+  key: z.string(), name: z.string().nullable(), unit: z.string().nullable(), target: z.number().nullable(), by: z.string().nullable(),
+  latest: z.object({ value: z.number(), at: z.string() }).nullable(),
+});
+export type AreaContextKpi = z.infer<typeof AreaContextKpiSchema>;
+export const AreaContextEventSchema = z.object({
+  at: z.string(), actor: z.string(), project: z.string().nullable(), kind: z.string(), field: z.string().nullable(),
+  from: z.unknown(), to: z.unknown(), note: z.string().nullable(),
+});
+export type AreaContextEvent = z.infer<typeof AreaContextEventSchema>;
+export const AreaContextSchema = z.object({
+  area: z.object({
+    slug: z.string(), title: z.string(), status: AreaStatusSchema, team: z.string().nullable(), division: z.string().nullable(),
+    home_path: z.string().nullable(), home_note: z.string().nullable(), design_path: z.string().nullable(), devlog_path: z.string().nullable(),
+    repos: z.array(z.string()), paths: z.array(z.string()), goal_codes: z.array(z.string()), needs_owner: z.string().nullable(), blocked_on: z.string().nullable(),
+    archived_at: z.string().nullable(),
+  }),
+  description: z.string().nullable(),
+  summary: z.string().nullable(),
+  links: z.unknown(),
+  style: z.unknown(),
+  goals: z.unknown().optional(),
+  kpis: z.array(AreaContextKpiSchema).optional(),
+  roadmap: z.array(z.object({
+    slug: z.string(), title: z.string(), outcome: z.string().nullable(), stage: StageSchema, due: z.string().nullable(), next_action: z.string().nullable(),
+    owner: z.string().nullable(), notes_path: z.string().nullable(),
+  })),
+  roadmap_total: z.number().int(),
+  recent: z.object({
+    days: z.number().int(), since: z.string(),
+    events: z.array(AreaContextEventSchema), events_total: z.number().int(),
+    cards: z.array(z.object({ id: z.string(), title: z.string(), project: z.string().nullable(), assignee: z.string().nullable(), completed_at: z.string() })), cards_total: z.number().int(),
+    files: z.array(z.object({ path: z.string(), mtime: z.string() })), files_total: z.number().int(),
+  }),
+  project: z.object({
+    slug: z.string(), title: z.string(), outcome: z.string().nullable(), stage: StageSchema, due: z.string().nullable(), owner: z.string().nullable(),
+    next_action: z.string().nullable(), notes_path: z.string().nullable(), needs_owner: z.string().nullable(), blocked_on: z.string().nullable(),
+    archived_at: z.string().nullable(), excerpt: z.string().nullable(),
+    verifications: z.array(TrackerVerificationSchema), verifications_total: z.number().int(),
+  }).optional(),
+});
+export type AreaContext = z.infer<typeof AreaContextSchema>;
