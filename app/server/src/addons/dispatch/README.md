@@ -9,7 +9,7 @@ List it in the vault's `secondbrain.json` `addons` (or `MODULES` in `.env`) to t
 | Module | `dispatch` |
 | CLI | `secondbrain dispatch` |
 | Timers (server) | `secondbrain-dispatch` |
-| Env | `ORG_DISPATCH`, `ORG_DISPATCH_TICK_SECONDS`, `ORG_DISPATCH_PARALLEL`, `ORG_DISPATCH_QUIET`, `ORG_DISPATCH_DAILY_TOKENS`, `ORG_CODEX_COMMAND` |
+| Env | `ORG_DISPATCH`, `ORG_DISPATCH_TICK_SECONDS`, `ORG_DISPATCH_PARALLEL`, `ORG_DISPATCH_QUIET`, `ORG_DISPATCH_DAILY_TOKENS`, `ORG_CODEX_COMMAND`, `ORG_CODEX_HOST` |
 | Docs | `docs/addons.md` |
 
 The manifest beside this file (`manifest.ts`) is the one place the addon is wired: its CLI, timers, wrappers, env and doc page. `deploy.sh`, `secondbrain features`, `doctor` and `secondbrain plan|apply` all read it. See `docs/addons.md`.
@@ -17,6 +17,8 @@ The manifest beside this file (`manifest.ts`) is the one place the addon is wire
 ## Codex subscription lane
 
 Set an agent's roster runtime to `codex` and its model to the exact Codex CLI model id. The dispatcher removes API-key and endpoint overrides, checks `codex login status` for ChatGPT login, then makes an ephemeral read-only request against that exact model before claiming any wakeup. If the binary, login or model is unavailable, ready task cards move to `blocked` with the reason and the tick reports an error. It never substitutes another model or an API key. `ORG_CODEX_COMMAND` selects the binary path; default is `codex`.
+
+When that command transports execution to another registered machine, set `ORG_CODEX_HOST` to that machine's `usage_hosts.slug`. The run, its fallback summary and native Codex calls then share a host and can be reconciled. Leave it unset when Codex executes on the dispatcher itself. An unregistered slug stops recording with a clear configuration error.
 
 For a task wake, the dispatcher claims the exact ready card once, passes its body and comments in the prompt, and runs `codex exec --json` in the vault root with `workspace-write`. A card naming a repository is blocked before launch and goes to the isolated card runner. It records the JSONL thread id and token counts, then comments and moves a successful card to `review`. Error, cancellation and timeout move it to `blocked`. A human may return a blocked card to `ready`; the next wake resumes its recorded Codex session id. Non-card wakes run read-only. Existing zen-agent and Claude Code runs are unaffected; the dispatcher selects only roster rows whose effective runtime is `zen-agent` or `codex`.
 

@@ -200,6 +200,8 @@ const Schema = z.object({
   ORG_ZEN_COMMAND: z.string().min(1).default('zen-agent'),
   // Subscription-only Codex CLI. A roster row runs only after ChatGPT login and exact-model preflight.
   ORG_CODEX_COMMAND: z.string().min(1).default('codex'),
+  // usage_hosts.slug where ORG_CODEX_COMMAND executes. Unset: this server's registered usage host.
+  ORG_CODEX_HOST: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/).optional(),
   // Native Codex conversation directory; authentication remains owned by the CLI.
   CODEX_HOME: z.string().min(1).optional(),
   // Where zen-agent writes its traces (zen.json sessionsDir); usage-sync reads them. Default: <vault>/.zen/sessions.
@@ -432,6 +434,7 @@ export const config = {
   orgDispatchDailyTokens: parsed.data.ORG_DISPATCH_DAILY_TOKENS,
   orgZenCommand: parsed.data.ORG_ZEN_COMMAND,
   orgCodexCommand: parsed.data.ORG_CODEX_COMMAND,
+  orgCodexHost: parsed.data.ORG_CODEX_HOST ?? null,
   zenSessionsDir: parsed.data.ZEN_SESSIONS_DIR ?? resolve(parsed.data.VAULT_ROOT, '.zen', 'sessions'),
   classifyProvider: parsed.data.CLASSIFY_PROVIDER,
   classifyDailyTokens: parsed.data.CLASSIFY_DAILY_TOKENS,

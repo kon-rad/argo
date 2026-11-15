@@ -31,6 +31,7 @@ export interface DispatchConfig {
   orgDispatchParallel: number;
   orgZenCommand: string;
   orgCodexCommand?: string;
+  orgCodexHost?: string | null;
   vaultRoot: string;
   /** The connected computers (OLLAMA_MACHINES); a model on one of them may fall back (settings.fallback). */
   machines?: OllamaMachine[];
@@ -311,7 +312,7 @@ export class Dispatcher {
       const summary = result.text || `Codex ${result.state} (exit ${result.code})`;
       await store.recordCodexRun({ runId, sessionId: result.sessionId ?? resume, agent: agent.name, model, card,
         startedAt, endedAt: this.now(), state: result.state, text: summary, inputTokens: result.inputTokens,
-        outputTokens: result.outputTokens, wakeupIds: selected.map((w) => w.id) });
+        outputTokens: result.outputTokens, wakeupIds: selected.map((w) => w.id), codexHost: this.deps.config.orgCodexHost });
       if (card) {
         await heartbeat(agent.name, card, { tokens: result.inputTokens + result.outputTokens });
         await commentCard(agent.name, card, `${result.state}: ${summary}`.slice(0, 8000));
