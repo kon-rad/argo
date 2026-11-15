@@ -200,6 +200,7 @@ Settings that don't fit one env line live in the vault, in `secondbrain.json` at
 | `uploads.destinations`, `uploads.m1Dir` | uploads | Folder presets for the Uploads page (label, vault path, keywords) and where the second machine files its copy |
 | `usage.subscriptions`, `usage.credits`, `usage.sections` | usage | Which subscription quotas, prepaid balances and page sections appear; provider lists default to empty |
 | `projects.reportFile` | projects | Where `cli-areas render` writes the report (default `projects.md`) |
+| `areas.reviewDir` | projects | Folder `cli-areas review` writes the weekly review to (default `Areas/weekly-review`) |
 | `garden.*` | garden | Shelf roots, archive folder, catalog and report paths, age thresholds, caps, pinned shelves, `apply` |
 
 Then `secondbrain scan` to build the index and `secondbrain embed` to build the vector index. Every setting: [docs/configuration.md](../docs/configuration.md).

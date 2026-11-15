@@ -1,0 +1,35 @@
+{
+  "area": {
+    "slug": "reading",
+    "title": "Reading",
+    "status": "active",
+    "team": null,
+    "division": null,
+    "home_path": "Areas/reading/README.md",
+    "home_note": "Areas/reading/README.md",
+    "design_path": null,
+    "devlog_path": null,
+    "repos": [],
+    "paths": [],
+    "goal_codes": [],
+    "needs_owner": null,
+    "blocked_on": null,
+    "archived_at": null
+  },
+  "description": "Books and papers worth keeping",
+  "summary": "One note per book.",
+  "links": null,
+  "style": null,
+  "roadmap": [],
+  "roadmap_total": 0,
+  "recent": {
+    "days": 14,
+    "since": "2026-11-06T00:00:00.000Z",
+    "events": [],
+    "events_total": 0,
+    "cards": [],
+    "cards_total": 0,
+    "files": [],
+    "files_total": 0
+  }
+}

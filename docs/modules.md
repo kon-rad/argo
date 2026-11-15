@@ -51,18 +51,58 @@ A tracker of **areas** and **projects**, the two words PARA uses ([vault.md](vau
 |---|---|
 | Pages | `/areas`: the active areas by division, with open project count, owner and KPI health; parked and archived areas behind toggles. `/areas/<area>`: the area's home page (below). `/projects`: projects across areas, filtered by area, stage and due date (`?area=&stage=&due=overdue\|week\|month\|none&archived=1`); its other tabs are the overview, the board (areas with their projects by stage), "needs you", teams and goals. `/projects/<area>/<project>`: outcome, stage history, verifications, next action, the start of its README. An old `/projects/<area>` link redirects to `/areas/<area>` |
 | Keys | `g` then `a` opens `/areas`, `g` then `p` opens `/projects` (no modifier, not while typing in a field) |
-| CLI, areas | `cli-areas` (`list`, `report`, `render`, `add`, `set`, `archive`, `unarchive`, `record`, `team`, `division`, `import`) |
+| CLI, areas | `cli-areas` (`list`, `show`, `review`, `report`, `render`, `add`, `set`, `archive`, `unarchive`, `record`, `team`, `division`, `import`) |
 | CLI, projects | `cli-projects` (`list --area --stage --due-before`, `add <area>/<project> --outcome`, `set`, `verify`, `archive`, `unarchive`, `report`): the way agents read and update it |
-| API | `/api/areas` (the board; `?view=index` is the list behind `/areas`), `/api/areas/report`, `/api/areas/:area` (`GET` is the area page: the row, the home note's links, style, goals and KPIs with readings, the roadmap, 14 days of history; `PATCH` sets fields), `/api/areas/:area/projects`, `POST /api/areas/:area/kpis` (one KPI reading: `{ key, value, at?, note? }`), `/api/projects` (across areas; `?area=`, `?stage=`, `?due_before=`, `?archived=1`), `/api/projects/:area/:project` (`GET` is the project page; `PATCH` sets fields), `.../verifications`, `.../archive`, `.../unarchive` |
+| API | `/api/areas` (the board; `?view=index` is the list behind `/areas`), `/api/areas/report`, `/api/areas/:area` (`GET` is the area page: the row, the home note's links, style, goals and KPIs with readings, the roadmap, 14 days of history; `PATCH` sets fields), `/api/areas/:area/projects`, `GET /api/areas/:area/context` (the context pack, `?project=`), `POST /api/areas/:area/kpis` (one KPI reading: `{ key, value, at?, note? }`), `/api/projects` (across areas; `?area=`, `?stage=`, `?due_before=`, `?archived=1`), `/api/projects/:area/:project` (`GET` is the project page; `PATCH` sets fields), `.../verifications`, `.../archive`, `.../unarchive` |
 | Kiosk feed | `GET /api/feed/projects` with `PROJECTS_FEED_TOKEN` (read-only). Its path and keys are the ones a kiosk already reads: `projects` lists the areas |
 | Report | `cli-areas render` writes a markdown report to `projects.reportFile` |
 | Project folders | `cli-projects add` creates `<area home>/projects/<project>/README.md` when the area has a home (`cli-areas set <area> --home <path>`), and never overwrites one |
 | Archive | `cli-areas archive <area>`, `cli-projects archive <area>/<project>`: hidden from active views, nothing deleted; `--archived` lists them; `archive --purge --yes` deletes for good |
-| Settings | `goalsFile` in `secondbrain.json` (goals table) |
-| Timers (server) | `projects-render` |
+| Settings | `goalsFile` in `secondbrain.json` (goals table), `projects.reportFile`, `areas.reviewDir` |
+| Timers (server) | `projects-render` (hourly), `areas-review` (Sunday 20:00 in the vault's `timezone`) |
 | Skill | `company-report` |
 | Change history | `tracker_events`: every change to an area or a project, frontmatter changes of home notes, KPI readings (below) |
 | KPIs | `cli-areas record <area> <kpi> <value> [--at D] [--note "why"]`; the keys are the `kpis:` frontmatter of the area's home note |
+| Context pack | `cli-areas show <area> [--project P] [--format text\|json]`: what an agent reads before it works on an area (below) |
+| Weekly review | `cli-areas review [--week YYYY-Www]` writes `<areas.reviewDir>/<week>.md` (below) |
+
+### Context pack
+
+`cli-areas show <area>` prints what an agent with a ticket on an area needs before it starts, and `GET /api/areas/:area/context` returns the same thing as JSON (`--format json` on the CLI).
+
+| Section | From |
+|---|---|
+| What it is | The home note's `description` and the first section of its body |
+| Links | The home note's `links:` frontmatter, as written |
+| Style and assets | The home note's `style:` frontmatter: paths, listed |
+| Goals and KPIs | `goals:` and `kpis:` of the home note, each KPI with its latest reading and its target. An area that defines no KPIs has no `kpis` key and no KPI section |
+| Roadmap | The open projects (`idea` to `testing`), by due date: outcome, stage, due, next action |
+| Recent | The last 14 days: rows of the change history, cards finished, files changed under the area's home (from the vault index) |
+| Project | With `--project <slug>` (or `show <area>/<project>`, or `?project=` on the API): the project's row, the first section of its README, its newest verifications |
+
+The pack names paths and never inlines a file, so an agent opens only what its ticket needs. The text form stays under about 8,000 characters (about 2,000 tokens): each list is cut with a count of what was left out (`... and 12 more`), and a busy area is rendered with shorter lists until it fits. The JSON carries up to 30 rows of a list with its `*_total` next to it. An unknown area or project is a 404 (exit 1 on the CLI).
+
+### Weekly review
+
+`cli-areas review` writes one markdown file per ISO week, `<areas.reviewDir>/2026-W46.md` (default folder `Areas/weekly-review`). The week runs Monday to Sunday in the vault's [`timezone`](timezone.md) (UTC when unset). `--week 2026-W46` picks a week; `--week ending` is the week that is ending or just ended, which is what the timer asks for.
+
+For each area where something happened:
+
+| Section | From |
+|---|---|
+| Shipped | Projects that reached `live` or `done` |
+| Moved | Every other stage change, and a status change of the area |
+| Slipped | A `due` moved to a later date during the week; and a `due` that fell in the week and passed while the project was still open (not shipped, parked or archived at the end of the week) |
+| New and dropped | Projects created, archived, unarchived |
+| KPIs | The reading the week started with (the last one before it, else the first one in it) and ended with, the change, and the distance to the target |
+| Changed facts | Frontmatter changes of the home notes, and tracker fields other than a stage (an owner, a next action, a due date set or moved earlier) |
+| Work | Cards finished for the area, and notes changed under its home |
+
+Active areas where nothing happened are one `Quiet:` line. Cards finished that name no area are one `Unfiled work:` line: a card needs neither an area nor a project.
+
+The generated part sits between `<!-- review:start -->` and `<!-- review:end -->`. A new file gets a title and an empty `## Reflection` section above the block, which is yours. A re-run rewrites the block and nothing else: every character outside the markers is kept, and a file whose block would not change is not written at all. If you wrote the file before the first run, the block is added at its end.
+
+On a server the `secondbrain-areas-review` timer runs `cli-areas review --week ending` on Sunday at 20:00 in the vault's `timezone`. The zone is written into the timer when its unit is generated (`deploy.sh`, `secondbrain apply`), so after `secondbrain timezone set` the timer moves on the next deploy. A week that has passed can be written again at any time; "notes changed" is then read from the vault index as it is now, which keeps only the last change of a file.
 
 ### The area page
 

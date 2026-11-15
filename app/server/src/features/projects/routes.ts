@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   addVerification,
   AreaPatch,
+  buildAreaContext,
   buildReport,
   getBoard,
   kioskSummary,
@@ -25,7 +26,7 @@ import { HttpError, parseOr400, wrap } from '../../routes/http.js';
 import type { FeatureRoutes } from '../types.js';
 import { ArchiveRequestSchema, KpiReadingRequestSchema } from '@secondbrain/contracts/projects';
 import type { AreaIndexResponse, AreaPage, ProjectListResponse, ProjectPage } from '@secondbrain/contracts/projects';
-import type { ArchivedResponse, KpiReadingCreatedResponse, StageChangedResponse, TrackerMarkdownResponse, TrackerReport, VerificationCreatedResponse } from '@secondbrain/contracts/projects';
+import type { AreaContext, ArchivedResponse, KpiReadingCreatedResponse, StageChangedResponse, TrackerMarkdownResponse, TrackerReport, VerificationCreatedResponse } from '@secondbrain/contracts/projects';
 
 const Slug = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
 const AreaParams = z.object({ area: Slug });
@@ -100,6 +101,17 @@ export function areasRouter(vaultRoot: string): Router {
       const patch = parseOr400(AreaPatch, req.body);
       const response = await tracked(() => upsertArea(area, patch, BY_APP));
       res.json(response satisfies StageChangedResponse);
+    }),
+  );
+
+  // The context pack an agent reads before it works on the area: the same JSON as `cli-areas show --format json`.
+  router.get(
+    '/:area/context',
+    wrap(async (req, res) => {
+      const { area } = parseOr400(AreaParams, req.params);
+      const { project } = parseOr400(z.object({ project: Slug.optional() }), req.query);
+      const response = await tracked(() => buildAreaContext(vaultRoot, area, { project }));
+      res.json(response satisfies AreaContext);
     }),
   );
 

@@ -444,6 +444,12 @@ const Settings = z.object({
       reportFile: z.string().default('projects.md'),
     })
     .prefault({}),
+  areas: z
+    .object({
+      /** Vault-relative folder `cli-areas review` writes the weekly review to, one file per ISO week (`<reviewDir>/2026-W46.md`). */
+      reviewDir: z.string().min(1).default('Areas/weekly-review'),
+    })
+    .prefault({}),
   /** `secondbrain garden`: the nightly vault gardener (docs/garden.md). */
   garden: z
     .object({
