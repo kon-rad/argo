@@ -366,7 +366,7 @@ Doctor checks saved local discovery, not remote connectivity. After upload, open
 
 ### Automatic review host settings
 
-Automatic review is off until the owner enables `review_policy` in PostgreSQL. The standalone worker receives `REVIEW_DB_URL` only in its dedicated service environment and takes an explicit owner-owned host JSON policy path. Repository mappings, required checks, the sole reviewer, note exclusions, subscription transport and registered deployment targets have no personal defaults. This service does not load the app's vault environment. See [automatic review setup](automatic-review.md).
+Automatic review is off until the owner enables `review_policy` in PostgreSQL. The standalone worker receives `REVIEW_DB_URL` only in its dedicated service environment and takes an explicit owner-owned host JSON policy path. Repository mappings, required checks, the sole reviewer, note exclusions, subscription transport, registered deployment targets and the optional `notify` program (one line to the owner when a review is rejected or blocked) have no personal defaults. This service does not load the app's vault environment. See [automatic review setup](automatic-review.md).
 
 
 
