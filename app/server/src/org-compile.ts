@@ -451,7 +451,7 @@ const POWER_LINES: Record<string, string> = {
   web: 'WebSearch and WebFetch for primary sources; cite what you use.',
   dispatch:
     '`cli-board list [--status ready|blocked|running]` reads the whole board; `cli-board assign <card> <bot> ' +
-    '--project <p> [--repo <r>]` gives any bot a card (still only a bot with the capability it needs; a coding card names its repo; vault code goes ' +
+    '--area <a> [--repo <r>]` gives any bot a card (still only a bot with the capability it needs; a coding card names its repo; vault code goes ' +
     'to `m4` with `--repo vault`). Your daily sweep card says what to do and when.',
 };
 

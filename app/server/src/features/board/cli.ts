@@ -8,7 +8,7 @@ import {
 import { config } from '../../config.js';
 import { pool, setDatabaseUrl } from '../../db.js';
 import { agentDatabaseUrl, parseArgs } from '../../cli-org.js';
-import { assignTask, createTask, getAgent, OrgError, redoTask } from '../../org.js';
+import { assignTask, createTask, getAgent, OrgError, redoTask, trackerRef } from '../../org.js';
 
 /**
  * cli-board (also `secondbrain board`): the board from a terminal, for people and agents. Design: docs/board-design.md
@@ -20,12 +20,12 @@ import { assignTask, createTask, getAgent, OrgError, redoTask } from '../../org.
 const USAGE = `cli-board <command>
 
   boards                                      the boards and their open cards
-  list [--board b] [--status s[,s]] [--assignee a|none] [--project p] [--feature f] [--kind k] [--q text] [--all] [--json]
+  list [--board b] [--status s[,s]] [--assignee a|none] [--area a] [--project p] [--kind k] [--q text] [--all] [--json]
   show <card> [--json]                        a card with its body, comments, dependencies, runs and events
-  create "<title>" [--to <agent>] [--project p] [--feature f] [--kind k] [--type work] [--needs cap] [--repo r] [--priority N]
+  create "<title>" [--to <agent>] [--area a] [--project p] [--kind k] [--type work] [--needs cap] [--repo r] [--priority N]
          [--after t_..,t_..] [--body "..."] [--contract file.json] [--ship-now] [--board b] [--json]
   comment <card> "<body>"                     as yourself
-  assign <card> <agent|none> [--project p] [--feature f] [--type work] [--needs cap] [--repo r] [--ship-now]   an existing card becomes the agent's
+  assign <card> <agent|none> [--area a] [--project p] [--type work] [--needs cap] [--repo r] [--ship-now]   an existing card becomes the agent's
   redo <card> "<what to change>"               changes requested: a new round for the builder, the review card parked until it is done
   move <card> <status> ["<note>"]             triage todo scheduled ready running review blocked done archived (bots: own card, not done)
   link <card> --after <card>                  card waits for the other
@@ -38,6 +38,9 @@ const USAGE = `cli-board <command>
   reclaim                                     lost leases back to ready, due schedules to ready (a timer runs this)
   token create <agent> [--label "where it runs"] | list | revoke <id>     (owner, database door)
   import <file.json> [--board b] [--check]    LEGACY migration tool: cards from a saved Hermes kanban export (list --json / show --json); --check reports drift only. Never calls hermes
+
+  --area is one of the areas (cli-areas list); --project is a project inside it and needs its area. Until the aliases end,
+  --project <area> alone is read as the area and --feature as --project, each with a warning.
 
   Doors: BOARD_URL + BOARD_TOKEN → HTTPS as the token's agent; else the database (ORG_AGENT + SB_ORG_DB_URL → the RLS role; else the owner).`;
 
@@ -54,11 +57,11 @@ const when = (d: Date | string | null): string => (d ? new Date(d).toISOString()
  * everywhere. A verb absent from this map keeps the old permissive parse (used by `token`/`import`). */
 const KNOWN_FLAGS: Record<string, readonly string[]> = {
   boards: [],
-  list: ['board', 'status', 'assignee', 'project', 'feature', 'kind', 'q', 'all', 'done-days', 'limit'],
+  list: ['board', 'status', 'assignee', 'area', 'project', 'feature', 'kind', 'q', 'all', 'done-days', 'limit'],
   show: [],
-  create: ['to', 'project', 'feature', 'board', 'priority', 'type', 'needs', 'repo', 'ship-now', 'kind', 'after', 'body', 'contract'],
+  create: ['to', 'area', 'project', 'feature', 'board', 'priority', 'type', 'needs', 'repo', 'ship-now', 'kind', 'after', 'body', 'contract'],
   comment: [],
-  assign: ['project', 'feature', 'type', 'needs', 'repo', 'ship-now'],
+  assign: ['area', 'project', 'feature', 'type', 'needs', 'repo', 'ship-now'],
   redo: ['run'],
   move: [],
   link: ['after'],
@@ -84,7 +87,7 @@ export function rejectUnknownFlags(cmd: string | undefined, opts: Opts): void {
 }
 
 export function formatCard(c: Card): string {
-  const ref = c.project_slug ? `${c.project_slug}${c.feature_slug ? `/${c.feature_slug}` : ''}` : '-';
+  const ref = c.area_slug ? `${c.area_slug}${c.project_slug ? `/${c.project_slug}` : ''}` : '-';
   return `${c.id}  [${c.status.padEnd(9)}] p${c.priority} ${(c.assignee ?? 'unassigned').padEnd(14)} ${ref.padEnd(28)} ${c.title}${c.block_kind ? `  (blocked: ${c.block_kind})` : ''}`;
 }
 
@@ -93,7 +96,7 @@ export function formatDetail(d: CardDetail): string {
   const lines = [
     `${c.id}: ${c.title}`,
     `board ${c.board_slug} · ${c.status}${c.assignee ? ` · ${c.assignee}` : ' · unassigned'} · by ${c.created_by} · ${when(c.created_at)} · priority ${c.priority} · kind ${c.kind}${c.work_type ? ` · ${c.work_type}` : ''}${c.needs ? ` · needs ${c.needs}` : ''}${c.ship_now ? ' · SHIP-NOW' : ''}`,
-    ...(c.project_slug ? [`project ${c.project_slug}${c.feature_slug ? `/${c.feature_slug}` : ''}${c.repo ? ` · repo ${c.repo}` : ''}${c.graph ? ` · graph ${c.graph} node ${c.node}` : ''}${c.rounds ? ` · round ${c.rounds}` : ''}`] : []),
+    ...(c.area_slug ? [`area ${c.area_slug}${c.project_slug ? `/${c.project_slug}` : ''}${c.repo ? ` · repo ${c.repo}` : ''}${c.graph ? ` · graph ${c.graph} node ${c.node}` : ''}${c.rounds ? ` · round ${c.rounds}` : ''}`] : []),
     ...(c.block_kind ? [`blocked (${c.block_kind}): ${c.block_reason ?? ''}`] : []),
     ...(c.result ? [`result: ${c.result}`] : []),
     ...(d.depends_on.length ? [`waits for: ${d.depends_on.map((x) => `${x.id} [${x.status}]`).join(', ')}`] : []),
@@ -109,11 +112,11 @@ export function formatDetail(d: CardDetail): string {
 /** The verbs, whichever door. */
 export interface BoardClient {
   boards(): Promise<(Board & { open: number })[]>;
-  list(f: CardFilter): Promise<Card[]>;
+  list(f: CardFilter & { feature?: string }): Promise<Card[]>;
   show(id: string): Promise<CardDetail>;
   create(c: Record<string, unknown>): Promise<{ card: Card; message: { id: number; channel_slug: string } | null }>;
   comment(id: string, body: string): Promise<void>;
-  assign(id: string, assignee: string | null, o: { project?: string; feature?: string; work?: string; needs?: string; repo?: string; shipNow?: boolean }): Promise<Card>;
+  assign(id: string, assignee: string | null, o: { area?: string; project?: string; feature?: string; work?: string; needs?: string; repo?: string; shipNow?: boolean }): Promise<Card>;
   redo(id: string, changes: string, runId?: string): Promise<{ escalated: boolean; task_id: string | null; rounds: number }>;
   move(id: string, status: string, note?: string): Promise<Card>;
   link(id: string, dependsOn: string): Promise<void>;
@@ -140,11 +143,11 @@ export class HttpBoard implements BoardClient {
     return data as T;
   }
   async boards() { return (await this.call<{ boards: (Board & { open: number })[] }>('GET', '/boards')).boards; }
-  async list(f: CardFilter) { return (await this.call<{ cards: Card[] }>('GET', '/cards', { ...f, id: f.ids?.join(','), ids: undefined, done_days: f.doneDays, doneDays: undefined })).cards; }
+  async list(f: CardFilter & { feature?: string }) { return (await this.call<{ cards: Card[] }>('GET', '/cards', { ...f, id: f.ids?.join(','), ids: undefined, done_days: f.doneDays, doneDays: undefined })).cards; }
   show(id: string) { return this.call<CardDetail>('GET', `/cards/${id}`); }
   create(c: Record<string, unknown>) { return this.call<{ card: Card; message: { id: number; channel_slug: string } | null }>('POST', '/cards', undefined, c); }
   async comment(id: string, body: string) { await this.call('POST', `/cards/${id}/comment`, undefined, { body }); }
-  async assign(id: string, assignee: string | null, o: { project?: string; feature?: string; work?: string; needs?: string; repo?: string; shipNow?: boolean }) { return (await this.call<{ card: Card }>('POST', `/cards/${id}/assign`, undefined, { assignee, project: o.project, feature: o.feature, work: o.work, needs: o.needs, repo: o.repo, ship_now: o.shipNow })).card; }
+  async assign(id: string, assignee: string | null, o: { area?: string; project?: string; feature?: string; work?: string; needs?: string; repo?: string; shipNow?: boolean }) { return (await this.call<{ card: Card }>('POST', `/cards/${id}/assign`, undefined, { assignee, area: o.area, project: o.project, feature: o.feature, work: o.work, needs: o.needs, repo: o.repo, ship_now: o.shipNow })).card; }
   async redo(id: string, changes: string, runId?: string) { return this.call<{ escalated: boolean; task_id: string | null; rounds: number }>('POST', `/cards/${id}/redo`, undefined, { changes, run_id: runId }); }
   async move(id: string, status: string, note?: string) { return (await this.call<{ card: Card }>('POST', `/cards/${id}/move`, undefined, { status, note })).card; }
   async link(id: string, dependsOn: string) { await this.call('POST', `/cards/${id}/link`, undefined, { depends_on: dependsOn }); }
@@ -190,17 +193,20 @@ export class HttpBoard implements BoardClient {
 export class DbBoard implements BoardClient {
   constructor(private readonly me: string, private readonly viewer: string | null) {}
   boards() { return listBoards(this.viewer); }
-  list(f: CardFilter) { return listCards(f, this.viewer); }
+  async list(f: CardFilter & { feature?: string }) {
+    const { feature, ...rest } = f;
+    return listCards({ ...rest, area: undefined, project: undefined, ...(await trackerRef({ area: f.area, project: f.project, feature })) }, this.viewer);
+  }
   show(id: string) { return getCard(id, this.viewer); }
   async create(c: Record<string, unknown>) {
-    const b = c as { title: string; assignee?: string | null; body?: string; contract?: Contract; project?: string; feature?: string; board?: string; priority?: number; work?: string; needs?: string; repo?: string; ship_now?: boolean; kind?: string; deps?: string[] };
-    const r = await createTask(await getAgent(this.me), { assignee: b.assignee ?? null, title: b.title, body: b.body, contract: b.contract, project: b.project, feature: b.feature, board: b.board, priority: b.priority, type: b.work, needs: b.needs, repo: b.repo, shipNow: b.ship_now, kind: b.kind, deps: b.deps, run: config.env.ORG_RUN });
+    const b = c as { title: string; assignee?: string | null; body?: string; contract?: Contract; area?: string; project?: string; feature?: string; board?: string; priority?: number; work?: string; needs?: string; repo?: string; ship_now?: boolean; kind?: string; deps?: string[] };
+    const r = await createTask(await getAgent(this.me), { assignee: b.assignee ?? null, title: b.title, body: b.body, contract: b.contract, ...(await trackerRef(b)), board: b.board, priority: b.priority, type: b.work, needs: b.needs, repo: b.repo, shipNow: b.ship_now, kind: b.kind, deps: b.deps, run: config.env.ORG_RUN });
     return { card: r.card, message: r.message };
   }
   async comment(id: string, body: string) { await commentCard(this.me, id, body); }
-  async assign(id: string, assignee: string | null, o: { project?: string; feature?: string; work?: string; needs?: string; repo?: string; shipNow?: boolean }) {
+  async assign(id: string, assignee: string | null, o: { area?: string; project?: string; feature?: string; work?: string; needs?: string; repo?: string; shipNow?: boolean }) {
     if (assignee === null) return assignCard(this.me, id, null);
-    return (await assignTask(await getAgent(this.me), { taskId: id, assignee, project: o.project, feature: o.feature, type: o.work, needs: o.needs, repo: o.repo, shipNow: o.shipNow, run: config.env.ORG_RUN })).card;
+    return (await assignTask(await getAgent(this.me), { taskId: id, assignee, ...(await trackerRef(o)), type: o.work, needs: o.needs, repo: o.repo, shipNow: o.shipNow, run: config.env.ORG_RUN })).card;
   }
   async redo(id: string, changes: string, runId?: string) {
     const r = await redoTask(await getAgent(this.me), id, changes, runId);
@@ -258,7 +264,7 @@ export async function main(argv: string[], out: (s: string) => void = console.lo
       return 0;
     }
     case 'list': {
-      const cards = await kb!.list({ board: str(opts.board), status: str(opts.status), assignee: str(opts.assignee), project: str(opts.project), feature: str(opts.feature), kind: str(opts.kind), q: str(opts.q), doneDays: opts.all === true ? 0 : num(opts['done-days'], 'done-days'), limit: num(opts.limit, 'limit') });
+      const cards = await kb!.list({ board: str(opts.board), status: str(opts.status), assignee: str(opts.assignee), area: str(opts.area), project: str(opts.project), feature: str(opts.feature), kind: str(opts.kind), q: str(opts.q), doneDays: opts.all === true ? 0 : num(opts['done-days'], 'done-days'), limit: num(opts.limit, 'limit') });
       out(json ? JSON.stringify(cards, null, 2) : cards.map(formatCard).join('\n') || 'no cards');
       return 0;
     }
@@ -269,10 +275,10 @@ export async function main(argv: string[], out: (s: string) => void = console.lo
       return 0;
     }
     case 'create': {
-      need(pos[0], 'create "<title>" [--to <agent>] [--project p] ...');
+      need(pos[0], 'create "<title>" [--to <agent>] [--area a] [--project p] ...');
       const contract = str(opts.contract) ? (JSON.parse(readFileSync(str(opts.contract)!, 'utf8')) as Contract) : undefined;
       const r = await kb!.create({
-        title: pos[0], assignee: str(opts.to) ?? null, body: str(opts.body), contract, project: str(opts.project), feature: str(opts.feature), board: str(opts.board), priority: num(opts.priority, 'priority'),
+        title: pos[0], assignee: str(opts.to) ?? null, body: str(opts.body), contract, area: str(opts.area), project: str(opts.project), feature: str(opts.feature), board: str(opts.board), priority: num(opts.priority, 'priority'),
         work: str(opts.type), needs: str(opts.needs), repo: str(opts.repo), ship_now: opts['ship-now'] === true, kind: str(opts.kind), deps: str(opts.after)?.split(',').map((x) => x.trim()).filter(Boolean),
       });
       out(json ? JSON.stringify(r) : `card ${r.card.id} ${r.card.assignee ? `for ${r.card.assignee}` : 'unassigned'} [${r.card.status}]: ${r.card.title}${r.message ? `; noted as ${r.message.id} in #${r.message.channel_slug}` : ''}`);
@@ -285,8 +291,8 @@ export async function main(argv: string[], out: (s: string) => void = console.lo
       return 0;
     }
     case 'assign': {
-      need(pos[0] && pos[1], 'assign <card> <agent|none> [--project p] [--feature f] [--repo r] [--ship-now]');
-      const c = await kb!.assign(pos[0]!, pos[1] === 'none' ? null : pos[1]!, { project: str(opts.project), feature: str(opts.feature), work: str(opts.type), needs: str(opts.needs), repo: str(opts.repo), shipNow: opts['ship-now'] === true });
+      need(pos[0] && pos[1], 'assign <card> <agent|none> [--area a] [--project p] [--repo r] [--ship-now]');
+      const c = await kb!.assign(pos[0]!, pos[1] === 'none' ? null : pos[1]!, { area: str(opts.area), project: str(opts.project), feature: str(opts.feature), work: str(opts.type), needs: str(opts.needs), repo: str(opts.repo), shipNow: opts['ship-now'] === true });
       out(json ? JSON.stringify(c) : `${c.id} is now ${c.assignee ?? 'unassigned'} [${c.status}]`);
       return 0;
     }

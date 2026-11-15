@@ -80,7 +80,7 @@ The keys, in the order you are likely to touch them:
 | `rules`, `skills` | `["AGENTS.md"]`, `[".agents/skills", "~/.zen/skills"]` | The rules part (first file that exists) and the skill folders (earlier wins) |
 | `context.cap`, `context.keepTurns`, `context.parts` | 0.6, 6, caps per part | The compaction trigger, the tail kept, and the token cap of each prompt part (`thread` 2 000, `tracker` 1 500, `github` 1 500, `recall` 2 000 for the fetched parts) |
 | `context.fetchers` | `{}` | Context fetchers per card work type, team (`team:<slug>`) or `default`: `tracker`, `github`, `recall`. Off unless listed ([3.4](#34-a-bot-wake-end-to-end)) |
-| `org.command`, `tracker.command`, `github.command` | `cli-org`, `cli-projects`, `gh` | The commands behind the `org` tools and the `thread`, `recall`, `tracker` and `github` fetchers |
+| `org.command`, `tracker.command`, `github.command` | `cli-org`, `cli-areas`, `gh` | The commands behind the `org` tools and the `thread`, `recall`, `tracker` and `github` fetchers |
 | `guard.local`, `guard.log`, `guard.hooks` | first `.agents/guard.local.json` up from the working directory; `~/.cache/agent-guard.log`; none | The vault's rules, the block log, and the `preToolUse` and `stop` hook commands |
 | `providers` | `{}` | Extra endpoints: `{ "<id>": { "api": "openai-completions" \| "anthropic-messages", "baseUrl", "apiKeyEnv"?, "models": [{ "id", "contextWindow"?, "maxTokens"? }] } }` |
 | `machines` | `{}` | Connected computers that run Ollama: `{ "<name>": { "url": "http://host:11434", "name"?, "contextWindow"? } }`. Each becomes the provider `ollama-<name>` whose models are whatever the machine has installed right now (`/api/tags`, embedding models left out), so a model pulled there appears without editing anything: `--model ollama-<name>/<tag>`. `contextWindow` (default 32 000) is the window assumed and the cap on a model's own: Ollama's OpenAI-compatible endpoint cannot ask for one, the server's `OLLAMA_CONTEXT_LENGTH` decides, so set it to that. The `OLLAMA_MACHINES` variable (`name=url,name=url`) adds to and overrides this key. A machine that stops answering keeps its last models, greyed out as unreachable |
@@ -129,9 +129,9 @@ The dispatcher's shell script becomes `ORG_AGENT=bolt zen-agent wake t_3f9a12 --
 
 | Fetcher | Reads off the card | Runs | Brings |
 |---|---|---|---|
-| `tracker` | `Project: <p>/<f>` (the header `cli-org task create` writes) | `cli-projects list` | The project's row and the feature's row, nothing else of the tracker |
+| `tracker` | `Area: <a>/<p>` (the header `cli-org task create` writes; an older card's `Project: <a>/<p>` reads the same) | `cli-areas list` | The area's row and the project's row, nothing else of the tracker |
 | `github` | `Repo: owner/name` and `Branch: <name>`, or a pull request URL | `gh pr view`, `gh run list --branch` | PR state, review decision, check counts with the failed names, the last five runs |
-| `recall` | The card's title, scoped to its project | `cli-org recall "<title>" --project <p>` as the persona | Up to six hits from facts, memory files and the vault |
+| `recall` | The card's title, scoped to its area | `cli-org recall "<title>" --area <a>` as the persona | Up to six hits from facts, memory files and the vault |
 
 A fetcher that fails leaves its part empty and the wake goes on with the card. The trace's `meta` line records every fetcher, on or off, with the size it brought and any error, next to the part sizes, so a policy ("turn `recall` on for research cards") is judged by numbers: `zen-agent sessions --json` prints one line per run with its parts, fetchers and usage.
 
