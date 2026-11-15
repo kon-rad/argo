@@ -14,12 +14,21 @@ import { expect, test } from '@playwright/test';
  *   BASE_URL=http://localhost:5123 npx -y @playwright/test test -c web/e2e/playwright.config.ts
  * (the optional pages only exist when their module is on; a route the app
  * answers "No such page" for is skipped).
+ *
+ * The area and project pages need a slug: E2E_AREA (default `example`) and
+ * E2E_PROJECT (default `example-project`) name an area and one of its projects
+ * in the database the app runs on. Without them the pages are checked in their
+ * "no such area" state.
  */
+
+const AREA = process.env.E2E_AREA ?? 'example';
+const PROJECT = process.env.E2E_PROJECT ?? 'example-project';
 
 const ROUTES = [
   '/', '/search?q=test', '/vector-search', '/database', '/sources', '/cron', '/ring',
   '/agents/chat', '/agents/history',
-  '/projects', '/projects?view=board', '/projects?view=needs', '/projects?view=teams', '/projects?view=goals', '/projects?view=report',
+  '/areas', `/areas/${AREA}`, `/projects/${AREA}/${PROJECT}`,
+  '/projects', '/projects?view=overview', '/projects?view=board', '/projects?view=needs', '/projects?view=teams', '/projects?view=goals', '/projects?view=report',
   '/org', '/org/chart', '/org/live', '/org/approvals',
   '/usage', '/media', '/media-schedule', '/map', '/tv',
 ];
