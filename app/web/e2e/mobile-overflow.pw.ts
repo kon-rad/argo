@@ -25,7 +25,7 @@ const ROUTES = [
 ];
 const PHONE = { width: 390, height: 844 };
 const DESKTOP = { width: 1440, height: 900 };
-const SHOTS = process.env.SHOTS_DIR ?? join(__dirname, 'shots');
+const SHOTS = process.env.SHOTS_DIR ?? join(import.meta.dirname, 'shots');
 
 const slug = (route: string): string => route.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '') || 'home';
 

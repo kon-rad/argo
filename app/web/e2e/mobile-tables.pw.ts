@@ -73,6 +73,28 @@ async function open(page: Page, view: View, size: { width: number; height: numbe
   expect(api.unmocked, 'API calls the fixtures did not answer').toEqual([]);
 }
 
+/**
+ * The route-level overflow check. The app scrolls inside its own boxes, not the document, so a view that is too wide
+ * shows up as one of those boxes scrolling sideways with the whole view in it. Every box that scrolls sideways has to
+ * hold one table, code block, tab strip or a box marked data-scroll-scope; anything else is page-wide sideways scroll by another name.
+ */
+function viewScrollers(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const bad: string[] = [];
+    if (document.documentElement.scrollWidth > window.innerWidth) bad.push(`the document scrolls sideways (${document.documentElement.scrollWidth} > ${window.innerWidth})`);
+    for (const el of [document.querySelector('main'), ...document.querySelectorAll<HTMLElement>('main *')]) {
+      if (!el) continue;
+      const s = getComputedStyle(el);
+      if (!['auto', 'scroll'].includes(s.overflowX) || el.scrollWidth <= el.clientWidth + 1) continue;
+      // [data-scroll-scope] names a box that scrolls sideways by design, such as the board's columns.
+      const scoped = el.matches('table, pre, nav, .data-table-scroll, .prose table, [data-scroll-scope]')
+        || (el.children.length === 1 && el.firstElementChild!.matches('table, pre'));
+      if (!scoped) bad.push(`<${el.tagName.toLowerCase()} class="${el.className}"> scrolls sideways with more than a table in it (${el.scrollWidth} > ${el.clientWidth})`);
+    }
+    return bad;
+  });
+}
+
 /** What is wrong with the tables on the page, measured in the page. An empty list is a pass. */
 function measure(page: Page): Promise<string[]> {
   return page.evaluate(() => {
@@ -82,6 +104,12 @@ function measure(page: Page): Promise<string[]> {
     const shown = (el: Element): boolean => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
 
     if (document.documentElement.scrollWidth > vw) bad.push(`the page scrolls sideways (${document.documentElement.scrollWidth} > ${vw})`);
+
+    // Anywhere on the view: a control squeezed narrower than its own label, so the text spills over its neighbour.
+    for (const el of document.querySelectorAll<HTMLElement>('main button, main a, main [role="tab"]')) {
+      if (!shown(el) || getComputedStyle(el).display === 'inline') continue;
+      if (el.scrollWidth > el.clientWidth + 1) bad.push(`text spills out of "${(el.textContent ?? '').trim().slice(0, 40)}" (${el.scrollWidth} > ${el.clientWidth})`);
+    }
 
     for (const table of document.querySelectorAll<HTMLTableElement>('main table')) {
       const scroller = table.closest<HTMLElement>('.data-table-scroll') ?? (getComputedStyle(table).overflowX === 'auto' ? table : null);
@@ -184,8 +212,18 @@ for (const size of PHONES) {
         await open(page, view, size);
         await page.screenshot({ path: join(SHOTS, `${view.name}-${size.width}.png`), fullPage: true });
         expect(await measure(page), `${view.route} at ${size.width} px`).toEqual([]);
+        expect(await viewScrollers(page), `${view.route} at ${size.width} px`).toEqual([]);
         for (const t of view.tables) {
           const table = page.getByRole('table', { name: t.label, exact: true });
+          // The page screenshot stops at the fold of the app's own scroller; this one is the screen with the table at the
+          // top (and its scroll hint, when it has one), as a reader sees it.
+          await table.evaluate((el) => {
+            const frame = el.closest('.data-table-frame');
+            const hint = frame?.previousElementSibling?.tagName === 'P' ? frame.previousElementSibling : null;
+            (hint ?? frame ?? el).scrollIntoView({ block: 'start' });
+          });
+          await page.screenshot({ path: join(SHOTS, `${view.name}-${size.width}-${t.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`) });
+          await table.evaluate(() => document.querySelector('main')?.scrollTo(0, 0));
           await expect(table).toHaveAttribute('data-phone', t.phone);
           if (t.phone === 'scroll') await checkScroller(page, t.label);
           else await expect(table).toHaveCSS('display', 'block');
@@ -244,12 +282,23 @@ for (const size of PHONES) {
   });
 }
 
+// Just above the phone breakpoint the desktop table is back, with all its columns: a wide one scrolls in its own
+// box, never the page.
+test.describe('tablet 800', () => {
+  for (const view of VIEWS) {
+    test(`${view.name}`, async ({ page }) => {
+      await open(page, view, { width: 800, height: 1024 });
+      expect(await viewScrollers(page), `${view.route} at 800 px`).toEqual([]);
+    });
+  }
+});
+
 test.describe('desktop 1440', () => {
   for (const view of VIEWS) {
     test(`${view.name}`, async ({ page }) => {
       await open(page, view, DESKTOP);
       await page.screenshot({ path: join(SHOTS, `${view.name}-1440.png`), fullPage: true });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      expect(await viewScrollers(page), `${view.route} at 1440 px`).toEqual([]);
       await expect(page.locator('.data-table-hint')).toHaveCount(0);
       await expect(page.locator('.data-table-scroll[tabindex], .data-table-scroll[role]')).toHaveCount(0);
       await expect(page.getByRole('combobox', { name: 'Jump to column' })).toBeHidden();
