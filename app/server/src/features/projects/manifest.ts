@@ -7,7 +7,7 @@ export default defineFeature({
   nav: [{ section: 'Work', label: 'Projects', path: '/projects' }],
   cli: [
     { command: 'projects', entry: 'cli-projects.js', summary: 'projects: report | list | add | set | verify | archive | unarchive (projects help)' },
-    { command: 'areas', entry: 'cli-areas.js', summary: 'areas: list | report | render | add | set | archive | unarchive | team | division | import (areas help)' },
+    { command: 'areas', entry: 'cli-areas.js', summary: 'areas: list | report | render | add | set | archive | unarchive | record | team | division | import (areas help)' },
   ],
   timers: [{
     unit: 'secondbrain-projects-render',
@@ -21,7 +21,7 @@ export default defineFeature({
     service: { after: ['postgresql.service'], requires: ['postgresql.service'], directives: ['TimeoutStartSec=60'] },
   }],
   wrappers: ['cli-projects', 'cli-areas'],
-  health: { label: 'the tracker tables answer', tables: ['teams', 'areas', 'projects', 'stage_changes', 'verifications'] },
+  health: { label: 'the tracker tables answer', tables: ['teams', 'areas', 'projects', 'tracker_events', 'stage_changes', 'kpi_readings', 'verifications'] },
   env: ['PROJECTS_FEED_TOKEN'],
   settings: 'projects',
   docs: 'docs/modules.md#projects',

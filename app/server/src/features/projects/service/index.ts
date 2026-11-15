@@ -22,6 +22,7 @@ import { ProjectPatch, upsertProject, VerificationInput } from './projects.js';
 export * from './common.js';
 export * from './areas.js';
 export * from './projects.js';
+export * from './history.js';
 
 export const Seed = z.object({
   divisions: z.array(DivisionInput.extend({ slug: Slug })).default([]),

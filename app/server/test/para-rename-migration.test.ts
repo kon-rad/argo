@@ -64,11 +64,26 @@ async function seed(): Promise<void> {
   await query(`INSERT INTO memory_facts (subject, claim, source, author, area_slug) VALUES ('s', 'c', 'src', 'owner', 'beta')`);
 }
 
+/**
+ * The change history (1756000018500) came after the rename and turned `stage_changes` into a
+ * view, which the rename's Down part cannot alter. So this suite first takes that later
+ * migration down (its own Down part), runs the rename both ways on the schema the rename
+ * left, and puts the later migration back at the end.
+ */
+const LATER = readFileSync(join(import.meta.dirname, '..', '..', 'db', 'migrations', '1756000018500_tracker-events.sql'), 'utf8');
+const LATER_UP = LATER.slice(0, LATER.indexOf('-- Down Migration'));
+const LATER_DOWN = LATER.slice(LATER.indexOf('-- Down Migration'));
+const hasLog = async (): Promise<boolean> => (await query<{ t: string | null }>(`SELECT to_regclass('public.tracker_events')::text AS t`)).rows[0]!.t !== null;
+
 describe('the PARA rename migration', () => {
-  beforeAll(seed);
-  // Whatever a failed assertion left behind, the rest of the suite needs the renamed schema.
+  beforeAll(async () => {
+    await seed();
+    await migrate(LATER_DOWN);
+  });
+  // Whatever a failed assertion left behind, the rest of the suite needs the newest schema.
   afterAll(async () => {
     if (!(await renamed())) await migrate(UP);
+    if (!(await hasLog())) await migrate(LATER_UP);
     await truncateAll();
   });
 

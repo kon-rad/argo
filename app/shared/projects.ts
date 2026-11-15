@@ -79,3 +79,10 @@ export const ProjectVerificationRequestSchema = z.object({ kind: z.enum(['test',
 export type ProjectVerificationRequest = z.infer<typeof ProjectVerificationRequestSchema>;
 export const ArchiveRequestSchema = z.object({ note: TextSchema.max(500).optional() }).strict();
 export type ArchiveRequest = z.infer<typeof ArchiveRequestSchema>;
+/** One KPI reading for an area. `key` must be defined in the `kpis:` frontmatter of the area's home note; `at` defaults to now. */
+export const KpiReadingRequestSchema = z.object({
+  key: z.string().trim().min(1).max(100), value: z.number().finite(), at: z.string().trim().min(1).max(40).optional(), note: TextSchema.max(500).optional(),
+}).strict();
+export type KpiReadingRequest = z.infer<typeof KpiReadingRequestSchema>;
+export const KpiReadingCreatedResponseSchema = z.object({ id: z.number().int() });
+export type KpiReadingCreatedResponse = z.infer<typeof KpiReadingCreatedResponseSchema>;

@@ -9,6 +9,7 @@ import {
   kioskSummary,
   listProjects,
   ProjectPatch,
+  recordKpi,
   setAreaArchived,
   setProjectArchived,
   STAGES,
@@ -21,8 +22,8 @@ import { config } from '../../config.js';
 import { renderMarkdown, renderStandup, renderTelegram } from './service/report.js';
 import { HttpError, parseOr400, wrap } from '../../routes/http.js';
 import type { FeatureRoutes } from '../types.js';
-import { ArchiveRequestSchema } from '@secondbrain/contracts/projects';
-import type { ArchivedResponse, StageChangedResponse, TrackerMarkdownResponse, TrackerReport, VerificationCreatedResponse } from '@secondbrain/contracts/projects';
+import { ArchiveRequestSchema, KpiReadingRequestSchema } from '@secondbrain/contracts/projects';
+import type { ArchivedResponse, KpiReadingCreatedResponse, StageChangedResponse, TrackerMarkdownResponse, TrackerReport, VerificationCreatedResponse } from '@secondbrain/contracts/projects';
 
 const Slug = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
 const AreaParams = z.object({ area: Slug });
@@ -105,6 +106,17 @@ export function areasRouter(vaultRoot: string): Router {
       const body = parseOr400(ProjectPatch.extend({ slug: Slug, title: z.string().trim().min(1).max(200) }), req.body);
       const { slug: project, ...patch } = body;
       res.status(201).json(await tracked(() => upsertProject(area, project, patch, BY_APP, { create: true })));
+    }),
+  );
+
+  // One KPI reading. The key must be defined in the kpis: frontmatter of the area's home note.
+  router.post(
+    '/:area/kpis',
+    wrap(async (req, res) => {
+      const { area } = parseOr400(AreaParams, req.params);
+      const reading = parseOr400(KpiReadingRequestSchema, req.body);
+      const response = await tracked(() => recordKpi(vaultRoot, area, reading, BY_APP));
+      res.status(201).json(response satisfies KpiReadingCreatedResponse);
     }),
   );
 
