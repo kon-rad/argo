@@ -50,9 +50,9 @@ A tracker of **areas** and **projects**, the two words PARA uses ([vault.md](vau
 | | |
 |---|---|
 | Page | `/projects`: overview, board (areas with their projects by stage), "needs you", teams, goals |
-| CLI, areas | `cli-areas` (`list`, `report`, `render`, `add`, `set`, `archive`, `unarchive`, `team`, `division`, `import`) |
+| CLI, areas | `cli-areas` (`list`, `report`, `render`, `add`, `set`, `archive`, `unarchive`, `record`, `team`, `division`, `import`) |
 | CLI, projects | `cli-projects` (`list --area --stage --due-before`, `add <area>/<project> --outcome`, `set`, `verify`, `archive`, `unarchive`, `report`): the way agents read and update it |
-| API | `/api/areas` (the board), `/api/areas/report`, `/api/areas/:area`, `/api/areas/:area/projects`, `/api/projects` (across areas; `?area=`, `?stage=`, `?due_before=`, `?archived=1`), `/api/projects/:area/:project`, `.../verifications`, `.../archive`, `.../unarchive` |
+| API | `/api/areas` (the board), `/api/areas/report`, `/api/areas/:area`, `/api/areas/:area/projects`, `POST /api/areas/:area/kpis` (one KPI reading: `{ key, value, at?, note? }`), `/api/projects` (across areas; `?area=`, `?stage=`, `?due_before=`, `?archived=1`), `/api/projects/:area/:project`, `.../verifications`, `.../archive`, `.../unarchive` |
 | Kiosk feed | `GET /api/feed/projects` with `PROJECTS_FEED_TOKEN` (read-only). Its path and keys are the ones a kiosk already reads: `projects` lists the areas |
 | Report | `cli-areas render` writes a markdown report to `projects.reportFile` |
 | Project folders | `cli-projects add` creates `<area home>/projects/<project>/README.md` when the area has a home (`cli-areas set <area> --home <path>`), and never overwrites one |
@@ -60,6 +60,28 @@ A tracker of **areas** and **projects**, the two words PARA uses ([vault.md](vau
 | Settings | `goalsFile` in `secondbrain.json` (goals table) |
 | Timers (server) | `projects-render` |
 | Skill | `company-report` |
+| Change history | `tracker_events`: every change to an area or a project, frontmatter changes of home notes, KPI readings (below) |
+| KPIs | `cli-areas record <area> <kpi> <value> [--at D] [--note "why"]`; the keys are the `kpis:` frontmatter of the area's home note |
+
+### Change history
+
+`tracker_events` is one append-only log of how areas and projects change. Triggers on the two tables write it, so a change made by a CLI, the web page, a bot through the board or plain SQL is logged the same way.
+
+| Column | Meaning |
+|---|---|
+| `id`, `at` | Order and time |
+| `actor` | Who made the change (`--by`, the signed-in owner, the board caller); `unknown` when the writer did not say |
+| `source` | `cli`, `api`, `board`, `scanner`, `kpi`, `migration` (rows copied from the old stage history), or `unknown` |
+| `area_slug`, `project_id` | What changed; `project_id` is empty for the area itself |
+| `kind` | `created`, `changed`, `stage`, `archived`, `unarchived`, `frontmatter`, `kpi_reading` |
+| `field`, `from_value`, `to_value` | One row per changed column (or frontmatter key, or KPI key), with both values as JSON. `updated_at` and `updated_by` are not logged. A `created` row holds the whole new row in `to_value` |
+| `note` | The `--note` of the command that made the change |
+
+- **Who and how.** A writer names itself for its transaction with `set_config('app.actor', ..., true)` and `set_config('app.source', ..., true)`; `app.note` carries the note. The CLIs and the API do this on every write. Code that writes to `areas` or `projects` without it is still logged, as `unknown`.
+- **Append-only.** An `UPDATE` or `DELETE` on `tracker_events` is refused for every role, the app's own included. The agents' role (`sb_org`) can read it and nothing else. `archive --purge` still takes the history of what it deletes.
+- **`stage_changes` is a view** over the log with the columns it always had (stage moves, the first stage of a new row, archive and unarchive), so the report and anything else that reads it keep working. Rows from before the log were copied in with their ids.
+- **Frontmatter.** The vault scanner adds a `frontmatter` row per changed top-level key of a home note ([vault.md](vault.md#areas-and-projects)); `note` holds the file's path.
+- **KPI readings** live in `kpi_readings` (`area_slug`, `kpi_key`, `value`, `at`, `source`, `actor`, `note`), and each one also appears in the log as `kpi_reading` with the reading before it as `from_value`. `--at` takes a date or a time; a bare date is midnight in the database's time zone.
 
 **Renamed in one step.** Until this release the tracker called an area a project and a project a feature. The tables, the API and the CLIs changed together, and a caller that still writes the old way fails instead of writing the wrong row: a card or a message can carry a project only with its area, and only a pair that exists. The old spellings keep working until 2026-12-01, each with a warning that names the new one; from that day they print the new command and exit 2.
 

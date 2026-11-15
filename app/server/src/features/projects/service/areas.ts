@@ -2,7 +2,7 @@ import { isAbsolute, normalize } from 'node:path';
 import type { z } from 'zod';
 import { AreaPatchSchema } from '@secondbrain/contracts/projects';
 import { query, withTransaction } from '../../../db.js';
-import { ALIAS_ENDS, assignments, divisionMustExist, recordArchive, Slug, teamMustExist, TrackerError, type AreaStatus } from './common.js';
+import { ALIAS_ENDS, assignments, divisionMustExist, insertion, Slug, stamp, teamMustExist, TrackerError, type AreaStatus } from './common.js';
 
 /**
  * Areas: what you run. An area is a standard the owner keeps up, so it has no stage and
@@ -40,27 +40,21 @@ export async function upsertArea(
     if (!cur.rows[0]) {
       if (!opts.create) throw new TrackerError(`no area "${slug}" (add it first: cli-areas add ${slug} --title "...")`, 404);
       if (!patch.title) throw new TrackerError('a new area needs a title');
-      const status = patch.status ?? 'active';
-      await tx.query(`INSERT INTO areas (slug, title, status, updated_by) VALUES ($1,$2,$3,$4)`, [slug, patch.title, status, by]);
-      await tx.query(
-        `INSERT INTO stage_changes (area_slug, from_stage, to_stage, by, note) VALUES ($1, NULL, $2, $3, $4)`,
-        [slug, status, by, [opts.imported ? 'imported' : 'added', patch.note].filter(Boolean).join(' · ')],
-      );
+      // One INSERT with every field, so the history holds one `created` row and not a row per field.
+      await stamp(tx, by, [opts.imported ? 'imported' : 'added', patch.note].filter(Boolean).join(' · '));
+      const { names, marks, vals } = insertion(patch, AREA_COLS, 3);
+      await tx.query(`INSERT INTO areas (${['slug', 'updated_by', ...names].join(', ')}) VALUES (${['$1', '$2', ...marks].join(', ')})`, [slug, by, ...vals]);
+      return { created: true, stage_changed: false };
     }
-    const from = cur.rows[0]?.status ?? patch.status ?? 'active';
+    const from = cur.rows[0].status;
+    // The triggers write one history row per column this changes; the note goes on each.
+    await stamp(tx, by, patch.note ?? null);
     const { sets, vals } = assignments(patch, AREA_COLS, 3);
     await tx.query(
       `UPDATE areas SET ${[...sets, 'updated_at = now()', 'updated_by = $2'].join(', ')} WHERE slug = $1`,
       [slug, by, ...vals],
     );
-    const statusChanged = Boolean(cur.rows[0] && patch.status && patch.status !== from);
-    if (statusChanged) {
-      await tx.query(
-        `INSERT INTO stage_changes (area_slug, from_stage, to_stage, by, note) VALUES ($1,$2,$3,$4,$5)`,
-        [slug, from, patch.status, by, patch.note ?? null],
-      );
-    }
-    return { created: !cur.rows[0], stage_changed: statusChanged };
+    return { created: false, stage_changed: Boolean(patch.status && patch.status !== from) };
   });
 }
 
@@ -75,14 +69,14 @@ export async function setAreaArchived(slug: string, archived: boolean, by: strin
     const cur = await tx.query<{ archived_at: Date | null }>(`SELECT archived_at FROM areas WHERE slug = $1 FOR UPDATE`, [slug]);
     if (!cur.rows[0]) throw new TrackerError(`no area "${slug}"`, 404);
     if (Boolean(cur.rows[0].archived_at) === archived) return { archived, changed: false };
+    await stamp(tx, by, note ?? null);
     await tx.query(`UPDATE areas SET archived_at = ${archived ? 'now()' : 'NULL'}, updated_at = now(), updated_by = $2 WHERE slug = $1`, [slug, by]);
-    await recordArchive(tx, slug, null, archived, by, note ?? null);
     return { archived, changed: true };
   });
 }
 
 /**
- * Deletes an area for good and, by cascade, its projects, stage history and verifications.
+ * Deletes an area for good and, by cascade, its projects, change history, KPI readings and verifications.
  * Cards and messages keep their rows with the area and project cleared. Shared-memory facts
  * tagged with it are re-tagged to `into` when given, else cleared. The everyday verb is
  * archive; this is `--purge`.

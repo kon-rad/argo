@@ -12,7 +12,7 @@ The tracker is the status board (the app's `projects` module). It uses the two w
 
 Divisions group areas and **teams** do the work. Nothing counts as shipped without evidence: a project moves to `live` or `done` only when its newest **verification** passed, or with `--unverified "<why>"`, which the report then lists as a gap.
 
-Status lives in Postgres (`divisions`, `teams`, `areas`, `projects`, `stage_changes`, `verifications`). The why and the how stay in markdown: the area's home note, design docs and dev logs. Goals stay in the vault's goals file (`goalsFile` in `secondbrain.json`); rows link to them by code (W1, M2, Q1, Y3). The report file (`projects.reportFile`, default `projects.md`) is **generated** from the database: never edit it.
+Status lives in Postgres (`divisions`, `teams`, `areas`, `projects`, `verifications`, and `tracker_events`, the log of every change, which `stage_changes` is a view of). The why and the how stay in markdown: the area's home note, design docs and dev logs. Goals stay in the vault's goals file (`goalsFile` in `secondbrain.json`); rows link to them by code (W1, M2, Q1, Y3). The report file (`projects.reportFile`, default `projects.md`) is **generated** from the database: never edit it.
 
 The user sees it on the app's `/projects` page, in any kiosk that reads `/api/feed/projects`, and wherever this skill replies.
 

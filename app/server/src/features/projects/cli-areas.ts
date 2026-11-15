@@ -9,7 +9,9 @@ import {
   aliasStillWorks, AREA_FIELDS, consoleIo, EXIT_ALIAS_ENDED, parseArgs, patchFrom, printError, target, text, whoAmI, writeIfChanged,
   type Args, type CliIo,
 } from './cli-shared.js';
-import { buildReport, getBoard, importSeed, removeArea, setAreaArchived, TrackerError, upsertArea, upsertDivision, upsertTeam } from './service/index.js';
+import {
+  buildReport, getBoard, importSeed, recordKpi, removeArea, setAreaArchived, TrackerError, upsertArea, upsertDivision, upsertTeam, withTrackerSource,
+} from './service/index.js';
 import { renderMarkdown, renderStandup, renderTelegram } from './service/report.js';
 
 const USAGE = `cli-areas: the areas of the tracker (Postgres). Areas are what you run: they have no end date.
@@ -23,6 +25,8 @@ The finite work inside an area is its projects: see cli-projects.
   archive <area> [--note "why"]                      hide it and its projects from every active view; deletes nothing
   archive <area> --purge [--into A] [--yes]          delete it and its projects for good, re-tag its memory facts to A; dry run without --yes
   unarchive <area> [--note "why"]                    bring it back as it was
+  record <area> <kpi> <value> [--at D] [--note "why"]
+                                                     one KPI reading; <kpi> is a key from the kpis: frontmatter of the area's home note
   team <team> --name N [--mission M] [--lead L] [--members a,b]
   division <division> --name N [--mission M] [--head H] [--sort N]
   import <file.json>                                 teams + areas + projects, idempotent
@@ -47,7 +51,12 @@ function areaPatch(opts: Args['opts'], io: CliIo): Record<string, unknown> | nul
   return patch;
 }
 
-export async function runAreasCli(argv: string[], io: CliIo = consoleIo()): Promise<number> {
+/** Everything this CLI writes is recorded in the change history with the source `cli`. */
+export function runAreasCli(argv: string[], io: CliIo = consoleIo()): Promise<number> {
+  return withTrackerSource('cli', () => areasCli(argv, io));
+}
+
+async function areasCli(argv: string[], io: CliIo): Promise<number> {
   const [cmd, ...rest] = argv;
   const { pos, opts } = parseArgs(rest);
   const by = whoAmI(opts);
@@ -118,6 +127,16 @@ export async function runAreasCli(argv: string[], io: CliIo = consoleIo()): Prom
       if (project) throw new TrackerError(`unarchive takes <area>; for a project use: cli-projects unarchive ${area}/${project}`);
       const r = await setAreaArchived(area, false, by, text(opts.note));
       io.out(r.changed ? `unarchived area ${area}` : `${area} was not archived`);
+      return 0;
+    }
+    case 'record': {
+      const [ref, key, value] = pos;
+      const { area, project } = target(ref);
+      if (project) throw new TrackerError('record takes <area>: a KPI belongs to an area');
+      if (!key || value === undefined) throw new TrackerError('record <area> <kpi> <value> [--at D] [--note "why"]');
+      if (!/^-?\d+(\.\d+)?$/.test(value)) throw new TrackerError(`the value is a number, e.g. 42 or 3.5 (got "${value}")`);
+      const r = await recordKpi(vault, area, { key, value: Number(value), at: text(opts.at), note: text(opts.note) }, by);
+      io.out(`recorded ${area} ${key} = ${value} (reading ${r.id})`);
       return 0;
     }
     case 'team': {
