@@ -332,3 +332,30 @@ it('invalidates a paused approval when its branch falls behind',async()=>{
   f.setCurrent({...snapshot(),behind:true});f.io.mayShip=async()=>true;
   await runReview(f.job,['test'],f.io);expect(f.job.state).toBe('rejected');expect(f.counts().merges).toBe(0);
 });
+
+describe('reviewer output schema', () => {
+  it('lists every property as required, as the provider\'s strict output mode demands', async () => {
+    const { z } = await import('zod');
+    const { ReviewerVerdict, Verdict } = await import('../src/review/gate.js');
+    const loose: string[] = [];
+    const walk = (node: unknown, path: string): void => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach((child, i) => walk(child, `${path}[${i}]`)); return; }
+      const n = node as Record<string, unknown>;
+      if (n.properties && typeof n.properties === 'object') {
+        const required = new Set(Array.isArray(n.required) ? n.required as string[] : []);
+        for (const key of Object.keys(n.properties)) if (!required.has(key)) loose.push(`${path}.${key}`);
+        if (n.additionalProperties !== false) loose.push(`${path} allows extra keys`);
+      }
+      for (const [key, child] of Object.entries(n)) walk(child, `${path}.${key}`);
+    };
+    walk(z.toJSONSchema(ReviewerVerdict), '$');
+    expect(loose).toEqual([]);
+    // The model's answer, which carries no code, is still a valid gate verdict.
+    const answer = { ...verdict(), evidence: 'e'.repeat(64), decision: 'reject' as const,
+      findings: [{ severity: 'high' as const, location: 'a.ts:1', evidence: 'ticket', impact: 'breaks', fix: 'fix it', verification: 'npm test' }] };
+    expect(ReviewerVerdict.safeParse(answer).success).toBe(true);
+    expect(Verdict.safeParse(answer).success).toBe(true);
+    expect(ReviewerVerdict.safeParse({ ...answer, findings: [{ ...answer.findings[0], code: 'ci-failure' }] }).success).toBe(false);
+  });
+});
