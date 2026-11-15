@@ -46,7 +46,7 @@ describe('feature manifests', () => {
   });
 
   it('answers the deploy script and the launcher for a module list', () => {
-    expect(unitsFor(new Set(['board', 'projects']))).toEqual(['secondbrain-projects-render', 'secondbrain-board-reclaim']);
+    expect(unitsFor(new Set(['board', 'projects']))).toEqual(['secondbrain-projects-render', 'secondbrain-areas-review', 'secondbrain-board-reclaim']);
     expect(unitsFor(new Set())).toEqual([]);
     expect(wrappersFor(new Set(['org', 'usage']))).toEqual(['cli-org']);
     expect(navFor(new Set(['usage', 'summaries']))).toEqual([{ section: 'Work', label: 'Usage', path: '/usage' }]);
