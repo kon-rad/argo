@@ -162,7 +162,8 @@ export default function Board() {
 
   return (
     <div className="flex h-full min-h-0">
-      <div className="flex min-w-0 flex-1 flex-col">
+      {/* Phone: the filters wrap to several rows, so this column scrolls and the lanes keep a usable height. */}
+      <div className="flex min-w-0 flex-1 flex-col max-md:overflow-y-auto">
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--rule)] px-3 py-2 text-sm">
           {select('All boards', board, (boards.data?.boards ?? []).map((b) => ({ value: b.slug, label: `${b.name} (${b.open})` })), (v) => set('board', v))}
           {select('Any area', area, areas.map((p) => ({ value: p, label: p })), (v) => set('area', v))}
@@ -173,7 +174,7 @@ export default function Board() {
           </select>
           <input value={q} onChange={(e) => set('q', e.target.value)} placeholder="Search or t_1d4c…" aria-label="Search cards"
             title="Words search the text; a ticket number (t_1d4c0eff, #1d4c or 1d4c0eff) finds the card by id"
-            className="w-40 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs" />
+            className="w-40 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs max-md:w-full" />
           {ids && (
             <span className="flex items-center gap-1 rounded bg-[var(--paper-sunk)] px-2 py-0.5 text-xs">
               Only {ids.split(',').join(', ')}
@@ -195,7 +196,7 @@ export default function Board() {
             {columns.map((col) => <option key={col.key} value={col.key}>{col.label} ({col.rows.length})</option>)}
           </select>
         </label>
-        <div data-scroll-scope="board columns" className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3 max-md:snap-x max-md:snap-mandatory max-md:scroll-px-3">
+        <div data-scroll-scope="board columns" className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3 max-md:min-h-96 max-md:snap-x max-md:snap-mandatory max-md:scroll-px-3">
           {columns.map(({ rows, ...col }) => {
             return (
               <section key={col.key} id={`board-col-${col.key}`} className="flex w-64 shrink-0 flex-col max-md:w-[82vw] max-md:snap-start" aria-label={col.label}>

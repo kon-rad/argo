@@ -70,7 +70,7 @@ function StepView({ step, show }: { step: AgentStep; show: Show }) {
   }
   return (
     <article aria-label={step.step === 'prompt' ? 'User message' : step.step === 'response' ? 'Assistant message' : label}
-      className={`my-3 rounded-xl border border-[var(--rule)] p-4 ${step.step === 'prompt' ? 'ml-auto w-[92%] bg-[var(--paper-sunk)]' : 'mr-auto w-full'} ${step.subagent ? 'ml-6 border-l border-[var(--rule)] pl-2' : ''}`}>
+      className={`my-3 rounded-xl border border-[var(--rule)] p-4 ${step.step === 'prompt' ? 'ml-auto w-[92%] bg-[var(--paper-sunk)]' : 'mr-auto w-full'} ${step.subagent ? 'ml-6 border-l border-[var(--rule)] pl-2 max-md:w-[calc(100%-1.5rem)]' : ''}`}>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-dim)]">
         <span className="font-semibold text-[var(--ink)]">{label}</span><span>{time(step.ts)}</span><Sub name={step.subagent} />{details}
       </div>

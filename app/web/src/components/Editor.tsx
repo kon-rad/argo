@@ -81,7 +81,8 @@ export default function Editor({ path, onDone }: Props) {
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Phone: Save stays at the top of the pane while the text scrolls, so it is reachable with the keyboard up. */}
+      <div className="flex flex-wrap items-center gap-2 max-md:sticky max-md:top-0 max-md:z-10 max-md:bg-[var(--paper)] max-md:py-1">
         <button
           type="button"
           onClick={() => void save()}
@@ -97,7 +98,7 @@ export default function Editor({ path, onDone }: Props) {
         >
           {dirty ? 'Cancel' : 'Close'}
         </button>
-        <span className="text-xs text-[var(--ink-faint)]">⌘S / Ctrl+S saves</span>
+        <span className="text-xs text-[var(--ink-faint)] max-md:hidden">⌘S / Ctrl+S saves</span>
       </div>
 
       {error && (

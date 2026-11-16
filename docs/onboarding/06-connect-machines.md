@@ -90,6 +90,19 @@ node --no-warnings ledger.mjs status
 
 `install` writes `ledger.json` (mode 0600, it holds the token) next to `ledger.db` in the OS data folder and schedules `ledger run` every two minutes with launchd, a systemd user timer or Task Scheduler. `--redact-env` names env files whose secret-named values are removed before anything leaves the machine; the server only knows its own keys. Details, including the optional capture proxy and the Hermes per-request plugin: "Agent ledger" in the [app README](https://github.com/kon-rad/argo/blob/main/app/README.md).
 
+### Record local-model calls
+
+The ledger can put a second listener in front of an Ollama server without moving or reconfiguring that server:
+
+```bash
+secondbrain ledger install --ollama-proxy --redact-env /path/to/vault/.env
+# Prints: Ollama capture base URL: http://127.0.0.1:11435
+```
+
+Point each caller you want recorded at the printed base URL, for example by setting that caller's Ollama host or OpenAI-compatible base URL to `http://127.0.0.1:11435`. Native Ollama calls and OpenAI-compatible chat, completion and embedding calls are forwarded to the standard local Ollama address, `http://127.0.0.1:11434`, and recorded as provider `ollama`. A caller is recorded only when it points at the proxy. Calls made directly to port 11434 bypass it and are not recorded.
+
+Use `--ollama-listen <url>` to choose another listener address and `--ollama-upstream <url>` if Ollama itself uses a different local address. These options affect only the ledger proxy; they do not change the Ollama service.
+
 Upgrade the server before the machines. A newer ledger may send rows an older server does not know; they are kept and retried.
 
 Hermes on the server, and pulling its history to the laptop: [Connect Hermes](04-hermes.md#hermes-on-a-server).

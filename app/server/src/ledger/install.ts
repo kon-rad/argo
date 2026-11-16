@@ -98,7 +98,7 @@ export function launchdProxyPlist(s: ScheduleSpec): string {
 
 export function systemdProxyUnit(s: ScheduleSpec): string {
   return `[Unit]
-Description=Second Brain capture proxy: records Claude Code's API calls into the agent ledger
+Description=Second Brain capture proxy: records model API calls into the agent ledger
 
 [Service]
 Environment=SB_LEDGER_DIR=${q(sd(s.dataDir))}

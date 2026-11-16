@@ -51,6 +51,7 @@ export default function History() {
                 key={p.key}
                 type="button"
                 onClick={() => setPlatform(p.key)}
+                aria-pressed={platform === p.key}
                 className={`rounded px-2 py-0.5 text-xs ${platform === p.key ? 'bg-[var(--paper-sunk)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}
               >
                 {p.label} <span className="text-[var(--ink-faint)]">{count(p.key)}</span>

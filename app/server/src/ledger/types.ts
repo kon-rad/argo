@@ -25,6 +25,8 @@ export interface LedgerConfig {
   redactEnvFiles?: string[];
   /** The capture proxy: Claude Code's ANTHROPIC_BASE_URL points here, it forwards to `upstream` and records each exchange. */
   proxy: { enabled: boolean; port: number; upstream: string };
+  /** Optional local-model listener. Callers must use `listen`; the Ollama server at `upstream` is never reconfigured. */
+  ollamaProxy: { enabled: boolean; listen: string; upstream: string };
 }
 
 /** `exchange` and `blob` come from the capture proxy: one exact API request/response, and the

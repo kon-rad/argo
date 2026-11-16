@@ -23,7 +23,7 @@ import { useAppTimezone } from '../../lib/useTimezone.js';
  */
 
 const tab = ({ isActive }: { isActive: boolean }): string =>
-  `px-3 py-1.5 text-sm border-b-2 ${isActive ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
+  `px-3 py-1.5 text-sm border-b-2 max-md:inline-flex max-md:min-h-11 max-md:items-center ${isActive ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
 const POLL_MS = 5000;
 const KIND_LABEL: Record<string, string> = {
   message: '', status: 'status', decision: 'decision', handoff: 'handoff', 'question-for-owner': 'question for you',
@@ -194,7 +194,7 @@ function Channels() {
 
   if (channels.isError) return <p className="p-4 text-sm">⚠ {channels.error.message}</p>;
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 max-md:flex-col">
       <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-[var(--rule)] p-2 md:block" aria-label="Channels">
         {GROUPS.map((g) => {
           const rows = list.filter((c) => c.kind === g.kind);
@@ -219,7 +219,7 @@ function Channels() {
         })}
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--rule)] px-3 py-2 text-sm">
           <select aria-label="Channel" value={current ?? ''} onChange={(e) => pick(e.target.value)} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs md:hidden">
             {list.map((c) => (
@@ -228,8 +228,8 @@ function Channels() {
           </select>
           {current && <span className="hidden font-semibold md:inline">{channelLabel(current)}</span>}
           <span className="hidden text-xs text-[var(--ink-dim)] md:inline">{list.find((c) => c.slug === current)?.purpose ?? ''}</span>
-          <input aria-label="Search messages" className="ml-auto w-40 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-xs" placeholder="search the board" value={q} onChange={(e) => setQ(e.target.value)} />
-          <button type="button" className="text-xs text-[var(--accent)] lg:hidden" onClick={() => setShowMembers((v) => !v)}>
+          <input aria-label="Search messages" className="ml-auto w-40 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-xs max-md:min-w-0 max-md:flex-1" placeholder="search the board" value={q} onChange={(e) => setQ(e.target.value)} />
+          <button type="button" className="text-xs text-[var(--accent)] lg:hidden" aria-expanded={showMembers} onClick={() => setShowMembers((v) => !v)}>
             {members.data ? `${members.data.members.length} members` : 'members'}
           </button>
         </div>
@@ -249,7 +249,7 @@ function Channels() {
       </div>
 
       {current && (
-        <aside className={`${showMembers ? 'block' : 'hidden'} w-48 shrink-0 overflow-y-auto border-l border-[var(--rule)] p-2 lg:block`} aria-label="Members">
+        <aside className={`${showMembers ? 'block' : 'hidden'} w-48 shrink-0 overflow-y-auto border-l border-[var(--rule)] p-2 max-md:max-h-48 max-md:w-full max-md:border-t max-md:border-l-0 lg:block`} aria-label="Members">
           <div className="mb-1 px-1 text-[0.65rem] font-semibold uppercase tracking-wide text-[var(--ink-faint)]">Members</div>
           {(members.data?.members ?? []).map((m) => (
             <div key={m.agent_name} className="flex items-center gap-2 px-1 py-0.5 text-xs">
@@ -325,7 +325,7 @@ function Live() {
   const body = feed.isError ? <p className="p-4">⚠ {feed.error.message}</p> : <MessageList messages={kiosk ? [...list].reverse() : list} teams={teams} showChannel big={kiosk} />;
   if (kiosk) {
     return (
-      <div className="fixed inset-0 z-50 overflow-hidden bg-[var(--paper)] p-6" data-testid="kiosk">
+      <div className="fixed inset-0 z-50 overflow-hidden bg-[var(--paper)] p-6 max-md:overflow-y-auto" data-testid="kiosk">
         <div className="mb-3 flex items-baseline gap-3">
           <h1 className="text-2xl font-semibold">Argo · company board</h1>
           <span className="text-sm text-[var(--ink-dim)]">newest first · refreshes every 5 s</span>
@@ -338,7 +338,7 @@ function Live() {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-3 border-b border-[var(--rule)] px-3 py-2 text-xs text-[var(--ink-dim)]">
         Every channel, newest at the bottom, refreshes every 5 s.
-        <Link to="/org/live?kiosk=1" className="ml-auto underline">TV mode</Link>
+        <Link to="/org/live?kiosk=1" className="ml-auto underline max-md:hidden">TV mode</Link>
       </div>
       <div ref={live.ref} className="min-h-0 flex-1 overflow-y-auto p-3">{body}</div>
     </div>
