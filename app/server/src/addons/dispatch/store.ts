@@ -1,4 +1,4 @@
-import { query } from '../../db.js';
+import { query, withTransaction } from '../../db.js';
 
 /**
  * The dispatcher's reads and the two writes org.ts does not already offer. Plain queries on the owner's
@@ -134,19 +134,31 @@ export async function pendingTaskCards(agent: string): Promise<{ wakeupId: numbe
 
 /** Subscription tokens are recorded without assigning an API dollar price. */
 export async function recordCodexRun(r: { runId: string; sessionId: string | null; agent: string; model: string; card: string | null;
-  startedAt: Date; endedAt: Date; state: string; text: string; inputTokens: number; outputTokens: number; wakeupIds: number[] }): Promise<void> {
+  startedAt: Date; endedAt: Date; state: string; text: string; inputTokens: number; outputTokens: number; wakeupIds: number[];
+  codexHost?: string | null }): Promise<void> {
   const session = r.sessionId ?? `dispatch:${r.runId}`;
-  await query(`INSERT INTO usage_runs
-    (host, run_id, session_id, log_path, task_id, agent_name, model, started_at, ended_at, duration_ms, runtime, outcome, subtype, is_error, wakeup_ids, usage)
-    VALUES ('droplet',$1,$2,$3,$4,$5,$6,$7,$8,$9,'codex',$10,$11,$12,$13,$14::jsonb)
-    ON CONFLICT (host, run_id) DO NOTHING`, [r.runId, session, `dispatch:${r.runId}`, r.card, r.agent, r.model,
-      r.startedAt, r.endedAt, Math.max(0, r.endedAt.getTime() - r.startedAt.getTime()), r.state === 'done' ? 'did-work' : 'failed',
-      `${r.state}: ${r.text}`.slice(0, 300), r.state !== 'done', r.wakeupIds,
-      JSON.stringify({ input_tokens: r.inputTokens, output_tokens: r.outputTokens })]);
-  if (r.inputTokens || r.outputTokens) await query(`INSERT INTO usage_calls
-    (source,host,call_id,session_external_id,ts,model,entrypoint,input_tokens,output_tokens,run_id)
-    VALUES ('codex','droplet',$1,$2,$3,$4,'sdk-cli',$5,$6,$7) ON CONFLICT DO NOTHING`,
-    [r.runId, session, r.endedAt, r.model, r.inputTokens, r.outputTokens, r.runId]);
+  await withTransaction(async (tx) => {
+    const selected = await tx.query<{ slug: string }>(
+      `SELECT slug FROM usage_hosts
+        WHERE slug = COALESCE($1, (SELECT slug FROM usage_hosts WHERE kind = 'server' ORDER BY slug LIMIT 1))`,
+      [r.codexHost ?? null]);
+    const host = selected.rows[0]?.slug;
+    if (!host) {
+      if (r.codexHost) throw new Error(`ORG_CODEX_HOST "${r.codexHost}" is not registered in usage_hosts`);
+      throw new Error('Codex usage host unavailable: usage_hosts has no server row');
+    }
+    await tx.query(`INSERT INTO usage_runs
+      (host, run_id, session_id, log_path, task_id, agent_name, model, started_at, ended_at, duration_ms, runtime, outcome, subtype, is_error, wakeup_ids, usage)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'codex',$11,$12,$13,$14,$15::jsonb)
+      ON CONFLICT (host, run_id) DO NOTHING`, [host, r.runId, session, `dispatch:${r.runId}`, r.card, r.agent, r.model,
+        r.startedAt, r.endedAt, Math.max(0, r.endedAt.getTime() - r.startedAt.getTime()), r.state === 'done' ? 'did-work' : 'failed',
+        `${r.state}: ${r.text}`.slice(0, 300), r.state !== 'done', r.wakeupIds,
+        JSON.stringify({ input_tokens: r.inputTokens, output_tokens: r.outputTokens })]);
+    if (r.inputTokens || r.outputTokens) await tx.query(`INSERT INTO usage_calls
+      (source,host,call_id,session_external_id,ts,model,entrypoint,input_tokens,output_tokens,run_id)
+      VALUES ('codex',$1,$2,$3,$4,$5,'sdk-cli',$6,$7,$8) ON CONFLICT DO NOTHING`,
+      [host, r.runId, session, r.endedAt, r.model, r.inputTokens, r.outputTokens, r.runId]);
+  });
 }
 
 /** Every bot with routines on the roster, whichever runtime runs it. */

@@ -31,6 +31,7 @@ export interface DispatchConfig {
   orgDispatchParallel: number;
   orgZenCommand: string;
   orgCodexCommand?: string;
+  orgCodexHost?: string | null;
   vaultRoot: string;
   /** ORG_TASK_WAKE_RETRIES: re-wakes a ready card gets before it waits for a person (default 2). */
   orgTaskWakeRetries?: number;
@@ -348,7 +349,7 @@ export class Dispatcher {
       const summary = result.text || `Codex ${result.state} (exit ${result.code})`;
       await store.recordCodexRun({ runId, sessionId: result.sessionId ?? resume, agent: agent.name, model, card,
         startedAt, endedAt: this.now(), state: result.state, text: summary, inputTokens: result.inputTokens,
-        outputTokens: result.outputTokens, wakeupIds: selected.map((w) => w.id) });
+        outputTokens: result.outputTokens, wakeupIds: selected.map((w) => w.id), codexHost: this.deps.config.orgCodexHost });
       if (card && (await getCard(card)).card.status !== 'running') {
         // The bot closed its own card during the run (cli-board finish). Its run row is finished, so a heartbeat
         // would throw "no live run" and the cleanup would turn a done card into a blocked one. Leave it as it is.
