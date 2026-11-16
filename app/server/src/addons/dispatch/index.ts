@@ -314,7 +314,11 @@ export class Dispatcher {
       await store.recordCodexRun({ runId, sessionId: result.sessionId ?? resume, agent: agent.name, model, card,
         startedAt, endedAt: this.now(), state: result.state, text: summary, inputTokens: result.inputTokens,
         outputTokens: result.outputTokens, wakeupIds: selected.map((w) => w.id) });
-      if (card) {
+      if (card && (await getCard(card)).card.status !== 'running') {
+        // The bot closed its own card during the run (cli-board finish). Its run row is finished, so a heartbeat
+        // would throw "no live run" and the cleanup would turn a done card into a blocked one. Leave it as it is.
+        await commentCard(agent.name, card, `${result.state}: ${summary}`.slice(0, 8000));
+      } else if (card) {
         await heartbeat(agent.name, card, { tokens: result.inputTokens + result.outputTokens });
         await commentCard(agent.name, card, `${result.state}: ${summary}`.slice(0, 8000));
         await moveCard(agent.name, card, result.state === 'done' ? 'review' : 'blocked', summary.slice(0, 600),
@@ -333,7 +337,9 @@ export class Dispatcher {
       await finishWakeups(selected.map((w) => w.id), { run: runId, exit: result.code, result: summary.slice(0, 600) });
     } catch (err) {
       const why = err instanceof Error ? err.message : String(err);
-      if (claimed && card) await moveCard(agent.name, card, 'blocked', why.slice(0, 600), { blockKind: 'tool-error' });
+      // Only a card this run still holds is blocked: one the bot already finished stays finished.
+      const live = claimed && card ? (await getCard(card).catch(() => null))?.card.status === 'running' : false;
+      if (live && card) await moveCard(agent.name, card, 'blocked', why.slice(0, 600), { blockKind: 'tool-error' });
       await finishWakeups(selected.map((w) => w.id), { run: runId, exit: 1, result: why.slice(0, 600) });
       throw err;
     }
