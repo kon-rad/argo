@@ -1,8 +1,8 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
 import {
-  assignCard, BLOCK_KINDS, BoardBus, BoardError, CARD_KINDS, claimCard, commentCard, finishCard, flagCard, getCard, heartbeat, linkCards, listBoards,
-  listCards, listTokens, moveCard, OUTCOMES, reclaim, revokeToken, STATUSES, findToken, tagCard, type BoardNotice,
+  assignCard, BLOCK_KINDS, blockCard, BoardBus, BoardError, CARD_KINDS, claimCard, commentCard, finishCard, flagCard, getCard, heartbeat, linkCards, listBoards,
+  listCards, listTokens, moveCard, OUTCOMES, reclaim, recordRunOutput, revokeToken, STATUSES, findToken, tagCard, type BoardNotice,
 } from './service/index.js';
 import { config } from '../../config.js';
 import { assignTask, createTask, getAgent, OrgError, redoTask, trackerRef, type Agent } from '../../org.js';
@@ -66,7 +66,13 @@ const MoveBody = z.object({ status: z.enum(STATUSES), note: z.string().trim().ma
 const LinkBody = z.object({ depends_on: Id });
 const FlagsBody = z.object({ ship_now: z.boolean().optional(), needs: z.enum(['code', 'review', 'merge', 'deploy', 'm1', 'web']).optional() });
 const ClaimBody = z.object({ runtime: z.string().regex(/^[a-z-]{1,20}$/).optional(), agent: Name.optional(), board: BoardSlug.optional(), lease_minutes: z.number().int().min(1).max(1440).optional(), wakeup: z.number().int().positive().optional(), task_id: Id.optional() });
-const HeartbeatBody = z.object({ tokens: z.number().int().nonnegative().optional(), turns: z.number().int().nonnegative().optional(), lease_minutes: z.number().int().min(1).max(1440).optional() });
+const HeartbeatBody = z.object({
+  tokens: z.number().int().nonnegative().optional(), turns: z.number().int().nonnegative().optional(), lease_minutes: z.number().int().min(1).max(1440).optional(),
+  branch: z.string().trim().min(1).max(200).optional(), pr: z.string().trim().min(1).max(500).optional(),
+});
+const Host = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/);
+const BlockBody = z.object({ kind: z.enum(BLOCK_KINDS).optional(), note: z.string().trim().max(2000).optional(), host: Host.optional(), after: z.array(Id).min(1).max(50).optional() });
+const HostUpBody = z.object({ hosts: z.array(Host).min(1).max(20) });
 const FinishBody = z.object({
   outcome: z.enum(OUTCOMES), result: z.string().trim().max(4000).optional(), block_kind: z.enum(BLOCK_KINDS).optional(),
   verification: z.object({ kind: z.enum(['test', 'manual', 'deploy', 'review', 'metric']).optional(), check: z.string().trim().min(1).max(500), result: z.enum(['pass', 'fail']).optional(), evidence: z.string().max(4000).optional() }).optional(),
@@ -208,6 +214,14 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
     res.json(response);
   }));
 
+  // Blocked with its cause as data: `after` (dependency links) or `host` (host-down). Clears itself; see board_reclaim.
+  router.post('/cards/:id/block', wrap(async (req, res) => {
+    const id = parseOr400(Id, req.params['id']);
+    const b = parseOr400(BlockBody, req.body);
+    const response = { card: await boardErrors(() => blockCard(caller(res).name, id, { kind: b.kind, reason: b.note, host: b.host, after: b.after })) } as unknown as BoardCardResponse;
+    res.json(response);
+  }));
+
   router.post('/cards/:id/link', wrap(async (req, res) => {
     const id = parseOr400(Id, req.params['id']);
     const b = parseOr400(LinkBody, req.body);
@@ -237,7 +251,10 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
   router.post('/cards/:id/heartbeat', wrap(async (req, res) => {
     const id = parseOr400(Id, req.params['id']);
     const b = parseOr400(HeartbeatBody, req.body ?? {});
-    res.json({ run: await boardErrors(() => heartbeat(caller(res).name, id, { tokens: b.tokens, turns: b.turns, leaseMinutes: b.lease_minutes })) });
+    const who = caller(res).name;
+    let run = await boardErrors(() => heartbeat(who, id, { tokens: b.tokens, turns: b.turns, leaseMinutes: b.lease_minutes }));
+    if (b.branch || b.pr) run = await boardErrors(() => recordRunOutput(who, id, { branch: b.branch, pr: b.pr }));
+    res.json({ run });
   }));
 
   router.post('/cards/:id/finish', wrap(async (req, res) => {
@@ -310,6 +327,13 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
   router.post('/reclaim', wrap(async (_req, res) => {
     ownerOnly(res);
     res.json({ reclaimed: await reclaim() });
+  }));
+
+  // A machine reports a host back up: host-down blocks on it go back to ready (at most 3 times a card), plus the
+  // usual sweep. Any caller: it can only re-queue cards a host-down block already parked. The engine never probes a host.
+  router.post('/host-up', wrap(async (req, res) => {
+    const b = parseOr400(HostUpBody, req.body);
+    res.json({ reclaimed: await boardErrors(() => reclaim(b.hosts)) });
   }));
 
   return router;

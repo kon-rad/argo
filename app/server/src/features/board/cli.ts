@@ -2,8 +2,8 @@ import { exitFlushed } from '../../cli-exit.js';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import {
-  assignCard, BoardBus, BoardError, claimCard, commentCard, createToken, driftReport, finishCard, flagCard, getCard, heartbeat, importHermesCards, linkCards, listBoards,
-  listCards, listTokens, moveCard, reclaim, revokeToken, type Board, type Card, type CardDetail, type CardFilter, type ClaimOpts, type Contract, type FinishOpts, type HermesCard,
+  assignCard, blockCard, BoardBus, BoardError, claimCard, commentCard, createToken, driftReport, finishCard, flagCard, getCard, heartbeat, importHermesCards, linkCards, listBoards,
+  HOST_RETRIES, listCards, listTokens, moveCard, reclaim, recordRunOutput, revokeToken, type BlockOpts, type Board, type Card, type CardDetail, type CardFilter, type ClaimOpts, type Contract, type FinishOpts, type HermesCard,
 } from './service/index.js';
 import { config } from '../../config.js';
 import { pool, setDatabaseUrl } from '../../db.js';
@@ -28,14 +28,19 @@ const USAGE = `cli-board <command>
   assign <card> <agent|none> [--area a] [--project p] [--type work] [--needs cap] [--repo r] [--ship-now]   an existing card becomes the agent's
   redo <card> "<what to change>"               changes requested: a new round for the builder, the review card parked until it is done
   move <card> <status> ["<note>"]             triage todo scheduled ready running review blocked done archived (bots: own card, not done)
+  move <card> blocked --after t_..[,t_..] ["<note>"]   blocked on those cards (links); back to ready when the last one is done
+  move <card> blocked --host <host> ["<note>"]        blocked on a host (kind host-down); host-up re-queues it, at most ${HOST_RETRIES} times
+  move <card> blocked --kind <kind> ["<note>"]        blocked with a kind (dependency needs-owner missing-input tool-error budget review-changes host-down other)
   link <card> --after <card>                  card waits for the other
   claim --runtime <r> | --agent <a> [--board b] [--lease N] [--task t_..] [--json]      the next ready card, or that exact one, now running with a lease
-  heartbeat <card> [--tokens N] [--turns N] [--lease N]
+  heartbeat <card> [--tokens N] [--turns N] [--lease N] [--branch b] [--pr url]   --branch/--pr: what the run left, so reclaim can route it to review
   finish <card> --done "<result>" | --blocked <kind> "<why>" | --partial | --budget ["<why>"]
          [--verify "<check>" [--fail] [--evidence "..."] [--verify-kind test|manual|deploy|review|metric]] [--tokens N] [--turns N] [--run id]
   flags <card> [--ship-now] [--needs cap]     ship-now: owner only
   watch [--board b]                           board events as JSON lines, until stopped
-  reclaim                                     lost leases back to ready, due schedules to ready (a timer runs this)
+  reclaim [--host-up h[,h]]                   lost leases and due schedules to ready, finished dependencies release their waiters,
+                                              running cards whose run already ended reconcile (a timer runs this)
+  host-up <host>[,<host>]                     a host is back: its host-down cards go back to ready (at most ${HOST_RETRIES} retries a card)
   token create <agent> [--label "where it runs"] | list | revoke <id>     (owner, database door)
   import <file.json> [--board b] [--check]    LEGACY migration tool: cards from a saved Hermes kanban export (list --json / show --json); --check reports drift only. Never calls hermes
 
@@ -63,14 +68,15 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   comment: [],
   assign: ['area', 'project', 'feature', 'type', 'needs', 'repo', 'ship-now'],
   redo: ['run'],
-  move: [],
+  move: ['after', 'host', 'kind'],
   link: ['after'],
   claim: ['runtime', 'agent', 'board', 'lease', 'task'],
-  heartbeat: ['tokens', 'turns', 'lease'],
+  heartbeat: ['tokens', 'turns', 'lease', 'branch', 'pr'],
   finish: ['done', 'blocked', 'partial', 'budget', 'verify', 'fail', 'evidence', 'verify-kind', 'tokens', 'turns', 'run'],
   flags: ['ship-now', 'needs'],
   watch: ['board'],
-  reclaim: [],
+  reclaim: ['host-up'],
+  'host-up': [],
 };
 
 /** Reject a flag the verb does not know, rather than letting parseArgs set an option the case ignores.
@@ -86,9 +92,16 @@ export function rejectUnknownFlags(cmd: string | undefined, opts: Opts): void {
   }
 }
 
+/** The block kind, with the host and its retry count for a host-down block ("host-down gpu-box, retries 3/3"). */
+export function blockLabel(c: Pick<Card, 'block_kind' | 'block_host' | 'host_retries'>): string {
+  if (c.block_kind !== 'host-down') return c.block_kind ?? '';
+  const n = c.host_retries ?? 0;
+  return `host-down${c.block_host ? ` ${c.block_host}` : ''}, retries ${n}/${HOST_RETRIES}${n >= HOST_RETRIES ? ' (no more automatic retries)' : ''}`;
+}
+
 export function formatCard(c: Card): string {
   const ref = c.area_slug ? `${c.area_slug}${c.project_slug ? `/${c.project_slug}` : ''}` : '-';
-  return `${c.id}  [${c.status.padEnd(9)}] p${c.priority} ${(c.assignee ?? 'unassigned').padEnd(14)} ${ref.padEnd(28)} ${c.title}${c.block_kind ? `  (blocked: ${c.block_kind})` : ''}`;
+  return `${c.id}  [${c.status.padEnd(9)}] p${c.priority} ${(c.assignee ?? 'unassigned').padEnd(14)} ${ref.padEnd(28)} ${c.title}${c.block_kind ? `  (blocked: ${blockLabel(c)})` : ''}`;
 }
 
 export function formatDetail(d: CardDetail): string {
@@ -97,7 +110,7 @@ export function formatDetail(d: CardDetail): string {
     `${c.id}: ${c.title}`,
     `board ${c.board_slug} · ${c.status}${c.assignee ? ` · ${c.assignee}` : ' · unassigned'} · by ${c.created_by} · ${when(c.created_at)} · priority ${c.priority} · kind ${c.kind}${c.work_type ? ` · ${c.work_type}` : ''}${c.needs ? ` · needs ${c.needs}` : ''}${c.ship_now ? ' · SHIP-NOW' : ''}`,
     ...(c.area_slug ? [`area ${c.area_slug}${c.project_slug ? `/${c.project_slug}` : ''}${c.repo ? ` · repo ${c.repo}` : ''}${c.graph ? ` · graph ${c.graph} node ${c.node}` : ''}${c.rounds ? ` · round ${c.rounds}` : ''}`] : []),
-    ...(c.block_kind ? [`blocked (${c.block_kind}): ${c.block_reason ?? ''}`] : []),
+    ...(c.block_kind ? [`blocked (${blockLabel(c)}): ${c.block_reason ?? ''}`] : []),
     ...(c.result ? [`result: ${c.result}`] : []),
     ...(d.depends_on.length ? [`waits for: ${d.depends_on.map((x) => `${x.id} [${x.status}]`).join(', ')}`] : []),
     ...(d.dependants.length ? [`waited for by: ${d.dependants.map((x) => `${x.id} [${x.status}]`).join(', ')}`] : []),
@@ -105,7 +118,7 @@ export function formatDetail(d: CardDetail): string {
   if (Object.keys(c.contract ?? {}).length) lines.push('', 'Contract:', ...Object.entries(c.contract).map(([k, v]) => `  ${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`));
   if (c.body) lines.push('', c.body);
   if (d.comments.length) lines.push('', 'Comments:', ...d.comments.map((m) => `- ${m.author} (${when(m.created_at)}): ${m.body}`));
-  if (d.runs.length) lines.push('', 'Runs:', ...d.runs.map((r) => `- #${r.id} ${r.agent_name} (${r.runtime}) ${when(r.claimed_at)}${r.finished_at ? ` → ${r.outcome} ${when(r.finished_at)}` : ` lease until ${when(r.lease_until)}`}${r.tokens ? ` · ${r.tokens} tokens` : ''}`));
+  if (d.runs.length) lines.push('', 'Runs:', ...d.runs.map((r) => `- #${r.id} ${r.agent_name} (${r.runtime}) ${when(r.claimed_at)}${r.finished_at ? ` → ${r.outcome} ${when(r.finished_at)}` : ` lease until ${when(r.lease_until)}`}${r.tokens ? ` · ${r.tokens} tokens` : ''}${r.branch ? ` · branch ${r.branch}` : ''}${r.pr ? ` · ${r.pr}` : ''}`));
   return lines.join('\n');
 }
 
@@ -119,13 +132,14 @@ export interface BoardClient {
   assign(id: string, assignee: string | null, o: { area?: string; project?: string; feature?: string; work?: string; needs?: string; repo?: string; shipNow?: boolean }): Promise<Card>;
   redo(id: string, changes: string, runId?: string): Promise<{ escalated: boolean; task_id: string | null; rounds: number }>;
   move(id: string, status: string, note?: string): Promise<Card>;
+  block(id: string, o: BlockOpts): Promise<Card>;
   link(id: string, dependsOn: string): Promise<void>;
   claim(o: ClaimOpts): Promise<Card | null>;
-  heartbeat(id: string, o: { tokens?: number; turns?: number; leaseMinutes?: number }): Promise<void>;
+  heartbeat(id: string, o: { tokens?: number; turns?: number; leaseMinutes?: number; branch?: string; pr?: string }): Promise<void>;
   finish(id: string, o: FinishOpts): Promise<Card>;
   flags(id: string, o: { shipNow?: boolean; needs?: string }): Promise<Card>;
   watch(board: string | undefined, onEvent: (e: unknown) => void): Promise<() => void>;
-  reclaim(): Promise<number>;
+  reclaim(hostsUp?: string[]): Promise<number>;
 }
 
 export class HttpBoard implements BoardClient {
@@ -150,9 +164,10 @@ export class HttpBoard implements BoardClient {
   async assign(id: string, assignee: string | null, o: { area?: string; project?: string; feature?: string; work?: string; needs?: string; repo?: string; shipNow?: boolean }) { return (await this.call<{ card: Card }>('POST', `/cards/${id}/assign`, undefined, { assignee, area: o.area, project: o.project, feature: o.feature, work: o.work, needs: o.needs, repo: o.repo, ship_now: o.shipNow })).card; }
   async redo(id: string, changes: string, runId?: string) { return this.call<{ escalated: boolean; task_id: string | null; rounds: number }>('POST', `/cards/${id}/redo`, undefined, { changes, run_id: runId }); }
   async move(id: string, status: string, note?: string) { return (await this.call<{ card: Card }>('POST', `/cards/${id}/move`, undefined, { status, note })).card; }
+  async block(id: string, o: BlockOpts) { return (await this.call<{ card: Card }>('POST', `/cards/${id}/block`, undefined, { kind: o.kind, note: o.reason, host: o.host, after: o.after })).card; }
   async link(id: string, dependsOn: string) { await this.call('POST', `/cards/${id}/link`, undefined, { depends_on: dependsOn }); }
   async claim(o: ClaimOpts) { return (await this.call<{ card: Card } | null>('POST', '/claim', undefined, { runtime: o.runtime, agent: o.agent, board: o.board, lease_minutes: o.leaseMinutes, task_id: o.taskId }))?.card ?? null; }
-  async heartbeat(id: string, o: { tokens?: number; turns?: number; leaseMinutes?: number }) { await this.call('POST', `/cards/${id}/heartbeat`, undefined, { tokens: o.tokens, turns: o.turns, lease_minutes: o.leaseMinutes }); }
+  async heartbeat(id: string, o: { tokens?: number; turns?: number; leaseMinutes?: number; branch?: string; pr?: string }) { await this.call('POST', `/cards/${id}/heartbeat`, undefined, { tokens: o.tokens, turns: o.turns, lease_minutes: o.leaseMinutes, branch: o.branch, pr: o.pr }); }
   async finish(id: string, o: FinishOpts) {
     return (await this.call<{ card: Card }>('POST', `/cards/${id}/finish`, undefined, { outcome: o.outcome, result: o.result, block_kind: o.blockKind, verification: o.verification, tokens: o.tokens, turns: o.turns, run_id: o.runId })).card;
   }
@@ -186,7 +201,9 @@ export class HttpBoard implements BoardClient {
     })();
     return () => ctl.abort();
   }
-  async reclaim() { return (await this.call<{ reclaimed: number }>('POST', '/reclaim')).reclaimed; }
+  async reclaim(hostsUp?: string[]) {
+    return (hostsUp?.length ? await this.call<{ reclaimed: number }>('POST', '/host-up', undefined, { hosts: hostsUp }) : await this.call<{ reclaimed: number }>('POST', '/reclaim')).reclaimed;
+  }
 }
 
 /** The database door: the board functions as the caller named here. */
@@ -213,9 +230,13 @@ export class DbBoard implements BoardClient {
     return { escalated: r.escalated, task_id: r.task_id, rounds: r.rounds };
   }
   move(id: string, status: string, note?: string) { return moveCard(this.me, id, status, note); }
+  block(id: string, o: BlockOpts) { return blockCard(this.me, id, o); }
   link(id: string, dependsOn: string) { return linkCards(this.me, id, dependsOn); }
   claim(o: ClaimOpts) { return claimCard(this.viewer === null ? null : this.me, o); }
-  async heartbeat(id: string, o: { tokens?: number; turns?: number; leaseMinutes?: number }) { await heartbeat(this.me, id, o); }
+  async heartbeat(id: string, o: { tokens?: number; turns?: number; leaseMinutes?: number; branch?: string; pr?: string }) {
+    await heartbeat(this.me, id, o);
+    if (o.branch || o.pr) await recordRunOutput(this.me, id, { branch: o.branch, pr: o.pr });
+  }
   finish(id: string, o: FinishOpts) { return finishCard(this.me, id, o); }
   flags(id: string, o: { shipNow?: boolean; needs?: string }) { return flagCard(this.me, id, o); }
   async watch(board: string | undefined, onEvent: (e: unknown) => void): Promise<() => void> {
@@ -223,7 +244,7 @@ export class DbBoard implements BoardClient {
     const off = bus.subscribe((n) => { if (!board || n.board === board) onEvent(n); });
     return () => { off(); void bus.close(); };
   }
-  reclaim() { return reclaim(); }
+  reclaim(hostsUp?: string[]) { return reclaim(hostsUp); }
 }
 
 /** Which door this process uses: HTTPS with a token, else the database (as the RLS role with ORG_AGENT, else the owner). */
@@ -304,8 +325,12 @@ export async function main(argv: string[], out: (s: string) => void = console.lo
     }
     case 'move': {
       need(pos[0] && pos[1], 'move <card> <status> ["<note>"]');
-      const c = await kb!.move(pos[0]!, pos[1]!, pos[2]);
-      out(json ? JSON.stringify(c) : `${c.id} is ${c.status}`);
+      const blockOpts = opts.after !== undefined || opts.host !== undefined || opts.kind !== undefined;
+      if (blockOpts && pos[1] !== 'blocked') throw new OrgError('--after, --host and --kind go with: move <card> blocked');
+      if (opts.after === true || opts.host === true || opts.kind === true) throw new OrgError('--after, --host and --kind need a value');
+      const after = str(opts.after)?.split(',').map((x) => x.trim()).filter(Boolean);
+      const c = blockOpts ? await kb!.block(pos[0]!, { kind: str(opts.kind), reason: pos[2], host: str(opts.host), after }) : await kb!.move(pos[0]!, pos[1]!, pos[2]);
+      out(json ? JSON.stringify(c) : `${c.id} is ${c.status}${c.block_kind ? ` (${blockLabel(c)})` : ''}`);
       return 0;
     }
     case 'link': {
@@ -325,7 +350,7 @@ export async function main(argv: string[], out: (s: string) => void = console.lo
     }
     case 'heartbeat': {
       need(pos[0], 'heartbeat <card> [--tokens N] [--turns N] [--lease N]');
-      await kb!.heartbeat(pos[0]!, { tokens: num(opts.tokens, 'tokens'), turns: num(opts.turns, 'turns'), leaseMinutes: num(opts.lease, 'lease') });
+      await kb!.heartbeat(pos[0]!, { tokens: num(opts.tokens, 'tokens'), turns: num(opts.turns, 'turns'), leaseMinutes: num(opts.lease, 'lease'), branch: str(opts.branch), pr: str(opts.pr) });
       out(`${pos[0]} lease extended`);
       return 0;
     }
@@ -354,8 +379,12 @@ export async function main(argv: string[], out: (s: string) => void = console.lo
       stop();
       return 0;
     }
-    case 'reclaim': {
-      const n = await kb!.reclaim();
+    case 'reclaim':
+    case 'host-up': {
+      const raw = cmd === 'host-up' ? pos[0] : opts['host-up'];
+      if ((cmd === 'host-up' || raw !== undefined) && typeof raw !== 'string') throw new OrgError(cmd === 'host-up' ? 'host-up <host>[,<host>]' : 'reclaim --host-up <host>[,<host>]');
+      const hosts = typeof raw === 'string' ? raw.split(',').map((h) => h.trim()).filter(Boolean) : undefined;
+      const n = await kb!.reclaim(hosts);
       out(json ? JSON.stringify({ reclaimed: n }) : `${n} card(s) moved`);
       return 0;
     }
