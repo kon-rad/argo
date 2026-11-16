@@ -163,8 +163,8 @@ function GiveCard({ p, f, chart, onDone }: { p: TrackerArea; f: TrackerProject; 
   return (
     <form className="mt-1 space-y-1" onSubmit={(e) => { e.preventDefault(); if (title.trim()) give.mutate(); }}>
       <input aria-label={`Card title for ${f.title}`} className="w-full rounded border border-[var(--rule)] bg-transparent px-1 text-xs" placeholder="What should the bot do?" maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} />
-      <div className="flex items-center gap-1 text-xs">
-        <select aria-label={`Bot for ${f.title}`} className="rounded border border-[var(--rule)] bg-transparent text-xs" value={chosen} onChange={(e) => setBot(e.target.value)}>
+      <div className="flex flex-wrap items-center gap-1 text-xs">
+        <select aria-label={`Bot for ${f.title}`} className="min-w-0 max-w-full rounded border border-[var(--rule)] bg-transparent text-xs" value={chosen} onChange={(e) => setBot(e.target.value)}>
           {sorted.map((a) => <option key={a.name} value={a.name}>{a.name}{a.team_slug === p.team ? '' : ` (${a.team_name ?? a.team_slug ?? 'no team'})`}</option>)}
         </select>
         <button type="submit" disabled={!title.trim() || give.isPending} className="rounded bg-[var(--accent)] px-2 py-0.5 text-white disabled:opacity-50">Give to {chosen}</button>
@@ -447,7 +447,8 @@ export default function Projects() {
               key={v}
               type="button"
               onClick={() => setParams(v === 'list' ? {} : { view: v })}
-              className={`rounded px-2 py-1 ${v === view ? 'bg-[var(--paper-sunk)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}
+              aria-current={v === view ? 'page' : undefined}
+              className={`shrink-0 rounded px-2 py-1 ${v === view ? 'bg-[var(--paper-sunk)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}
             >
               {VIEW_LABEL[v]}
               {v === 'needs' && r ? ` (${r.needs_owner.length})` : ''}
