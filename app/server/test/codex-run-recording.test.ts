@@ -99,7 +99,7 @@ describe('Codex host repair migration', () => {
              ('codex','migration-b','native-migrated','migrated-session',$1,'example-model','exec',70,NULL),
              ('codex','migration-a','fallback-migration','fallback-session',$1,'example-model','sdk-cli',15,'fallback-migration')`, [now]);
 
-    const sql = readFileSync(join(import.meta.dirname, '..', '..', 'db', 'migrations', '1756000018400_codex-run-hosts.sql'), 'utf8');
+    const sql = readFileSync(join(import.meta.dirname, '..', '..', 'db', 'migrations', '1756000018600_codex-run-hosts.sql'), 'utf8');
     const up = sql.split('-- Down Migration')[0]!;
     await query(up);
     const afterFirst = await query(`SELECT r.host, c.call_id, c.host AS call_host, c.run_id
