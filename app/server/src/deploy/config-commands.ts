@@ -30,6 +30,8 @@ export interface ConfigIo {
   baseUnits?: ReadonlySet<string>;
   /** Update unit files but leave an existing machine env file alone. */
   unitsOnly?: boolean;
+  /** The vault's `timezone` setting; timers that fire at the owner's wall-clock time use it. */
+  timezone?: string | null;
   log: (line: string) => void;
   error: (line: string) => void;
 }
@@ -46,6 +48,7 @@ export function planFor(io: ConfigIo): DeployPlan {
     installed: io.listInstalled(),
     baseUnits: io.baseUnits,
     unitsOnly: io.unitsOnly,
+    timezone: io.timezone,
   });
 }
 

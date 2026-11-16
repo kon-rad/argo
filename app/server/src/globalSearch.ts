@@ -69,10 +69,10 @@ interface RecordTable {
 export const RECORD_TABLES: RecordTable[] = [
   { table: 'inventory_items', label: 'Inventory', id: 'id::text', title: 'name',
     text: ['name', 'brand', 'model', 'category', 'location', 'status', 'specs::text'], notesPath: 'notes_path' },
-  { table: 'projects', label: 'Project', id: 'slug', title: 'title',
-    text: ['slug', 'title', 'area', 'stage', 'needs_owner', 'blocked_on'], notesPath: 'design_path' },
-  { table: 'features', label: 'Feature', id: 'project_slug || \'/\' || slug', title: 'title',
-    text: ['slug', 'title', 'project_slug', 'stage', 'owner', 'needs_owner', 'blocked_on'], notesPath: 'notes_path' },
+  { table: 'areas', label: 'Area', id: 'slug', title: 'title',
+    text: ['slug', 'title', 'status', 'needs_owner', 'blocked_on'], notesPath: 'design_path' },
+  { table: 'projects', label: 'Project', id: 'area_slug || \'/\' || slug', title: 'title',
+    text: ['slug', 'title', 'outcome', 'next_action', 'area_slug', 'stage', 'owner', 'needs_owner', 'blocked_on'], notesPath: 'notes_path' },
   { table: 'teams', label: 'Team', id: 'slug', title: 'name', text: ['slug', 'name', 'mission', 'lead'] },
 ];
 

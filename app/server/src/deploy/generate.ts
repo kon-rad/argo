@@ -141,8 +141,10 @@ export function renderEnv(server: ServerSettings, modules: ReadonlySet<string>, 
 }
 
 /** The `@...@` placeholders the unit templates carry, resolved from the server block. */
-export function unitSubstitutions(server: ServerSettings): Record<string, string> {
+export function unitSubstitutions(server: ServerSettings, timezone?: string | null): Record<string, string> {
   return {
+    // A timer that fires at a wall-clock time of the owner (the weekly review) names the vault's zone; unset reads as UTC.
+    '@TIMEZONE@': timezone || 'UTC',
     '@APP_USER@': server.user,
     '@APP_DIR@': server.dir,
     '@VAULT_DIR@': server.vaultDir,
@@ -241,10 +243,12 @@ export interface PlanInput {
   baseUnits?: ReadonlySet<string>;
   /** A deploy can ask the generator to update units without replacing its hand-maintained env file. */
   unitsOnly?: boolean;
+  /** The vault's `timezone` setting, for timers that fire at the owner's wall-clock time. Unset: UTC. */
+  timezone?: string | null;
 }
 
 export function planDeploy(input: PlanInput): DeployPlan {
-  const subs = unitSubstitutions(input.server);
+  const subs = unitSubstitutions(input.server, input.timezone);
   const files: PlannedFile[] = [];
   const add = (kind: PlannedFileKind, path: string, after: string): void => {
     const before = input.read(path);

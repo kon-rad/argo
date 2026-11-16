@@ -78,6 +78,7 @@ The app refuses to start in server mode without `AUTH_PASSWORD_HASH`, `AUTH_TOTP
 | `secondbrain-agents-sync.timer` | Periodic | `agents` |
 | `secondbrain-usage-sync.timer`, `-credits-sync.timer`, usage importer | Periodic | `usage` |
 | `secondbrain-projects-render.timer` | Hourly | `projects` |
+| `secondbrain-areas-review.timer` | Sunday 20:00 in the vault's `timezone` (UTC when unset) | `projects` |
 | `secondbrain-map-build.timer` | Hourly at :20 | `map` |
 | `secondbrain-metrics.timer` | Daily 00:30 UTC | `map` |
 | `secondbrain-metrics-checkpoints.timer` | Hourly at :45 | `map` |

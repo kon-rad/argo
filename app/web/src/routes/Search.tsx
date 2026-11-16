@@ -11,7 +11,7 @@ type Tab = 'all' | SearchScope;
 const TABS: { value: Tab; label: string; hint: string }[] = [
   { value: 'all', label: 'All', hint: 'A few hits from every store' },
   { value: 'notes', label: 'Notes', hint: 'Markdown in the vault, plus Discord' },
-  { value: 'records', label: 'Records', hint: 'Database rows: gear, projects, features, teams' },
+  { value: 'records', label: 'Records', hint: 'Database rows: gear, areas, projects, teams' },
   { value: 'agents', label: 'Agent logs', hint: 'Claude Code and Hermes messages, tool calls and results' },
 ];
 

@@ -97,7 +97,11 @@ describe('memory api', () => {
     await request(app).post('/api/summaries/facts/1/promote').send({}).expect(410);
   });
   it('migrates pending history once, leaving rejected history untouched', async () => {
-    const sql = readFileSync(new URL('../../db/migrations/1756000017400_automatic-memory.sql', import.meta.url), 'utf8');
+    // This replays an older migration on today's schema. It was written before the PARA rename (1756000018400), which
+    // moved the names its trigger function reads: memory_facts.project_slug is area_slug, and an area is a row of `areas`.
+    // Read it the way the rename rewrote that function, or the replay would leave the old body installed.
+    const sql = readFileSync(new URL('../../db/migrations/1756000017400_automatic-memory.sql', import.meta.url), 'utf8')
+      .replaceAll('project_slug', 'area_slug').replaceAll('FROM projects WHERE slug', 'FROM areas WHERE slug');
     const [up, down] = sql.split('-- Down Migration');
     await query(down!);
     try {
@@ -120,14 +124,14 @@ describe('memory api', () => {
   });
 
   it('deduplicates concurrent sessions within a project and keeps projects separate', async () => {
-    await query(`INSERT INTO projects (slug,title,stage) VALUES ('alpha','Alpha','building'),('beta','Beta','building')`);
+    await query(`INSERT INTO areas (slug,title,status) VALUES ('alpha','Alpha','active'),('beta','Beta','active')`);
     const summary = await seedSummary();
     await query(`UPDATE agent_summaries SET project='alpha' WHERE id=$1`, [summary]);
     await Promise.all(Array.from({length:3}, () => query(`INSERT INTO agent_summary_facts (summary_id,subject,claim) VALUES ($1,'lesson','Concurrent claim')`, [summary])));
-    expect((await query(`SELECT * FROM memory_facts`)).rows).toMatchObject([{project_slug:'alpha'}]);
+    expect((await query(`SELECT * FROM memory_facts`)).rows).toMatchObject([{area_slug:'alpha'}]);
     await query(`UPDATE agent_summaries SET project='beta' WHERE id=$1`, [summary]);
     await query(`INSERT INTO agent_summary_facts (summary_id,subject,claim) VALUES ($1,'lesson','Concurrent claim')`, [summary]);
-    expect((await query(`SELECT project_slug FROM memory_facts ORDER BY id`)).rows).toEqual([{project_slug:'alpha'},{project_slug:'beta'}]);
+    expect((await query(`SELECT area_slug FROM memory_facts ORDER BY id`)).rows).toEqual([{area_slug:'alpha'},{area_slug:'beta'}]);
   });
 
 });

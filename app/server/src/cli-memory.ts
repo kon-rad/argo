@@ -2,7 +2,7 @@ import { exitFlushed } from './cli-exit.js';
 import { z } from 'zod';
 import { config } from './config.js';
 import { pool, setDatabaseUrl } from './db.js';
-import { getAgent, createTask, OrgError } from './org.js';
+import { areaFlag, getAgent, createTask, OrgError } from './org.js';
 import { factById, factStats, forget, listFacts, recallFacts, recallMemoryFiles, remember, type Fact, type RecallHit } from './org-powers.js';
 import { runCapture } from './memory-capture.js';
 import { recallVault } from './recall.js';
@@ -19,10 +19,10 @@ import { agentDatabaseUrl, identityName, parseArgs } from './cli-org.js';
 
 const USAGE = `secondbrain memory: the shared memory every runtime recalls (a claim with a source, or it is not a fact).
 
-  memory recall "<query>" [--project p] [--limit N] [--json]    the facts, the memory files, then the vault (keyword + vector)
+  memory recall "<query>" [--area a] [--limit N] [--json]       the facts, the memory files, then the vault (keyword + vector)
   memory remember "<subject>" "<claim>" --source <path|#msg|t_card|url>
-      [--project p] [--agent a] [--inferred] [--supersedes id] [--via runtime@host]   a sourced claim; --agent tags it as one bot's
-  memory list [--subject s] [--project p] [--author a] [--agent a] [--all] [--limit N] [--json]    the current facts (--all includes retired)
+      [--area a] [--agent a] [--inferred] [--supersedes id] [--via runtime@host]   a sourced claim; --agent tags it as one bot's
+  memory list [--subject s] [--area a] [--author a] [--agent a] [--all] [--limit N] [--json]    the current facts (--all includes retired)
   memory retire <id> "<why>"       close a claim that no longer holds (never a hard delete)
   memory propose <fact-id> [--dry-run]   open one improve card on the owner's backlog from a fact (a lesson that keeps
                                     recurring); a person applies it, never a bot
@@ -94,10 +94,10 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
   switch (sub) {
     case 'recall': {
       const [q] = pos;
-      if (!q) throw new OrgError('recall "<query>" [--project p] [--limit N]');
+      if (!q) throw new OrgError('recall "<query>" [--area a] [--limit N]');
       const limit = num(opts.limit, 'limit') ?? 8;
       const hits: RecallHit[] = [
-        ...(await recallFacts(q, { project: str(opts.project), limit })),
+        ...(await recallFacts(q, { area: areaFlag(str(opts.area), str(opts.project)), limit })),
         ...recallMemoryFiles(config.vaultRoot, q, Math.ceil(limit / 2)),
         ...(vaultHits ?? []),
       ];
@@ -109,9 +109,9 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
     case 'remember': {
       const [subject, claim] = pos;
       const source = str(opts.source);
-      if (!subject || !claim || !source) throw new OrgError('remember "<subject>" "<claim>" --source <path|#msg|t_card|url> [--project p] [--agent a] [--inferred] [--supersedes id]');
+      if (!subject || !claim || !source) throw new OrgError('remember "<subject>" "<claim>" --source <path|#msg|t_card|url> [--area a] [--agent a] [--inferred] [--supersedes id]');
       const f = await remember(await me(), {
-        subject, claim, source, project: str(opts.project), agent: str(opts.agent), inferred: opts.inferred === true,
+        subject, claim, source, area: areaFlag(str(opts.area), str(opts.project)), agent: str(opts.agent), inferred: opts.inferred === true,
         supersedes: num(opts.supersedes, 'supersedes'), via: str(opts.via) ?? config.env.ORG_VIA,
       });
       out(json ? JSON.stringify(f) : `fact #${f.id} saved${f.agent ? ` (${f.agent}'s memory)` : ''}${f.supersedes ? ` (closes #${f.supersedes})` : ''}`);
@@ -119,7 +119,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
     }
     case 'list': {
       const fs = await listFacts({
-        subject: str(opts.subject), project: str(opts.project), author: str(opts.author), agent: str(opts.agent),
+        subject: str(opts.subject), area: areaFlag(str(opts.area), str(opts.project)), author: str(opts.author), agent: str(opts.agent),
         all: opts.all === true, limit: num(opts.limit, 'limit'),
       });
       if (json) return (out(JSON.stringify(fs, null, 2)), 0);
