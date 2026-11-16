@@ -85,7 +85,7 @@ Each one carries a **channel** label, `telegram`, and the name of the bot. Filte
 }
 ```
 
-`name` is what the page shows; `agent` is which harness polls that bot. A Hermes profile other than `~/.hermes` adds `"profile": "<name>"`; the zen bridge passes its name with `BRIDGE_BOT_NAME`, which the command sets. Without this block the label is still `telegram`, just without a bot name.
+`name` is what the page shows; `agent` is which harness polls that bot. The bot on the main Hermes home has no `profile` (an explicit `"profile": "main"` also works); a named Hermes profile adds `"profile": "<name>"`. When more than one Hermes bot could be the main bot, none is guessed. The zen bridge passes its name with `BRIDGE_BOT_NAME`, which the command sets. Without this block the label is still `telegram`, just without a bot name.
 
 What the label holds, and what it does not: the channel, the bot's name and the sender's Telegram handle. Chat ids, user ids and message ids are never written into the label (the raw transcript keeps whatever the harness logged, on your own server). Sessions stored before the label existed get it with `secondbrain archive-steps --relabel`.
 
