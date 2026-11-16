@@ -34,11 +34,11 @@ That split is why a card can be given to a runtime that does not exist yet, and 
 | `ready` | Waits for its assignee's lane to claim it. A ready card wakes its bot through the org's wakeups |
 | `running` | A lane claimed it; there is an open `card_runs` row with a lease |
 | `review` | The builder finished; the review card decides |
-| `blocked` | Stuck, with a `block_kind` (`dependency`, `needs-owner`, `missing-input`, `tool-error`, `budget`, `review-changes`, `other`) and a reason |
+| `blocked` | Stuck, with a `block_kind` (`dependency`, `needs-owner`, `missing-input`, `tool-error`, `budget`, `review-changes`, `host-down`, `other`) and a reason; a `host-down` block also names its host |
 | `done` | Finished, with a one-line `result` |
 | `archived` | Off the columns; kept for the record |
 
-Two transitions happen by themselves: `todo → ready` the moment a card has no open dependency and no future `scheduled_for`, and `running → ready` when a lease expires with no heartbeat (`board_reclaim()`, run by the `board-reclaim` timer). Nobody polls for either.
+Two transitions happen by themselves: `todo → ready` the moment a card has no open dependency and no future `scheduled_for`, and `running → ready` when a lease expires with no heartbeat (`board_reclaim()`, run by the `board-reclaim` timer). Nobody polls for either. The same sweep also re-tests every `dependency` block (a block whose reason names a `t_…` card but has no link gets that link first), and reconciles a `running` card whose latest run has already ended with no live lease: to `review` when the run left a branch or a PR (`heartbeat --branch/--pr`, a ship request with a PR, or a `/pull/<n>` link commented since the claim), else to `ready`, with a `reconciled` event naming the run.
 
 **A card's status is not a feature's status.** Card status is work state; a feature's stage is product state in the tracker. The only bridge is finishing a card with a verification, which writes the tracker's `verifications` row. Nothing on the board moves a feature's stage directly.
 
@@ -128,7 +128,12 @@ cli-board redo t_review123 "tighten the error handling"   # changes requested: a
 cli-board move t_abc123 ready
 cli-board move t_abc123 scheduled "after the release"
 cli-board link t_abc123 --after t_def456           # a dependency
+cli-board move t_abc123 blocked --after t_def456 "needs the schema first"   # blocked on cards: clears itself
+cli-board move t_abc123 blocked --host gpu-box "ollama not answering"         # blocked on a host: host-up retries it
+cli-board host-up gpu-box                            # a host is back: its host-down cards go back to ready
 ```
+
+**Blocks that clear themselves.** `move <card> blocked --after <t_x>[,<t_y>]` records each card as a link (kind `dependency`); the moment the last one is `done` (or archived) the card goes back to `ready` in the same transaction, with a `released` event naming the card that released it. If they are all finished already, the card is released at once. `move <card> blocked --host <host>` sets kind `host-down` with the host; when anything reports the host up (`cli-board host-up <host>`, `cli-board reclaim --host-up <host>`, or `POST /api/board/host-up {"hosts": [...]}` with any board token) the card goes back to `ready`, at most 3 times a card; after that it stays blocked and `list`/`show` say `retries 3/3`. The engine never probes a host itself. `move <card> blocked --kind <kind>` sets any other kind. None of this ever moves a `done` or `archived` card.
 
 A comment is always authored by the caller. `assign` re-points a card that already exists, which is how a card you find unassigned becomes someone's; it takes the same `--repo` and `--ship-now` as `create` (`--ship-now` is the owner's alone), and a coding card must name the repo the bots reach. `redo` takes a review card and asks its builder for another round: a new card with the next `rounds` count is created for the builder and the review card is parked until it is done. An unknown flag on any verb is a hard error, never a silent drop.
 
@@ -142,6 +147,7 @@ A lane claims work, keeps the lease alive and reports the outcome. If you are no
 cli-board claim --runtime claude-code --json        # the next ready card for that runtime
 cli-board claim --agent sable --task t_abc123       # this exact card
 cli-board heartbeat t_abc123 --tokens 1200 --turns 8
+cli-board heartbeat t_abc123 --branch card/t_abc123-fix --pr https://example.com/org/repo/pull/52   # what the run left
 cli-board finish t_abc123 --done "Shipped in #52; 992 tests pass."
 cli-board finish t_abc123 --blocked needs-owner "Which board does the kiosk show?"
 cli-board finish t_abc123 --budget "hit the token cap"
