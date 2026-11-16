@@ -52,7 +52,7 @@ You are a solo founder or a small company and you want a staff of agents that re
 
 1. One vault per company, private, with `Areas/` for the standing functions (finance, customers, product) and `Projects/` for the work with an end date. Agents and people share it.
 2. Put it on a server ([Connect servers and computers](06-connect-machines.md)) so it works from a phone and runs while laptops sleep. The login is built in and cannot be turned off.
-3. Turn on `projects`. Make the rule: a feature is `live` when its verification is recorded, by whoever did it. The report `cli-projects render` writes is your weekly status, searchable.
+3. Turn on `projects`. Make the rule: a project is `live` when its verification is recorded, by whoever did it. The report `cli-areas render` writes is your weekly status, searchable.
 4. Turn on `org`. Name your agents by role (research, engineering, finance, chief of staff), give each a team and a lead, and write the dispatcher ([Orchestrate agents](09-orchestrate-agents.md#layer-3-a-company-of-agents-the-org-module)). Questions agents cannot answer land in one place, waiting on you.
 5. Turn on `usage` and install the ledger on every machine that runs agents. The first month's table will change which jobs you keep.
 6. Secrets by role: the agents' machines hold the keys the agents need, under their own Unix user. Signing keys, banking and anything that moves money stay on a device agents do not run on. The `fund` module is an example of that split: it reads a fund's state and never signs.

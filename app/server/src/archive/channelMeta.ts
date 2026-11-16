@@ -7,9 +7,13 @@ type Agent = 'claude-code' | 'hermes' | 'zen-agent';
 /** The configured bot (secondbrain.json `telegram.bots`) a session on `agent` belongs to; `hint` is a bot name or a Hermes profile. */
 export function telegramBot(agent: Agent, hint: string | null | undefined): TelegramBotSetting | null {
   const mine = settings().telegram.bots.filter(b => b.agent === agent);
+  if (agent === 'hermes') {
+    const profile = hint ?? 'main';
+    const matches = mine.filter(b => profile === 'main' ? !b.profile || b.profile === 'main' : b.profile === profile);
+    return matches.length === 1 ? matches[0]! : null;
+  }
   if (hint) {
-    const matches = mine.filter(b => b.name === hint || b.username?.replace(/^@/, '') === hint.replace(/^@/, '')
-      || agent === 'hermes' && b.profile === hint);
+    const matches = mine.filter(b => b.name === hint || b.username?.replace(/^@/, '') === hint.replace(/^@/, ''));
     return matches.length === 1 ? matches[0]! : null;
   }
   return mine.length === 1 ? mine[0]! : null;

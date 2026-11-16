@@ -12,7 +12,7 @@ PARA says Projects and Areas hold only live work and everything else goes to Arc
 ---
 shelf: Projects/demo          # the folder; always rewritten from the real path
 status: active                # active | dormant | archived
-project: none                 # a tracker project slug (module `projects`), or none
+project: none                 # the slug of the tracker area this shelf belongs to (module `projects`), or none
 kind: project                 # project | area | resource, from the root folder
 last_reviewed: 2026-11-03     # set on every run that writes
 archive_after: default        # `default` = garden.projectArchiveAfterDays (90) for projects, never for others; or `120d`, or `never`
@@ -49,8 +49,8 @@ The **Next action** line comes from `<shelf>/dev-log/README.md` when it has a Re
 Rules, in order, one action per shelf:
 
 1. `pin: true`, `status: archived`, or listed in `garden.pinned`: nothing.
-2. A **project** shelf whose tracker project is `parked` or `done`, or with no commit in `archive_after` days (or no git history at all), moves to `<archiveDir>/<YYYYQn>/projects/<name>` and gets `status: archived`.
-3. An **area** shelf with no tracker project and no commit in `garden.areaProposeAfterDays` (180) is **proposed** in the report. Areas are standards you maintain, so a quiet one is not a dead one; the gardener never moves them on its own.
+2. A **project** shelf whose tracker area is `parked` or archived, or with no commit in `archive_after` days (or no git history at all), moves to `<archiveDir>/<YYYYQn>/projects/<name>` and gets `status: archived`.
+3. An **area** shelf with no tracker area and no commit in `garden.areaProposeAfterDays` (180) is **proposed** in the report. Areas are standards you maintain, so a quiet one is not a dead one; the gardener never moves them on its own.
 4. A **resource** shelf (`Research/`) is never archived by age.
 5. A folder whose name is not lowercase kebab-case is renamed (`Models Research` becomes `models-research`), up to `garden.maxRenames` (5) a night.
 
@@ -66,7 +66,7 @@ The gardener does not commit. Pair it with the vault sync timer ([sync.md](sync.
 secondbrain garden                 # shadow: report only
 secondbrain garden --write         # shelf notes, catalog, report
 secondbrain garden --apply         # also move and rename
-secondbrain garden --no-db         # don't ask the tracker for project stages
+secondbrain garden --no-db         # don't ask the tracker for the areas' status
 secondbrain garden --today 2026-11-03 --no-wiki
 ```
 

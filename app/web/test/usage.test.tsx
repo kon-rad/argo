@@ -33,9 +33,9 @@ const RUNS = { runs: [{ host: 'droplet', session_id: 'cc1', task_id: 't_9', lane
 const FACETS = { from: '', to: '', total: { calls: 10, tokens: 1160 }, facets: {
   agent: [{ value: 'atlas', calls: 6, tokens: 900, output: 60 }, { value: 'unlabelled', calls: 4, tokens: 260, output: 20 }],
   action: [{ value: 'post', calls: 5, tokens: 700, output: 50 }, { value: 'reply', calls: 5, tokens: 460, output: 30 }],
-  team: [], reason: [], work_type: [], project: [], feature: [], task: [], host: [{ value: 'droplet', calls: 10, tokens: 1160, output: 80 }], headless: [], surface: [], lane: [], model: [], source: [] } };
+  team: [], reason: [], work_type: [], area: [], project: [], task: [], host: [{ value: 'droplet', calls: 10, tokens: 1160, output: 80 }], headless: [], surface: [], lane: [], model: [], source: [] } };
 const RUNS2 = { runs: [{ ...RUNS.runs[0], run_id: 'org-atlas-20261014-010000', agent_name: 'atlas', team_slug: 'platform', reason: 'mention', work_type: 'coding',
-  project_slug: 'secondbrain-app', feature_slug: null, card_title: 'Fix it', resumed: true, surface: 'bot', calls: 2, input: 10, cache_write: 0, cache_read: 1000, output: 60, lane: null, verify_name: null }] };
+  area_slug: 'secondbrain-app', project_slug: null, card_title: 'Fix it', resumed: true, surface: 'bot', calls: 2, input: 10, cache_write: 0, cache_read: 1000, output: 60, lane: null, verify_name: null }] };
 let seriesBody: unknown = SERIES;
 function mockFetch(metadata: () => unknown | Promise<unknown> = () => ({})) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {

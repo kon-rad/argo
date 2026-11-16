@@ -1,67 +1,42 @@
 import { readFileSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 import { z } from 'zod';
-import { FeaturePatchSchema, FeatureVerificationRequestSchema, ProjectPatchSchema } from '@secondbrain/contracts/projects';
-import { query, withTransaction, type TxClient } from '../../../db.js';
+import { query } from '../../../db.js';
 import { settings } from '../../../settings.js';
+import { AreaPatch, upsertArea } from './areas.js';
+import {
+  AREA_STATUSES, day, daysBetween, DivisionInput, emptyCounts, IN_FLIGHT, iso, isoOrNull, SHIPPED, Slug, STAGES, STALE_DAYS, TeamInput, Text,
+  upsertDivision, upsertTeam, type AreaStatus, type Stage,
+} from './common.js';
+import { ProjectPatch, upsertProject, VerificationInput } from './projects.js';
 
 /**
- * The project tracker: teams own projects, projects are made of features, and
- * every feature moves through one stage list. Status is records (Postgres);
- * the why and the how stay in markdown (design docs, dev logs). Goals stay in
- * the goals file (`goalsFile` in secondbrain.json) and are linked by code (W1, M2, Q1, Y3).
- *
- * The rule that makes "done" mean something: a feature moves to live or done
- * only when its newest verification passed, or the move says why it skipped
- * that (recorded in the stage history and shown as a gap in the report).
- *
+ * The tracker: teams own areas, areas hold projects, and every project moves through one
+ * stage list. Areas are what you run (./areas.ts), projects are what you finish
+ * (./projects.ts); this file is what reads both: the board, the report and the kiosk feed.
+ * Status is records (Postgres); the why and the how stay in markdown (home notes, design
+ * docs, dev logs). Goals stay in the goals file (`goalsFile` in secondbrain.json) and are
+ * linked by code (W1, M2, Q1, Y3).
  */
 
-export const STAGES = ['idea', 'designing', 'building', 'testing', 'live', 'parked', 'done'] as const;
-export type Stage = (typeof STAGES)[number];
-export const IN_FLIGHT: readonly Stage[] = ['designing', 'building', 'testing'];
-const SHIPPED: readonly Stage[] = ['live', 'done'];
-export const STALE_DAYS = 7;
-
-const Slug = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'lowercase letters, digits and dashes');
-const Text = z.string().trim().min(1).max(2000);
-
-export const DivisionInput = z.object({
-  name: Text.max(100),
-  mission: Text.nullish(),
-  head: Text.max(100).nullish(),
-  sort: z.number().int().optional(),
-});
-
-export const TeamInput = z.object({
-  name: Text.max(100),
-  mission: Text.nullish(),
-  lead: Text.max(100).nullish(),
-  members: z.array(z.string().max(100)).optional(),
-  sort: z.number().int().optional(),
-});
-
-export const ProjectPatch = ProjectPatchSchema;
-export type ProjectPatch = z.infer<typeof ProjectPatch>;
-
-export const FeaturePatch = FeaturePatchSchema;
-export type FeaturePatch = z.infer<typeof FeaturePatch>;
-
-export const VerificationInput = FeatureVerificationRequestSchema;
-export type VerificationInput = z.infer<typeof VerificationInput>;
+export * from './common.js';
+export * from './areas.js';
+export * from './projects.js';
+export * from './history.js';
+export * from './context.js';
+export * from './review.js';
 
 export const Seed = z.object({
   divisions: z.array(DivisionInput.extend({ slug: Slug })).default([]),
   teams: z.array(TeamInput.extend({ slug: Slug })).default([]),
-  projects: z
+  areas: z
     .array(
-      ProjectPatch.extend({
+      AreaPatch.extend({
         slug: Slug,
         title: Text.max(200),
-        stage: z.enum(STAGES),
-        features: z
+        projects: z
           .array(
-            FeaturePatch.extend({
+            ProjectPatch.extend({
               slug: Slug,
               title: Text.max(200),
               /** Evidence that already exists (a dev log's test run), with its real date. */
@@ -75,258 +50,48 @@ export const Seed = z.object({
 });
 export type Seed = z.infer<typeof Seed>;
 
-/** A refusal the caller can show as-is (400 in the API, exit 1 in the CLI). */
-export class TrackerError extends Error {
-  constructor(
-    message: string,
-    readonly status = 400,
-  ) {
-    super(message);
-  }
-}
-
-// ---------------------------------------------------------------- writes
-
-const PROJECT_COLS: Record<string, string> = {
-  title: 'title', team: 'team_slug', division: 'division_slug', area: 'area', stage: 'stage', health: 'health', priority: 'priority',
-  goals: 'goals', needs_owner: 'needs_owner', blocked_on: 'blocked_on', started: 'started', due: 'due',
-  devlog_path: 'devlog_path', design_path: 'design_path', paths: 'paths', repos: 'repos',
-};
-const FEATURE_COLS: Record<string, string> = {
-  title: 'title', stage: 'stage', health: 'health', owner: 'owner', goals: 'goals', needs_owner: 'needs_owner',
-  blocked_on: 'blocked_on', started: 'started', due: 'due', notes_path: 'notes_path', sort: 'sort',
-};
-
-function assignments(patch: Record<string, unknown>, cols: Record<string, string>, first: number) {
-  const sets: string[] = [];
-  const vals: unknown[] = [];
-  for (const [k, col] of Object.entries(cols)) {
-    if (patch[k] === undefined) continue;
-    vals.push(patch[k]);
-    sets.push(`${col} = $${first + vals.length - 1}`);
-  }
-  return { sets, vals };
-}
-
-export async function upsertDivision(slug: string, input: z.infer<typeof DivisionInput>): Promise<void> {
-  Slug.parse(slug);
-  const d = DivisionInput.parse(input);
-  await query(
-    `INSERT INTO divisions (slug, name, mission, head, sort) VALUES ($1,$2,$3,$4,$5)
-     ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, mission = EXCLUDED.mission, head = EXCLUDED.head,
-       sort = EXCLUDED.sort, updated_at = now()`,
-    [slug, d.name, d.mission ?? null, d.head ?? null, d.sort ?? 0],
-  );
-}
-
-export async function upsertTeam(slug: string, input: z.infer<typeof TeamInput>): Promise<void> {
-  Slug.parse(slug);
-  const t = TeamInput.parse(input);
-  await query(
-    `INSERT INTO teams (slug, name, mission, lead, members, sort) VALUES ($1,$2,$3,$4,$5,$6)
-     ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, mission = EXCLUDED.mission, lead = EXCLUDED.lead,
-       members = EXCLUDED.members, sort = EXCLUDED.sort, updated_at = now()`,
-    [slug, t.name, t.mission ?? null, t.lead ?? null, t.members ?? [], t.sort ?? 0],
-  );
-}
-
-async function teamMustExist(tx: TxClient, team: string | null | undefined): Promise<void> {
-  if (!team) return;
-  const { rowCount } = await tx.query(`SELECT 1 FROM teams WHERE slug = $1`, [team]);
-  if (!rowCount) throw new TrackerError(`no team "${team}"`);
-}
-
-async function divisionMustExist(tx: TxClient, division: string | null | undefined): Promise<void> {
-  if (!division) return;
-  const { rowCount } = await tx.query(`SELECT 1 FROM divisions WHERE slug = $1`, [division]);
-  if (!rowCount) throw new TrackerError(`no division "${division}"`);
-}
-
-/** Deletes a project and, by cascade, its features, stage history and verifications. Cards and messages keep their rows with the project cleared. Shared-memory facts tagged with it are re-tagged to `into` when given, else cleared. */
-export async function removeProject(slug: string, opts: { dryRun?: boolean; into?: string } = {}): Promise<{ features: number; facts: number }> {
-  Slug.parse(slug);
-  if (opts.into) Slug.parse(opts.into);
-  if (opts.into === slug) throw new TrackerError('--into must be a different project');
-  const { rows } = await query<{ f: string; m: string }>(
-    `SELECT (SELECT count(*) FROM features WHERE project_slug = $1)::text AS f,
-            (SELECT count(*) FROM memory_facts WHERE project_slug = $1)::text AS m`,
-    [slug],
-  );
-  const out = { features: Number(rows[0]?.f ?? 0), facts: Number(rows[0]?.m ?? 0) };
-  if (opts.dryRun) return out;
-  await withTransaction(async (tx) => {
-    if (opts.into) {
-      const { rowCount } = await tx.query(`SELECT 1 FROM projects WHERE slug = $1`, [opts.into]);
-      if (!rowCount) throw new TrackerError(`no project "${opts.into}" to move facts into`);
-    }
-    await tx.query(`UPDATE memory_facts SET project_slug = $2 WHERE project_slug = $1`, [slug, opts.into ?? null]);
-    const { rowCount } = await tx.query(`DELETE FROM projects WHERE slug = $1`, [slug]);
-    if (!rowCount) throw new TrackerError(`no project "${slug}"`);
-  });
-  return out;
-}
-
-/** Creates the project when `create` is set (title and stage required), else updates it. */
-export async function upsertProject(
-  slug: string,
-  raw: ProjectPatch,
-  by: string,
-  opts: { create?: boolean; imported?: boolean } = {},
-): Promise<{ created: boolean; stage_changed: boolean }> {
-  Slug.parse(slug);
-  const patch = ProjectPatch.parse(raw);
-  return withTransaction(async (tx) => {
-    await teamMustExist(tx, patch.team);
-    await divisionMustExist(tx, patch.division);
-    const cur = await tx.query<{ stage: Stage }>(`SELECT stage FROM projects WHERE slug = $1 FOR UPDATE`, [slug]);
-    if (!cur.rows[0]) {
-      if (!opts.create) throw new TrackerError(`no project "${slug}" (add it first)`, 404);
-      if (!patch.title || !patch.stage) throw new TrackerError('a new project needs a title and a stage');
-      await tx.query(`INSERT INTO projects (slug, title, stage, updated_by) VALUES ($1,$2,$3,$4)`, [
-        slug, patch.title, patch.stage, by,
-      ]);
-      await tx.query(
-        `INSERT INTO stage_changes (project_slug, from_stage, to_stage, by, note) VALUES ($1, NULL, $2, $3, $4)`,
-        [slug, patch.stage, by, [opts.imported ? 'imported' : 'added', patch.note].filter(Boolean).join(' · ')],
-      );
-    }
-    const from = cur.rows[0]?.stage ?? patch.stage!;
-    const { sets, vals } = assignments(patch, PROJECT_COLS, 3);
-    await tx.query(
-      `UPDATE projects SET ${[...sets, 'updated_at = now()', 'updated_by = $2'].join(', ')} WHERE slug = $1`,
-      [slug, by, ...vals],
-    );
-    const stageChanged = Boolean(cur.rows[0] && patch.stage && patch.stage !== from);
-    if (stageChanged) {
-      await tx.query(
-        `INSERT INTO stage_changes (project_slug, from_stage, to_stage, by, note) VALUES ($1,$2,$3,$4,$5)`,
-        [slug, from, patch.stage, by, patch.note ?? null],
-      );
-    }
-    return { created: !cur.rows[0], stage_changed: stageChanged };
-  });
-}
+const OLD_STAGE = new Set<string>(STAGES);
 
 /**
- * Creates or updates a feature. A move into live or done is refused unless the
- * feature's newest verification passed, or `unverified` gives the reason,
- * which is then kept in the stage history.
+ * A seed file written before the rename says `projects: [{ stage, features: [...] }]`.
+ * Read it as areas and projects: the stage becomes a status (parked stays parked, anything
+ * else is active), and the fields an area no longer has (`due`, the free-text `area`) are dropped.
  */
-export async function upsertFeature(
-  projectSlug: string,
-  slug: string,
-  raw: FeaturePatch,
-  by: string,
-  opts: {
-    create?: boolean;
-    /** From importSeed: the feature already existed before the tracker, so its ship date is unknown. */
-    imported?: boolean;
-    /** Existing evidence, inserted with a new feature so the stage gate sees it. */
-    evidence?: (VerificationInput & { at?: string })[];
-  } = {},
-): Promise<{ id: number; created: boolean; stage_changed: boolean }> {
-  Slug.parse(slug);
-  const patch = FeaturePatch.parse(raw);
-  return withTransaction(async (tx) => {
-    const proj = await tx.query(`SELECT 1 FROM projects WHERE slug = $1`, [projectSlug]);
-    if (!proj.rowCount) throw new TrackerError(`no project "${projectSlug}"`, 404);
-    let cur = await tx.query<{ id: number; stage: Stage; shipped_at: string | null }>(
-      `SELECT id, stage, shipped_at FROM features WHERE project_slug = $1 AND slug = $2 FOR UPDATE`,
-      [projectSlug, slug],
-    );
-    let created = false;
-    let from: Stage | null = cur.rows[0]?.stage ?? null;
-    if (!cur.rows[0]) {
-      if (!opts.create) throw new TrackerError(`no feature "${projectSlug}/${slug}" (add it first)`, 404);
-      if (!patch.title) throw new TrackerError('a new feature needs a title');
-      cur = await tx.query(
-        `INSERT INTO features (project_slug, slug, title, stage, updated_by) VALUES ($1,$2,$3,'idea',$4)
-         RETURNING id, stage, shipped_at`,
-        [projectSlug, slug, patch.title, by],
-      );
-      created = true;
-      from = null;
-      for (const v of opts.evidence ?? []) {
-        await tx.query(
-          `INSERT INTO verifications (feature_id, kind, check_run, result, evidence, at, by)
-           VALUES ($1,$2,$3,$4,$5,coalesce($6::timestamptz, now()),$7)`,
-          [cur.rows[0]!.id, v.kind, v.check, v.result, v.evidence ?? null, v.at ?? null, by],
-        );
-      }
-    }
-    const feature = cur.rows[0]!;
-    const to = patch.stage;
-    const moving = to !== undefined && to !== from;
-
-    let note = patch.note ?? null;
-    if (moving && SHIPPED.includes(to) && !(from && SHIPPED.includes(from))) {
-      const v = await tx.query<{ result: string }>(
-        `SELECT result FROM verifications WHERE feature_id = $1 ORDER BY at DESC, id DESC LIMIT 1`,
-        [feature.id],
-      );
-      const passed = v.rows[0]?.result === 'pass';
-      if (!passed && !patch.unverified) {
-        throw new TrackerError(
-          `${projectSlug}/${slug} can't move to ${to}: ${v.rows[0] ? 'its newest verification failed' : 'it has no verification'}. ` +
-            `Record one (verify --pass with the check you ran), or pass unverified with the reason.`,
-          409,
-        );
-      }
-      if (!passed) note = `UNVERIFIED: ${patch.unverified}${note ? ` · ${note}` : ''}`;
-    }
-
-    const { sets, vals } = assignments(patch, FEATURE_COLS, 3);
-    if (moving && to === 'live' && !feature.shipped_at && !opts.imported) sets.push('shipped_at = CURRENT_DATE');
-    await tx.query(
-      `UPDATE features SET ${[...sets, 'updated_at = now()', 'updated_by = $2'].join(', ')} WHERE id = $1`,
-      [feature.id, by, ...vals],
-    );
-    if (moving || created) {
-      await tx.query(
-        `INSERT INTO stage_changes (project_slug, feature_id, from_stage, to_stage, by, note) VALUES ($1,$2,$3,$4,$5,$6)`,
-        [projectSlug, feature.id, from, to ?? 'idea', by, created ? [opts.imported ? 'imported' : 'added', note].filter(Boolean).join(' · ') : note],
-      );
-    }
-    await tx.query(`UPDATE projects SET updated_at = now(), updated_by = $2 WHERE slug = $1`, [projectSlug, by]);
-    return { id: feature.id, created, stage_changed: moving && !created ? true : false };
-  });
-}
-
-export async function addVerification(
-  projectSlug: string,
-  featureSlug: string,
-  raw: VerificationInput,
-  by: string,
-): Promise<number> {
-  const v = VerificationInput.parse(raw);
-  const f = await query<{ id: number }>(`SELECT id FROM features WHERE project_slug = $1 AND slug = $2`, [
-    projectSlug, featureSlug,
-  ]);
-  if (!f.rows[0]) throw new TrackerError(`no feature "${projectSlug}/${featureSlug}"`, 404);
-  const { rows } = await query<{ id: number }>(
-    `INSERT INTO verifications (feature_id, kind, check_run, result, evidence, by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-    [f.rows[0].id, v.kind, v.check, v.result, v.evidence ?? null, by],
-  );
-  await query(`UPDATE features SET updated_at = now(), updated_by = $2 WHERE id = $1`, [f.rows[0].id, by]);
-  return rows[0]!.id;
+export function seedFromOldShape(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const doc = raw as Record<string, unknown>;
+  if (doc.areas !== undefined || !Array.isArray(doc.projects)) return raw;
+  const { projects, ...rest } = doc;
+  return {
+    ...rest,
+    areas: projects.map((p) => {
+      if (!p || typeof p !== 'object') return p;
+      const { stage, features, due: _due, area: _area, ...area } = p as Record<string, unknown>;
+      return {
+        ...area,
+        ...(typeof stage === 'string' && OLD_STAGE.has(stage) ? { status: stage === 'parked' ? 'parked' : 'active' } : stage !== undefined ? { status: stage } : {}),
+        projects: features ?? [],
+      };
+    }),
+  };
 }
 
 /** Idempotent: re-importing the same file changes nothing but updated_at. */
-export async function importSeed(raw: unknown, by: string): Promise<{ teams: number; projects: number; features: number }> {
-  const seed = Seed.parse(raw);
+export async function importSeed(raw: unknown, by: string): Promise<{ teams: number; areas: number; projects: number }> {
+  const seed = Seed.parse(seedFromOldShape(raw));
   for (const d of seed.divisions) await upsertDivision(d.slug, d);
   for (const t of seed.teams) await upsertTeam(t.slug, t);
-  let features = 0;
-  for (const p of seed.projects) {
-    const { slug, features: fs, ...patch } = p;
-    await upsertProject(slug, patch, by, { create: true, imported: true });
-    for (const f of fs) {
-      const { slug: fslug, verifications, ...patch } = f;
-      await upsertFeature(slug, fslug, patch, by, { create: true, imported: true, evidence: verifications });
-      features++;
+  let projects = 0;
+  for (const a of seed.areas) {
+    const { slug, projects: ps, ...patch } = a;
+    await upsertArea(slug, patch, by, { create: true, imported: true });
+    for (const p of ps) {
+      const { slug: pslug, verifications, ...patch } = p;
+      await upsertProject(slug, pslug, patch, by, { create: true, imported: true, evidence: verifications });
+      projects++;
     }
   }
-  return { teams: seed.teams.length, projects: seed.projects.length, features };
+  return { teams: seed.teams.length, areas: seed.areas.length, projects };
 }
 
 // ---------------------------------------------------------------- reads
@@ -340,10 +105,13 @@ export interface Verification {
   by: string | null;
 }
 
-export interface FeatureView {
+export interface ProjectView {
   id: number;
+  area: string;
   slug: string;
   title: string;
+  outcome: string | null;
+  next_action: string | null;
   stage: Stage;
   health: string | null;
   owner: string | null;
@@ -354,6 +122,7 @@ export interface FeatureView {
   due: string | null;
   shipped_at: string | null;
   notes_path: string | null;
+  archived_at: string | null;
   updated_at: string;
   updated_by: string | null;
   days_in_stage: number;
@@ -362,31 +131,31 @@ export interface FeatureView {
   verifications_total: number;
 }
 
-export interface ProjectView {
+export interface AreaView {
   slug: string;
   title: string;
   team: string | null;
   division: string | null;
-  area: string | null;
-  stage: Stage;
+  status: AreaStatus;
   health: string | null;
   priority: number | null;
   goals: string[];
   needs_owner: string | null;
   blocked_on: string | null;
   started: string | null;
-  due: string | null;
   devlog_path: string | null;
   design_path: string | null;
+  home_path: string | null;
   paths: string[];
   repos: string[];
+  archived_at: string | null;
   updated_at: string;
   updated_by: string | null;
-  days_in_stage: number;
+  /** From the `## Resume` block of the area's dev-log README. */
   next_action: string | null;
-  features: FeatureView[];
+  projects: ProjectView[];
   counts: Record<Stage, number>;
-  /** Shipped (live + done) over every feature that isn't parked. */
+  /** Shipped (live + done) over every project that isn't parked. */
   progress: number | null;
 }
 
@@ -414,8 +183,9 @@ export interface Goal {
 }
 
 export interface StageChangeView {
-  project: string;
-  feature: string | null;
+  area: string;
+  /** NULL: the area itself changed (its status, or archived). */
+  project: string | null;
   title: string;
   from: string | null;
   to: string;
@@ -427,21 +197,11 @@ export interface StageChangeView {
 export interface Board {
   divisions: DivisionView[];
   teams: TeamView[];
-  projects: ProjectView[];
+  areas: AreaView[];
   goals: Goal[];
   recent: StageChangeView[];
   as_of: string | null;
 }
-
-/** pg turns a DATE into local midnight; read it back with local fields, or toISOString shifts it a day east of UTC. */
-const day = (d: unknown): string | null => {
-  if (d == null) return null;
-  if (!(d instanceof Date)) return String(d).slice(0, 10);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
-const iso = (d: unknown): string => (d instanceof Date ? d.toISOString() : String(d));
-const daysBetween = (from: string, now: Date): number => Math.max(0, Math.floor((now.getTime() - new Date(from).getTime()) / 86_400_000));
-const emptyCounts = (): Record<Stage, number> => Object.fromEntries(STAGES.map((s) => [s, 0])) as Record<Stage, number>;
 
 /** The `- **Next action:**` line of a dev-log README's `## Resume` block. */
 export function nextActionFrom(markdown: string): string | null {
@@ -490,82 +250,91 @@ export function parseGoals(markdown: string): Goal[] {
   return goals;
 }
 
-export async function getBoard(vaultRoot: string, now = new Date()): Promise<Board> {
-  const [divisions, teams, projects, features, verifs, moves, recent] = await Promise.all([
+/**
+ * Everything the board shows. Archived areas (with their projects) and archived projects
+ * are left out unless `archived` is set, so every view built on this is an active view.
+ */
+export async function getBoard(vaultRoot: string, now = new Date(), opts: { archived?: boolean } = {}): Promise<Board> {
+  const hide = !opts.archived;
+  const [divisions, teams, areas, projects, verifs, moves, recent] = await Promise.all([
     query(`SELECT slug, name, mission, head FROM divisions ORDER BY sort, slug`),
     query(`SELECT slug, name, mission, lead, members FROM teams ORDER BY sort, slug`),
-    query(`SELECT * FROM projects ORDER BY priority NULLS LAST, slug`),
-    query(`SELECT * FROM features ORDER BY project_slug, sort, id`),
+    query(`SELECT * FROM areas ${hide ? 'WHERE archived_at IS NULL' : ''} ORDER BY priority NULLS LAST, slug`),
+    query(`SELECT * FROM projects ${hide ? 'WHERE archived_at IS NULL' : ''} ORDER BY area_slug, sort, id`),
     query(
-      `SELECT DISTINCT ON (feature_id) feature_id, kind, check_run, result, evidence, at, by,
-              count(*) OVER (PARTITION BY feature_id) AS total
-         FROM verifications ORDER BY feature_id, at DESC, id DESC`,
+      `SELECT DISTINCT ON (project_id) project_id, kind, check_run, result, evidence, at, by,
+              count(*) OVER (PARTITION BY project_id) AS total
+         FROM verifications ORDER BY project_id, at DESC, id DESC`,
+    ),
+    // The last stage move of each project. Archiving is not a stage move, so it does not reset the clock.
+    query(
+      `SELECT DISTINCT ON (project_id) project_id, at
+         FROM stage_changes WHERE project_id IS NOT NULL AND to_stage NOT IN ('archived', 'unarchived')
+        ORDER BY project_id, at DESC, id DESC`,
     ),
     query(
-      `SELECT DISTINCT ON (project_slug, feature_id) project_slug, feature_id, at
-         FROM stage_changes ORDER BY project_slug, feature_id, at DESC, id DESC`,
-    ),
-    query(
-      `SELECT s.project_slug, f.slug AS feature, coalesce(f.title, p.title) AS title, s.from_stage, s.to_stage, s.at, s.by, s.note
-         FROM stage_changes s JOIN projects p ON p.slug = s.project_slug LEFT JOIN features f ON f.id = s.feature_id
-        WHERE s.at > $1 AND coalesce(s.note, '') NOT LIKE 'imported%' ORDER BY s.at DESC LIMIT 50`,
+      `SELECT s.area_slug, p.slug AS project, coalesce(p.title, a.title) AS title, s.from_stage, s.to_stage, s.at, s.by, s.note
+         FROM stage_changes s JOIN areas a ON a.slug = s.area_slug LEFT JOIN projects p ON p.id = s.project_id
+        WHERE s.at > $1 AND coalesce(s.note, '') NOT LIKE 'imported%' AND coalesce(s.note, '') NOT LIKE 'para-rename:%'
+          ${hide ? 'AND (a.archived_at IS NULL OR s.to_stage = \'archived\') AND (p.archived_at IS NULL OR s.to_stage = \'archived\')' : ''}
+        ORDER BY s.at DESC, s.id DESC LIMIT 50`,
       [new Date(now.getTime() - 7 * 86_400_000)],
     ),
   ]);
 
-  const lastMove = new Map<string, string>();
-  for (const r of moves.rows) lastMove.set(`${r.project_slug}:${r.feature_id ?? ''}`, iso(r.at));
+  const lastMove = new Map<number, string>();
+  for (const r of moves.rows) lastMove.set(Number(r.project_id), iso(r.at));
   const lastVerif = new Map<number, Verification & { total: number }>();
   for (const r of verifs.rows) {
-    lastVerif.set(Number(r.feature_id), {
+    lastVerif.set(Number(r.project_id), {
       kind: r.kind, check: r.check_run, result: r.result, evidence: r.evidence, at: iso(r.at), by: r.by, total: Number(r.total),
     });
   }
 
-  const byProject = new Map<string, FeatureView[]>();
-  for (const f of features.rows) {
-    const v = lastVerif.get(Number(f.id)) ?? null;
-    const moved = lastMove.get(`${f.project_slug}:${f.id}`) ?? iso(f.created_at);
-    const activity = [iso(f.updated_at), moved, v?.at].filter(Boolean).sort().at(-1)!;
-    const view: FeatureView = {
-      id: Number(f.id), slug: f.slug, title: f.title, stage: f.stage, health: f.health, owner: f.owner, goals: f.goals,
-      needs_owner: f.needs_owner, blocked_on: f.blocked_on, started: day(f.started), due: day(f.due),
-      shipped_at: day(f.shipped_at), notes_path: f.notes_path, updated_at: iso(f.updated_at), updated_by: f.updated_by,
+  const byArea = new Map<string, ProjectView[]>();
+  for (const p of projects.rows) {
+    const v = lastVerif.get(Number(p.id)) ?? null;
+    const moved = lastMove.get(Number(p.id)) ?? iso(p.created_at);
+    const activity = [iso(p.updated_at), moved, v?.at].filter(Boolean).sort().at(-1)!;
+    const view: ProjectView = {
+      id: Number(p.id), area: p.area_slug, slug: p.slug, title: p.title, outcome: p.outcome, next_action: p.next_action, stage: p.stage,
+      health: p.health, owner: p.owner, goals: p.goals,
+      needs_owner: p.needs_owner, blocked_on: p.blocked_on, started: day(p.started), due: day(p.due),
+      shipped_at: day(p.shipped_at), notes_path: p.notes_path, archived_at: isoOrNull(p.archived_at), updated_at: iso(p.updated_at), updated_by: p.updated_by,
       days_in_stage: daysBetween(moved, now), last_activity: activity,
       verification: v ? { kind: v.kind, check: v.check, result: v.result, evidence: v.evidence, at: v.at, by: v.by } : null,
       verifications_total: v?.total ?? 0,
     };
-    const list = byProject.get(f.project_slug) ?? [];
+    const list = byArea.get(p.area_slug) ?? [];
     list.push(view);
-    byProject.set(f.project_slug, list);
+    byArea.set(p.area_slug, list);
   }
 
-  const projectViews: ProjectView[] = projects.rows.map((p) => {
-    const fs = byProject.get(p.slug) ?? [];
+  const areaViews: AreaView[] = areas.rows.map((a) => {
+    const ps = byArea.get(a.slug) ?? [];
     const counts = emptyCounts();
-    for (const f of fs) counts[f.stage]++;
-    const denom = fs.length - counts.parked;
+    for (const p of ps) counts[p.stage]++;
+    const denom = ps.length - counts.parked;
     return {
-      slug: p.slug, title: p.title, team: p.team_slug, division: p.division_slug, area: p.area, stage: p.stage, health: p.health, priority: p.priority,
-      goals: p.goals, needs_owner: p.needs_owner, blocked_on: p.blocked_on, started: day(p.started), due: day(p.due),
-      devlog_path: p.devlog_path, design_path: p.design_path, paths: p.paths, repos: p.repos,
-      updated_at: iso(p.updated_at), updated_by: p.updated_by,
-      days_in_stage: daysBetween(lastMove.get(`${p.slug}:`) ?? iso(p.created_at), now),
-      next_action: nextActionFrom(readVault(vaultRoot, p.devlog_path) ?? ''),
-      features: fs, counts, progress: denom > 0 ? (counts.live + counts.done) / denom : null,
+      slug: a.slug, title: a.title, team: a.team_slug, division: a.division_slug, status: a.status, health: a.health, priority: a.priority,
+      goals: a.goals, needs_owner: a.needs_owner, blocked_on: a.blocked_on, started: day(a.started),
+      devlog_path: a.devlog_path, design_path: a.design_path, home_path: a.home_path, paths: a.paths, repos: a.repos,
+      archived_at: isoOrNull(a.archived_at), updated_at: iso(a.updated_at), updated_by: a.updated_by,
+      next_action: nextActionFrom(readVault(vaultRoot, a.devlog_path) ?? ''),
+      projects: ps, counts, progress: denom > 0 ? (counts.live + counts.done) / denom : null,
     };
   });
 
   const goalsFile = settings(vaultRoot).goalsFile;
   const goalsText = goalsFile ? readVault(vaultRoot, goalsFile) : null;
-  const asOf = projectViews.map((p) => p.updated_at).sort().at(-1) ?? null;
+  const asOf = areaViews.map((a) => a.updated_at).sort().at(-1) ?? null;
   return {
     divisions: divisions.rows.map((d) => ({ slug: d.slug, name: d.name, mission: d.mission, head: d.head })),
     teams: teams.rows.map((t) => ({ slug: t.slug, name: t.name, mission: t.mission, lead: t.lead, members: t.members })),
-    projects: projectViews,
+    areas: areaViews,
     goals: goalsText ? parseGoals(goalsText) : [],
     recent: recent.rows.map((r) => ({
-      project: r.project_slug, feature: r.feature, title: r.title, from: r.from_stage, to: r.to_stage, at: iso(r.at), by: r.by, note: r.note,
+      area: r.area_slug, project: r.project, title: r.title, from: r.from_stage, to: r.to_stage, at: iso(r.at), by: r.by, note: r.note,
     })),
     as_of: asOf,
   };
@@ -574,8 +343,8 @@ export async function getBoard(vaultRoot: string, now = new Date()): Promise<Boa
 // ---------------------------------------------------------------- report
 
 export interface Item {
-  project: string;
-  feature: string | null;
+  area: string;
+  project: string | null;
   title: string;
   detail: string;
 }
@@ -583,24 +352,24 @@ export interface Item {
 export interface Rollup {
   slug: string;
   name: string;
-  projects: string[];
+  areas: string[];
   in_flight: number;
   shipped_7d: number;
   needs_owner: number;
-  /** Projects in each stage. */
-  stages: Record<Stage, number>;
+  /** Areas in each status. */
+  statuses: Record<AreaStatus, number>;
 }
 
 export interface Report {
   as_of: string | null;
   generated_at: string;
-  totals: { projects: Record<Stage, number>; features: Record<Stage, number> };
+  totals: { areas: Record<AreaStatus, number>; projects: Record<Stage, number> };
   needs_owner: (Item & { priority: number | null; due: string | null })[];
   divisions: Rollup[];
   teams: (Rollup & { lead: string | null })[];
-  goals: (Goal & { projects: string[]; features: string[] })[];
+  goals: (Goal & { areas: string[]; projects: string[] })[];
   gaps: {
-    goals_uncovered: (Goal & { projects: string[]; features: string[] })[];
+    goals_uncovered: (Goal & { areas: string[]; projects: string[] })[];
     unverified_shipped: Item[];
     failing: Item[];
     testing_unverified: Item[];
@@ -608,20 +377,22 @@ export interface Report {
     overdue: Item[];
     no_team: string[];
     no_division: string[];
-    no_features: string[];
+    no_projects: string[];
   };
   oldest: Item[];
-  backlog: { total: number; by_project: { project: string; count: number; oldest_days: number }[] };
+  backlog: { total: number; by_area: { area: string; count: number; oldest_days: number }[] };
   moved_7d: StageChangeView[];
   shipped_7d: Item[];
   verified_7d: { pass: number; fail: number };
-  projects: ProjectView[];
+  areas: AreaView[];
 }
 
 const OPEN_GOAL = (g: Goal): boolean => !/^(done|cancelled)/i.test(g.status) && g.horizon !== '' && !g.code.startsWith('T');
+const emptyStatuses = (): Record<AreaStatus, number> => Object.fromEntries(AREA_STATUSES.map((s) => [s, 0])) as Record<AreaStatus, number>;
 
-export async function buildReport(vaultRoot: string, now = new Date()): Promise<Report> {
-  const board = await getBoard(vaultRoot, now);
+/** The company report. Archived areas and projects are left out unless `archived` is set. */
+export async function buildReport(vaultRoot: string, now = new Date(), opts: { archived?: boolean } = {}): Promise<Report> {
+  const board = await getBoard(vaultRoot, now, opts);
   const weekAgo = new Date(now.getTime() - 7 * 86_400_000).toISOString();
   const today = now.toISOString().slice(0, 10);
   const { rows: vrows } = await query<{ result: string; n: number }>(
@@ -631,107 +402,116 @@ export async function buildReport(vaultRoot: string, now = new Date()): Promise<
   const verified = { pass: 0, fail: 0 };
   for (const r of vrows) verified[r.result as 'pass' | 'fail'] = r.n;
 
-  const totals = { projects: emptyCounts(), features: emptyCounts() };
+  const totals = { areas: emptyStatuses(), projects: emptyCounts() };
   const needs: Report['needs_owner'] = [];
   const gaps: Report['gaps'] = {
-    goals_uncovered: [], unverified_shipped: [], failing: [], testing_unverified: [], stale: [], overdue: [], no_team: [], no_division: [], no_features: [],
+    goals_uncovered: [], unverified_shipped: [], failing: [], testing_unverified: [], stale: [], overdue: [], no_team: [], no_division: [], no_projects: [],
   };
   const oldest: (Item & { days: number })[] = [];
-  const backlog: Report['backlog'] = { total: 0, by_project: [] };
+  const backlog: Report['backlog'] = { total: 0, by_area: [] };
   const shipped7: Item[] = [];
-  const goalLinks = new Map<string, { projects: Set<string>; features: Set<string> }>();
-  const link = (code: string) => goalLinks.get(code) ?? goalLinks.set(code, { projects: new Set(), features: new Set() }).get(code)!;
+  const goalLinks = new Map<string, { areas: Set<string>; projects: Set<string> }>();
+  const link = (code: string) => goalLinks.get(code) ?? goalLinks.set(code, { areas: new Set(), projects: new Set() }).get(code)!;
 
-  for (const p of board.projects) {
-    totals.projects[p.stage]++;
-    for (const g of p.goals) link(g).projects.add(p.slug);
-    if (p.needs_owner) needs.push({ project: p.slug, feature: null, title: p.title, detail: p.needs_owner, priority: p.priority, due: p.due });
-    if (!p.team) gaps.no_team.push(p.slug);
-    if (!p.division) gaps.no_division.push(p.slug);
-    const active = !['parked', 'done'].includes(p.stage);
-    if (active && p.features.length === 0) gaps.no_features.push(p.slug);
-    if (active && p.due && p.due < today) gaps.overdue.push({ project: p.slug, feature: null, title: p.title, detail: `due ${p.due}` });
+  for (const a of board.areas) {
+    totals.areas[a.status]++;
+    for (const g of a.goals) link(g).areas.add(a.slug);
+    if (a.needs_owner) needs.push({ area: a.slug, project: null, title: a.title, detail: a.needs_owner, priority: a.priority, due: null });
+    if (!a.team) gaps.no_team.push(a.slug);
+    if (!a.division) gaps.no_division.push(a.slug);
+    const active = a.status === 'active';
+    if (active && a.projects.length === 0) gaps.no_projects.push(a.slug);
     let ideas = 0;
     let oldestIdea = 0;
-    for (const f of p.features) {
-      totals.features[f.stage]++;
-      for (const g of f.goals) link(g).features.add(`${p.slug}/${f.slug}`);
-      const item = { project: p.slug, feature: f.slug, title: f.title };
-      if (f.needs_owner) needs.push({ ...item, detail: f.needs_owner, priority: p.priority, due: f.due ?? p.due });
-      if (f.stage === 'idea') {
+    for (const p of a.projects) {
+      totals.projects[p.stage]++;
+      for (const g of p.goals) link(g).projects.add(`${a.slug}/${p.slug}`);
+      const item = { area: a.slug, project: p.slug, title: p.title };
+      if (p.needs_owner) needs.push({ ...item, detail: p.needs_owner, priority: a.priority, due: p.due });
+      if (p.stage === 'idea') {
         ideas++;
-        oldestIdea = Math.max(oldestIdea, f.days_in_stage);
+        oldestIdea = Math.max(oldestIdea, p.days_in_stage);
       }
-      const shipped = SHIPPED.includes(f.stage);
-      if (shipped && f.verification?.result !== 'pass') {
-        gaps.unverified_shipped.push({ ...item, detail: f.verification ? 'newest verification failed' : 'no verification' });
+      const shipped = SHIPPED.includes(p.stage);
+      if (shipped && p.verification?.result !== 'pass') {
+        gaps.unverified_shipped.push({ ...item, detail: p.verification ? 'newest verification failed' : 'no verification' });
       }
-      if (f.verification?.result === 'fail' && !shipped) {
-        gaps.failing.push({ ...item, detail: `${f.verification.kind}: ${f.verification.check}` });
+      if (p.verification?.result === 'fail' && !shipped) {
+        gaps.failing.push({ ...item, detail: `${p.verification.kind}: ${p.verification.check}` });
       }
-      if (f.stage === 'testing' && !f.verification) gaps.testing_unverified.push({ ...item, detail: `${f.days_in_stage}d in testing` });
-      if (IN_FLIGHT.includes(f.stage)) {
-        const idle = daysBetween(f.last_activity, now);
-        if (idle >= STALE_DAYS) gaps.stale.push({ ...item, detail: `${f.stage}, no activity for ${idle}d` });
-        oldest.push({ ...item, detail: `${f.stage} for ${f.days_in_stage}d`, days: f.days_in_stage });
-        if (f.due && f.due < today) gaps.overdue.push({ ...item, detail: `due ${f.due}` });
+      if (p.stage === 'testing' && !p.verification) gaps.testing_unverified.push({ ...item, detail: `${p.days_in_stage}d in testing` });
+      if (IN_FLIGHT.includes(p.stage)) {
+        const idle = daysBetween(p.last_activity, now);
+        if (idle >= STALE_DAYS) gaps.stale.push({ ...item, detail: `${p.stage}, no activity for ${idle}d` });
+        oldest.push({ ...item, detail: `${p.stage} for ${p.days_in_stage}d`, days: p.days_in_stage });
+        if (p.due && p.due < today) gaps.overdue.push({ ...item, detail: `due ${p.due}` });
       }
-      if (f.shipped_at && f.shipped_at >= weekAgo.slice(0, 10)) shipped7.push({ ...item, detail: `shipped ${f.shipped_at}` });
+      if (p.shipped_at && p.shipped_at >= weekAgo.slice(0, 10)) shipped7.push({ ...item, detail: `shipped ${p.shipped_at}` });
     }
-    if (ideas) backlog.by_project.push({ project: p.slug, count: ideas, oldest_days: oldestIdea });
+    if (ideas) backlog.by_area.push({ area: a.slug, count: ideas, oldest_days: oldestIdea });
     backlog.total += ideas;
   }
 
   needs.sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99) || (a.due ?? '9999').localeCompare(b.due ?? '9999'));
-  backlog.by_project.sort((a, b) => b.count - a.count);
+  backlog.by_area.sort((a, b) => b.count - a.count);
   oldest.sort((a, b) => b.days - a.days);
 
   const goals = board.goals.map((g) => {
     const l = goalLinks.get(g.code);
-    return { ...g, projects: [...(l?.projects ?? [])], features: [...(l?.features ?? [])] };
+    return { ...g, areas: [...(l?.areas ?? [])], projects: [...(l?.projects ?? [])] };
   });
-  gaps.goals_uncovered = goals.filter((g) => OPEN_GOAL(g) && g.projects.length === 0 && g.features.length === 0);
+  gaps.goals_uncovered = goals.filter((g) => OPEN_GOAL(g) && g.areas.length === 0 && g.projects.length === 0);
 
-  const rollup = (slug: string, name: string, ps: ProjectView[]): Rollup => {
-    const fs = ps.flatMap((p) => p.features);
+  const rollup = (slug: string, name: string, as: AreaView[]): Rollup => {
+    const ps = as.flatMap((a) => a.projects);
     return {
-      slug, name, projects: ps.map((p) => p.slug),
-      in_flight: fs.filter((f) => IN_FLIGHT.includes(f.stage)).length,
-      shipped_7d: fs.filter((f) => f.shipped_at && f.shipped_at >= weekAgo.slice(0, 10)).length,
-      needs_owner: ps.filter((p) => p.needs_owner).length + fs.filter((f) => f.needs_owner).length,
-      stages: ps.reduce((c, p) => ({ ...c, [p.stage]: c[p.stage] + 1 }), emptyCounts()),
+      slug, name, areas: as.map((a) => a.slug),
+      in_flight: ps.filter((p) => IN_FLIGHT.includes(p.stage)).length,
+      shipped_7d: ps.filter((p) => p.shipped_at && p.shipped_at >= weekAgo.slice(0, 10)).length,
+      needs_owner: as.filter((a) => a.needs_owner).length + ps.filter((p) => p.needs_owner).length,
+      statuses: as.reduce((c, a) => ({ ...c, [a.status]: c[a.status] + 1 }), emptyStatuses()),
     };
   };
-  const divisions = board.divisions.map((d) => rollup(d.slug, d.name, board.projects.filter((p) => p.division === d.slug)));
-  const teams = board.teams.map((t) => ({ ...rollup(t.slug, t.name, board.projects.filter((p) => p.team === t.slug)), lead: t.lead }));
+  const divisions = board.divisions.map((d) => rollup(d.slug, d.name, board.areas.filter((a) => a.division === d.slug)));
+  const teams = board.teams.map((t) => ({ ...rollup(t.slug, t.name, board.areas.filter((a) => a.team === t.slug)), lead: t.lead }));
 
   return {
     as_of: board.as_of, generated_at: now.toISOString(), totals, needs_owner: needs, divisions, teams, goals, gaps,
     oldest: oldest.slice(0, 8).map(({ days: _d, ...i }) => i), backlog, moved_7d: board.recent, shipped_7d: shipped7,
-    verified_7d: verified, projects: board.projects,
+    verified_7d: verified, areas: board.areas,
   };
 }
 
-/** Compact feed for the kiosk: top projects, their features in flight, the needs-you list. */
+/**
+ * Compact feed for a kiosk: the top areas, their projects in flight, the needs-you list.
+ *
+ * The kiosk is a separate device with its own code, so this payload keeps the keys it had
+ * before the PARA rename: `projects` is the list of areas (each with a `stage` that now
+ * carries the area's status), `features` counts the projects, and a needs-you item names
+ * its area as `project` and its project as `feature`. It moves to the new words when the
+ * kiosk does.
+ */
 export function kioskSummary(r: Report, top = 5) {
-  const ranked = [...r.projects]
-    .filter((p) => !['parked', 'done'].includes(p.stage))
+  const ranked = [...r.areas]
+    .filter((a) => a.status === 'active')
     .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99) || b.updated_at.localeCompare(a.updated_at));
   return {
     as_of: r.as_of,
     generated_at: r.generated_at,
-    totals: r.totals,
-    projects: ranked.slice(0, top).map((p) => ({
-      slug: p.slug, title: p.title, stage: p.stage, health: p.health, priority: p.priority, counts: p.counts,
-      progress: p.progress, next: p.next_action ?? p.needs_owner ?? null, needs_owner: Boolean(p.needs_owner || p.features.some((f) => f.needs_owner)),
-      in_flight: p.features.filter((f) => IN_FLIGHT.includes(f.stage)).map((f) => ({ title: f.title, stage: f.stage, days: f.days_in_stage })),
+    totals: { projects: { ...emptyCounts(), ...r.totals.areas }, features: r.totals.projects },
+    projects: ranked.slice(0, top).map((a) => ({
+      slug: a.slug, title: a.title, stage: a.status, health: a.health, priority: a.priority, counts: a.counts,
+      progress: a.progress, next: a.next_action ?? a.needs_owner ?? null, needs_owner: Boolean(a.needs_owner || a.projects.some((p) => p.needs_owner)),
+      in_flight: a.projects.filter((p) => IN_FLIGHT.includes(p.stage)).map((p) => ({ title: p.title, stage: p.stage, days: p.days_in_stage })),
     })),
-    needs_owner: r.needs_owner.map((n) => ({ project: n.project, feature: n.feature, title: n.title, detail: n.detail, due: n.due })),
+    needs_owner: r.needs_owner.map((n) => ({ project: n.area, feature: n.project, title: n.title, detail: n.detail, due: n.due })),
     gaps: {
       unverified_shipped: r.gaps.unverified_shipped.length, failing: r.gaps.failing.length, stale: r.gaps.stale.length,
       overdue: r.gaps.overdue.length, goals_uncovered: r.gaps.goals_uncovered.map((g) => g.code),
     },
-    attention: [...r.gaps.failing, ...r.gaps.overdue, ...r.gaps.stale, ...r.gaps.testing_unverified].slice(0, 8),
+    attention: [...r.gaps.failing, ...r.gaps.overdue, ...r.gaps.stale, ...r.gaps.testing_unverified]
+      .slice(0, 8)
+      .map((i) => ({ project: i.area, feature: i.project, title: i.title, detail: i.detail })),
     shipped_7d: r.shipped_7d.length,
     moved_7d: r.moved_7d.length,
   };

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ClassifyInput, ClassifyResult } from '../src/addons/classify/types.js';
 import { query } from '../src/db.js';
-import { claimCard, createCard, getCard, moveCard, setOverride } from '../src/board.js';
+import { claimCard, createCard, finishCard, getCard, moveCard, setOverride } from '../src/board.js';
 import { Dispatcher, inQuietHours, isProviderError, localTime, machineOf, parseRunResult, primaryReason, providerOf, routineDue, type Deps, type RunnerResult } from '../src/addons/dispatch/index.js';
 import { addWakeup, claimWakeups, dm, getAgent, importOrg, openWakeups, post, unreadCounts } from '../src/org.js';
 import { parseSettings } from '../src/settings.js';
@@ -132,6 +132,23 @@ describe('tick', () => {
       .toEqual([{ runtime: 'codex', outcome: 'did-work', input: '12' }]);
     expect((await query(`SELECT source, input_tokens FROM usage_calls WHERE source = 'codex'`)).rows)
       .toEqual([{ source: 'codex', input_tokens: 12 }]);
+  });
+
+  it('leaves a card the Codex bot finished itself as done, with no cleanup block', async () => {
+    await importOrg(codexOrg());
+    const card = await createCard('owner', { title: 'Daily sweep', body: 'Sweep the board', assignee: 'codebot' });
+    const h = harness();
+    const fake = codexFake();
+    // The bot runs `cli-board finish` inside its own run, as sol did on t_3a93bdae and t_ce4cbf28.
+    h.setResult(((args: string[]) => args[0] === 'exec' && !args.includes('--ephemeral')
+      ? finishCard('codebot', card.id, { outcome: 'done', result: 'swept' }).then(() => fake(args))
+      : fake(args)) as unknown as (args: string[]) => RunnerResult);
+    const r = await h.d.tick();
+    expect(r).toMatchObject({ runs: 1, errors: [] });
+    const after = await getCard(card.id);
+    expect(after.card).toMatchObject({ status: 'done', block_kind: null });
+    expect(after.comments.some((c) => c.body.startsWith('done: '))).toBe(true);
+    expect((await openWakeups('codebot'))).toEqual([]);
   });
 
   it('claims a card using an effective Codex runtime override', async () => {

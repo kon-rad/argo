@@ -44,7 +44,7 @@ function stripCost(v: unknown): unknown {
 export const DIMENSIONS = {
   host: 'host', source: 'source', provider: 'provider', surface: 'surface', headless: 'headless', model: 'model',
   agent: 'agent_name', team: 'team_slug', reason: 'reason', action: 'action', work_type: 'work_type',
-  project: 'project_slug', feature: 'feature_slug', task: 'task_id', lane: 'lane',
+  area: 'area_slug', project: 'project_slug', task: 'task_id', lane: 'lane',
 } as const;
 export type Dimension = keyof typeof DIMENSIONS;
 export const DIMENSION_NAMES = Object.keys(DIMENSIONS) as Dimension[];
@@ -97,14 +97,14 @@ function eventsSql(filters: Filters, params: unknown[]): string {
   return `
   WITH claude AS (
     SELECT f.ts, f.model, f.provider, f.host, f.sid, f.source, f.surface, f.headless, f.agent_name, f.team_slug, f.reason, f.action,
-      f.work_type, f.project_slug, f.feature_slug, f.task_id, f.lane, f.run_id,
+      f.work_type, f.area_slug, f.project_slug, f.task_id, f.lane, f.run_id,
       f.input, f.cache_write, f.cache_read, f.output, 1 AS calls, f.cost_usd
     FROM (SELECT uf.*, 'anthropic'::text AS provider FROM usage_facts uf) f
     WHERE f.ts >= $1 AND f.ts < $2${where}),
   hermes_all AS (
     SELECT h.observed_at AS ts, h.model, nullif(h.billing_provider, '') AS provider, h.host, h.session_id AS sid, 'hermes' AS source, 'hermes' AS surface, true AS headless,
       h.profile AS agent_name, NULL::text AS team_slug, NULL::text AS reason, NULL::text AS action, NULL::text AS work_type,
-      NULL::text AS project_slug, NULL::text AS feature_slug, NULL::text AS task_id, NULL::text AS lane, NULL::text AS run_id,
+      NULL::text AS area_slug, NULL::text AS project_slug, NULL::text AS task_id, NULL::text AS lane, NULL::text AS run_id,
       GREATEST(h.input_tokens - COALESCE(lag(h.input_tokens) OVER w, 0), 0) AS input,
       GREATEST(h.cache_write_tokens - COALESCE(lag(h.cache_write_tokens) OVER w, 0), 0) AS cache_write,
       GREATEST(h.cache_read_tokens - COALESCE(lag(h.cache_read_tokens) OVER w, 0), 0) AS cache_read,
@@ -134,7 +134,7 @@ async function sessionRows(from: Date, to: Date, limit: number, only: SessionFil
             sum(e.calls)::bigint AS calls, sum(e.input)::bigint AS input, sum(e.cache_write)::bigint AS cache_write,
             sum(e.cache_read)::bigint AS cache_read, sum(e.output)::bigint AS output,
             sum(e.cost_usd) AS cost_usd,                -- Hermes and zen-agent; Claude Code has no dollar figure
-            max(e.agent_name) AS agent_name, max(e.task_id) AS task_id, max(e.lane) AS lane, max(e.project_slug) AS project_slug,
+            max(e.agent_name) AS agent_name, max(e.task_id) AS task_id, max(e.lane) AS lane, max(e.area_slug) AS area_slug,
             max(e.work_type) AS work_type, count(DISTINCT e.run_id)::int AS runs,
             max(a.title) AS title, max(a.id) AS archive_id
      FROM events e
@@ -159,7 +159,7 @@ const RUNS_CTE = `
                     CASE r.lane WHEN 'cc-coder' THEN 'coding' WHEN 'cc-research' THEN 'research'
                                 WHEN 'cc-writer' THEN 'writing' WHEN 'cc-reviewer' THEN 'coding' END,
                     a.work) AS work_type,
-           tl.project_slug, tl.feature_slug, tl.title AS card_title,
+           tl.area_slug, tl.project_slug, tl.title AS card_title,
            CASE WHEN r.agent_name IS NOT NULL THEN 'bot' ELSE 'cc-lane' END AS surface,
            r.runtime AS source, r.runtime, r.tier, r.outcome, r.compactions, r.blocked, true AS headless,
            -- Real dollars only where the runtime priced them; the subscription's API-equivalent figure is never shown.
@@ -300,7 +300,7 @@ export function usageRouter(): Router {
     const session = row ?? {
       source, host, external_id: sid, title: null, surface: null, started_at: null, ended_at: null,
       calls: 0, input: 0, cache_write: 0, cache_read: 0, output: 0, cost_usd: null, task_id: null, lane: null,
-      agent_name: null, project_slug: null, work_type: null, runs: 0, archive_id: a.rows[0]!.archive_id,
+      agent_name: null, area_slug: null, work_type: null, runs: 0, archive_id: a.rows[0]!.archive_id,
     };
     const runs = await query(
       `${RUNS_CTE}

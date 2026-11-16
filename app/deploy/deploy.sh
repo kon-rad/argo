@@ -34,7 +34,7 @@
 #                        agents: agents-sync, and (if the vault's .secondbrain/zen-agent builds) zen-agent-serve,
 #                        ZEN_SERVE_TOKEN/ZEN_AGENT_URL/ZEN_AGENT_TOKEN, zen-agent on PATH (docs/zen-agent.md 3.6)
 #                        usage: usage-sync, credits-sync, the usage importer
-#                        projects: projects-render, the kiosk feed token, cli-projects on PATH
+#                        projects: projects-render, the kiosk feed token, cli-areas and cli-projects on PATH
 #                        org: the sb_org role, cli-org on PATH · board: board-reclaim, cli-board on PATH · map: map-build, metrics
 #                        livestream: the minute poller and Caddy's /public/ files
 #                        social: the minute post-publisher and reauth check, cli-social on PATH

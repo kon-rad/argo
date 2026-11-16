@@ -55,8 +55,8 @@ export interface Card {
   priority: number;
   assignee: string | null;
   created_by: string;
+  area_slug: string | null;
   project_slug: string | null;
-  feature_slug: string | null;
   kind: string;
   work_type: string | null;
   needs: string | null;
@@ -118,14 +118,14 @@ export interface CardDetail {
   runs: CardRun[];
 }
 
-const CARD_COLS = 'id, board_slug, title, body, contract, status, priority, assignee, created_by, project_slug, feature_slug, kind, work_type, needs, ship_now, repo, graph, node, rounds, scheduled_for, block_kind, block_reason, result, created_at, started_at, completed_at, updated_at';
+const CARD_COLS = 'id, board_slug, title, body, contract, status, priority, assignee, created_by, area_slug, project_slug, kind, work_type, needs, ship_now, repo, graph, node, rounds, scheduled_for, block_kind, block_reason, result, created_at, started_at, completed_at, updated_at';
 
 /** A Postgres RAISE from a board function becomes a BoardError with a status the API can use. */
 function translate(err: unknown): never {
   const e = err as { code?: string; message?: string };
   if (e?.code === 'P0001' && e.message) {
     const m = e.message;
-    const status = /^(no card|no board|unknown agent|no project|no feature|no pending|card .* has no live run)/.test(m) ? 404 : /can't|only the owner|doesn't have|not a bot|caller is|is retired|didn't give/.test(m) ? 403 : 400;
+    const status = /^(no card|no board|unknown agent|no area|no project|no pending|card .* has no live run)/.test(m) ? 404 : /can't|only the owner|doesn't have|not a bot|caller is|is retired|didn't give/.test(m) ? 403 : 400;
     throw new BoardError(m, status);
   }
   if (e?.code === '23514' || e?.code === '23503' || e?.code === '22P02') throw new BoardError(e.message ?? 'rejected by the database', 400);
@@ -173,8 +173,8 @@ export interface CardFilter {
   board?: string;
   status?: string;
   assignee?: string;
+  area?: string;
   project?: string;
-  feature?: string;
   kind?: string;
   /** Full text; a ticket number (t_xxxx, #xxxx or 4+ hex) also matches ids by prefix, the exact id first. */
   q?: string;
@@ -202,8 +202,8 @@ export async function listCards(f: CardFilter = {}, viewer: string | null = null
   if (f.board) add('board_slug = ?', f.board);
   if (f.status) add('status = ANY (?)', f.status.split(','));
   if (f.assignee) add(f.assignee === 'none' ? 'assignee IS NULL AND ?::text IS NOT NULL' : 'assignee = ?', f.assignee);
+  if (f.area) add('area_slug = ?', f.area);
   if (f.project) add('project_slug = ?', f.project);
-  if (f.feature) add('feature_slug = ?', f.feature);
   if (f.kind) add('kind = ?', f.kind);
   if (f.ids?.length) {
     const prefixes = f.ids.map((s) => {
@@ -259,8 +259,8 @@ export interface NewCard {
   body?: string;
   contract?: Contract;
   assignee?: string | null;
+  area?: string;
   project?: string;
-  feature?: string;
   kind?: string;
   work?: string;
   needs?: string;
@@ -283,20 +283,20 @@ export async function createCard(by: string, c: NewCard): Promise<Card> {
   if ((c.body ?? '').length > 20000) throw new BoardError('a card body is at most 20000 characters');
   return fn<Card>(
     `SELECT * FROM board_card_create($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
-    [by, c.board ?? null, c.title, c.body ?? null, JSON.stringify(c.contract ?? {}), c.assignee ?? null, c.project ?? null, c.feature ?? null, c.kind ?? null,
+    [by, c.board ?? null, c.title, c.body ?? null, JSON.stringify(c.contract ?? {}), c.assignee ?? null, c.area ?? null, c.project ?? null, c.kind ?? null,
      c.work ?? null, c.needs ?? null, c.repo ?? null, c.priority ?? null, c.deps ?? null, c.graph ?? null, c.node ?? null, c.rounds ?? null, c.shipNow ?? false, c.id ?? null, c.scheduledFor ?? null],
   );
 }
 
-export async function assignCard(by: string, id: string, assignee: string | null, opts: { project?: string; feature?: string; work?: string; needs?: string; repo?: string } = {}): Promise<Card> {
+export async function assignCard(by: string, id: string, assignee: string | null, opts: { area?: string; project?: string; work?: string; needs?: string; repo?: string } = {}): Promise<Card> {
   checkId(id);
-  return fn<Card>(`SELECT * FROM board_card_assign($1,$2,$3,$4,$5,$6,$7,$8)`, [by, id, assignee, opts.project ?? null, opts.feature ?? null, opts.work ?? null, opts.needs ?? null, opts.repo ?? null]);
+  return fn<Card>(`SELECT * FROM board_card_assign($1,$2,$3,$4,$5,$6,$7,$8)`, [by, id, assignee, opts.area ?? null, opts.project ?? null, opts.work ?? null, opts.needs ?? null, opts.repo ?? null]);
 }
 
-/** Set, change or clear a card's project and feature (null clears). Leaves the assignee and status alone. */
-export async function tagCard(by: string, id: string, t: { project: string | null; feature: string | null }): Promise<Card> {
+/** Set, change or clear a card's area and project (null clears). Leaves the assignee and status alone. */
+export async function tagCard(by: string, id: string, t: { area: string | null; project: string | null }): Promise<Card> {
   checkId(id);
-  return fn<Card>(`SELECT * FROM board_card_tag($1,$2,$3,$4)`, [by, id, t.project, t.feature]);
+  return fn<Card>(`SELECT * FROM board_card_tag($1,$2,$3,$4)`, [by, id, t.area, t.project]);
 }
 
 export async function commentCard(by: string, id: string, body: string): Promise<CardComment> {

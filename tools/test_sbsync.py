@@ -495,3 +495,203 @@ def test_vault_cli_forwards_sync(tmp_path, capsys):
     assert r.returncode == 0 and r.stdout.strip() == "no conflict copies"
     r = subprocess.run([sys.executable, str(cli), "sync"], capture_output=True, text=True)
     assert "run | status | install" in r.stdout or "install" in r.stdout
+
+
+# ---- merge fallback when the rebase stops, repeating conflict alerts ----
+
+def commit_local(m: Machine, files: dict, msg: str) -> None:
+    """A hand commit on a machine, not pushed: one step of a local series."""
+    for rel, text in files.items():
+        m.write(rel, text)
+    git(m.vault, "add", "-A")
+    git(m.vault, "commit", "-q", "-m", msg)
+
+
+def is_ancestor(repo: Path, a: str, b: str) -> bool:
+    return subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", a, b]).returncode == 0
+
+
+def parents(repo: Path, rev: str) -> int:
+    return len(git(repo, "rev-list", "--parents", "-n", "1", rev).split()) - 1
+
+
+def test_intermediate_conflict_with_matching_final_merges(world, monkeypatch):
+    # (a) The rebase replays "draft", which clashes with upstream, though both tips end the same.
+    base, origin = world
+    lap = Machine(base, origin, "laptop", "owner")
+    srv = Machine(base, origin, "server", "agent")
+    commit_local(lap, {"note.md": "laptop draft\n"}, "draft")
+    commit_local(lap, {"note.md": "final\n", "a.md": "A\n"}, "final")
+    local_tip = git(lap.vault, "rev-parse", "HEAD")
+    srv.write("b.md", "B\n")
+    srv.commit_push("note.md", "final\n", "sync(server): 2 files: b.md, note.md")
+    upstream_tip = git(origin, "rev-parse", "main")
+    st = lap.run(monkeypatch)
+    assert st["last_result"] == "ok" and lap.rc == 0
+    assert "rebase conflict on 1 file: note.md; merged instead: ok" in lap.log()
+    assert "merge: 1 file: note.md identical on both tips; not a conflict" in lap.log()
+    head = git(lap.vault, "rev-parse", "HEAD")
+    assert parents(lap.vault, head) == 2  # a merge commit
+    # Nothing lost on either side: both tips are in the pushed history, every file is there.
+    assert git(origin, "rev-parse", "main") == head
+    assert is_ancestor(origin, local_tip, "main") and is_ancestor(origin, upstream_tip, "main")
+    files = origin_files(origin)
+    assert files["note.md"] == "final\n" and files["a.md"] == "A\n" and files["b.md"] == "B\n"
+    assert git(lap.vault, "status", "--porcelain") == ""
+    assert st["ahead"] == 0 and st["behind"] == 0 and st["alerted"] == {}
+
+
+def test_real_note_conflict_aborts_the_merge_and_names_only_real_files(world, monkeypatch):
+    # (b) note.md really differs; projects.md only clashed on its intermediate version.
+    base, origin = world
+    lap = Machine(base, origin, "laptop", "owner")
+    srv = Machine(base, origin, "server", "agent")
+    commit_local(lap, {"note.md": "laptop draft\n", "projects.md": "draft\n"}, "draft")
+    commit_local(lap, {"note.md": "laptop final\n", "projects.md": "report v2\n", "a.md": "A\n"}, "final")
+    local_tip = git(lap.vault, "rev-parse", "HEAD")
+    srv.write("projects.md", "report v2\n")
+    srv.commit_push("note.md", "server final\n", "sync(server): 2 files")
+    before = git(origin, "rev-parse", "main")
+    st = lap.run(monkeypatch)
+    assert st["last_result"] == "conflict" and lap.rc == 1
+    assert st["conflict_files"] == ["note.md"]
+    assert "rebase conflict on 2 files: note.md, projects.md; merged instead: conflict (1 file: note.md)" in lap.log()
+    # The merge was aborted: no merge in progress, a clean tree, the local tip untouched, nothing pushed.
+    assert not (lap.vault / ".git" / "MERGE_HEAD").exists()
+    assert git(lap.vault, "status", "--porcelain") == ""
+    assert git(lap.vault, "rev-parse", "HEAD") == local_tip
+    assert lap.read("note.md") == "laptop final\n"
+    assert git(origin, "rev-parse", "main") == before
+    assert "alert[conflict:note.md]" in lap.log() and "2 ahead and 1 behind" in lap.log()
+
+
+def test_merge_resolves_agent_owned_files_with_merge_stages(world, monkeypatch):
+    # During a merge stage 2 is local and stage 3 upstream: the owner must still get the server's report.
+    base, origin = world
+    lap = Machine(base, origin, "laptop", "owner", agentOwned=["projects.md"])
+    srv = Machine(base, origin, "server", "agent", agentOwned=["projects.md"])
+    commit_local(lap, {"note.md": "laptop draft\n"}, "draft")
+    commit_local(lap, {"note.md": "final\n", "projects.md": "laptop version\n"}, "final plus a hand edit of the report")
+    srv.write("projects.md", "server version\n")
+    srv.commit_push("note.md", "final\n", "sync(server): 2 files")
+    st = lap.run(monkeypatch)
+    assert st["last_result"] == "ok"
+    assert "merged instead: ok" in lap.log()
+    assert "conflict on projects.md: took remote" in lap.log()
+    assert lap.read("projects.md") == "server version\n"
+    files = origin_files(origin)
+    assert files["projects.md"] == "server version\n" and files["note.md"] == "final\n"
+
+
+def test_after_a_fallback_merge_the_next_rebase_is_a_noop_and_push_fast_forwards(world, monkeypatch):
+    # (c) The fallback merges but the push is refused; the next run must not replay the series again.
+    base, origin = world
+    lap = Machine(base, origin, "laptop", "owner")
+    srv = Machine(base, origin, "server", "agent")
+    commit_local(lap, {"note.md": "laptop draft\n"}, "draft")
+    commit_local(lap, {"note.md": "final\n", "a.md": "A\n"}, "final")
+    srv.commit_push("note.md", "final\n", "sync(server): 1 file: note.md")
+    upstream_tip = git(origin, "rev-parse", "main")
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    st = lap.run(monkeypatch)
+    assert st["last_result"] == "push-failed"
+    merged = git(lap.vault, "rev-parse", "HEAD")
+    assert parents(lap.vault, merged) == 2
+    assert st["ahead"] == 3 and st["behind"] == 0  # draft, final and the merge
+    hook.unlink()
+    st = lap.run(monkeypatch)
+    assert st["last_result"] == "ok"
+    assert git(lap.vault, "rev-parse", "HEAD") == merged  # the rebase was a no-op
+    assert lap.log().count("rebase conflict on") == 1  # the series was not replayed again
+    assert git(origin, "rev-parse", "main") == merged
+    assert is_ancestor(origin, upstream_tip, merged)  # the remote branch moved by fast-forward
+    # Upstream moves on again: an ordinary pull on top of the merge.
+    srv.pull()
+    srv.commit_push("c.md", "C\n", "sync(server): 1 file: c.md")
+    st = lap.run(monkeypatch)
+    assert st["last_result"] == "ok" and lap.read("c.md") == "C\n"
+    assert lap.log().count("rebase conflict on") == 1
+
+
+def test_conflict_alert_repeats_after_n_hours_until_cleared(world, monkeypatch):
+    # (d) Unit level: a fake clock and a counting notifier.
+    base, origin = world
+    lap = Machine(base, origin, "laptop", "owner", alertRepeatHours=6)
+    for k in SYNC_ENV:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("SYNC_STATE_DIR", str(lap.state))
+    s = sbsync.Settings(lap.vault)
+    assert s.alert_repeat == sbsync.timedelta(hours=6)
+    st = sbsync.State(s)
+    sent = []
+    monkeypatch.setattr(sbsync, "notify", lambda s, title, text, log: sent.append(text))
+    t0 = sbsync.utcnow()
+    clock = [t0]
+    monkeypatch.setattr(sbsync, "utcnow", lambda: clock[0])
+
+    def at(hours: float) -> None:
+        clock[0] = t0 + sbsync.timedelta(hours=hours)
+        st.alert("conflict:x.md", "stuck", f"at {hours}", repeat=s.alert_repeat)
+
+    at(0)
+    at(1)
+    at(5.9)
+    assert sent == ["at 0"]
+    at(6)
+    assert sent == ["at 0", "at 6"]
+    at(11.9)
+    assert sent == ["at 0", "at 6"]
+    at(12)
+    assert sent == ["at 0", "at 6", "at 12"]
+    st.clear("conflict:x.md")
+    at(12.5)  # cleared: the next one goes out at once
+    assert sent[-1] == "at 12.5"
+    # Without repeat (the refused, offline and push alerts) it stays once per key.
+    st.alert("refused", "t", "first")
+    clock[0] += sbsync.timedelta(days=3)
+    st.alert("refused", "t", "second")
+    assert sent[-1] == "first"
+    # 0 turns the repeat off; the default is 6 hours.
+    lap.settings["sync"]["alertRepeatHours"] = 0
+    (lap.vault / "secondbrain.json").write_text(json.dumps(lap.settings))
+    assert sbsync.Settings(lap.vault).alert_repeat is None
+    (lap.vault / "secondbrain.json").write_text("{}")
+    assert sbsync.Settings(lap.vault).alert_repeat == sbsync.timedelta(hours=6)
+
+
+def test_stuck_sync_realerts_with_how_long_and_how_far(world, monkeypatch):
+    # (d) End to end: a conflict left for 7 hours is announced again, saying how long and how far.
+    base, origin = world
+    lap = Machine(base, origin, "laptop", "owner")
+    srv = Machine(base, origin, "server", "agent")
+    lap.write("note.md", "laptop edit\n", old=True)
+    srv.commit_push("note.md", "server edit\n", "sync(server): 1 file: note.md")
+    st = lap.run(monkeypatch)
+    assert st["last_result"] == "conflict"
+    st = lap.run(monkeypatch)
+    assert lap.log().count("(already sent)") == 1
+    # Seven hours pass: move the recorded times back.
+    ago = sbsync.iso(sbsync.utcnow() - sbsync.timedelta(hours=7))
+    st["alerted"]["conflict:note.md"] = ago
+    st["conflict_since"] = ago
+    lap.state.joinpath("sync.json").write_text(json.dumps(st))
+    st = lap.run(monkeypatch)
+    assert st["last_result"] == "conflict"
+    last = [line for line in lap.log().splitlines() if "alert[conflict:note.md]" in line][-1]
+    assert "(already sent)" not in last
+    assert "Stuck for 7h 0m" in last and "1 ahead and 1 behind" in last
+    assert st["alerted"]["conflict:note.md"] != ago
+    # Resolved: the alert and the stuck-since time are cleared.
+    git(lap.vault, "fetch", "-q", "origin", "main")
+    subprocess.run(["git", "-C", str(lap.vault), "rebase", "-X", "theirs", "origin/main"], check=True, capture_output=True)
+    st = lap.run(monkeypatch)
+    assert st["last_result"] == "ok" and st["alerted"] == {} and "conflict_since" not in st
+
+
+def test_duration_text():
+    td = sbsync.timedelta
+    assert sbsync.duration(td(minutes=7)) == "7m"
+    assert sbsync.duration(td(hours=5, minutes=12)) == "5h 12m"
+    assert sbsync.duration(td(days=3, hours=4, minutes=30)) == "3d 4h"

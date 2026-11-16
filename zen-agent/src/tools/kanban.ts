@@ -37,9 +37,9 @@ export interface KanbanBackend {
   readonly board: string;
   list(board?: string): Promise<Card[]>;
   show(id: string, board?: string): Promise<CardDetail>;
-  create(c: { title: string; body: string; assignee: string; board?: string; project?: string; feature?: string }): Promise<Card>;
+  create(c: { title: string; body: string; assignee: string; board?: string; area?: string; project?: string }): Promise<Card>;
   comment(id: string, text: string, board?: string): Promise<void>;
-  assign(id: string, assignee: string, opts?: { board?: string; project?: string; feature?: string }): Promise<void>;
+  assign(id: string, assignee: string, opts?: { board?: string; area?: string; project?: string }): Promise<void>;
   complete?(id: string, result?: string, board?: string): Promise<void>;
   block?(id: string, reason: string, board?: string): Promise<void>;
   /** The lane loop: the next ready card for this runtime or agent, now running with a lease; null when nothing waits. */
@@ -120,15 +120,15 @@ export class BoardKanban implements KanbanBackend {
       latest_summary: d.card.block_reason ?? null,
     };
   }
-  async create(c: { title: string; body: string; assignee: string; board?: string; project?: string; feature?: string }): Promise<Card> {
-    const r = await this.call<{ card: EngineCard }>('POST', '/cards', undefined, { title: c.title, body: c.body, assignee: c.assignee === 'none' ? null : c.assignee, board: c.board ?? this.board, project: c.project, feature: c.feature });
+  async create(c: { title: string; body: string; assignee: string; board?: string; area?: string; project?: string }): Promise<Card> {
+    const r = await this.call<{ card: EngineCard }>('POST', '/cards', undefined, { title: c.title, body: c.body, assignee: c.assignee === 'none' ? null : c.assignee, board: c.board ?? this.board, area: c.area, project: c.project });
     return toCard(r.card);
   }
   async comment(id: string, body: string): Promise<void> {
     await this.call('POST', `/cards/${checkId(id)}/comment`, undefined, { body });
   }
-  async assign(id: string, assignee: string, opts: { board?: string; project?: string; feature?: string } = {}): Promise<void> {
-    await this.call('POST', `/cards/${checkId(id)}/assign`, undefined, { assignee: assignee === 'none' ? null : assignee, project: opts.project, feature: opts.feature });
+  async assign(id: string, assignee: string, opts: { board?: string; area?: string; project?: string } = {}): Promise<void> {
+    await this.call('POST', `/cards/${checkId(id)}/assign`, undefined, { assignee: assignee === 'none' ? null : assignee, area: opts.area, project: opts.project });
   }
   async complete(id: string, result?: string): Promise<void> {
     await this.call('POST', `/cards/${checkId(id)}/finish`, undefined, { outcome: 'done', result });
@@ -207,8 +207,8 @@ export function kanbanTools(ctx: ToolContext, backend?: KanbanBackend | null): A
         body: Type.String({ maxLength: 6000 }),
         assignee: Type.String(),
         board: Board,
+        area: Type.Optional(Type.String()),
         project: Type.Optional(Type.String()),
-        feature: Type.Optional(Type.String()),
       }),
       execute: async (a) => {
         const c = await kb.create(a);
@@ -229,7 +229,7 @@ export function kanbanTools(ctx: ToolContext, backend?: KanbanBackend | null): A
       name: 'card_assign',
       label: 'Assign card',
       description: 'Give a card to an agent (or "none" to unassign).',
-      parameters: Type.Object({ id: Type.String(), assignee: Type.String(), board: Board, project: Type.Optional(Type.String()), feature: Type.Optional(Type.String()) }),
+      parameters: Type.Object({ id: Type.String(), assignee: Type.String(), board: Board, area: Type.Optional(Type.String()), project: Type.Optional(Type.String()) }),
       execute: async (a) => {
         await kb.assign(a.id, a.assignee, a);
         return text(`${a.id} is now ${a.assignee}'s`, { id: a.id });
