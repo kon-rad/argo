@@ -15,7 +15,7 @@ describe('optional modules', () => {
   it('a module that is off mounts no API routes', async () => {
     const app = createApp({ modules: new Set() });
     const paths = [
-      '/api/ring', '/api/agents/chats', '/api/hub/telegram', '/api/usage/plan', '/api/projects/report',
+      '/api/ring', '/api/agents/chats', '/api/hub/telegram', '/api/usage/plan', '/api/areas/report', '/api/projects/report',
       '/api/feed/projects', '/api/org/channels', '/api/map/graph', '/api/tv/episodes', '/api/voice/status', '/api/media',
       '/api/social/accounts', '/api/fund', '/api/chat/options', '/api/uploads/config',
     ];

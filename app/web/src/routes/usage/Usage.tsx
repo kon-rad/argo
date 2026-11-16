@@ -131,7 +131,7 @@ function FilterBar({ filters, facets, onAdd, onRemove, onClear }: {
   const chips = USAGE_DIMENSIONS.flatMap((d) => (filters[d] ?? []).map((v) => ({ d, v })));
   const values = dim ? (facets?.facets?.[dim] ?? []).filter((x) => !(filters[dim] ?? []).includes(x.value)) : [];
   return (
-    <div className="flex flex-wrap items-center gap-2 text-sm" aria-label="Filters">
+    <div className="flex flex-wrap items-center gap-2 text-sm" role="group" aria-label="Filters">
       <span className="text-xs text-[var(--ink-dim)]">Filter</span>
       {chips.map(({ d, v }) => (
         <span key={`${d}=${v}`} className="inline-flex items-center gap-1 rounded-full border border-[var(--rule)] bg-[var(--paper-sunk)] px-2 py-0.5 text-xs">
@@ -298,7 +298,7 @@ function UsageLedger({ claudeConfigured, onSelectBucketZone }: { claudeConfigure
 
       <section>
         <h2 className="text-sm font-semibold">Runs (bots and lanes)</h2>
-        <p className="text-xs text-[var(--ink-dim)]">One row per headless run (<code>claude -p</code> or zen-agent). Click a bot, reason, project or work type to filter on it. Cost is shown only where the runtime priced the run itself.</p>
+        <p className="text-xs text-[var(--ink-dim)]">One row per headless run (<code>claude -p</code> or zen-agent). Click a bot, reason, area or work type to filter on it. Cost is shown only where the runtime priced the run itself.</p>
         <div className="overflow-x-auto"><table className="w-full text-sm">
           <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
             <th>When</th><th>Who</th><th>Woken by</th><th>Card</th><th>Project</th><th>Work</th>
@@ -314,7 +314,7 @@ function UsageLedger({ claudeConfigured, onSelectBucketZone }: { claudeConfigure
                   <td>{w ? <Pick dim={w.dim} value={w.value} onPick={addFilter}>{r.agent_name ? <Link className="inline-flex items-center gap-1 underline" to={`/org/agents/${r.agent_name}`} onClick={(e) => e.stopPropagation()}><AgentAvatar name={r.agent_name} size={16} />{r.agent_name}</Link> : r.lane}</Pick> : ''}{r.resumed ? <span className="text-xs text-[var(--ink-faint)]" title="resumed its session"> ↻</span> : null}</td>
                   <td><Pick dim="reason" value={r.reason} onPick={addFilter} /></td>
                   <td>{r.task_id ? <Link className="underline" to={`/board/${r.task_id}`} title={r.card_title ?? ''}>{r.task_id}</Link> : ''}</td>
-                  <td><Pick dim="project" value={r.project_slug} onPick={addFilter}>{r.project_slug}{r.feature_slug ? `/${r.feature_slug}` : ''}</Pick></td>
+                  <td><Pick dim="area" value={r.area_slug} onPick={addFilter}>{r.area_slug}{r.project_slug ? `/${r.project_slug}` : ''}</Pick></td>
                   <td><Pick dim="work_type" value={r.work_type} onPick={addFilter} /></td>
                   <td className="text-right">{t === null ? '' : formatTokens(t)}</td>
                   <td className="text-right">{r.output == null ? '' : formatTokens(Number(r.output))}</td>
@@ -431,9 +431,12 @@ export default function Usage() {
   const labels: Record<UsageSection, string> = { running: 'Running now', ledger: 'Ledger', sessions: 'Sessions', summaries: 'Summaries' };
   return (
     <div className="flex h-full flex-col">
-      <div role="tablist" aria-label="Usage views" className="flex shrink-0 flex-wrap gap-1 border-b border-[var(--rule)] px-4 pt-2">
-        {sections.map((section) => tab(section, labels[section]))}
-        {tab('account', 'Account')}
+      <div className="flex shrink-0 flex-wrap gap-1 border-b border-[var(--rule)] px-4 pt-2">
+        <div role="tablist" aria-label="Usage views" className="flex flex-wrap gap-1">
+          {sections.map((section) => tab(section, labels[section]))}
+          {tab('account', 'Account')}
+        </div>
+        {/* A link to another page, so it sits beside the tab list, not in it. */}
         {sections.includes('running') && <RunningLink />}
       </div>
       {view && <div role="tabpanel" id={`usage-panel-${view}`} aria-labelledby={`usage-tab-${view}`} aria-label={view === 'account' ? 'Account' : labels[view]} className="min-h-0 flex-1">

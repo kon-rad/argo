@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import Chat from './Chat.js';
 import History from './History.js';
 import ZenChat from './ZenChat.js';
@@ -8,14 +8,16 @@ import ZenChat from './ZenChat.js';
  * server (the Chat tab, with a harness switch), and the history of every Hermes conversation.
  */
 const tab = ({ isActive }: { isActive: boolean }): string =>
-  `px-3 py-1.5 text-sm border-b-2 ${isActive ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
+  `px-3 py-1.5 text-sm border-b-2 max-md:inline-flex max-md:min-h-11 max-md:items-center ${isActive ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
 
 export default function Agents() {
   const location = useLocation();
+  // The Chat tab covers both harnesses: /agents/chat and /agents/zen.
+  const onChat = /^\/agents\/(chat|zen)(\/|$)/.test(location.pathname);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <nav className="flex shrink-0 gap-1 overflow-x-auto whitespace-nowrap border-b border-[var(--rule)] px-3" aria-label="Agents">
-        <NavLink to="/agents/chat" className={({ isActive }) => tab({ isActive: isActive || location.pathname.startsWith('/agents/zen') })}>Chat</NavLink>
+        <Link to="/agents/chat" aria-current={onChat ? 'page' : undefined} className={tab({ isActive: onChat })}>Chat</Link>
         <NavLink to="/agents/history" className={tab}>History</NavLink>
       </nav>
       <div className="min-h-0 flex-1">

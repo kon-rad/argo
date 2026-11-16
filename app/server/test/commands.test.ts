@@ -31,7 +31,7 @@ describe('the command table', () => {
   });
 
   it('the wrappers are a function of the module list: an addon command wraps only when its module is on', () => {
-    expect(wrappersFor(new Set(['board', 'org', 'projects', 'social']))).toEqual(['cli-projects', 'cli-org', 'cli-board', 'cli-social']);
+    expect(wrappersFor(new Set(['board', 'org', 'projects', 'social']))).toEqual(['cli-projects', 'cli-areas', 'cli-org', 'cli-board', 'cli-social']);
     expect(wrappersFor(new Set(['board']))).toEqual(['cli-board']);
     expect(wrappersFor(new Set())).toEqual([]);
   });

@@ -164,10 +164,10 @@ describe('usage api', () => {
   async function seedBot(): Promise<void> {
     await importOrg({ version: 'usage-1', company: 'Argo', ceo: 'owner', teams: { platform: { name: 'Platform', lead: 'atlas' } }, channels: {},
       agents: { owner: { runtime: 'human', role: 'CEO', channels: ['*'] }, atlas: { role: 'Head of Platform', team: 'platform', reports_to: 'owner', work: 'coding' } } });
-    await query(`INSERT INTO projects (slug, title, stage) VALUES ('secondbrain-app', 'Second Brain app', 'building')`);
+    await query(`INSERT INTO areas (slug, title, status) VALUES ('secondbrain-app', 'Second Brain app', 'active')`);
     await query(`INSERT INTO org_agents (name, runtime, role, org_version) VALUES ('atlas', 'claude-code', 'Head', 'v'), ('owner', 'human', 'CEO', 'v') ON CONFLICT DO NOTHING`);
     await query(`INSERT INTO boards (slug, name) VALUES ('exo', 'Exo') ON CONFLICT DO NOTHING`);
-    await query(`INSERT INTO cards (id, board_slug, title, project_slug, assignee, created_by, work_type) VALUES ('t_0bada55e', 'exo', 'Fix the parser', 'secondbrain-app', 'atlas', 'owner', 'coding')`);
+    await query(`INSERT INTO cards (id, board_slug, title, area_slug, assignee, created_by, work_type) VALUES ('t_0bada55e', 'exo', 'Fix the parser', 'secondbrain-app', 'atlas', 'owner', 'coding')`);
     await query(`INSERT INTO org_wakeups (agent_name, reason, ref, created_at, claimed_at, claimed_by, done_at) VALUES ('atlas', 'mention', '62', '2026-10-14T02:59:00Z', '2026-10-14T03:00:00Z', 'org-atlas-20261014-030000', '2026-10-14T03:01:00Z')`);
     await withTransaction(async (tx) => {
       await store.upsertCalls(tx, [
@@ -192,11 +192,11 @@ describe('usage api', () => {
 
   it('labels a bot\'s calls by run: agent, reason, action, card, project and work type, and keeps two wakes of one session apart', async () => {
     await seedBot();
-    const facts = await query(`SELECT run_id, agent_name, reason, action, task_id, project_slug, work_type, surface, headless FROM usage_facts WHERE sid = 'bot-s' ORDER BY ts`);
+    const facts = await query(`SELECT run_id, agent_name, reason, action, task_id, area_slug, work_type, surface, headless FROM usage_facts WHERE sid = 'bot-s' ORDER BY ts`);
     expect(facts.rows).toEqual([
-      { run_id: 'org-atlas-20261014-030000', agent_name: 'atlas', reason: 'mention', action: 'post', task_id: null, project_slug: null, work_type: 'coding', surface: 'bot', headless: true },
-      { run_id: 'org-atlas-20261014-030000', agent_name: 'atlas', reason: 'mention', action: 'reply', task_id: null, project_slug: null, work_type: 'coding', surface: 'bot', headless: true },
-      { run_id: 'org-atlas-20261014-040000', agent_name: 'atlas', reason: null, action: 'card', task_id: 't_0bada55e', project_slug: 'secondbrain-app', work_type: 'coding', surface: 'bot', headless: true },
+      { run_id: 'org-atlas-20261014-030000', agent_name: 'atlas', reason: 'mention', action: 'post', task_id: null, area_slug: null, work_type: 'coding', surface: 'bot', headless: true },
+      { run_id: 'org-atlas-20261014-030000', agent_name: 'atlas', reason: 'mention', action: 'reply', task_id: null, area_slug: null, work_type: 'coding', surface: 'bot', headless: true },
+      { run_id: 'org-atlas-20261014-040000', agent_name: 'atlas', reason: null, action: 'card', task_id: 't_0bada55e', area_slug: 'secondbrain-app', work_type: 'coding', surface: 'bot', headless: true },
     ]);
     const range = { from: '2026-10-13T00:00:00Z', to: '2026-10-15T00:00:00Z' };
     // Group by action, filtered to atlas: post 70, reply 30, card 20 output tokens; the Mac's calls are out.
@@ -215,8 +215,8 @@ describe('usage api', () => {
     expect(two.body.total.calls).toBe(2);
     // Runs: one row per wake with its labels and token sums, filterable the same way.
     const runs = await request(app).get('/api/usage/runs').query({ ...range, agent: 'atlas' });
-    expect(runs.body.runs.map((x: { run_id: string; reason: string | null; task_id: string | null; project_slug: string | null; calls: number; output: number }) =>
-      [x.run_id, x.reason, x.task_id, x.project_slug, x.calls, Number(x.output)])).toEqual([
+    expect(runs.body.runs.map((x: { run_id: string; reason: string | null; task_id: string | null; area_slug: string | null; calls: number; output: number }) =>
+      [x.run_id, x.reason, x.task_id, x.area_slug, x.calls, Number(x.output)])).toEqual([
       ['org-atlas-20261014-040000', null, 't_0bada55e', 'secondbrain-app', 1, 20],
       ['org-atlas-20261014-030000', 'mention', null, null, 2, 100]]);
     expect((await request(app).get('/api/usage/runs').query({ ...range, work_type: 'research' })).body.runs).toEqual([]);

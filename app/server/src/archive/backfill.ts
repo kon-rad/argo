@@ -98,7 +98,8 @@ export async function redactExisting(opts: { batch: number; dryRun: boolean; log
  * Labels sessions stored before the channel column existed (channel.ts): Claude Code sessions whose
  * prompts carry a `<channel …>` tag get `meta.channel` and the tag stripped from `content_text`, slash
  * command records become `meta` steps, Hermes sessions take it from their `source`, zen-agent runs
- * from their dispatch labels. Safe to re-run: a labelled session is skipped.
+ * from their dispatch labels. It also fills missing bot identities on Telegram sessions without
+ * overwriting an identity already stored. Safe to re-run: rows that need no change are skipped.
  */
 export async function relabelChannels(opts: { batch: number; log: Log }): Promise<{ sessions: number; messages: number; commands: number }> {
   const out = { sessions: 0, messages: 0, commands: 0 };
@@ -139,26 +140,36 @@ export async function relabelChannels(opts: { batch: number; log: Log }): Promis
     if (ids.length < rows.length) break;
   }
   // Hermes: the gateway's source column came along in meta.
-  const { rows: hermes } = await query<{ id: number; source: string; src: string; profile: string | null }>(
-    `SELECT id, source, meta ->> 'source' AS src, meta ->> 'profile' AS profile FROM archive_sessions
-     WHERE harness = 'hermes' AND meta ->> 'channel' IS NULL AND meta ->> 'source' IN ('telegram', 'api_server')`);
+  const { rows: hermes } = await query<{ id: number; channel: string | null; src: string; profile: string | null }>(
+    `SELECT id, meta ->> 'channel' AS channel, meta ->> 'source' AS src, meta ->> 'profile' AS profile FROM archive_sessions
+     WHERE harness = 'hermes' AND (
+       (meta ->> 'channel' IS NULL AND meta ->> 'source' IN ('telegram', 'api_server'))
+       OR (meta ->> 'channel' = 'telegram' AND meta ->> 'channel_bot' IS NULL)
+     )`);
   for (const h of hermes) {
+    const meta = channelMeta(h.channel === 'telegram' ? 'telegram' : hermesChannel(h.src), 'hermes', h.profile);
+    if (h.channel === 'telegram' && meta.channel_bot == null) continue;
     await query(`UPDATE archive_sessions SET meta = meta || $2::jsonb, updated_at = now() WHERE id = $1`,
-      [h.id, JSON.stringify(channelMeta(hermesChannel(h.src), 'hermes', h.profile))]);
+      [h.id, JSON.stringify(meta)]);
     out.sessions++;
   }
   // zen-agent: the bridge's labels are in meta.dispatch.
-  const { rows: zen } = await query<{ id: number; dispatch: Record<string, unknown> | null }>(
-    `SELECT id, meta -> 'dispatch' AS dispatch FROM archive_sessions
-     WHERE source = 'zen-agent' AND meta ->> 'channel' IS NULL AND (meta -> 'dispatch' ->> 'channel' IS NOT NULL OR meta -> 'dispatch' ->> 'reasons' LIKE '%telegram%')`);
+  const { rows: zen } = await query<{ id: number; channel: string | null; dispatch: Record<string, unknown> | null }>(
+    `SELECT id, meta ->> 'channel' AS channel, meta -> 'dispatch' AS dispatch FROM archive_sessions
+     WHERE source = 'zen-agent' AND (
+       (meta ->> 'channel' IS NULL AND (meta -> 'dispatch' ->> 'channel' IS NOT NULL OR meta -> 'dispatch' ->> 'reasons' LIKE '%telegram%'))
+       OR (meta ->> 'channel' = 'telegram' AND meta ->> 'channel_bot' IS NULL)
+     )`);
   for (const z of zen) {
     const d = z.dispatch ?? {};
     let reasons: Array<{ reason: string | null }> = [];
     try { reasons = typeof d.reasons === 'string' ? JSON.parse(d.reasons) : Array.isArray(d.reasons) ? d.reasons as never : []; } catch { reasons = []; }
-    const ch = zenChannel(d, reasons);
+    const ch = z.channel === 'telegram' ? 'telegram' : zenChannel(d, reasons);
     if (!ch) continue;
+    const meta = channelMeta(ch, 'zen-agent', typeof d.bot === 'string' ? d.bot : null);
+    if (z.channel === 'telegram' && meta.channel_bot == null) continue;
     await query(`UPDATE archive_sessions SET meta = meta || $2::jsonb, updated_at = now() WHERE id = $1`,
-      [z.id, JSON.stringify(channelMeta(ch, 'zen-agent', typeof d.bot === 'string' ? d.bot : null))]);
+      [z.id, JSON.stringify(meta)]);
     out.sessions++;
   }
   opts.log(`relabel: ${out.sessions} sessions labelled, ${out.messages} prompts unwrapped, ${out.commands} command records reclassified`);

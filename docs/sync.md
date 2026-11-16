@@ -37,14 +37,14 @@ Every run, on the interval you chose and once at login:
 4. **Stage and check.** `git add -A`, then refuse the whole commit if a staged file looks like a secret by name (`.env`, `*.pem`, `*.key`, SSH keys), if gitleaks flags the staged diff, if the built-in token rules match (private key blocks, AWS, GitHub, Slack and `sk-` style tokens), or if any staged file is over `maxFileMB` (20). On refusal everything is unstaged, nothing is committed, and the alert names the files, never the matched value. Allow a false alarm in `.gitleaksignore`.
 5. **Commit** as `sync(<machine>): 3 files: a.md, b.md, c.md`, with the checkout's own git author. `SYNC_MACHINE` defaults to the hostname, so a server's commits and a laptop's are told apart by message.
 6. **Fetch.** If it fails you are offline: the commit stays local, the run ends with no alert, unless the last successful sync is more than 24 hours old.
-7. **Rebase onto the remote branch.** The tree is clean after step 5, so this is safe. On a conflict:
+7. **Rebase onto the remote branch.** The tree is clean after step 5, so this is safe. If the remote branch is already in the local history (say, after an earlier merge below), there is nothing to replay and the rebase is skipped. On a conflict:
     - every conflicted file is an `agentOwned` one: take the side that owns it and continue;
-    - anything else, policy `stop`: `git rebase --abort` puts the checkout back exactly where it was, the alert names the files, and later runs keep committing locally but skip pull and push until the conflict is gone (they retry it each time, so fixing it by hand is all it takes);
+    - anything else, policy `stop`: `git rebase --abort`, then **merge instead** with `git merge --no-edit <remote>/<branch>`. A rebase replays every local commit, so an old draft of a note can clash with the remote even when both final versions are the same; a merge compares only the two tips. Files the merge still conflicts on get the same per-file rules (`agentOwned` takes the owning side). If a note still conflicts, `git merge --abort` puts the checkout back exactly where it was, the alert names the files, and later runs keep committing locally but skip pull and push until the conflict is gone (they retry it each time, so fixing it by hand is all it takes). The log says `rebase conflict on N files; merged instead: ok|conflict|error` each time;
     - anything else, policy `both`: the local version stays as the note, the remote version is written next to it as `<note> (conflict from <machine>).md`, and the sync continues. Nothing is lost and nobody is paged. `sync resolve` lists the copies and `--keep local|remote` picks one.
 8. **Push.** If someone pushed in between, fetch and rebase once more and retry. A push that fails three runs in a row alerts.
 9. **Write the state** to `~/.local/state/secondbrain/sync.json` and append to `sync.log` in the same folder: last run, last success, ahead/behind, last problem. `sync status` prints it; the app shows it as a header chip ("synced 12m ago", or "sync: conflict" in red) when the state file exists on the machine the app runs on.
 
-A run never force-pushes, never rewrites history and never deletes a file that only one side has.
+A run never force-pushes, never rewrites pushed history and never deletes a file that only one side has. The merge fallback adds a merge commit, so the remote branch only ever moves forward.
 
 ## Install on a machine
 
@@ -88,7 +88,8 @@ Shared by every machine, committed, in `secondbrain.json`:
   "embeddedRepos": "ignore",
   "maxFileMB": 20,
   "settleSeconds": 90,
-  "heartbeat": false
+  "heartbeat": false,
+  "alertRepeatHours": 6
 }
 ```
 
@@ -100,6 +101,7 @@ Shared by every machine, committed, in `secondbrain.json`:
 | `maxFileMB` | `20` | Largest file a run will commit |
 | `settleSeconds` | `90` | How recently a file may have changed before the run waits |
 | `heartbeat` | `false` | When on, each run that commits also writes `.sync/<machine>.json` (machine, role, time, engine commit), so every checkout can see when every other machine last synced. Adds no commits of its own |
+| `alertRepeatHours` | `6` | How often a conflict alert is sent again while the sync stays stopped on it. `0` sends it once only |
 
 ## When something goes wrong
 
@@ -109,12 +111,12 @@ Shared by every machine, committed, in `secondbrain.json`:
 | Git busy (lock, rebase, merge) | Skips the run | No |
 | Files still being written | Waits up to five minutes, then goes ahead | No |
 | A secret, a key file or a file over the size cap is staged | Unstages everything, commits nothing | Yes, with file names |
-| Conflict on a note, policy `stop` | Aborts the rebase, keeps committing locally, retries the pull every run | Once per distinct set of files |
+| Conflict on a note, policy `stop` | Aborts the rebase and merges instead; if the merge still conflicts on a note, aborts it, keeps committing locally, retries every run | Per distinct set of files, then again every `alertRepeatHours` (6) while it stays stuck |
 | Conflict on a note, policy `both` | Keeps both versions, continues | No; `sync status` lists the copies |
 | Push rejected | Fetches, rebases and retries once, then waits for the next run | After three failed runs in a row |
 | Another sync run is still going | Skips | No |
 
-Each alert fires once until its cause clears, so a conflict left for a day is one notification, not twenty-four.
+Each alert fires once until its cause clears, so an hourly sync does not page you every hour. The conflict alert is the exception: a stopped sync means pulls and pushes have stopped too, so it repeats every `alertRepeatHours` and says how long the sync has been stuck and how many commits it is ahead and behind. A conflict left for a day is four notifications, not one or twenty-four.
 
 ## What it is not
 

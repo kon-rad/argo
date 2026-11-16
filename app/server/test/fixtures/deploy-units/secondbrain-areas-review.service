@@ -1,0 +1,15 @@
+[Unit]
+Description=Second Brain: write the weekly review of areas and projects into the vault (areas.reviewDir in secondbrain.json)
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-areas.js review --week ending
+TimeoutStartSec=300
+PrivateTmp=true
+NoNewPrivileges=true

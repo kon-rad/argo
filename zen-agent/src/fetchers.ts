@@ -52,8 +52,8 @@ export interface FetcherStat {
 
 /** What a card says about where its work lives, read from the header `cli-org task create` writes and the body. */
 export interface CardMeta {
+  area: string | null;
   project: string | null;
-  feature: string | null;
   /** `owner/name` */
   repo: string | null;
   branch: string | null;
@@ -62,26 +62,27 @@ export interface CardMeta {
   workType: string | null;
 }
 
-const PROJECT = /^\s*project:\s*([a-z0-9][\w.-]*)(?:\/([a-z0-9][\w.-]*))?/im;
+// `Area: a/p` is the header since the PARA rename; a card written before it says `Project: a/p`. The `a/p` pair reads the same in both.
+const TRACKER_REF = /^\s*(?:area|project):\s*([a-z0-9][\w.-]*)(?:\/([a-z0-9][\w.-]*))?/im;
 const REPO = /\brepo(?:sitory)?:\s*([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?=[\s.,;)]|$)/i;
 const BRANCH = /\bbranch:\s*`?([\w./-]+)`?/i;
 const PR_URL = /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/;
 const TYPE = /^\s*(?:type|work(?:[ _]type)?):\s*([a-z]+)/im;
 
 export function cardMeta(card: CardDetail | null): CardMeta {
-  if (!card) return { project: null, feature: null, repo: null, branch: null, pr: null, workType: null };
+  if (!card) return { area: null, project: null, repo: null, branch: null, pr: null, workType: null };
   const body = card.task.body ?? '';
   const comments = card.comments.map((c) => c.body).join('\n');
   const all = `${body}\n${comments}`;
-  const project = PROJECT.exec(body);
+  const area = TRACKER_REF.exec(body);
   const repo = REPO.exec(all);
   const branch = BRANCH.exec(all);
   const pr = PR_URL.exec(all);
   const type = TYPE.exec(body);
   const repoName = repo?.[1] ?? null;
   return {
-    project: project?.[1] ?? null,
-    feature: project?.[2] ?? null,
+    area: area?.[1] ?? null,
+    project: area?.[2] ?? null,
     repo: repoName && repoName.toLowerCase() !== 'vault' ? repoName : null,
     branch: branch?.[1] ?? null,
     pr: pr?.[0] ?? null,
@@ -124,18 +125,18 @@ export const thread: Fetcher = async (input) => {
   ].join('\n');
 };
 
-/** The card's project and feature rows in the tracker (`cli-projects list`, filtered to them). */
+/** The card's area and project rows in the tracker (`cli-areas list`, filtered to them). */
 export const tracker: Fetcher = async (input) => {
   const meta = cardMeta(input.card);
-  if (!meta.project) return '';
+  if (!meta.area) return '';
   const out = await input.exec(input.cfg.tracker.command, ['list'], input.env);
   const rows = out.split('\n').filter((l) => {
-    if (new RegExp(`^${escape(meta.project!)} \\[`).test(l)) return true;
+    if (new RegExp(`^${escape(meta.area!)} \\[`).test(l)) return true;
     if (!/^\s+\S/.test(l)) return false;
     const f = /^\s+([\w.-]+)\/([\w.-]+) \[/.exec(l);
-    return Boolean(f && f[1] === meta.project && (!meta.feature || f[2] === meta.feature));
+    return Boolean(f && f[1] === meta.area && (!meta.project || f[2] === meta.project));
   });
-  const head = `Tracker row for ${meta.project}${meta.feature ? `/${meta.feature}` : ''} (${input.cfg.tracker.command} list):`;
+  const head = `Tracker row for ${meta.area}${meta.project ? `/${meta.project}` : ''} (${input.cfg.tracker.command} list):`;
   return rows.length ? [head, ...rows].join('\n') : `${head}\nnot in the tracker.`;
 };
 
@@ -209,7 +210,7 @@ export const recall: Fetcher = async (input) => {
   const q = input.card.task.title.trim();
   if (!q) return '';
   const meta = cardMeta(input.card);
-  const args = ['recall', q, '--limit', '6', ...(meta.project ? ['--project', meta.project] : []), '--json'];
+  const args = ['recall', q, '--limit', '6', ...(meta.area ? ['--area', meta.area] : []), '--json'];
   const hits = parseJson<RecallHit[]>(await input.exec(input.cfg.org.command, args, orgEnv(input)), 'recall');
   if (!Array.isArray(hits) || !hits.length) return '';
   return [

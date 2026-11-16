@@ -140,7 +140,7 @@ The engine supplies a real JSON-RPC reader, the explicitly selected settlement a
 | `HERMES_HOME` | `agents`, archive | `~/.hermes` | Hermes's home on this machine |
 | `ARCHIVE_SSH_HOST`, `REMOTE_HERMES_HOME`, `REMOTE_HERMES_USER` | archive | unset | Pull a server's Hermes history over ssh; unset skips the pull |
 | `SB_LEDGER_DIR`, `SB_LEDGER_TOKEN` | agent ledger (on each machine, not the server) | the OS data folder, the token in `ledger.json` | Where a machine's agent ledger keeps `ledger.db` and `ledger.json`, and a token that overrides the stored one. See the app README, "Agent ledger" |
-| `PROJECTS_FEED_TOKEN` | `projects` | unset | Read-only bearer token for `GET /api/feed/projects` (a kiosk panel). Unset: the route doesn't exist. `deploy.sh` generates one |
+| `PROJECTS_FEED_TOKEN` | `projects` | unset | Read-only bearer token for `GET /api/feed/projects` (a kiosk panel: the areas and their projects in flight). Unset: the route doesn't exist. `deploy.sh` generates one |
 | `KNOWLEDGE_TOKEN` | any | unset | Read-only bearer token for an agent on the same machine (zen-agent's `search_notes` and `read_note`). Opens `GET /api/search`, `/api/search/global` and `/api/file/source` and nothing else, only from loopback and never through a proxy (a request with a forwarding header, or a Host that is not `127.0.0.1`, `localhost` or `[::1]`, is refused). At least 32 characters; `openssl rand -hex 24`. Unset: the token does nothing |
 | `ORG_OWNER` | `org` | `owner` | Your handle on the agent board (lowercase, `a-z0-9-`) |
 | `ORG_VAULT_ASSIGNEE` | `org` | `vault-session` | The kanban assignee for vault work: a Claude Code session on your machine that no dispatcher spawns (lowercase, `a-z0-9-`). Cards on boards that still use the older assignee slug keep working |
@@ -249,14 +249,15 @@ The reference below lists shipped settings. It is not a generic registry for arb
 | `tv.shows` | `tv` | `{ "slug": "Show name" }` |
 | `livestream.youtube`, `.twitch`, `.kick` | `livestream` | Your channel handle on each platform |
 | `fund.dir`, `fund.txService`, `fund.explorer` | `fund` | Vault folder of the fund's state (default `fund`), the Safe Transaction Service URL and the block explorer for its chain (defaults: Base) |
-| `projects.reportFile` | `projects` | Where `cli-projects render` writes the markdown report (default `projects.md`) |
+| `areas.reviewDir` | `projects` | Vault folder `cli-areas review` and its Sunday timer write the weekly review to, one file per ISO week (default `Areas/weekly-review`) ([modules.md](modules.md#weekly-review)) |
+| `projects.reportFile` | `projects` | Where `cli-areas render` writes the markdown report (default `projects.md`). The key and its default kept their names when the tracker was renamed to areas and projects ([modules.md](modules.md#projects)) |
 | `summaries.chain`, `summaries.minSteps`, `summaries.quietMinutes`, `summaries.maxInputChars` | `usage` | Which providers write session summaries and in what order, the shortest session worth summarizing, how long a session must be quiet, and how much transcript is sent. Defaults in `app/config/summaries.json`; see [summaries.md](summaries.md) |
 | `chat.defaultProvider` | `chat` | The preset provider the chat starts on, when its key is set |
 | `chat.systemPrompt` | `chat` | Replaces the engine's base system prompt (still editable in the app's settings modal) |
 | `chat.providers.<id>` | `chat` | Per preset provider: `models` to add (`[{ "id", "label" }]`), another `default` model, another `baseUrl` |
 | `sync.remote`, `sync.branch` | vault sync | What every machine syncs with (default `origin`, `main`) |
 | `sync.agentOwned` | vault sync | Files only `agent`-role machines commit, e.g. a rendered report |
-| `sync.embeddedRepos`, `sync.maxFileMB`, `sync.settleSeconds`, `sync.heartbeat` | vault sync | `ignore` or `record` nested repos' pointers; largest file to commit (20); recent-write wait (90); write `.sync/<machine>.json` with each commit (off). See [sync.md](sync.md#settings) |
+| `sync.embeddedRepos`, `sync.maxFileMB`, `sync.settleSeconds`, `sync.heartbeat`, `sync.alertRepeatHours` | vault sync | `ignore` or `record` nested repos' pointers; largest file to commit (20); recent-write wait (90); write `.sync/<machine>.json` with each commit (off); hours between repeats of a still-active conflict alert (6, `0` for once only). See [sync.md](sync.md#settings) |
 | `classify.allow` | `org` | Channel slugs and vault folder prefixes whose text may be sent to the classifier. Empty (the default): every decision falls through and nothing leaves the machine |
 | `classify.model` | `org` | `provider/model` for decisions whose schema pins none (default: a hosted model over OpenRouter) |
 | `classify.schemasDir` | `org` | Vault folder of decision schemas, `<decision>.json` (default `.agents/classify`); the engine's defaults fill in what is missing |

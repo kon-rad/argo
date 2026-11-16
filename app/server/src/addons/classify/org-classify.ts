@@ -13,7 +13,7 @@ export interface ClassifyCard {
   kind?: string | null;
   work_type?: string | null;
   repo?: string | null;
-  project_slug?: string | null;
+  area_slug?: string | null;
   contract?: { objective?: string; returns?: string[]; scope?: string[]; verification?: string } | null;
 }
 
@@ -157,6 +157,6 @@ export async function classifyCard(card: ClassifyCard, cfg?: ClassifierSettings,
 /** The card as the classifier reads it, from the board's `cards` table. */
 export async function loadCard(id: string): Promise<ClassifyCard | null> {
   const { rows } = await query<ClassifyCard>(
-    `SELECT id, title, body, kind, work_type, repo, project_slug, contract FROM cards WHERE id = $1`, [id]);
+    `SELECT id, title, body, kind, work_type, repo, area_slug, contract FROM cards WHERE id = $1`, [id]);
   return rows[0] ?? null;
 }

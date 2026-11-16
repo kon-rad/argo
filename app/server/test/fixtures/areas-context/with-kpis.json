@@ -1,0 +1,181 @@
+{
+  "area": {
+    "slug": "lifeos",
+    "title": "LifeOS",
+    "status": "active",
+    "team": null,
+    "division": null,
+    "home_path": "Areas/lifeos",
+    "home_note": "Areas/lifeos/README.md",
+    "design_path": "Areas/lifeos/design.md",
+    "devlog_path": null,
+    "repos": [
+      "example/lifeos"
+    ],
+    "paths": [],
+    "goal_codes": [
+      "Q1"
+    ],
+    "needs_owner": null,
+    "blocked_on": null,
+    "archived_at": null
+  },
+  "description": "A private journal that answers questions about your own life",
+  "summary": "The journal is the product. Everything else here serves it: the apps, the brand and the server.\n\nEntries stay encrypted on the device.",
+  "links": {
+    "websites": [
+      "https://lifeos.example.com"
+    ],
+    "repos": [
+      "example/lifeos"
+    ],
+    "socials": "Areas/lifeos/social-channels.md"
+  },
+  "style": {
+    "guide": "Areas/lifeos/brand/style-guide.md",
+    "assets": "Areas/lifeos/brand/assets/"
+  },
+  "goals": [
+    "A hundred people pay for it",
+    "Every answer cites the entry it came from"
+  ],
+  "kpis": [
+    {
+      "key": "paying-users",
+      "name": "Paying users",
+      "unit": "users",
+      "target": 100,
+      "by": "2027-03-31",
+      "latest": {
+        "value": 17,
+        "at": "2026-11-17T09:00:00.000Z"
+      }
+    },
+    {
+      "key": "mrr",
+      "name": "MRR",
+      "unit": "usd",
+      "target": null,
+      "by": null,
+      "latest": null
+    }
+  ],
+  "roadmap": [
+    {
+      "slug": "onboarding",
+      "title": "Onboarding",
+      "outcome": "A new user writes a first entry in two minutes",
+      "stage": "designing",
+      "due": "2026-11-25",
+      "next_action": null,
+      "owner": null,
+      "notes_path": null
+    },
+    {
+      "slug": "core",
+      "title": "Core",
+      "outcome": "A question gets one cited answer",
+      "stage": "testing",
+      "due": "2026-12-01",
+      "next_action": "run the golden questions",
+      "owner": "builder",
+      "notes_path": "Areas/lifeos/projects/core/README.md"
+    },
+    {
+      "slug": "voice",
+      "title": "Voice entries",
+      "outcome": "Voice entries",
+      "stage": "idea",
+      "due": null,
+      "next_action": null,
+      "owner": null,
+      "notes_path": null
+    }
+  ],
+  "roadmap_total": 3,
+  "recent": {
+    "days": 14,
+    "since": "2026-11-06T00:00:00.000Z",
+    "events": [
+      {
+        "at": "2026-11-17T09:00:00.000Z",
+        "actor": "ada",
+        "project": null,
+        "kind": "kpi_reading",
+        "field": "paying-users",
+        "from": 12,
+        "to": 17,
+        "note": null
+      },
+      {
+        "at": "2026-11-14T09:00:00.000Z",
+        "actor": "ada",
+        "project": "old-sync",
+        "kind": "archived",
+        "field": "archived_at",
+        "from": null,
+        "to": null,
+        "note": "superseded by core"
+      },
+      {
+        "at": "2026-11-12T09:00:00.000Z",
+        "actor": "builder",
+        "project": "core",
+        "kind": "stage",
+        "field": "stage",
+        "from": "building",
+        "to": "testing",
+        "note": "endpoints done"
+      },
+      {
+        "at": "2026-11-12T09:00:00.000Z",
+        "actor": "builder",
+        "project": "core",
+        "kind": "changed",
+        "field": "next_action",
+        "from": "draft the retrieval query",
+        "to": "run the golden questions",
+        "note": "endpoints done"
+      },
+      {
+        "at": "2026-11-10T09:00:00.000Z",
+        "actor": "ada",
+        "project": null,
+        "kind": "kpi_reading",
+        "field": "paying-users",
+        "from": null,
+        "to": 12,
+        "note": null
+      }
+    ],
+    "events_total": 5,
+    "cards": [
+      {
+        "id": "t_bbbbbb",
+        "title": "Fix the footer link",
+        "project": null,
+        "assignee": "builder",
+        "completed_at": "2026-11-18T12:00:00.000Z"
+      },
+      {
+        "id": "t_aaaaaa",
+        "title": "Retrieval: rank by recency",
+        "project": "core",
+        "assignee": "builder",
+        "completed_at": "2026-11-13T12:00:00.000Z"
+      }
+    ],
+    "cards_total": 2,
+    "files": [
+      {
+        "path": "Areas/lifeos/README.md",
+        "mtime": "2026-11-16T08:00:00.000Z"
+      },
+      {
+        "path": "Areas/lifeos/brand/assets/logo.svg",
+        "mtime": "2026-11-15T08:00:00.000Z"
+      }
+    ],
+    "files_total": 2
+  }
+}

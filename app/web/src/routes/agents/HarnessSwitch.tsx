@@ -6,7 +6,7 @@ import { NavLink } from 'react-router-dom';
  * not offered here; its conversations are under History.
  */
 const pill = ({ isActive }: { isActive: boolean }): string =>
-  `rounded px-2 py-0.5 text-xs ${isActive ? 'bg-[var(--ink)] text-[var(--paper)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
+  `rounded px-2 py-0.5 text-xs max-md:inline-flex max-md:min-h-11 max-md:items-center max-md:px-3 ${isActive ? 'bg-[var(--ink)] text-[var(--paper)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
 
 export default function HarnessSwitch() {
   return (
