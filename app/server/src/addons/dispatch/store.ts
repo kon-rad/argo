@@ -1,4 +1,4 @@
-import { query } from '../../db.js';
+import { query, withTransaction } from '../../db.js';
 
 /**
  * The dispatcher's reads and the two writes org.ts does not already offer. Plain queries on the owner's
@@ -73,6 +73,50 @@ export async function zenAgentsWithOpenWakeups(): Promise<ZenAgentRow[]> {
   return rows;
 }
 
+/**
+ * Cards that wait on dependencies which have all closed, yet were never promoted: the trigger only fires when a
+ * dependency finishes, so a card moved to `todo` (or dependency-blocked) after that, or one whose open dependency was
+ * unlinked, waits for ever. Only cards with at least one dependency: a `todo` card with none is someone's backlog.
+ */
+export async function waitingCardsWithClosedDeps(): Promise<string[]> {
+  const { rows } = await query<{ id: string }>(
+    `SELECT c.id FROM cards c
+      WHERE (c.status = 'todo' OR (c.status = 'blocked' AND c.block_kind = 'dependency'))
+        AND (c.scheduled_for IS NULL OR c.scheduled_for <= now())
+        AND EXISTS (SELECT 1 FROM card_deps d WHERE d.card_id = c.id)
+        AND NOT EXISTS (SELECT 1 FROM card_deps d JOIN cards p ON p.id = d.depends_on
+                         WHERE d.card_id = c.id AND p.status NOT IN ('done', 'archived'))
+      ORDER BY c.priority, c.created_at`);
+  return rows.map((r) => r.id);
+}
+
+/** board_promote moves the card to ready and wakes its bot; false when the board's own checks say not yet. */
+export async function promoteCard(card: string): Promise<boolean> {
+  const { rows } = await query<{ ok: boolean }>(`SELECT board_promote($1) AS ok`, [card]);
+  return rows[0]?.ok === true;
+}
+
+/**
+ * Ready cards whose bot has nothing to wake it: assigned to a live, unpaused bot (any lane: cc-dispatcher reads the
+ * same wakeups through `cli-org wake-claim`), no open task wakeup, no unfinished run. A card's wake is consumed when
+ * its run ends, so one that ends with the card still ready (a budget stop, a crash, a routed park) is owed another.
+ * At most `retries` wakes per ready stint (since it was created, moved, assigned or reclaimed): past that the card
+ * waits for a person, as addWakeup's hold says, and a person moving it starts a new stint.
+ */
+export async function readyCardsOwedAWake(retries: number): Promise<{ card: string; agent: string }[]> {
+  const { rows } = await query<{ card: string; agent: string }>(
+    `SELECT c.id AS card, c.assignee AS agent FROM cards c JOIN org_agents_effective a ON a.name = c.assignee
+      WHERE c.status = 'ready' AND a.retired_at IS NULL AND NOT a.paused AND a.runtime NOT IN ('human', 'session')
+        AND board_dispatch_enabled(c.board_slug)
+        AND NOT EXISTS (SELECT 1 FROM org_wakeups w WHERE w.agent_name = c.assignee AND w.reason = 'task' AND w.ref = c.id AND w.done_at IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM card_runs r WHERE r.card_id = c.id AND r.finished_at IS NULL)
+        AND (SELECT count(*) FROM org_wakeups w WHERE w.agent_name = c.assignee AND w.reason = 'task' AND w.ref = c.id
+               AND w.created_at >= coalesce((SELECT max(e.at) FROM card_events e WHERE e.card_id = c.id
+                                              AND e.kind IN ('created', 'moved', 'assigned', 'reclaimed')), c.created_at)) <= $1
+      ORDER BY c.priority, c.created_at`, [retries]);
+  return rows;
+}
+
 export async function lastCodexSession(agent: string, card: string): Promise<string | null> {
   const { rows } = await query<{ session_id: string }>(
     `SELECT session_id FROM usage_runs WHERE runtime = 'codex' AND agent_name = $1 AND task_id = $2
@@ -90,19 +134,31 @@ export async function pendingTaskCards(agent: string): Promise<{ wakeupId: numbe
 
 /** Subscription tokens are recorded without assigning an API dollar price. */
 export async function recordCodexRun(r: { runId: string; sessionId: string | null; agent: string; model: string; card: string | null;
-  startedAt: Date; endedAt: Date; state: string; text: string; inputTokens: number; outputTokens: number; wakeupIds: number[] }): Promise<void> {
+  startedAt: Date; endedAt: Date; state: string; text: string; inputTokens: number; outputTokens: number; wakeupIds: number[];
+  codexHost?: string | null }): Promise<void> {
   const session = r.sessionId ?? `dispatch:${r.runId}`;
-  await query(`INSERT INTO usage_runs
-    (host, run_id, session_id, log_path, task_id, agent_name, model, started_at, ended_at, duration_ms, runtime, outcome, subtype, is_error, wakeup_ids, usage)
-    VALUES ('droplet',$1,$2,$3,$4,$5,$6,$7,$8,$9,'codex',$10,$11,$12,$13,$14::jsonb)
-    ON CONFLICT (host, run_id) DO NOTHING`, [r.runId, session, `dispatch:${r.runId}`, r.card, r.agent, r.model,
-      r.startedAt, r.endedAt, Math.max(0, r.endedAt.getTime() - r.startedAt.getTime()), r.state === 'done' ? 'did-work' : 'failed',
-      `${r.state}: ${r.text}`.slice(0, 300), r.state !== 'done', r.wakeupIds,
-      JSON.stringify({ input_tokens: r.inputTokens, output_tokens: r.outputTokens })]);
-  if (r.inputTokens || r.outputTokens) await query(`INSERT INTO usage_calls
-    (source,host,call_id,session_external_id,ts,model,entrypoint,input_tokens,output_tokens,run_id)
-    VALUES ('codex','droplet',$1,$2,$3,$4,'sdk-cli',$5,$6,$7) ON CONFLICT DO NOTHING`,
-    [r.runId, session, r.endedAt, r.model, r.inputTokens, r.outputTokens, r.runId]);
+  await withTransaction(async (tx) => {
+    const selected = await tx.query<{ slug: string }>(
+      `SELECT slug FROM usage_hosts
+        WHERE slug = COALESCE($1, (SELECT slug FROM usage_hosts WHERE kind = 'server' ORDER BY slug LIMIT 1))`,
+      [r.codexHost ?? null]);
+    const host = selected.rows[0]?.slug;
+    if (!host) {
+      if (r.codexHost) throw new Error(`ORG_CODEX_HOST "${r.codexHost}" is not registered in usage_hosts`);
+      throw new Error('Codex usage host unavailable: usage_hosts has no server row');
+    }
+    await tx.query(`INSERT INTO usage_runs
+      (host, run_id, session_id, log_path, task_id, agent_name, model, started_at, ended_at, duration_ms, runtime, outcome, subtype, is_error, wakeup_ids, usage)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'codex',$11,$12,$13,$14,$15::jsonb)
+      ON CONFLICT (host, run_id) DO NOTHING`, [host, r.runId, session, `dispatch:${r.runId}`, r.card, r.agent, r.model,
+        r.startedAt, r.endedAt, Math.max(0, r.endedAt.getTime() - r.startedAt.getTime()), r.state === 'done' ? 'did-work' : 'failed',
+        `${r.state}: ${r.text}`.slice(0, 300), r.state !== 'done', r.wakeupIds,
+        JSON.stringify({ input_tokens: r.inputTokens, output_tokens: r.outputTokens })]);
+    if (r.inputTokens || r.outputTokens) await tx.query(`INSERT INTO usage_calls
+      (source,host,call_id,session_external_id,ts,model,entrypoint,input_tokens,output_tokens,run_id)
+      VALUES ('codex',$1,$2,$3,$4,$5,'sdk-cli',$6,$7,$8) ON CONFLICT DO NOTHING`,
+      [host, r.runId, session, r.endedAt, r.model, r.inputTokens, r.outputTokens, r.runId]);
+  });
 }
 
 /** Every bot with routines on the roster, whichever runtime runs it. */

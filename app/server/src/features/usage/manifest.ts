@@ -43,6 +43,6 @@ export default defineFeature({
   ],
   wrappers: [],
   health: { label: 'the usage tables answer', tables: ['usage_runs', 'usage_calls', 'usage_hosts', 'usage_files'] },
-  env: ['ORG_CODEX_COMMAND', 'CODEX_HOME', 'USAGE_HOST', 'USAGE_PUSH_HOST', 'USAGE_PUSH_STATE', 'ZEN_SESSIONS_DIR', 'USAGE_SYNC_SERVER', 'USAGE_SYNC_TOKEN'],
+  env: ['ORG_CODEX_COMMAND', 'ORG_CODEX_HOST', 'CODEX_HOME', 'USAGE_HOST', 'USAGE_PUSH_HOST', 'USAGE_PUSH_STATE', 'ZEN_SESSIONS_DIR', 'USAGE_SYNC_SERVER', 'USAGE_SYNC_TOKEN'],
   docs: 'docs/modules.md#usage',
 });

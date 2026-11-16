@@ -117,6 +117,10 @@ Caddy is rendered from `app/deploy/Caddyfile.template`. If you already run Caddy
 
 One user. The password is hashed with scrypt (128 MiB, verified one at a time); the second factor is RFC 6238 TOTP with single-use codes. Both factors are always checked and failures share one message. Sessions are random 256-bit tokens in a `__Host-` cookie (HttpOnly, Secure, SameSite=Strict); only their SHA-256 is stored. They end after 7 idle days or 30 days total, and `POST /api/auth/logout-all` ends every session. Five failures lock an IP out for 15 minutes; 100 failures in an hour lock everyone out. Every mutating request must carry the right `Origin`.
 
+## How the build is swapped in
+
+`deploy.sh` does not run `npm ci` in the live app directory: npm ci empties `node_modules` first, and any CLI an agent started in that minute (`cli-org recall` from a run already in flight) died with `Cannot find package '<app dir>/node_modules/zod/index.js'`. Instead `app/deploy/build-release.sh` copies the shipped source to `<app dir>/data/release`, runs `npm ci` and `npm run build` there, checks that `server/dist/cli-org.js` and `server/dist/cli-memory.js` load from the new build, then swaps `node_modules`, `shared/dist`, `server/dist` and `web/dist` into place, each with one atomic exchange (`renameat2` on Linux). The CLIs always run from `<app dir>/server/dist` and resolve their packages from `<app dir>/node_modules`. A failed install, build or check leaves the live tree as it was. The stage needs room for a second `node_modules` while it builds.
+
 ## When a deploy does not come up
 
 Before it builds, `deploy.sh` keeps the build that is running (`server/dist`, `web/dist` and the build-info file) in `<app dir>/data/rollback`. If the build, the migration or the app itself then fails, it puts that copy back, restarts, and checks the app again:
