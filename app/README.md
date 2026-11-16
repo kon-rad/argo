@@ -79,9 +79,29 @@ In `local` mode there is no authentication: the server binds loopback only, and 
 
 React 19 · Vite 8 · TanStack Query 5 · React Router 7 · Tailwind 4 · `react-markdown` 10 + `remark-gfm` with a custom remark plugin that turns `[[wikilinks]]` into in-app navigation.
 
+#### Tables on a phone
+
+Under 768 px a data table is not left to squeeze or to scroll the page. It goes through `web/src/components/DataTable.tsx` and picks one of two patterns; at desktop width it is the plain table it always was.
+
+| `phone=` | On a phone | Use it when |
+|---|---|---|
+| `cards` | Each row is a card, each cell a tile under its column name. Every column is shown | Rows are read one at a time (a run, a session, a transaction) |
+| `scroll` | The table keeps its grid in its own sideways scroller: first column pinned, a "swipe sideways" hint and an edge fade while columns are off screen, focusable so arrow keys scroll it | Rows are compared down a column (tokens by model, days, query results) |
+
+Never hide a column to make a table fit. A small table that fits a phone as it is (two or three short columns) may stay a plain `<table>`: add it to the short list in `web/test/tables-audit.test.ts`, which fails on any table that is neither. The Board is not a table: on a phone one column fills most of the screen, the next shows at the edge, and a "Jump to column" select goes to any of them.
+
 ### Testing
 
 Vitest 4 + Supertest, running against a **real** `secondbrain_test` database — no mocked `pg`. The schema is rebuilt from migrations on every run.
+
+The table layouts are also checked in a real browser, at 375, 390, 800 and 1440 px, with no server and no database (Vite plus fake `/api` answers from `web/test/fixtures/`). Besides each table, every view must not scroll sideways: any box inside `<main>` that does has to hold one table, code block or tab strip, or carry `data-scroll-scope` (the board's columns). Not part of `npm test` or CI:
+
+```sh
+npm run e2e:install -w web   # once: a headless Chromium inside node_modules
+npm run e2e:tables -w web    # screenshots land in web/e2e/shots/
+```
+
+With a Playwright server elsewhere (`PW_TEST_CONNECT_WS_ENDPOINT`, say a browser in a container), set `TABLES_BROWSER_HOST` to the name that browser reaches this machine by: Vite then listens on every interface and allows that host. To compare desktop pixels with another revision, see the top of `web/e2e/mobile-tables.pw.ts`.
 
 ---
 

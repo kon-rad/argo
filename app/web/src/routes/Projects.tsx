@@ -7,6 +7,7 @@ import { api, type OrgChart, type TaskLink } from '../lib/api.js';
 import { boardApi } from './board/api.js';
 import { projectsApi, STAGES, type Stage, type TrackerArea, type TrackerItem, type TrackerProject, type TrackerReport } from './Projects.api.js';
 import { ago } from '../lib/time.js';
+import DataTable from '../components/DataTable.js';
 import ProjectList from './areas/ProjectList.js';
 import { STAGE_LABEL as LABEL, StatusChip } from './areas/parts.js';
 
@@ -317,7 +318,7 @@ function Needs({ r }: { r: TrackerReport }) {
   });
   if (!r.needs_owner.length) return <p className="text-[var(--ink-dim)]">Nothing is waiting on you.</p>;
   return (
-    <table className="w-full text-sm">
+    <DataTable label="Needs you" phone="cards" className="w-full text-sm">
       <thead className="text-left text-xs text-[var(--ink-dim)]">
         <tr><th className="py-1">Priority</th><th>Area / project</th><th>What you need to do</th><th>Due</th><th /></tr>
       </thead>
@@ -325,16 +326,16 @@ function Needs({ r }: { r: TrackerReport }) {
         {r.needs_owner.map((n) => (
           <tr key={`${n.area}/${n.project ?? ''}`} className="border-t border-[var(--rule)]">
             <td className="py-2">{n.priority ?? ''}</td>
-            <td className="font-medium">{n.project ? `${n.area} / ${n.title}` : n.title}</td>
-            <td>{n.detail}</td>
+            <td className="font-medium max-md:order-first max-md:col-span-2">{n.project ? `${n.area} / ${n.title}` : n.title}</td>
+            <td className="max-md:col-span-2">{n.detail}</td>
             <td>{n.due ?? ''}</td>
-            <td className="text-right">
+            <td className="text-right max-md:col-span-2">
               <button type="button" className="text-xs text-[var(--accent)]" onClick={() => clear.mutate(n)}>done</button>
             </td>
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -401,7 +402,7 @@ function Divisions({ r }: { r: TrackerReport }) {
 
 function Goals({ r }: { r: TrackerReport }) {
   return (
-    <table className="w-full text-sm">
+    <DataTable label="Goals" phone="cards" className="w-full text-sm">
       <thead className="text-left text-xs text-[var(--ink-dim)]">
         <tr><th className="py-1">Goal</th><th>Horizon</th><th>Status</th><th>Due</th><th>Linked work</th></tr>
       </thead>
@@ -410,16 +411,16 @@ function Goals({ r }: { r: TrackerReport }) {
           const linked = [...g.areas, ...g.projects];
           return (
             <tr key={g.code} className="border-t border-[var(--rule)] align-top">
-              <td className="py-2"><b>{g.code}</b> {g.goal}</td>
+              <td className="py-2 max-md:col-span-2"><b>{g.code}</b> {g.goal}</td>
               <td>{g.horizon}</td>
               <td>{g.status}</td>
               <td>{g.due ?? ''}</td>
-              <td>{linked.length ? linked.join(', ') : <span className="text-[var(--warn)]">nothing linked</span>}</td>
+              <td className="max-md:col-span-2">{linked.length ? linked.join(', ') : <span className="text-[var(--warn)]">nothing linked</span>}</td>
             </tr>
           );
         })}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -439,16 +440,16 @@ export default function Projects() {
     <div className="h-full overflow-y-auto p-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold tracking-tight">Projects</h1>
-        <Link to="/areas" className="text-sm text-[var(--accent)] hover:underline">Areas</Link>
-        {/* Scrolls inside its own strip on a phone instead of widening the page. */}
-        <nav className="flex max-w-full gap-1 overflow-x-auto whitespace-nowrap text-sm" aria-label="Projects views">
+        <Link to="/areas" className="text-sm text-[var(--accent)] hover:underline max-md:inline-flex max-md:min-h-11 max-md:items-center">Areas</Link>
+        {/* On a phone the tabs wrap onto a second line: every view stays in sight and no label is squeezed. */}
+        <nav className="flex max-w-full gap-1 overflow-x-auto whitespace-nowrap text-sm max-md:flex-wrap" aria-label="Projects views">
           {VIEWS.map((v) => (
             <button
               key={v}
               type="button"
               onClick={() => setParams(v === 'list' ? {} : { view: v })}
               aria-current={v === view ? 'page' : undefined}
-              className={`shrink-0 rounded px-2 py-1 ${v === view ? 'bg-[var(--paper-sunk)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}
+              className={`shrink-0 rounded px-2 py-1 max-md:min-h-11 ${v === view ? 'bg-[var(--paper-sunk)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}
             >
               {VIEW_LABEL[v]}
               {v === 'needs' && r ? ` (${r.needs_owner.length})` : ''}

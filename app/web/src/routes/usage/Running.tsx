@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type RunningRow } from '../../lib/api.js';
 import { AgentAvatar } from '../../components/AgentAvatar.js';
+import DataTable from '../../components/DataTable.js';
 import { clock, zoned } from '../../lib/time.js';
 import { useAppTimezone } from '../../lib/useTimezone.js';
 
@@ -27,7 +28,7 @@ function Group({ kind, rows, tz }: { kind: RunningRow['kind']; rows: RunningRow[
     <section>
       <h2 className="text-sm font-semibold">{KIND_LABEL[kind]} <span className="font-normal text-[var(--ink-dim)]">({rows.length})</span></h2>
       <p className="text-xs text-[var(--ink-dim)]">{KIND_HINT[kind]}</p>
-      <div className="overflow-x-auto"><table className="w-full text-sm">
+      <DataTable label={KIND_LABEL[kind]} phone="cards" className="w-full text-sm">
         <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
           <th>{kind === 'other' ? 'Session' : 'Name'}</th><th>Runtime</th><th>Model</th><th>Woken by</th><th className="text-right">Running</th><th className="text-right">PID</th><th>Run</th>
         </tr></thead>
@@ -37,7 +38,7 @@ function Group({ kind, rows, tz }: { kind: RunningRow['kind']; rows: RunningRow[
             const drift = r.configured && r.configured.runtime !== r.runtime && r.runtime !== 'unknown';
             return (
               <tr key={`${r.pid ?? r.runId ?? i}-${i}`} className="border-t border-[var(--rule)] align-top">
-                <td>
+                <td className="max-md:order-first max-md:col-span-2">
                   {r.kind === 'bot' ? <Link className="inline-flex items-center gap-1 hover:underline" to={`/usage?view=ledger&agent=${encodeURIComponent(r.name)}`}><AgentAvatar name={r.name} size={18} />{r.name}</Link> : r.name}
                   {r.state === 'claimed' && <span className="ml-1 rounded bg-[var(--paper-sunk)] px-1 text-xs text-[var(--ink-dim)]" title={r.detail ?? ''}>claimed, no process</span>}
                 </td>
@@ -49,12 +50,12 @@ function Group({ kind, rows, tz }: { kind: RunningRow['kind']; rows: RunningRow[
                 <td>{r.reason ? `${r.reason}${r.ref ? ` ${r.ref}` : ''}` : '-'}</td>
                 <td className="text-right tabular-nums" title={r.startedAt ? `since ${zoned(r.startedAt, tz, { seconds: true })}` : ''}>{elapsedText(r.elapsedSec)}</td>
                 <td className="text-right tabular-nums text-[var(--ink-dim)]">{r.pid ?? ''}</td>
-                <td className="font-mono text-xs text-[var(--ink-dim)]">{r.runId ?? ''}</td>
+                <td className="font-mono text-xs text-[var(--ink-dim)] max-md:col-span-2">{r.runId ?? ''}</td>
               </tr>
             );
           })}
         </tbody>
-      </table></div>
+      </DataTable>
     </section>
   );
 }
