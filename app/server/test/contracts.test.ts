@@ -15,7 +15,7 @@ describe('route response contracts', () => {
   });
 
   it('accepts the projects route response shape', () => {
-    const response = { as_of: null, generated_at: '2026-01-01T00:00:00.000Z', totals: { projects: counts, features: counts }, needs_owner: [], divisions: [], teams: [], goals: [], gaps: { goals_uncovered: [], unverified_shipped: [], failing: [], testing_unverified: [], stale: [], overdue: [], no_team: [], no_division: [], no_features: [] }, oldest: [], backlog: { total: 0, by_project: [] }, moved_7d: [], shipped_7d: [], verified_7d: { pass: 0, fail: 0 }, projects: [] };
+    const response = { as_of: null, generated_at: '2026-01-01T00:00:00.000Z', totals: { areas: { active: 0, parked: 0 }, projects: counts }, needs_owner: [], divisions: [], teams: [], goals: [], gaps: { goals_uncovered: [], unverified_shipped: [], failing: [], testing_unverified: [], stale: [], overdue: [], no_team: [], no_division: [], no_projects: [] }, oldest: [], backlog: { total: 0, by_area: [] }, moved_7d: [], shipped_7d: [], verified_7d: { pass: 0, fail: 0 }, areas: [] };
     expect(TrackerReportSchema.parse(response).generated_at).toBe(response.generated_at);
   });
 });

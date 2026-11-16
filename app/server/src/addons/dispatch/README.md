@@ -27,3 +27,5 @@ The separate local card runner can call the same interface without changing this
 The CLI flags and login mode were checked against the installed `codex exec --help`, `codex exec resume --help` and `codex login status`. OpenAI documents [ChatGPT authentication](https://learn.chatgpt.com/docs/auth?surface=cli) and [structured `codex exec --json` events](https://developers.openai.com/blog/eval-skills).
 
 Codex executions receive `ORG_AGENT` (persona), `ORG_RUN` (dispatch run) and `CC_CARD` (ticket ID, empty for message wakes). Remote transports must forward all three to the execution host so process monitors can attribute work without reading prompts. Preflight probes have no ticket.
+
+A fresh Codex session starts with a preamble (`codexPreamble`): the agent's compiled persona from `.claude/agents/<name>.md` without its frontmatter (`codexPersona`; skipped when the vault has no such file), a pointer to `.agents/skills/org-member/SKILL.md`, and one line saying whether the run can write. A message wake is read-only and says so, so the bot does not spend the run finding out. A resumed session gets no preamble: it already holds it.

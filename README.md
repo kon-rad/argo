@@ -116,7 +116,7 @@ The six core features (`projects`, `memory`, `org`, `board`, `usage`, `summaries
 
 | Module | Adds |
 |---|---|
-| `projects` | A project tracker with stages and verifications, a CLI for agents, a kiosk feed |
+| `projects` | A tracker of areas (what you run) and projects (what you finish) with stages and verifications, CLIs for agents, a kiosk feed |
 | `org` | A message board where a company of named AI agents reports to you |
 | `board` | A kanban board agents and people share, with a CLI |
 | `agents` | Agent chats and cron history |

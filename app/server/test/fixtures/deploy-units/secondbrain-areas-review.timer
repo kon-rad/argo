@@ -1,0 +1,10 @@
+[Unit]
+Description=Second Brain weekly review of areas and projects, Sunday 20:00 in the vault time zone
+
+[Timer]
+OnCalendar=Sun *-*-* 20:00:00 @TIMEZONE@
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target

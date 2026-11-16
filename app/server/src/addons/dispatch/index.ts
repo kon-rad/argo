@@ -10,7 +10,7 @@ import type { DispatchSettings } from '../../settings.js';
 import { classifyCard, loadCard } from '../classify/org-classify.js';
 import { decide, recordDecision, recordOutcome, routeSpend, TIERS, type RoutingConfig, type Tier } from '../routing/org-router.js';
 import * as store from './store.js';
-import { codexCommand, codexPreflight, parseCodexResult, subscriptionEnv } from './codex.js';
+import { codexCommand, codexPersona, codexPreamble, codexPreflight, parseCodexResult, subscriptionEnv } from './codex.js';
 import type { MessageRow, Routine, ZenAgentRow } from './store.js';
 
 /**
@@ -305,6 +305,8 @@ export class Dispatcher {
         }
       }
       const resume = card ? await store.lastCodexSession(agent.name, card) : null;
+      // A fresh session learns who it is and whether it can write; a resumed one already holds that.
+      if (!resume) prompt = codexPreamble(codexPersona(this.deps.config.vaultRoot, agent.name), Boolean(card)) + prompt;
       const args = codexCommand(model, this.deps.config.vaultRoot, prompt, resume, Boolean(card));
       const result = parseCodexResult(await this.deps.runner(command, args, { ...env, ORG_RUN: runId, CC_CARD: card ?? '' },
         this.deps.config.vaultRoot, (budget.minutes + 2) * 60_000));
