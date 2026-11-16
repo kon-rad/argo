@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { config } from '../config.js';
-import { OrgError } from '../org.js';
+import { log } from '../logger.js';
+import { areaFlag, OrgError } from '../org.js';
 import { factById, forget, listCandidates, listFacts, remember } from '../org-powers.js';
 import { HttpError, parseOr400, wrap } from './http.js';
 
@@ -12,6 +13,8 @@ import { HttpError, parseOr400, wrap } from './http.js';
  */
 const listFactsQuery = z.object({
   subject: z.string().trim().max(200).optional(),
+  area: z.string().trim().max(100).optional(),
+  /** The pre-rename name for `area`; read until the aliases end. */
   project: z.string().trim().max(100).optional(),
   agent: z.string().trim().max(64).optional(),
   author: z.string().trim().max(64).optional(),
@@ -23,6 +26,8 @@ const rememberBody = z.object({
   subject: z.string().trim().min(1).max(200),
   claim: z.string().trim().min(1).max(1000),
   source: z.string().trim().min(1).max(500),
+  area: z.string().trim().max(100).optional(),
+  /** The pre-rename name for `area`; read until the aliases end, so an older client's fact is not saved untagged. */
   project: z.string().trim().max(100).optional(),
   agent: z.string().trim().max(64).optional(),
   inferred: z.boolean().default(false),
@@ -36,13 +41,23 @@ function badRequest(err: unknown): never {
   throw err;
 }
 
+/** `area`, or the old `project` for as long as the aliases last; a refused old spelling is a 400. */
+function oldArea(area: string | undefined, project: string | undefined): string | undefined {
+  try {
+    return areaFlag(area || undefined, project || undefined, (line) => log.warn(`memory API: ${line}`));
+  } catch (err) {
+    return badRequest(err);
+  }
+}
+
 export function memoryRouter(): Router {
   const router = Router();
   const owner = (): { name: string } => ({ name: config.orgOwner });
 
   // Facts, newest first. `agent` narrows to one bot's own memory; without it, every fact, company-wide ones included.
   router.get('/', wrap(async (req, res) => {
-    res.json({ facts: await listFacts(parseOr400(listFactsQuery, req.query)) });
+    const { project, area, ...q } = parseOr400(listFactsQuery, req.query);
+    res.json({ facts: await listFacts({ ...q, area: oldArea(area, project) }) });
   }));
 
   // Legacy read endpoint for session-fact history. New session facts are saved automatically.
@@ -57,8 +72,8 @@ export function memoryRouter(): Router {
 
   // One claim, written by the owner's session (the same write the CLI's `remember` makes).
   router.post('/', wrap(async (req, res) => {
-    const body = parseOr400(rememberBody, req.body ?? {});
-    res.json(await remember(owner(), body).catch(badRequest));
+    const { project, area, ...body } = parseOr400(rememberBody, req.body ?? {});
+    res.json(await remember(owner(), { ...body, area: oldArea(area, project) }).catch(badRequest));
   }));
 
   router.post('/:id/retire', wrap(async (req, res) => {

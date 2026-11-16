@@ -5,6 +5,7 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { relabelChannels } from '../src/archive/backfill.js';
+import { telegramBot } from '../src/archive/channelMeta.js';
 import { sha256 } from '../src/archive/clean.js';
 import * as archive from '../src/archive/store.js';
 import type { SessionInput } from '../src/archive/types.js';
@@ -31,13 +32,32 @@ beforeEach(async () => {
   await truncateAll();
   root = mkdtempSync(join(tmpdir(), 'channel-'));
   writeFileSync(join(root, 'secondbrain.json'), JSON.stringify({ telegram: { bots: [
-    { name: 'claude', agent: 'claude-code', username: 'examplebot' }, { name: 'hermes', agent: 'hermes', profile: 'main' }, { name: 'zen', agent: 'zen-agent', persona: 'sol' }] } }));
+    { name: 'claude', agent: 'claude-code', username: 'examplebot' }, { name: 'hermes', agent: 'hermes' }, { name: 'zen', agent: 'zen-agent', persona: 'sol' }] } }));
   process.env.SECONDBRAIN_SETTINGS = join(root, 'secondbrain.json');
   resetSettings();
 });
 afterEach(() => { delete process.env.SECONDBRAIN_SETTINGS; resetSettings(); });
 
 describe('channel label from the collectors', () => {
+  it('matches the profile-less Hermes bot to main without guessing between main candidates', () => {
+    writeFileSync(join(root, 'secondbrain.json'), JSON.stringify({ telegram: { bots: [
+      { name: 'main-bot', agent: 'hermes' },
+      { name: 'research-bot', agent: 'hermes', profile: 'research' },
+    ] } }));
+    resetSettings();
+    expect(telegramBot('hermes', 'main')?.name).toBe('main-bot');
+    expect(telegramBot('hermes', null)?.name).toBe('main-bot');
+    expect(telegramBot('hermes', 'research')?.name).toBe('research-bot');
+
+    writeFileSync(join(root, 'secondbrain.json'), JSON.stringify({ telegram: { bots: [
+      { name: 'first-main', agent: 'hermes' },
+      { name: 'second-main', agent: 'hermes' },
+    ] } }));
+    resetSettings();
+    expect(telegramBot('hermes', 'main')).toBeNull();
+    expect(telegramBot('hermes', null)).toBeNull();
+  });
+
   it('labels a Claude Code Telegram session from its first tagged prompt and keeps the label on later chunks', async () => {
     const proj = join(root, 'projects', '-home-me-vault');
     mkdirSync(proj, { recursive: true });
@@ -142,19 +162,38 @@ describe('relabelChannels', () => {
       ]);
       await archive.upsertSession(tx, sess({ externalId: 'typed' }));
       await archive.upsertSession(tx, sess({ externalId: 'h-tg', source: 'hermes', meta: { source: 'telegram', profile: 'main', chat_type: 'dm' } }));
+      await archive.upsertSession(tx, sess({ externalId: 'h-labelled-null', source: 'hermes', meta: {
+        source: 'telegram', profile: 'main', channel: 'telegram', channel_bot: null, channel_persona: null,
+      } }));
+      await archive.upsertSession(tx, sess({ externalId: 'h-labelled-kept', source: 'hermes', meta: {
+        source: 'telegram', profile: 'main', channel: 'telegram', channel_bot: 'recorded', channel_persona: 'recorded-persona',
+      } }));
       await archive.upsertSession(tx, sess({ externalId: 'h-cron', source: 'hermes', meta: { source: 'cron', profile: 'main' } }));
       await archive.upsertSession(tx, sess({ externalId: 'z-tg', source: 'zen-agent', meta: { persona: 'sol', dispatch: { work_type: 'telegram', reasons: '[{"reason":"telegram","ref":"9"}]' } } }));
+      await archive.upsertSession(tx, sess({ externalId: 'z-labelled-null', source: 'zen-agent', meta: {
+        persona: 'sol', channel: 'telegram', channel_bot: null, channel_persona: null, dispatch: { channel: 'telegram', bot: 'zen' },
+      } }));
+      await archive.upsertSession(tx, sess({ externalId: 'z-labelled-kept', source: 'zen-agent', meta: {
+        persona: 'sol', channel: 'telegram', channel_bot: 'recorded', channel_persona: 'recorded-persona', dispatch: { channel: 'telegram', bot: 'zen' },
+      } }));
       await archive.upsertSession(tx, sess({ externalId: 'z-card', source: 'zen-agent', meta: { persona: 'sol', dispatch: { reasons: '[{"reason":"task","ref":"t_1"}]' } } }));
     });
     // The first message was stored as a prompt (the parser classified it before this version).
     await query(`UPDATE archive_messages SET step = 'prompt' WHERE external_id = 'u1'`);
     const r = await relabelChannels({ batch: 10, log: () => {} });
-    expect(r).toEqual({ sessions: 3, messages: 1, commands: 1 });
-    const rows = (await query(`SELECT external_id, channel, meta ->> 'channel_bot' bot FROM archive_sessions ORDER BY 1`)).rows;
+    expect(r).toEqual({ sessions: 5, messages: 1, commands: 1 });
+    const rows = (await query(`SELECT external_id, channel, meta ->> 'channel_bot' bot, meta ->> 'channel_persona' persona FROM archive_sessions ORDER BY 1`)).rows;
     expect(rows).toEqual([
-      { external_id: 'h-cron', channel: null, bot: null }, { external_id: 'h-tg', channel: 'telegram', bot: 'hermes' },
-      { external_id: 'old-tg', channel: 'telegram', bot: 'claude' }, { external_id: 'typed', channel: null, bot: null },
-      { external_id: 'z-card', channel: null, bot: null }, { external_id: 'z-tg', channel: 'telegram', bot: 'zen' },
+      { external_id: 'h-cron', channel: null, bot: null, persona: null },
+      { external_id: 'h-labelled-kept', channel: 'telegram', bot: 'recorded', persona: 'recorded-persona' },
+      { external_id: 'h-labelled-null', channel: 'telegram', bot: 'hermes', persona: null },
+      { external_id: 'h-tg', channel: 'telegram', bot: 'hermes', persona: null },
+      { external_id: 'old-tg', channel: 'telegram', bot: 'claude', persona: null },
+      { external_id: 'typed', channel: null, bot: null, persona: null },
+      { external_id: 'z-card', channel: null, bot: null, persona: null },
+      { external_id: 'z-labelled-kept', channel: 'telegram', bot: 'recorded', persona: 'recorded-persona' },
+      { external_id: 'z-labelled-null', channel: 'telegram', bot: 'zen', persona: 'sol' },
+      { external_id: 'z-tg', channel: 'telegram', bot: 'zen', persona: 'sol' },
     ]);
     const msgs = (await query(`SELECT step, content_text FROM archive_messages ORDER BY seq`)).rows;
     expect(msgs).toEqual([{ step: 'meta', content_text: CLEAR }, { step: 'prompt', content_text: 'save this gear' }]);

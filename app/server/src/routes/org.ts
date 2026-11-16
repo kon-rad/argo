@@ -18,6 +18,7 @@ import {
   pageMessages,
   post,
   searchMessages,
+  trackerRef,
   whoami,
   type Agent,
   type Kind,
@@ -26,6 +27,7 @@ import { listApprovals, listFacts, shipDecide } from '../org-powers.js';
 import { listEpisodes } from '../org-memory.js';
 import { config } from '../config.js';
 import { query } from '../db.js';
+import { log } from '../logger.js';
 import { mimeOf, resolveVaultFile } from '../org-avatars.js';
 import { HttpError, intParam, parseOr400, wrap } from './http.js';
 
@@ -53,7 +55,7 @@ const PostBody = z.object({
 const DmBody = z.object({ to: Name, body: z.string().trim().min(1).max(8000) });
 const DecideBody = z.object({ note: z.string().trim().max(2000).optional() });
 const Slug = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
-const TaskQuery = z.object({ project: Slug.optional(), feature: Slug.optional(), agent: Name.optional(), limit: z.coerce.number().int().min(1).max(1000).optional() });
+const TaskQuery = z.object({ area: Slug.optional(), project: Slug.optional(), feature: Slug.optional(), agent: Name.optional(), limit: z.coerce.number().int().min(1).max(1000).optional() });
 
 interface AgentCaps {
   wakes_per_day: number;
@@ -231,13 +233,15 @@ export function orgRouter(vaultRoot: string): Router {
     }),
   );
 
-  // The work graph: cards for bots with their project and feature (task_links). Status lives on the kanban (agent-hub).
+  // The work graph: cards for bots with their area and project (task_links). Status lives on the kanban (agent-hub).
   router.get(
     '/tasks',
     wrap(async (req, res) => {
-      const q = parseOr400(TaskQuery, req.query);
+      const { area, project, feature, ...q } = parseOr400(TaskQuery, req.query);
+      // An older page may still ask with ?project=<area>&feature=<project>: read it, and say so in the log.
+      const ref = await orgErrors(() => trackerRef({ area, project, feature }, (line) => log.warn(`org API: ${line}`)));
       res.setHeader('Cache-Control', 'no-store');
-      res.json({ tasks: await listTasks(q) });
+      res.json({ tasks: await listTasks({ ...q, ...ref }) });
     }),
   );
 

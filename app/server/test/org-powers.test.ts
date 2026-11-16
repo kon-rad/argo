@@ -46,7 +46,7 @@ describe('bot powers', () => {
   beforeEach(async () => {
     await truncateAll();
     await importOrg(ORG);
-    await query(`INSERT INTO projects (slug, title, team_slug, stage) VALUES ('argo-exo', 'Exo', 'platform', 'building')`);
+    await query(`INSERT INTO areas (slug, title, team_slug, status) VALUES ('argo-exo', 'Exo', 'platform', 'active')`);
   });
 
   it('imports capabilities and refuses an unknown one', async () => {
@@ -69,15 +69,15 @@ describe('bot powers', () => {
 
   it('a coding card goes only to a bot with code, and the refusal names who can', async () => {
     const owner = await getAgent('owner');
-    await expect(createTask(owner, { assignee: 'lena', title: 'Fix the dispatcher', project: 'argo-exo', type: 'coding' }))
+    await expect(createTask(owner, { assignee: 'lena', title: 'Fix the dispatcher', area: 'argo-exo', type: 'coding' }))
       .rejects.toThrow(/lena doesn't have the code capability.*rune, sable/);
-    const r = await createTask(owner, { assignee: 'rune', title: 'Fix the dispatcher', project: 'argo-exo', type: 'coding' });
+    const r = await createTask(owner, { assignee: 'rune', title: 'Fix the dispatcher', area: 'argo-exo', type: 'coding' });
     expect(r.link).toMatchObject({ needs: 'code', ship_now: false });
-    await expect(assignTask(owner, { taskId: 't_abcdef', assignee: 'juno', project: 'argo-exo', needs: 'm1' })).rejects.toThrow(/echo/);
+    await expect(assignTask(owner, { taskId: 't_abcdef', assignee: 'juno', area: 'argo-exo', needs: 'm1' })).rejects.toThrow(/echo/);
   });
 
   it('a card note names the bot without waking it a second time', async () => {
-    const r = await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Tidy', project: 'argo-exo' });
+    const r = await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Tidy', area: 'argo-exo' });
     expect(r.message).toMatchObject({ channel_slug: 'platform', mentions: [] });
     expect(r.message!.body).toBe(`card ${r.task_id} for rune: Tidy (argo-exo)`);
     // The ready card wakes rune once (reason task); the note adds no mention wake on top.
@@ -85,21 +85,21 @@ describe('bot powers', () => {
   });
 
   it('a graph checks every node: a code review node needs a reviewer', async () => {
-    const g = { name: 'feature-build', description: '', work: 'coding', nodes: [
+    const g = { name: 'project-build', description: '', work: 'coding', nodes: [
       { id: 'build', kind: 'build', assign: 'rune', title: 'Build', after: [] },
       { id: 'review', kind: 'review', assign: 'lena', title: 'Review', after: ['build'] },
     ] };
-    await expect(applyGraph(await getAgent('owner'), g as never, { project: 'argo-exo', team: 'platform' })).rejects.toThrow(/lena doesn't have the review/);
+    await expect(applyGraph(await getAgent('owner'), g as never, { area: 'argo-exo', team: 'platform' })).rejects.toThrow(/lena doesn't have the review/);
   });
 
   it('only the owner marks a card ship-now', async () => {
-    await expect(createTask(await getAgent('atlas'), { assignee: 'rune', title: 'x', project: 'argo-exo', shipNow: true })).rejects.toThrow(/only the owner/);
-    const r = await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Ship it', project: 'argo-exo', type: 'coding', shipNow: true });
+    await expect(createTask(await getAgent('atlas'), { assignee: 'rune', title: 'x', area: 'argo-exo', shipNow: true })).rejects.toThrow(/only the owner/);
+    const r = await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Ship it', area: 'argo-exo', type: 'coding', shipNow: true });
     expect(r.link.ship_now).toBe(true);
   });
 
   it('request → owner approves → merge check passes for that PR only; the requester is woken', async () => {
-    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build', project: 'argo-exo', type: 'coding' })).task_id;
+    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build', area: 'argo-exo', type: 'coding' })).task_id;
     const r = await shipRequest(await getAgent('atlas'), { card, summary: 'adds the m1 gate; 85 tests pass', pr: PR, deploy: 'argo-exo-agents' });
     expect(r).toMatchObject({ created: true, approval: { status: 'pending', requested_by: 'atlas' } });
     expect(r.message).toMatchObject({ channel_slug: 'platform', kind: 'question-for-owner', task_id: card });
@@ -120,7 +120,7 @@ describe('bot powers', () => {
   });
 
   it('a ship-now card is approved at once; a bot without code, merge or deploy can not ask', async () => {
-    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Hotfix', project: 'argo-exo', type: 'coding', shipNow: true })).task_id;
+    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Hotfix', area: 'argo-exo', type: 'coding', shipNow: true })).task_id;
     const r = await shipRequest(await getAgent('rune'), { card, summary: 'hotfix', pr: PR });
     expect(r.approval).toMatchObject({ status: 'approved', ship_now: true, decided_by: 'owner' });
     expect(r.message).toBeNull();
@@ -130,7 +130,7 @@ describe('bot powers', () => {
   });
 
   it('the database refuses a bot that decides through the RLS role', async () => {
-    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build', project: 'argo-exo', type: 'coding' })).task_id;
+    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build', area: 'argo-exo', type: 'coding' })).task_id;
     const r = await shipRequest(await getAgent('rune'), { card, summary: 's', pr: PR });
     const url = agentDatabaseUrl(`postgres://sb_org@${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${process.env.SB_TEST_DB ?? 'secondbrain_test'}`, 'rune');
     const c = new pg.Client({ connectionString: url });
@@ -147,7 +147,7 @@ describe('bot powers', () => {
   });
 
   it('the approvals routes list and decide as the owner', async () => {
-    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build', project: 'argo-exo', type: 'coding' })).task_id;
+    const card = (await createTask(await getAgent('owner'), { assignee: 'rune', title: 'Build', area: 'argo-exo', type: 'coding' })).task_id;
     const r = await shipRequest(await getAgent('rune'), { card, summary: 's', pr: PR });
     const app = createApp({ modules: ALL_MODULES });
     const list = await request(app).get('/api/org/approvals').expect(200);
@@ -190,14 +190,14 @@ describe('shared memory', () => {
   beforeEach(async () => {
     await truncateAll();
     await importOrg(ORG);
-    await query(`INSERT INTO projects (slug, title, team_slug, stage) VALUES ('argo-exo', 'Exo', 'platform', 'building')`);
+    await query(`INSERT INTO areas (slug, title, team_slug, status) VALUES ('argo-exo', 'Exo', 'platform', 'active')`);
   });
 
   it('remembers a sourced fact, recalls it, supersedes and closes it', async () => {
     const rune = await getAgent('rune');
     await expect(remember(rune, { subject: 'x', claim: 'y', source: ' ' })).rejects.toThrow(/--source/);
-    const f = await remember(rune, { subject: 'droplet RAM', claim: 'about 3 GB free with two workers', source: 'agents/cc-lanes/lanes.toml', project: 'argo-exo' });
-    const hits = await recallFacts('droplet RAM workers', { project: 'argo-exo' });
+    const f = await remember(rune, { subject: 'droplet RAM', claim: 'about 3 GB free with two workers', source: 'agents/cc-lanes/lanes.toml', area: 'argo-exo' });
+    const hits = await recallFacts('droplet RAM workers', { area: 'argo-exo' });
     expect(hits[0]).toMatchObject({ source: 'fact', ref: `fact #${f.id}`, title: 'droplet RAM' });
     const g = await remember(rune, { subject: 'droplet RAM', claim: 'about 2.5 GB free with two workers', source: '#201', supersedes: f.id, via: 'claude-code@droplet' });
     const current = await listFacts({ subject: 'droplet' });

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import App from '../src/App.js';
@@ -202,6 +202,38 @@ describe('nav follows /api/meta', () => {
     expect(screen.queryByRole('button', { name: 'Ask your second brain' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Vault/ }));
     expect(screen.queryByRole('menuitem', { name: 'Ask your second brain' })).toBeNull();
+  });
+});
+
+describe('phone shell', () => {
+  it('names the current page in the header, beside the menu button', async () => {
+    renderAt('/sources');
+    const banner = await screen.findByRole('banner');
+    expect(within(banner).getByText('Sources')).toBeDefined();
+    expect(within(banner).getByRole('button', { name: 'Menu' }).getAttribute('aria-haspopup')).toBe('dialog');
+    fireEvent.click(within(banner).getByRole('button', { name: 'Menu' }));
+    const menu = screen.getByRole('dialog', { name: 'Menu' });
+    expect(within(menu).getByRole('link', { name: 'Sources' }).getAttribute('aria-current')).toBe('page');
+    expect(within(menu).getByRole('link', { name: 'Browse' }).getAttribute('aria-current')).toBeNull();
+  });
+
+  it('a note is on Browse; a page with no menu entry names nothing', async () => {
+    renderAt('/file/CLAUDE.md');
+    const banner = await screen.findByRole('banner');
+    expect(within(banner).getByText('Browse')).toBeDefined();
+    cleanup();
+    renderAt('/search?q=x');
+    const again = await screen.findByRole('banner');
+    expect(within(again).queryByText('Browse')).toBeNull();
+  });
+
+  it('search scope and mode switches say which one is on', async () => {
+    renderAt('/search?q=x');
+    const scope = await screen.findByRole('group', { name: 'Search in' });
+    const on = within(scope).getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') === 'true');
+    expect(on.length).toBe(2); // one scope, one mode
+    const mode = within(scope).getByRole('group', { name: 'Search mode' });
+    expect(within(mode).getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') === 'true').length).toBe(1);
   });
 });
 

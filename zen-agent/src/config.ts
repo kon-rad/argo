@@ -98,7 +98,7 @@ export interface ZenConfig {
   knowledge: KnowledgeConfig;
   kanban: KanbanConfig;
   org: { command: string };
-  /** The project tracker CLI (the `tracker` fetcher). */
+  /** The tracker CLI whose `list` prints areas with their projects (the `tracker` fetcher). */
   tracker: { command: string };
   /** GitHub's CLI (the `github` fetcher). */
   github: { command: string };
@@ -130,7 +130,7 @@ export const DEFAULTS: ZenConfig = {
   knowledge: { kind: 'none' },
   kanban: { kind: 'none' },
   org: { command: 'cli-org' },
-  tracker: { command: 'cli-projects' },
+  tracker: { command: 'cli-areas' },
   github: { command: 'gh' },
   providers: {},
   machines: {},

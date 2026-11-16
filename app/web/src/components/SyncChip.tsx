@@ -60,7 +60,7 @@ export default function SyncChip() {
 
   return (
     <div
-      className={`shrink-0 whitespace-nowrap border-l border-[var(--rule)] pl-3 text-xs ${bad ? 'text-red-600' : 'text-[var(--ink-dim)]'}`}
+      className={`shrink-0 whitespace-nowrap border-[var(--rule)] text-xs md:border-l md:pl-3 ${bad ? 'text-red-600' : 'text-[var(--ink-dim)]'}`}
       title={title}
       aria-label={`Vault sync. ${title}`}
     >

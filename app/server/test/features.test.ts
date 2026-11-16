@@ -46,7 +46,7 @@ describe('feature manifests', () => {
   });
 
   it('answers the deploy script and the launcher for a module list', () => {
-    expect(unitsFor(new Set(['board', 'projects']))).toEqual(['secondbrain-projects-render', 'secondbrain-board-reclaim']);
+    expect(unitsFor(new Set(['board', 'projects']))).toEqual(['secondbrain-projects-render', 'secondbrain-areas-review', 'secondbrain-board-reclaim']);
     expect(unitsFor(new Set())).toEqual([]);
     expect(wrappersFor(new Set(['org', 'usage']))).toEqual(['cli-org']);
     expect(navFor(new Set(['usage', 'summaries']))).toEqual([{ section: 'Work', label: 'Usage', path: '/usage' }]);
@@ -70,7 +70,7 @@ describe('feature manifests', () => {
 describe('features mounted from their manifests', () => {
   it('a feature that is off leaves no route, and one that is on mounts all of its routes', async () => {
     const off = createApp({ modules: new Set() });
-    for (const path of ['/api/projects/report', '/api/feed/projects', '/api/org/channels', '/api/board/cards', '/api/usage/plan', '/api/summaries', '/api/ingest']) {
+    for (const path of ['/api/areas/report', '/api/projects', '/api/feed/projects', '/api/org/channels', '/api/board/cards', '/api/usage/plan', '/api/summaries', '/api/ingest']) {
       const res = await request(off).get(path);
       expect(res.body.error?.message, path).toBe('no such endpoint');
     }

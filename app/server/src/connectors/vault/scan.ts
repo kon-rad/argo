@@ -4,6 +4,7 @@ import { basename, extname, join } from 'node:path';
 import { z } from 'zod';
 import { config } from '../../config.js';
 import { query, withTransaction, type TxClient } from '../../db.js';
+import { recordFrontmatterChange } from '../../features/projects/service/history.js';
 import { log } from '../../logger.js';
 import type { Connector, RunContext } from '../types.js';
 import { parseMarkdown } from './parse.js';
@@ -60,6 +61,10 @@ async function upsertFile(
   buf: Buffer | null,
 ): Promise<{ id: number; inserted: boolean }> {
   const md = buf !== null ? parseMarkdown(buf.toString('utf8'), basename(entry.name, extname(entry.name))) : null;
+  // What the note said before, for the change history of area and project home notes (below).
+  const before = md !== null
+    ? (await tx.query<{ frontmatter: Record<string, unknown> | null }>(`SELECT frontmatter FROM vault_files WHERE path = $1 AND is_markdown`, [entry.path])).rows[0]
+    : undefined;
 
   const { rows } = await tx.query<{ id: number; inserted: boolean }>(
     `INSERT INTO vault_files
@@ -87,6 +92,10 @@ async function upsertFile(
   );
 
   const row = rows[0]!;
+
+  // A note seen for the first time is the baseline, not a change: only an already indexed
+  // home note writes history, one row per frontmatter key that differs.
+  if (md !== null && before) await recordFrontmatterChange(tx, entry.path, before.frontmatter, md.frontmatter);
 
   if (md !== null) {
     // Replace wholesale: a diff of link/tag sets costs more than it saves at

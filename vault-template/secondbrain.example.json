@@ -36,6 +36,7 @@
   },
   "livestream": { "youtube": "example" },
   "projects": { "reportFile": "projects.md" },
+  "areas": { "reviewDir": "Areas/weekly-review" },
   "sync": {
     "remote": "origin",
     "branch": "main",

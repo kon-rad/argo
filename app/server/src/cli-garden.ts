@@ -23,10 +23,12 @@ try {
   const stages = new Map<string, string | null>();
   if (useDb) {
     try {
-      const r = await pool.query<{ slug: string; stage: string }>('SELECT slug, stage FROM projects');
+      // The shelf rules ask one thing of the tracker: is this still run? A parked or archived area is not.
+      const r = await pool.query<{ slug: string; stage: string }>(
+        `SELECT slug, CASE WHEN archived_at IS NOT NULL THEN 'parked' ELSE status END AS stage FROM areas`);
       for (const row of r.rows) stages.set(row.slug, row.stage);
     } catch (err) {
-      console.error(`tracker unreachable, treating every project stage as unknown: ${(err as Error).message.split('\n')[0]}`);
+      console.error(`tracker unreachable, treating every area's status as unknown: ${(err as Error).message.split('\n')[0]}`);
     }
   }
   const r = await runGarden(config.vaultRoot, {
