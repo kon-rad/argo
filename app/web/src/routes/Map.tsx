@@ -125,16 +125,17 @@ function FullMapPage() {
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-3 border-b border-[var(--rule)] px-4 py-2 text-sm">
         <h1 className="font-semibold">Brain map</h1>
-        <div className="relative">
+        <div className="relative max-md:w-full">
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && matches[0]) { pick(matches[0].id); setSearch(''); } }}
             placeholder="Find a note, area, goal..."
-            className="w-64 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1"
+            aria-label="Find on the map"
+            className="w-64 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 max-md:w-full"
           />
           {matches.length > 0 && (
-            <ul className="absolute left-0 top-full z-20 mt-1 w-80 rounded border border-[var(--rule)] bg-[var(--paper)] shadow">
+            <ul className="absolute left-0 top-full z-20 mt-1 w-80 rounded max-md:w-full border border-[var(--rule)] bg-[var(--paper)] shadow">
               {matches.map((n) => (
                 <li key={n.id}>
                   <button type="button" className="block w-full truncate px-2 py-1 text-left hover:bg-[var(--paper-sunk)]" onClick={() => { pick(n.id); setSearch(''); }}>
@@ -171,7 +172,7 @@ function FullMapPage() {
           ))}
         </div>
         {!selected && headline.length > 0 && (
-          <div className="absolute right-3 top-3 grid w-56 gap-2">
+          <div className="absolute right-3 top-3 grid w-56 gap-2 max-md:max-h-[50%] max-md:w-44 max-md:overflow-y-auto">
             {headline.map((m) => <MetricCard key={m.key} m={m} />)}
           </div>
         )}

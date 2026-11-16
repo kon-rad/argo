@@ -29,7 +29,7 @@ Each row is off until its setting exists. Decide per row.
 | `DEPLOYMENT=server` and a deploy | The whole vault checkout and index live on that server, behind a password + authenticator login over HTTPS | Your server |
 | `SECONDBRAIN_DB_URL` | Queries from the laptop to the server's Postgres | Your server, over the private network you chose |
 | The agent ledger on a machine | Every turn of every agent session on that machine: prompts, responses, tool calls and results, tokens, model. Values of secret-named variables in the env files you named with `--redact-env` are removed first | Your server (module `usage`) |
-| The ledger's `--proxy` | Each Claude Code API call, with its system prompt and tools, stored once by hash on the machine; synced only when `--redact-env` is set | Your server |
+| The ledger's `--proxy` or `--ollama-proxy` | Each proxied Claude Code or Ollama API call and response, redacted on the machine with repeated prompts and messages stored once by hash; synced only when `--redact-env` is set | Your server |
 | `metrics[]` with `collect` in `secondbrain.json` | Requests to YouTube, X, Instagram or a chain RPC for the numbers you listed | Those platforms |
 | `livestream.*` in `secondbrain.json` | Polls of your channels; a summary JSON (viewers, hours) served **without login** under `/public/` | Those platforms; anyone with the URL |
 | `LINKEDIN_*`, `BUFFER_API_KEY` | The posts you queue, with their media; for relayed posts, a media URL Buffer fetches from your server | LinkedIn, Buffer, the networks behind it |

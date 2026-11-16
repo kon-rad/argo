@@ -79,9 +79,29 @@ In `local` mode there is no authentication: the server binds loopback only, and 
 
 React 19 · Vite 8 · TanStack Query 5 · React Router 7 · Tailwind 4 · `react-markdown` 10 + `remark-gfm` with a custom remark plugin that turns `[[wikilinks]]` into in-app navigation.
 
+#### Tables on a phone
+
+Under 768 px a data table is not left to squeeze or to scroll the page. It goes through `web/src/components/DataTable.tsx` and picks one of two patterns; at desktop width it is the plain table it always was.
+
+| `phone=` | On a phone | Use it when |
+|---|---|---|
+| `cards` | Each row is a card, each cell a tile under its column name. Every column is shown | Rows are read one at a time (a run, a session, a transaction) |
+| `scroll` | The table keeps its grid in its own sideways scroller: first column pinned, a "swipe sideways" hint and an edge fade while columns are off screen, focusable so arrow keys scroll it | Rows are compared down a column (tokens by model, days, query results) |
+
+Never hide a column to make a table fit. A small table that fits a phone as it is (two or three short columns) may stay a plain `<table>`: add it to the short list in `web/test/tables-audit.test.ts`, which fails on any table that is neither. The Board is not a table: on a phone one column fills most of the screen, the next shows at the edge, and a "Jump to column" select goes to any of them.
+
 ### Testing
 
 Vitest 4 + Supertest, running against a **real** `secondbrain_test` database — no mocked `pg`. The schema is rebuilt from migrations on every run.
+
+The table layouts are also checked in a real browser, at 375, 390, 800 and 1440 px, with no server and no database (Vite plus fake `/api` answers from `web/test/fixtures/`). Besides each table, every view must not scroll sideways: any box inside `<main>` that does has to hold one table, code block or tab strip, or carry `data-scroll-scope` (the board's columns). Not part of `npm test` or CI:
+
+```sh
+npm run e2e:install -w web   # once: a headless Chromium inside node_modules
+npm run e2e:tables -w web    # screenshots land in web/e2e/shots/
+```
+
+With a Playwright server elsewhere (`PW_TEST_CONNECT_WS_ENDPOINT`, say a browser in a container), set `TABLES_BROWSER_HOST` to the name that browser reaches this machine by: Vite then listens on every interface and allows that host. To compare desktop pixels with another revision, see the top of `web/e2e/mobile-tables.pw.ts`.
 
 ---
 
@@ -178,9 +198,11 @@ node --no-warnings ledger.mjs install --server https://brain.example.com --token
 node --no-warnings ledger.mjs status
 ```
 
-`install` writes `ledger.json` (0600, it holds the token) next to `ledger.db` in the OS data folder (macOS `~/Library/Application Support/secondbrain`, Linux `$XDG_DATA_HOME/secondbrain`, Windows `%LOCALAPPDATA%\secondbrain`; `SB_LEDGER_DIR` overrides) and schedules `ledger run` every two minutes (launchd, a systemd user timer, or Task Scheduler). Options: `--hermes <dir>[=<label>]` for each Hermes home (default `~/.hermes`), `--claude-dir`, `--redact-env <file>` (repeatable) for env files whose secret-named values are removed before anything leaves the machine (the server only knows its own keys; an unreadable file stops the sync rather than send unredacted), `--retain-days N` to drop synced turns older than N days on a small disk, `--proxy` for the capture proxy. `SB_LEDGER_TOKEN` overrides the stored token.
+`install` writes `ledger.json` (0600, it holds the token) next to `ledger.db` in the OS data folder (macOS `~/Library/Application Support/secondbrain`, Linux `$XDG_DATA_HOME/secondbrain`, Windows `%LOCALAPPDATA%\secondbrain`; `SB_LEDGER_DIR` overrides) and schedules `ledger run` every two minutes (launchd, a systemd user timer, or Task Scheduler). Options: `--hermes <dir>[=<label>]` for each Hermes home (default `~/.hermes`), `--claude-dir`, `--redact-env <file>` (repeatable) for env files whose secret-named values are removed before anything leaves the machine (the server only knows its own keys; an unreadable file stops the sync rather than send unredacted), `--retain-days N` to drop synced turns older than N days on a small disk, `--proxy` for the Claude Code capture proxy, and `--ollama-proxy` for the local Ollama capture proxy. `SB_LEDGER_TOKEN` overrides the stored token.
 
 **Capture proxy (optional).** Claude Code doesn't write its system prompt or tool definitions to disk. With `--proxy`, a local pass-through proxy runs as a service and `env.ANTHROPIC_BASE_URL` in `~/.claude/settings.json` points new Claude Code sessions at it: it forwards every request unchanged, never records headers, and keeps each Messages call with the system prompt, tools and messages stored once by hash. If it stops answering, the next `ledger run` takes Claude Code off it; `ledger proxy-off` does that by hand.
+
+`--ollama-proxy` starts a second listener and prints its base URL (default `http://127.0.0.1:11435`). Point an Ollama or OpenAI-compatible caller at that URL to record native chat, generation and embedding calls plus OpenAI-compatible chat, completion and embedding calls. The listener forwards to `http://127.0.0.1:11434` by default; `--ollama-listen` and `--ollama-upstream` override the two addresses without reconfiguring Ollama. Only calls aimed at the proxy are recorded.
 
 **Hermes tokens per request.** Hermes keeps only session totals. The plugin in `harness/hermes/usage-ledger/` appends one JSON line per model request (tokens, model, provider, timing, and a match key: the response's tool-call ids or a hash of its text, never the text) to `<hermes home>/usage/calls-YYYY-MM-DD.jsonl`. Install it in every home and profile with `harness/hermes/install-usage-ledger.sh <hermes-home>...`, then restart the gateway. The ledger, `secondbrain agents-sync` and the Mac archive run read those files into `usage_calls` (source `hermes` or `hermes:<profile>`), and the session view puts each call's tokens on the response it made. Usage totals still take Hermes from its own session counters. Known gaps: Hermes runs one hook per turn at a time, so a second side call finishing at the same moment in the same turn is skipped (Hermes logs a warning); side calls with no session (idle gateway work) are not recorded. With `--proxy`, the ledger syncs only when `--redact-env` is set, because proxy captures are stored by content hash and can't be redacted afterwards.
 

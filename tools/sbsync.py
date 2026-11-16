@@ -40,7 +40,7 @@ SETTLE_CHECKS = 5
 SCAN_CAP = 5 * 1024 * 1024  # the built-in rules read at most this much of a staged file
 POLICY_DEFAULT = {"owner": "stop", "agent": "both"}
 JSON_DEFAULTS = {"remote": "origin", "branch": "main", "agentOwned": [], "embeddedRepos": "ignore",
-                 "maxFileMB": 20, "settleSeconds": 90, "heartbeat": False}
+                 "maxFileMB": 20, "settleSeconds": 90, "heartbeat": False, "alertRepeatHours": 6}
 
 # Files that are secrets by name, whatever is in them. `.env.example` and public keys are fine.
 SECRET_NAME = re.compile(r"^(\.env(\.(?!example$).*)?|.*\.(pem|key|p12|pfx|keystore)|id_(rsa|dsa|ecdsa|ed25519))$")
@@ -117,6 +117,12 @@ class Settings:
         self.max_bytes = int(float(js["maxFileMB"]) * 1024 * 1024)
         self.settle_seconds = float(js["settleSeconds"])
         self.heartbeat = bool(js["heartbeat"])
+        try:
+            hours = float(js["alertRepeatHours"])  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            hours = float(JSON_DEFAULTS["alertRepeatHours"])  # type: ignore[arg-type]
+        # How often a conflict that is still there is announced again; 0 or less: once only.
+        self.alert_repeat: Optional[timedelta] = timedelta(hours=hours) if hours > 0 else None
 
     @staticmethod
     def read_json(vault: Path, env: Dict[str, str]) -> Dict[str, object]:
@@ -178,6 +184,13 @@ class Git:
     def in_rebase(self) -> bool:
         gd = self.git_dir()
         return (gd / "rebase-merge").exists() or (gd / "rebase-apply").exists()
+
+    def in_merge(self) -> bool:
+        return (self.git_dir() / "MERGE_HEAD").exists()
+
+    def blob_id(self, rev: str, path: str) -> Optional[str]:
+        r = self.run("rev-parse", "-q", "--verify", f"{rev}:{path}", check=False)
+        return r.stdout.strip() if r.returncode == 0 else None
 
     def status(self) -> List[Tuple[str, str]]:
         """(XY, path) for every changed or untracked path."""
@@ -270,13 +283,16 @@ class State:
         tmp.write_text(json.dumps(self.data, indent=2, sort_keys=True) + "\n")
         os.replace(tmp, self.file)
 
-    def alert(self, key: str, title: str, text: str) -> None:
-        """Once per key until clear(key): a conflict left for a day is one notification."""
+    def alert(self, key: str, title: str, text: str, repeat: Optional[timedelta] = None) -> None:
+        """Once per key until clear(key); with `repeat`, again every `repeat` while the key stays active."""
         alerted: Dict[str, str] = self.data["alerted"]  # type: ignore[assignment]
-        self.log(f"alert[{key}]: {title}: {text}" + (" (already sent)" if key in alerted else ""))
-        if key in alerted:
+        now = utcnow()
+        sent = parse_iso(alerted.get(key))
+        due = key not in alerted or (repeat is not None and (sent is None or now - sent >= repeat))
+        self.log(f"alert[{key}]: {title}: {text}" + ("" if due else " (already sent)"))
+        if not due:
             return
-        alerted[key] = iso(utcnow())
+        alerted[key] = iso(now)
         notify(self.s, title, text, self.log)
 
     def clear(self, key: str) -> None:
@@ -338,6 +354,17 @@ class Lock:
     def __exit__(self, *exc) -> None:
         if self.held:
             shutil.rmtree(self.dir, ignore_errors=True)
+
+
+def duration(d: timedelta) -> str:
+    """'3d 4h', '5h 12m', '7m': how long, in the two largest units."""
+    mins = max(0, int(d.total_seconds()) // 60)
+    days, hours, mins = mins // 1440, mins // 60 % 24, mins % 60
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {mins}m"
+    return f"{mins}m"
 
 
 def summary(paths: List[str], limit: int = 4) -> str:
@@ -476,10 +503,16 @@ def write_blob(s: Settings, git: Git, path: str, data: bytes) -> None:
     git.run("add", "--", path)
 
 
-def take_side(s: Settings, git: Git, path: str, side: str) -> List[str]:
-    """During a rebase, stage 2 is upstream (remote), stage 3 is the local commit being replayed."""
-    remote = git.blob(f":2:{path}")
-    local = git.blob(f":3:{path}")
+def take_side(s: Settings, git: Git, path: str, side: str, during: str) -> List[str]:
+    """Resolve one conflicted path. The stage numbers swap between the two operations: during a
+    rebase stage 2 is upstream (remote) and stage 3 the local commit being replayed; during a merge
+    stage 2 is the local tip (ours) and stage 3 is upstream (theirs)."""
+    if during == "rebase":
+        remote, local = git.blob(f":2:{path}"), git.blob(f":3:{path}")
+    elif during == "merge":
+        local, remote = git.blob(f":2:{path}"), git.blob(f":3:{path}")
+    else:
+        raise ValueError(f"during must be rebase or merge, not {during!r}")
     copies: List[str] = []
     if side == "both":
         if remote is not None and local is not None:
@@ -501,30 +534,94 @@ def take_side(s: Settings, git: Git, path: str, side: str) -> List[str]:
     return copies
 
 
+def commit_ident(s: Settings, git: Git) -> List[str]:
+    """`-c` options naming this machine when the checkout has no git identity of its own."""
+    if git.run("config", "user.email", check=False).stdout.strip():
+        return []
+    return ["-c", f"user.name={s.machine}", "-c", "user.email=secondbrain-sync@localhost"]
+
+
+def conflicted_paths(git: Git) -> List[str]:
+    return [p for p in git.out("diff", "--name-only", "--diff-filter=U").splitlines() if p]
+
+
+def resolve_paths(s: Settings, git: Git, st: State, paths: List[str], during: str) -> Tuple[List[str], List[str]]:
+    """Apply the per-path policy. Returns (copies written, note paths left unresolved)."""
+    copies: List[str] = []
+    unresolved: List[str] = []
+    for path in paths:
+        side = owner_of(s, path)
+        if side == "note":
+            if s.conflicts == "stop":
+                unresolved.append(path)
+                continue
+            side = "both"
+        copies.extend(take_side(s, git, path, side, during))
+        st.log(f"conflict on {path}: took {side}")
+    return copies, unresolved
+
+
+def last_line(r: subprocess.CompletedProcess, default: str) -> str:
+    text = (r.stderr or "").strip() or (r.stdout or "").strip()
+    return text.splitlines()[-1] if text else default
+
+
+def merge(s: Settings, git: Git, st: State, rebase_conflicts: List[str]) -> Tuple[str, List[str]]:
+    """Merge upstream in one step after a rebase stopped on notes.
+
+    A rebase replays every local commit, so an old intermediate version of a note can clash with
+    upstream even when both final versions match. A merge only compares the two tips with their base.
+    Returns like rebase(). On 'conflict' or 'error' the merge is aborted and the tree is left clean."""
+    same = [p for p in rebase_conflicts if git.blob_id("HEAD", p) == git.blob_id(s.upstream, p)]
+    if same:
+        st.log(f"merge: {summary(same)} identical on both tips; not a conflict")
+    ident = commit_ident(s, git)
+    msg = f"sync({s.machine}): merge {s.upstream} after a rebase conflict on {summary(rebase_conflicts)}"
+    r = git.run(*ident, "merge", "--no-edit", "-q", "-m", msg, s.upstream, check=False)
+    if r.returncode == 0:
+        return "ok", []
+    if not git.in_merge():
+        return "error", ["merge failed: " + last_line(r, "unknown reason")]
+    conflicted = conflicted_paths(git)
+    if not conflicted:
+        git.run("merge", "--abort", check=False)
+        return "error", ["merge stopped without conflicts: " + last_line(r, "unknown reason")]
+    copies, unresolved = resolve_paths(s, git, st, conflicted, "merge")
+    if unresolved:
+        git.run("merge", "--abort", check=False)
+        return "conflict", sorted(unresolved)
+    r = git.run(*ident, "commit", "-q", "--no-edit", check=False)
+    if r.returncode != 0:
+        git.run("merge", "--abort", check=False)
+        return "error", ["merge commit failed: " + last_line(r, "unknown reason")]
+    return "ok", copies
+
+
 def rebase(s: Settings, git: Git, st: State) -> Tuple[str, List[str]]:
-    """Rebase onto upstream. Returns ('ok', copies) | ('conflict', files) | ('error', [message])."""
+    """Rebase onto upstream, falling back to a merge when the rebase stops on notes.
+    Returns ('ok', copies) | ('conflict', files) | ('error', [message])."""
+    if git.ok("merge-base", "--is-ancestor", s.upstream, "HEAD"):
+        # Nothing to replay. This also keeps an earlier fallback merge commit as it is: a plain
+        # rebase would flatten it and replay the local commits again, into the same conflicts.
+        return "ok", []
     r = git.run("rebase", "-q", s.upstream, check=False)
     copies: List[str] = []
     while r.returncode != 0:
         if not git.in_rebase():
             return "error", [r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "rebase failed"]
-        conflicted = [p for p in git.out("diff", "--name-only", "--diff-filter=U").splitlines() if p]
+        conflicted = conflicted_paths(git)
         if not conflicted:
             git.run("rebase", "--abort", check=False)
             return "error", ["rebase stopped without conflicts: " + (r.stderr.strip() or "unknown reason")]
-        unresolved = []
-        for path in conflicted:
-            side = owner_of(s, path)
-            if side == "note":
-                if s.conflicts == "stop":
-                    unresolved.append(path)
-                    continue
-                side = "both"
-            copies.extend(take_side(s, git, path, side))
-            st.log(f"conflict on {path}: took {side}")
+        more, unresolved = resolve_paths(s, git, st, conflicted, "rebase")
+        copies.extend(more)
         if unresolved:
+            unresolved.sort()
             git.run("rebase", "--abort", check=False)
-            return "conflict", sorted(unresolved)
+            res, detail = merge(s, git, st, unresolved)
+            how = summary(detail) if res == "conflict" else (detail[0] if res == "error" else "")
+            st.log(f"rebase conflict on {summary(unresolved)}; merged instead: {res}" + (f" ({how})" if how else ""))
+            return res, detail
         r = git.run("rebase", "--continue", check=False)
     return "ok", copies
 
@@ -557,6 +654,20 @@ def run_once(s: Settings) -> int:
         st.save()
         st.log(f"result: {result}" + (f" ({error})" if error else ""))
         return 0 if result in ("ok", "busy", "offline", "dry-run") else 1
+
+    def conflict(files: List[str]) -> int:
+        """Stopped on notes: alert, and again every alert_repeat while it stays stuck."""
+        st.data["conflict_files"] = files
+        since = parse_iso(st.data.get("conflict_since"))  # type: ignore[arg-type]
+        if since is None:
+            since = now
+            st.data["conflict_since"] = iso(now)
+        ahead, behind = git.counts(s.upstream)
+        st.alert("conflict:" + ",".join(files), "Second Brain sync stopped on a conflict",
+                 f"{summary(files)}. Stuck for {duration(utcnow() - since)} (since {iso(since)}), "
+                 f"{ahead} ahead and {behind} behind. Local commits are kept; pull and push wait until it is resolved.",
+                 repeat=s.alert_repeat)
+        return finish("conflict", summary(files))
 
     if not git.ok("rev-parse", "--git-dir"):
         return finish("error", f"{s.vault} is not a git checkout")
@@ -595,9 +706,7 @@ def run_once(s: Settings) -> int:
                     git.run("reset", "-q")
                     st.log(f"dry run: would commit {summary(paths)}")
                 else:
-                    ident = [] if git.run("config", "user.email", check=False).stdout.strip() else \
-                        ["-c", f"user.name={s.machine}", "-c", "user.email=secondbrain-sync@localhost"]
-                    r = git.run(*ident, "commit", "-q", "-m", f"sync({s.machine}): {summary(paths)}", check=False)
+                    r = git.run(*commit_ident(s, git), "commit", "-q", "-m", f"sync({s.machine}): {summary(paths)}", check=False)
                     if r.returncode != 0:
                         git.run("reset", "-q")
                         return finish("error", "commit failed: " + r.stderr.strip().splitlines()[-1])
@@ -621,15 +730,13 @@ def run_once(s: Settings) -> int:
 
             res, detail = rebase(s, git, st)
             if res == "conflict":
-                st.data["conflict_files"] = detail
-                st.alert("conflict:" + ",".join(detail), "Second Brain sync stopped on a conflict",
-                         f"{summary(detail)}. Local commits are kept; pull and push wait until it is resolved.")
-                return finish("conflict", summary(detail))
+                return conflict(detail)
             if res == "error":
                 return finish("error", detail[0])
             for k in [k for k in st.data["alerted"] if k.startswith("conflict:")]:  # type: ignore[union-attr]
                 st.clear(k)
             st.data["conflict_files"] = []
+            st.data.pop("conflict_since", None)
             if detail:
                 st.log(f"kept both versions: {', '.join(detail)}")
 
@@ -644,10 +751,7 @@ def run_once(s: Settings) -> int:
                     if attempt == 1 and git.ok("fetch", "-q", s.remote, s.branch):
                         res, detail = rebase(s, git, st)
                         if res == "conflict":
-                            st.data["conflict_files"] = detail
-                            st.alert("conflict:" + ",".join(detail), "Second Brain sync stopped on a conflict",
-                                     f"{summary(detail)}. Local commits are kept; pull and push wait until it is resolved.")
-                            return finish("conflict", summary(detail))
+                            return conflict(detail)
                         if res == "error":
                             return finish("error", detail[0])
                 if not pushed:

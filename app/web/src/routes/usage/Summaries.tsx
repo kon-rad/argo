@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, type AgentSummary } from '../../lib/api.js';
+import DataTable from '../../components/DataTable.js';
 import { zoned } from '../../lib/time.js';
 import { useAppTimezone } from '../../lib/useTimezone.js';
 import { sessionLink } from './AgentSessions.js';
@@ -85,7 +86,7 @@ export default function Summaries() {
         <p className="text-xs text-[var(--ink-dim)]">One record per finished agent session, any harness, any machine. The request, what was done, what was learned and what is open are written by a model; the outcome check, tokens, tool calls and files are counted from the transcript. For tokens by hour, model, provider and harness see <Link className="underline" to="/usage?view=ledger&group=provider">Usage</Link>.</p>
       </header>
 
-      <section aria-label="Overview" className="grid gap-3 sm:grid-cols-2">
+      <section aria-label="Overview" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
             <span><b>{o?.summarized ?? '…'}</b> summarized</span>
@@ -96,7 +97,7 @@ export default function Summaries() {
           <div className="mt-1 flex flex-wrap gap-1 text-xs">{o?.outcomes.map((x) => <span key={x.key}><Chip outcome={x.key} /> {x.n}</span>)}</div>
           <div className="mt-2 text-xs text-[var(--ink-dim)]">Written by {o?.writers.length ? o.writers.map((w) => `${w.key} (${w.n}, ${formatTokens(Number(w.input) + Number(w.output))} tokens)`).join('; ') : 'nothing yet'}</div>
         </div>
-        <table className="w-full text-xs">
+        <DataTable label="Sessions by day" phone="scroll" className="w-full text-xs">
           <thead className="text-left text-[var(--ink-dim)]"><tr><th>Day</th><th className="text-right">Sessions</th><th className="text-right">Stuck</th><th className="text-right">Errors / session</th><th>Tokens</th></tr></thead>
           <tbody>{o?.days.map((d) => (
             <tr key={d.day} className="border-t border-[var(--rule)]">
@@ -105,7 +106,7 @@ export default function Summaries() {
               <td className="w-32"><div className="h-2 bg-[var(--ink-dim)]" style={{ width: `${Math.max(2, (Number(d.tokens) / maxTokens) * 100)}%` }} title={`${formatTokens(Number(d.tokens))} tokens`} /></td>
             </tr>
           ))}</tbody>
-        </table>
+        </DataTable>
       </section>
 
       <section aria-label="Summaries list">

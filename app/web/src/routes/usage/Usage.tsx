@@ -7,6 +7,7 @@ import {
 } from '../../lib/api.js';
 import LineChart from '../../components/charts/LineChart.js';
 import { AgentAvatar } from '../../components/AgentAvatar.js';
+import DataTable from '../../components/DataTable.js';
 import StackedBars, { type BarSeries } from '../../components/charts/StackedBars.js';
 import { bucketEnd, formatTokens, money, TYPE_SERIES } from './format.js';
 import { zoned } from '../../lib/time.js';
@@ -131,7 +132,7 @@ function FilterBar({ filters, facets, onAdd, onRemove, onClear }: {
   const chips = USAGE_DIMENSIONS.flatMap((d) => (filters[d] ?? []).map((v) => ({ d, v })));
   const values = dim ? (facets?.facets?.[dim] ?? []).filter((x) => !(filters[dim] ?? []).includes(x.value)) : [];
   return (
-    <div className="flex flex-wrap items-center gap-2 text-sm" aria-label="Filters">
+    <div className="flex flex-wrap items-center gap-2 text-sm" role="group" aria-label="Filters">
       <span className="text-xs text-[var(--ink-dim)]">Filter</span>
       {chips.map(({ d, v }) => (
         <span key={`${d}=${v}`} className="inline-flex items-center gap-1 rounded-full border border-[var(--rule)] bg-[var(--paper-sunk)] px-2 py-0.5 text-xs">
@@ -266,7 +267,7 @@ function UsageLedger({ claudeConfigured, onSelectBucketZone }: { claudeConfigure
         <section>
           <h2 className="text-sm font-semibold">Tokens by {USAGE_DIMENSION_LABELS[group]}</h2>
           <p className="text-xs text-[var(--ink-dim)]">{formatTokens(total)} tokens in {facets.data?.total?.calls ?? 0} calls{sel ? ` in ${fmtBucket(sel)}` : ''}. Click a row to filter on it.</p>
-          <div className="overflow-x-auto"><table className="w-full text-sm">
+          <DataTable label={`Tokens by ${USAGE_DIMENSION_LABELS[group]}`} phone="scroll" className="w-full text-sm">
             <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
               <th>{USAGE_DIMENSION_LABELS[group]}</th><th className="text-right">Calls</th><th className="text-right">Tokens</th><th className="text-right">Share</th>
               <th className="text-right">Output</th><th className="text-right">Per call</th>
@@ -284,7 +285,7 @@ function UsageLedger({ claudeConfigured, onSelectBucketZone }: { claudeConfigure
               ))}
               {breakdown.length === 0 && <tr><td colSpan={6} className="py-2 text-xs text-[var(--ink-faint)]">Nothing in this range.</td></tr>}
             </tbody>
-          </table></div>
+          </DataTable>
         </section>
       )}
 
@@ -299,7 +300,7 @@ function UsageLedger({ claudeConfigured, onSelectBucketZone }: { claudeConfigure
       <section>
         <h2 className="text-sm font-semibold">Runs (bots and lanes)</h2>
         <p className="text-xs text-[var(--ink-dim)]">One row per headless run (<code>claude -p</code> or zen-agent). Click a bot, reason, area or work type to filter on it. Cost is shown only where the runtime priced the run itself.</p>
-        <div className="overflow-x-auto"><table className="w-full text-sm">
+        <DataTable label="Runs" phone="cards" className="w-full text-sm">
           <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
             <th>When</th><th>Who</th><th>Woken by</th><th>Card</th><th>Project</th><th>Work</th>
             <th className="text-right">Tokens</th><th className="text-right">Output</th><th className="text-right">Cost</th><th className="text-right">Turns</th><th className="text-right">Min</th><th>Verify</th>
@@ -321,19 +322,19 @@ function UsageLedger({ claudeConfigured, onSelectBucketZone }: { claudeConfigure
                   <td className="text-right" title={r.outcome ?? ''}>{r.cost_usd == null ? '' : `$${Number(r.cost_usd).toFixed(4)}`}</td>
                   <td className="text-right">{r.num_turns ?? ''}</td>
                   <td className="text-right">{r.duration_ms === null ? '' : (r.duration_ms / 60000).toFixed(1)}</td>
-                  <td title={r.verify_output ?? ''}>{r.verify_name === null ? '' : `${r.verify_passed ? 'passed' : 'failed'} ${r.verify_name}${r.verify_metric === null ? '' : ` (${r.verify_metric})`}`}</td>
+                  <td className="max-md:col-span-2" title={r.verify_output ?? ''}>{r.verify_name === null ? '' : `${r.verify_passed ? 'passed' : 'failed'} ${r.verify_name}${r.verify_metric === null ? '' : ` (${r.verify_metric})`}`}</td>
                 </tr>
               );
             })}
             {runs.data?.runs?.length === 0 && <tr><td colSpan={12} className="py-2 text-xs text-[var(--ink-faint)]">No runs in this range.</td></tr>}
           </tbody>
-        </table></div>
+        </DataTable>
       </section>
 
       <section>
         <h2 className="text-sm font-semibold">Agent wakes (the company board)</h2>
         <p className="text-xs text-[var(--ink-dim)]">Each wake is one <code>claude -p</code> run against the shared daily cap. Open = waiting or running. Tokens are the bot's calls in this range.</p>
-        <div className="overflow-x-auto"><table className="w-full text-sm">
+        <DataTable label="Agent wakes" phone="scroll" className="w-full text-sm">
           <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
             <th>Agent</th><th>Team</th><th className="text-right">Wakes</th><th className="text-right">Done</th><th className="text-right">Open</th>
             <th className="text-right">Routine</th><th className="text-right">DM</th><th className="text-right">Mention</th><th className="text-right">Card</th>
@@ -356,7 +357,7 @@ function UsageLedger({ claudeConfigured, onSelectBucketZone }: { claudeConfigure
               <tr><td colSpan={12} className="py-2 text-xs text-[var(--ink-faint)]">No wakes in this range.</td></tr>
             )}
           </tbody>
-        </table></div>
+        </DataTable>
       </section>
     </div>
   );
@@ -431,9 +432,12 @@ export default function Usage() {
   const labels: Record<UsageSection, string> = { running: 'Running now', ledger: 'Ledger', sessions: 'Sessions', summaries: 'Summaries' };
   return (
     <div className="flex h-full flex-col">
-      <div role="tablist" aria-label="Usage views" className="flex shrink-0 flex-wrap gap-1 border-b border-[var(--rule)] px-4 pt-2">
-        {sections.map((section) => tab(section, labels[section]))}
-        {tab('account', 'Account')}
+      <div className="flex shrink-0 flex-wrap gap-1 border-b border-[var(--rule)] px-4 pt-2">
+        <div role="tablist" aria-label="Usage views" className="flex flex-wrap gap-1">
+          {sections.map((section) => tab(section, labels[section]))}
+          {tab('account', 'Account')}
+        </div>
+        {/* A link to another page, so it sits beside the tab list, not in it. */}
         {sections.includes('running') && <RunningLink />}
       </div>
       {view && <div role="tabpanel" id={`usage-panel-${view}`} aria-labelledby={`usage-tab-${view}`} aria-label={view === 'account' ? 'Account' : labels[view]} className="min-h-0 flex-1">
