@@ -95,8 +95,9 @@ body {
   @supports (height: 100dvh) {
     html, body, #root { height: 100dvh; }
   }
-  /* Long unbroken strings (URLs, hashes, paths) wrap instead of widening the page. */
-  main { overflow-wrap: anywhere; }
+  /* Long unbroken strings (URLs, hashes, paths) wrap instead of widening the page. Dialogs (the
+     menu, the chat panel) render outside main. */
+  main, [role="dialog"] { overflow-wrap: anywhere; }
 }
 
 /* Markdown body. Scoped so Tailwind's reset stays in force everywhere else. */

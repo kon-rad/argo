@@ -5,32 +5,32 @@ import { MemoryRouter } from 'react-router-dom';
 import Projects from '../src/routes/Projects.js';
 
 const counts = { idea: 1, designing: 0, building: 0, testing: 1, live: 0, parked: 0, done: 0 };
-const feature = (slug: string, title: string, stage: string) => ({
-  id: slug === 'core' ? 1 : 2, slug, title, stage, health: null, owner: 'claude-code', goals: [], needs_owner: null, blocked_on: null,
+const project = (slug: string, title: string, stage: string) => ({
+  id: slug === 'core' ? 1 : 2, area: 'lifeos', slug, title, outcome: slug === 'core' ? 'The core answers /v1/days' : title, next_action: null, archived_at: null, stage, health: null, owner: 'claude-code', goals: [], needs_owner: null, blocked_on: null,
   due: null, shipped_at: null, notes_path: null, updated_at: '2026-10-14T00:00:00Z', updated_by: 't', days_in_stage: 3,
   verification: null, verifications_total: 0,
 });
 const REPORT = {
   as_of: '2026-10-14T00:00:00Z',
   generated_at: '2026-10-14T00:00:00Z',
-  totals: { projects: { ...counts, idea: 0, testing: 0, building: 1 }, features: counts },
-  needs_owner: [{ project: 'lifeos', feature: null, title: 'argo-lifeos', detail: 'Write the README pitch', priority: 2, due: null }],
-  divisions: [{ slug: 'lifeos', name: 'LifeOS', projects: ['lifeos'], in_flight: 1, shipped_7d: 0, needs_owner: 1, stages: { ...counts, idea: 0, testing: 0, building: 1 } }],
-  teams: [{ slug: 'platform', name: 'Platform', lead: 'claude-code', projects: ['lifeos'], in_flight: 1, shipped_7d: 0, needs_owner: 1, stages: { ...counts, idea: 0, testing: 0, building: 1 } }],
-  goals: [{ code: 'W2', horizon: 'This week', goal: 'Livestream', due: '2026-10-18', status: 'open', projects: [], features: [] }],
+  totals: { areas: { active: 1, parked: 0 }, projects: counts },
+  needs_owner: [{ area: 'lifeos', project: null, title: 'argo-lifeos', detail: 'Write the README pitch', priority: 2, due: null }],
+  divisions: [{ slug: 'lifeos', name: 'LifeOS', areas: ['lifeos'], in_flight: 1, shipped_7d: 0, needs_owner: 1, statuses: { active: 1, parked: 0 } }],
+  teams: [{ slug: 'platform', name: 'Platform', lead: 'claude-code', areas: ['lifeos'], in_flight: 1, shipped_7d: 0, needs_owner: 1, statuses: { active: 1, parked: 0 } }],
+  goals: [{ code: 'W2', horizon: 'This week', goal: 'Livestream', due: '2026-10-18', status: 'open', areas: [], projects: [] }],
   gaps: {
-    goals_uncovered: [{ code: 'W2', horizon: 'This week', goal: 'Livestream', due: '2026-10-18', status: 'open', projects: [], features: [] }],
-    unverified_shipped: [], failing: [], testing_unverified: [{ project: 'lifeos', feature: 'core', title: 'Headless core', detail: '3d in testing' }],
-    stale: [], overdue: [], no_team: [], no_division: [], no_features: [],
+    goals_uncovered: [{ code: 'W2', horizon: 'This week', goal: 'Livestream', due: '2026-10-18', status: 'open', areas: [], projects: [] }],
+    unverified_shipped: [], failing: [], testing_unverified: [{ area: 'lifeos', project: 'core', title: 'Headless core', detail: '3d in testing' }],
+    stale: [], overdue: [], no_team: [], no_division: [], no_projects: [],
   },
-  oldest: [], backlog: { total: 1, by_project: [{ project: 'lifeos', count: 1, oldest_days: 3 }] }, moved_7d: [], shipped_7d: [],
+  oldest: [], backlog: { total: 1, by_area: [{ area: 'lifeos', count: 1, oldest_days: 3 }] }, moved_7d: [], shipped_7d: [],
   verified_7d: { pass: 0, fail: 0 },
-  projects: [
+  areas: [
     {
-      slug: 'lifeos', title: 'argo-lifeos', team: 'platform', division: 'lifeos', area: 'argo', stage: 'building', health: 'green', priority: 2, goals: ['W1'],
+      slug: 'lifeos', title: 'argo-lifeos', team: 'platform', division: 'lifeos', status: 'active', home_path: null, archived_at: null, health: 'green', priority: 2, goals: ['W1'],
       needs_owner: 'Write the README pitch', blocked_on: null, due: null, devlog_path: 'Areas/x/dev-log/README.md', design_path: null,
-      updated_at: '2026-10-14T00:00:00Z', days_in_stage: 2, next_action: 'Write /v1/days', counts, progress: 0,
-      features: [feature('core', 'Headless core', 'testing'), feature('mcp', 'MCP server', 'idea')],
+      updated_at: '2026-10-14T00:00:00Z', next_action: 'Write /v1/days', counts, progress: 0,
+      projects: [project('core', 'Headless core', 'testing'), project('mcp', 'MCP server', 'idea')],
     },
   ],
 };
@@ -62,29 +62,36 @@ afterEach(() => {
 
 describe('Projects page', () => {
   it('overview shows needs-you and the gaps', async () => {
-    mount('/projects');
+    mount('/projects?view=overview');
     expect(await screen.findByRole('heading', { name: 'Needs you (1)' })).toBeTruthy();
     expect(screen.getAllByText(/Write the README pitch/).length).toBeGreaterThan(0);
     expect(screen.getByText(/W2 Livestream/)).toBeTruthy();
   });
 
-  it('board puts features in stage columns and shows a refused move', async () => {
+  it('board puts projects in stage columns under their area and shows a refused move', async () => {
     mount('/projects?view=board', (url, init) =>
       init?.method === 'PATCH' ? Response.json({ error: { message: "can't move to live: it has no verification" } }, { status: 409 }) : undefined,
     );
     expect(await screen.findByText('Headless core')).toBeTruthy();
     expect(screen.getByText('Testing (1)')).toBeTruthy();
     expect(screen.getByText('Next:')).toBeTruthy();
+    // The area shows its status, the project its outcome.
+    expect(screen.getByText('Active')).toBeTruthy();
+    expect(screen.getByText('Outcome: The core answers /v1/days')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Stage of Headless core'), { target: { value: 'live' } });
     await waitFor(() => expect(screen.getByText(/has no verification/)).toBeTruthy());
+    // The move went to the project's own path: /api/projects/<area>/<project>.
+    const fetched = (globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL, RequestInit?][] } }).mock.calls;
+    expect(fetched.filter(([, init]) => init?.method === 'PATCH').map(([url]) => new URL(String(url), 'http://x').pathname)).toEqual(['/api/projects/lifeos/core']);
+    expect(fetched.some(([url]) => new URL(String(url), 'http://x').pathname === '/api/areas/report')).toBe(true);
   });
 
-  it('board shows a feature\'s cards with the bot and status, and gives a new card to the team lead by default', async () => {
+  it('board shows a project\'s cards with the bot and status, and gives a new card to the team lead by default', async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     mount('/projects?view=board', (url, init) => {
       calls.push({ url, init });
       const u = new URL(url, 'http://x');
-      if (u.pathname === '/api/org/tasks') return Response.json({ tasks: [{ task_id: 't_abc123', board: 'exo', title: 'Write /v1/days', project_slug: 'lifeos', feature_slug: 'core', assignee: 'rune', created_by: 'owner', rounds: 1, created_at: '2026-10-15T05:00:00Z', status: 'running' }] });
+      if (u.pathname === '/api/org/tasks') return Response.json({ tasks: [{ task_id: 't_abc123', board: 'exo', title: 'Write /v1/days', area_slug: 'lifeos', project_slug: 'core', assignee: 'rune', created_by: 'owner', rounds: 1, created_at: '2026-10-15T05:00:00Z', status: 'running' }] });
       if (u.pathname === '/api/org/chart') return Response.json({ teams: [{ slug: 'platform', name: 'Platform', lead: 'atlas' }, { slug: 'media', name: 'Media', lead: 'juno' }], agents: [
         { name: 'owner', team_slug: null, team_name: null, runtime: 'human', role: 'CEO', is_lead: false },
         { name: 'atlas', team_slug: 'platform', team_name: 'Platform', runtime: 'claude-code', role: 'Head of Platform', is_lead: true },
@@ -103,18 +110,18 @@ describe('Projects page', () => {
     const card = screen.getByText('Headless core').closest('div.rounded') as HTMLElement;
     fireEvent.click(within(card).getByRole('button', { name: 'give to a bot' }));
     const bot = (await screen.findByLabelText('Bot for Headless core')) as HTMLSelectElement;
-    expect(bot.value).toBe('atlas'); // the project team's lead
+    expect(bot.value).toBe('atlas'); // the area team's lead
     expect(screen.getByRole('option', { name: 'juno (Media)' })).toBeTruthy(); // other teams are marked
     fireEvent.change(screen.getByLabelText('Card title for Headless core'), { target: { value: 'Add tests' } });
     fireEvent.click(screen.getByRole('button', { name: 'Give to atlas' }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')).toBe(true));
-    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')!.init?.body))).toEqual({ title: 'Add tests', assignee: 'atlas', project: 'lifeos', feature: 'core' });
+    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')!.init?.body))).toEqual({ title: 'Add tests', assignee: 'atlas', area: 'lifeos', project: 'core' });
   });
 
-  it('divisions view groups projects under their division', async () => {
+  it('divisions view groups areas under their division', async () => {
     mount('/projects?view=divisions');
     expect(await screen.findByRole('heading', { name: 'LifeOS' })).toBeTruthy();
-    expect(screen.getByText(/1 projects · 1 features in flight/)).toBeTruthy();
+    expect(screen.getByText(/1 areas · 1 projects in flight/)).toBeTruthy();
   });
 
   it('goals view flags goals with nothing linked', async () => {

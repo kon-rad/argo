@@ -15,7 +15,7 @@ import { getAgent, OrgError, type Agent, type Message } from './org.js';
  * the three sources `cli-org recall` merges (the vault search is the third, run in cli-org on the app's connection).
  */
 
-const MESSAGE_COLS = 'id, channel_slug, thread_id, author, kind, body, mentions, urgent, task_id, project_slug, feature_slug, run_id, created_at';
+const MESSAGE_COLS = 'id, channel_slug, thread_id, author, kind, body, mentions, urgent, task_id, area_slug, project_slug, run_id, created_at';
 const CARD_ID = /^t_[0-9a-f]{6,32}$/;
 const SHIP_CAPS = ['code', 'merge', 'deploy'];
 /** An approval is good for a week; after that the bot asks again with what changed. */
@@ -61,7 +61,7 @@ export async function shipRequest(caller: Agent, opts: ShipRequestOpts): Promise
   if (opts.pr === undefined && opts.deploy === undefined) throw new OrgError('ship request needs --pr <url>, --deploy <target>, or both');
   const summary = opts.summary.trim();
   if (!summary || summary.length > 2000) throw new OrgError('the summary is 1 to 2000 characters: what changed, the tests that ran, what the deploy touches');
-  const { rows: link } = await query<{ project_slug: string | null; feature_slug: string | null }>(`SELECT project_slug, feature_slug FROM task_links WHERE task_id = $1`, [opts.card]);
+  const { rows: link } = await query<{ area_slug: string | null; project_slug: string | null }>(`SELECT area_slug, project_slug FROM task_links WHERE task_id = $1`, [opts.card]);
   if (!link[0]) throw new OrgError(`card ${opts.card} has no link row; company work goes through cli-org task create|assign`);
 
   const { rows: open } = await query<Approval>(
@@ -77,9 +77,9 @@ export async function shipRequest(caller: Agent, opts: ShipRequestOpts): Promise
     if (approval.status === 'pending' && caller.team_slug) {
       const what = [opts.pr ? `PR ${opts.pr}` : '', opts.deploy ? `deploy ${opts.deploy}` : ''].filter(Boolean).join(' + ');
       const { rows: m } = await tx.query<Message>(
-        `INSERT INTO org_messages (channel_slug, author, kind, body, mentions, task_id, project_slug, feature_slug, run_id)
+        `INSERT INTO org_messages (channel_slug, author, kind, body, mentions, task_id, area_slug, project_slug, run_id)
          VALUES ($1,$2,'question-for-owner',$3,'{}',$4,$5,$6,$7) RETURNING ${MESSAGE_COLS}`,
-        [caller.team_slug, caller.name, `Ship #${approval.id}? ${what}. ${summary}`, opts.card, link[0]!.project_slug, link[0]!.feature_slug, config.env.ORG_RUN ?? null],
+        [caller.team_slug, caller.name, `Ship #${approval.id}? ${what}. ${summary}`, opts.card, link[0]!.area_slug, link[0]!.project_slug, config.env.ORG_RUN ?? null],
       );
       message = m[0]!;
       await tx.query(`SELECT org_ship_set_message($1, $2)`, [approval.id, message.id]);
@@ -171,7 +171,7 @@ export interface Fact {
   source: string;
   author: string;
   via: string | null;
-  project_slug: string | null;
+  area_slug: string | null;
   /** The one agent this claim is about, or null for a company-wide fact anybody may recall (phase 6). */
   agent: string | null;
   confidence: 'confirmed' | 'inferred';
@@ -182,7 +182,7 @@ export interface Fact {
   retired_why: string | null;
 }
 
-const FACT_COLS = 'id, subject, claim, source, author, via, project_slug, agent, confidence, supersedes, valid_from, valid_to, retired_by, retired_why';
+const FACT_COLS = 'id, subject, claim, source, author, via, area_slug, agent, confidence, supersedes, valid_from, valid_to, retired_by, retired_why';
 const VIA = /^[a-z0-9][a-z0-9.@_-]{0,60}$/;
 const AGENT_NAME = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -190,7 +190,7 @@ export interface RememberOpts {
   subject: string;
   claim: string;
   source: string;
-  project?: string;
+  area?: string;
   inferred?: boolean;
   supersedes?: number;
   via?: string;
@@ -208,9 +208,9 @@ export async function remember(caller: Pick<Agent, 'name'>, opts: RememberOpts):
   if (!source || source.length > 500) throw new OrgError('every fact needs --source: a vault path, a message #id, a card t_… or a URL');
   if (opts.via !== undefined && !VIA.test(opts.via)) throw new OrgError(`bad --via "${opts.via}" (e.g. claude-code@laptop)`);
   if (opts.agent !== undefined && !AGENT_NAME.test(opts.agent)) throw new OrgError(`bad --agent "${opts.agent}" (a roster agent name)`);
-  if (opts.project) {
-    const { rowCount } = await query(`SELECT 1 FROM projects WHERE slug = $1`, [opts.project]);
-    if (!rowCount) throw new OrgError(`no project "${opts.project}" in the tracker`);
+  if (opts.area) {
+    const { rowCount } = await query(`SELECT 1 FROM areas WHERE slug = $1`, [opts.area]);
+    if (!rowCount) throw new OrgError(`no area "${opts.area}" in the tracker`);
   }
   if (opts.agent) {
     const { rowCount } = await query(`SELECT 1 FROM org_agents WHERE name = $1 AND retired_at IS NULL`, [opts.agent]);
@@ -218,9 +218,9 @@ export async function remember(caller: Pick<Agent, 'name'>, opts: RememberOpts):
   }
   return withTransaction(async (tx) => {
     const { rows } = await tx.query<Fact>(
-      `INSERT INTO memory_facts (subject, claim, source, author, via, project_slug, agent, confidence, supersedes)
+      `INSERT INTO memory_facts (subject, claim, source, author, via, area_slug, agent, confidence, supersedes)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${FACT_COLS}`,
-      [subject, claim, source, caller.name, opts.via ?? null, opts.project ?? null, opts.agent ?? null, opts.inferred ? 'inferred' : 'confirmed', opts.supersedes ?? null],
+      [subject, claim, source, caller.name, opts.via ?? null, opts.area ?? null, opts.agent ?? null, opts.inferred ? 'inferred' : 'confirmed', opts.supersedes ?? null],
     );
     const fact = rows[0]!;
     if (opts.supersedes !== undefined) await tx.query(`SELECT memory_fact_retire($1, $2, $3)`, [opts.supersedes, caller.name, `superseded by #${fact.id}`]);
@@ -233,12 +233,12 @@ export async function forget(caller: Pick<Agent, 'name'>, id: number, why: strin
   await query(`SELECT memory_fact_retire($1, $2, $3)`, [id, caller.name, why.trim().slice(0, 500)]);
 }
 
-export async function listFacts(opts: { subject?: string; project?: string; author?: string; agent?: string; all?: boolean; limit?: number } = {}): Promise<Fact[]> {
+export async function listFacts(opts: { subject?: string; area?: string; author?: string; agent?: string; all?: boolean; limit?: number } = {}): Promise<Fact[]> {
   const where: string[] = [];
   const params: unknown[] = [];
   if (!opts.all) where.push('valid_to IS NULL');
   if (opts.subject) where.push(`subject ILIKE $${params.push(`%${opts.subject}%`)}`);
-  if (opts.project) where.push(`project_slug = $${params.push(opts.project)}`);
+  if (opts.area) where.push(`area_slug = $${params.push(opts.area)}`);
   if (opts.author) where.push(`author = $${params.push(opts.author)}`);
   if (opts.agent) where.push(`agent = $${params.push(opts.agent)}`);
   const { rows } = await query<Fact>(
@@ -263,7 +263,7 @@ export interface Candidate {
   decided_by: string | null;
   decided_at: Date | null;
   created_at: Date;
-  project_slug: string | null;
+  area_slug: string | null;
   harness: string;
   host: string;
   session_id: string;
@@ -273,7 +273,7 @@ export interface Candidate {
 }
 
 const CANDIDATE_COLS = `f.id, f.summary_id, f.subject, f.claim, f.status, f.fact_id, f.agent, f.decided_by, f.decided_at, f.created_at,
-  s.project AS project_slug, s.harness, s.host, s.session_id, a.external_id, a.source, s.request`;
+  s.project AS area_slug, s.harness, s.host, s.session_id, a.external_id, a.source, s.request`;
 const CANDIDATE_JOIN = `FROM agent_summary_facts f JOIN agent_summaries s ON s.id = f.summary_id JOIN archive_sessions a ON a.id = s.session_id`;
 
 /**
@@ -328,30 +328,30 @@ export interface RecallHit {
  * way a person asks it ("why does cli-board return 401") misses a fact that has most of its words. Here a current fact
  * qualifies when it matches at least half of the query's terms (as word prefixes, one term at a time), best first.
  */
-async function recallFactsLoose(q: string, opts: { project?: string; limit?: number }): Promise<(Fact & { rank: number })[]> {
+async function recallFactsLoose(q: string, opts: { area?: string; limit?: number }): Promise<(Fact & { rank: number })[]> {
   // trimmed so each term is a valid tsquery operand; matched as a prefix ("401" finds "401s", "return" finds "returns")
   const words = terms(q).map((w) => w.replace(/^[._-]+|[._-]+$/g, '')).filter(Boolean);
   if (words.length < 2) return [];
   const params: unknown[] = [words, Math.ceil(words.length / 2)];
-  const project = opts.project ? `AND (project_slug = $${params.push(opts.project)} OR project_slug IS NULL)` : '';
+  const area = opts.area ? `AND (area_slug = $${params.push(opts.area)} OR area_slug IS NULL)` : '';
   const { rows } = await query<Fact & { hits: number }>(
     `SELECT * FROM (
        SELECT ${FACT_COLS}, (SELECT count(*)::int FROM unnest($1::text[]) AS t WHERE memory_facts.tsv @@ to_tsquery('english', t || ':*')) AS hits
-         FROM memory_facts WHERE valid_to IS NULL ${project}
+         FROM memory_facts WHERE valid_to IS NULL ${area}
      ) m WHERE hits >= $2 ORDER BY hits DESC, id DESC LIMIT $${params.push(Math.min(opts.limit ?? 8, 50))}`,
     params,
   );
   return rows.map((r) => ({ ...r, rank: r.hits / words.length }));
 }
 
-/** Current facts first, then by text rank; a project filter keeps project-less facts too (they are company-wide). */
-export async function recallFacts(q: string, opts: { project?: string; limit?: number } = {}): Promise<RecallHit[]> {
+/** Current facts first, then by text rank; a area filter keeps area-less facts too (they are company-wide). */
+export async function recallFacts(q: string, opts: { area?: string; limit?: number } = {}): Promise<RecallHit[]> {
   const params: unknown[] = [q, `%${q}%`];
-  const project = opts.project ? `AND (project_slug = $${params.push(opts.project)} OR project_slug IS NULL)` : '';
+  const area = opts.area ? `AND (area_slug = $${params.push(opts.area)} OR area_slug IS NULL)` : '';
   const { rows } = await query<Fact & { rank: number }>(
     `SELECT ${FACT_COLS}, ts_rank(tsv, websearch_to_tsquery('english', $1)) + CASE WHEN subject ILIKE $2 THEN 0.5 ELSE 0 END AS rank
        FROM memory_facts
-      WHERE valid_to IS NULL AND (tsv @@ websearch_to_tsquery('english', $1) OR subject ILIKE $2 OR claim ILIKE $2) ${project}
+      WHERE valid_to IS NULL AND (tsv @@ websearch_to_tsquery('english', $1) OR subject ILIKE $2 OR claim ILIKE $2) ${area}
       ORDER BY rank DESC, id DESC LIMIT $${params.push(Math.min(opts.limit ?? 8, 50))}`,
     params,
   );

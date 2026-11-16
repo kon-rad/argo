@@ -3,6 +3,9 @@ import { Route } from 'react-router-dom';
 import BoardPage from './routes/board/Board.js';
 import Memory from './routes/Memory.js';
 import Org from './routes/org/Org.js';
+import AreaPage from './routes/areas/AreaPage.js';
+import Areas from './routes/areas/Areas.js';
+import ProjectDetail, { OldAreaLink } from './routes/areas/ProjectDetail.js';
 import Projects from './routes/Projects.js';
 import LiveAgents from './routes/usage/LiveAgents.js';
 import Usage from './routes/usage/Usage.js';
@@ -17,7 +20,14 @@ const Desk = lazy(() => import('./routes/Desk.js'));
  * renders the entries of the modules /api/meta says are on.
  */
 export const FEATURE_ROUTES: Record<string, ReactElement[]> = {
-  projects: [<Route key="projects" path="/projects" element={<Projects />} />],
+  projects: [
+    <Route key="areas" path="/areas" element={<Areas />} />,
+    <Route key="area" path="/areas/:slug" element={<AreaPage />} />,
+    <Route key="projects" path="/projects" element={<Projects />} />,
+    <Route key="project" path="/projects/:area/:slug" element={<ProjectDetail />} />,
+    // The address an area had before it got its own page.
+    <Route key="projects-old-area" path="/projects/:area" element={<OldAreaLink />} />,
+  ],
   memory: [<Route key="memory" path="/memory" element={<Memory />} />],
   org: [<Route key="org" path="/org/*" element={<Org />} />],
   board: [

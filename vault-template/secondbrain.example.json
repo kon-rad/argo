@@ -36,6 +36,7 @@
   },
   "livestream": { "youtube": "example" },
   "projects": { "reportFile": "projects.md" },
+  "areas": { "reviewDir": "Areas/weekly-review" },
   "sync": {
     "remote": "origin",
     "branch": "main",
@@ -43,7 +44,8 @@
     "embeddedRepos": "ignore",
     "maxFileMB": 20,
     "settleSeconds": 90,
-    "heartbeat": false
+    "heartbeat": false,
+    "alertRepeatHours": 6
   },
   "chat": {
     "defaultProvider": "anthropic",

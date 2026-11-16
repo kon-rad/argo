@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Runner, RunnerResult } from './index.js';
 
 /** Codex CLI JSONL is the only source of run identity, usage and completion. */
@@ -21,6 +23,29 @@ export function subscriptionEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env = { ...source };
   for (const key of CREDENTIAL_OVERRIDES) delete env[key];
   return env;
+}
+
+/** The compiled persona for a roster agent (`.claude/agents/<name>.md`, written by the org compiler), without its
+ *  Claude Code frontmatter. Null when the vault has no such file, so a vault without a roster still runs. */
+export function codexPersona(vaultRoot: string, name: string): string | null {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) return null;
+  let raw: string;
+  try { raw = readFileSync(join(vaultRoot, '.claude', 'agents', `${name}.md`), 'utf8'); } catch { return null; }
+  const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
+  return body || null;
+}
+
+/** What a fresh Codex session is told before its task: who it is, where the board checklist is, and whether this
+ *  run can write. Codex has no `--persona` flag and does not read `.claude/agents/`, so without this the bot only
+ *  learns its name. A resumed session already holds it. */
+export function codexPreamble(persona: string | null, writable: boolean): string {
+  const lines: string[] = [];
+  if (persona) lines.push(persona, '');
+  lines.push('Your checklist for the message board is the `org-member` skill: read `.agents/skills/org-member/SKILL.md` before you post, DM or hand off.');
+  lines.push(writable
+    ? 'This run can write inside your worktree.'
+    : 'This run is read-only: a message woke you, not a card. You cannot create, edit or sync files. If the work needs writes, say so once on the card and stop; do not report the same blocker again in a DM and a channel.');
+  return lines.join('\n') + '\n\n---\n\n';
 }
 
 export function codexCommand(model: string, cwd: string, prompt: string, sessionId?: string | null, writable = false): string[] {

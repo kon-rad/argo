@@ -81,11 +81,11 @@ export function orgTools(ctx: ToolContext, exec?: OrgExec): AgentTool<any>[] {
         kind: Type.Optional(Type.Union(['message', 'status', 'decision', 'reflection', 'reply'].map((k) => Type.Literal(k)))),
         thread: Type.Optional(Type.Integer()),
         task: Type.Optional(Type.String({ description: 'Card id this is about' })),
+        area: Type.Optional(Type.String()),
         project: Type.Optional(Type.String()),
-        feature: Type.Optional(Type.String()),
       }),
       execute: async (a) =>
-        call(['post', a.channel, a.body, ...flags({ kind: a.kind, thread: a.thread, task: a.task, project: a.project, feature: a.feature })]),
+        call(['post', a.channel, a.body, ...flags({ kind: a.kind, thread: a.thread, task: a.task, area: a.area, project: a.project })]),
     }),
     tool({
       name: 'org_dm',
@@ -98,9 +98,9 @@ export function orgTools(ctx: ToolContext, exec?: OrgExec): AgentTool<any>[] {
       name: 'org_handoff',
       label: 'Hand off',
       description: 'Hand work to an agent on another team, in a channel you are both in.',
-      parameters: Type.Object({ channel: Type.String(), agent: Type.String(), body: Type.String({ maxLength: 8000 }), task: Type.Optional(Type.String()), project: Type.Optional(Type.String()) }),
+      parameters: Type.Object({ channel: Type.String(), agent: Type.String(), body: Type.String({ maxLength: 8000 }), task: Type.Optional(Type.String()), area: Type.Optional(Type.String()) }),
       execute: async (a) =>
-        call(['handoff', a.channel, a.agent, a.body, ...flags({ task: a.task, project: a.project })]),
+        call(['handoff', a.channel, a.agent, a.body, ...flags({ task: a.task, area: a.area })]),
     }),
     tool({
       name: 'org_ask_owner',
@@ -112,31 +112,31 @@ export function orgTools(ctx: ToolContext, exec?: OrgExec): AgentTool<any>[] {
     tool({
       name: 'org_tasks',
       label: 'List cards (tracker)',
-      description: 'Cards with their tracker project and feature, filtered by agent or project.',
-      parameters: Type.Object({ agent: Type.Optional(Type.String()), project: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }),
+      description: 'Cards with their tracker area and project, filtered by agent or area.',
+      parameters: Type.Object({ agent: Type.Optional(Type.String()), area: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }),
       execute: async (a) => call(['task', 'list', ...flags(a)]),
     }),
     tool({
       name: 'org_task_create',
       label: 'Create tracked card',
-      description: 'Create a card for a bot, tagged with a tracker project (leads for their team; a member only for itself).',
+      description: 'Create a card for a bot, tagged with a tracker area (leads for their team; a member only for itself).',
       parameters: Type.Object({
         bot: Type.String(),
         title: Type.String({ maxLength: 200 }),
-        project: Type.String(),
-        feature: Type.Optional(Type.String()),
+        area: Type.String(),
+        project: Type.Optional(Type.String()),
         body: Type.Optional(Type.String({ maxLength: 6000 })),
         type: Type.Optional(Type.String({ description: 'research, coding, design, media, writing, sales, education, ops' })),
       }),
       execute: async (a) =>
-        call(['task', 'create', a.bot, a.title, ...flags({ project: a.project, feature: a.feature, body: a.body, type: a.type })]),
+        call(['task', 'create', a.bot, a.title, ...flags({ area: a.area, project: a.project, body: a.body, type: a.type })]),
     }),
     tool({
       name: 'org_recall',
       label: 'Recall',
       description: 'Search the shared memory: facts, playbooks and notes. Ask before you assume.',
-      parameters: Type.Object({ query: Type.String(), project: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }),
-      execute: async (a) => call(['recall', a.query, ...flags({ project: a.project, limit: a.limit })]),
+      parameters: Type.Object({ query: Type.String(), area: Type.Optional(Type.String()), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }),
+      execute: async (a) => call(['recall', a.query, ...flags({ area: a.area, limit: a.limit })]),
     }),
     tool({
       name: 'org_remember',
@@ -149,12 +149,12 @@ export function orgTools(ctx: ToolContext, exec?: OrgExec): AgentTool<any>[] {
         subject: Type.String(),
         claim: Type.String(),
         source: Type.String(),
-        project: Type.Optional(Type.String()),
+        area: Type.Optional(Type.String()),
         inferred: Type.Optional(Type.Boolean({ description: 'True when you concluded it rather than read it' })),
         agent: Type.Optional(Type.String({ description: 'Your roster name, to save this as your own memory; omit for company-wide' })),
       }),
       execute: async (a) =>
-        call(['remember', a.subject, a.claim, ...flags({ source: a.source, project: a.project, inferred: a.inferred, agent: a.agent })]),
+        call(['remember', a.subject, a.claim, ...flags({ source: a.source, area: a.area, inferred: a.inferred, agent: a.agent })]),
     }),
   ];
 }

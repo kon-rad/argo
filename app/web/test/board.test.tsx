@@ -15,14 +15,14 @@ const CHART = {
   ],
 };
 const card = (id: string, title: string, status: string, extra: Record<string, unknown> = {}) => ({
-  id, board_slug: 'exo', title, body: null, contract: {}, status, priority: 3, assignee: 'rune', created_by: 'owner', project_slug: 'secondbrain-app', feature_slug: 'board', kind: 'work',
+  id, board_slug: 'exo', title, body: null, contract: {}, status, priority: 3, assignee: 'rune', created_by: 'owner', area_slug: 'secondbrain-app', project_slug: 'board', kind: 'work',
   work_type: null, needs: null, ship_now: false, repo: null, graph: null, node: null, rounds: 0, scheduled_for: null, block_kind: null, block_reason: null, result: null,
   created_at: '2026-10-24T08:00:00Z', started_at: null, completed_at: null, updated_at: '2026-10-24T08:00:00Z', ...extra,
 });
 const CARDS = [
   card('t_00000001', 'Build the board', 'running', { kind: 'build', started_at: '2026-10-24T09:00:00Z' }),
   card('t_00000002', 'Review the board', 'todo', { kind: 'review', assignee: 'atlas' }),
-  card('t_00000003', 'Think about it', 'ready', { assignee: null, project_slug: null, feature_slug: null }),
+  card('t_00000003', 'Think about it', 'ready', { assignee: null, area_slug: null, project_slug: null }),
   card('t_00000004', 'Stuck', 'blocked', { block_kind: 'needs-owner', block_reason: 'which repo?' }),
 ];
 const DETAIL = {
@@ -35,9 +35,9 @@ const DETAIL = {
 };
 
 const PROJECTS = [
-  { slug: 'secondbrain-app', title: 'Second Brain app', team: 'platform', stage: 'building', features: [{ slug: 'board', title: 'The board' }] },
-  { slug: 'argo-second-brain', title: 'Argo second brain', team: 'platform', stage: 'live', features: [] },
-  { slug: 'old-thing', title: 'Old thing', team: 'platform', stage: 'parked', features: [] },
+  { slug: 'secondbrain-app', title: 'Second Brain app', team: 'platform', status: 'active', projects: [{ slug: 'board', title: 'The board' }] },
+  { slug: 'argo-second-brain', title: 'Argo second brain', team: 'platform', status: 'active', projects: [] },
+  { slug: 'old-thing', title: 'Old thing', team: 'platform', status: 'parked', projects: [] },
 ];
 
 function mount(path: string) {
@@ -61,7 +61,7 @@ function mount(path: string) {
       if (u.pathname === '/api/board/cards/t_00000001/comment') return Response.json({ comment: { id: 2, author: 'owner', body: 'looks good', created_at: '2026-10-24T09:30:00Z' } }, { status: 201 });
       if (u.pathname === '/api/board/cards/t_00000001/finish') return Response.json({ card: { ...CARDS[0], status: 'done' } });
       if (u.pathname === '/api/board/cards/t_00000001/project') return Response.json({ card: { ...CARDS[0], ...JSON.parse(String(init?.body)) } });
-      if (u.pathname === '/api/projects/report') return Response.json({ projects: PROJECTS });
+      if (u.pathname === '/api/areas/report') return Response.json({ areas: PROJECTS });
       if (u.pathname === '/api/file/resolve') return Response.json({ resolved: {} });
       return Response.json({ error: { message: `unexpected ${url}` } }, { status: 404 });
     }),
@@ -133,7 +133,7 @@ describe('Board page', () => {
     expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/finish'))!.init?.body))).toEqual({ outcome: 'done' });
   });
 
-  it('creates a card for a roster bot, tagged with a project and feature', async () => {
+  it('creates a card for a roster bot, tagged with an area and a project', async () => {
     const calls = mount('/board');
     await screen.findByText('Build the board');
     fireEvent.click(screen.getByRole('button', { name: 'New card' }));
@@ -142,36 +142,36 @@ describe('Board page', () => {
     await within(form).findByRole('option', { name: /Head of Platform/ });
     fireEvent.change(within(form).getByLabelText('Agent'), { target: { value: 'atlas' } });
     await within(form).findByRole('option', { name: 'secondbrain-app' });
-    fireEvent.change(within(form).getByLabelText('Project'), { target: { value: 'secondbrain-app' } });
-    fireEvent.change(within(form).getByLabelText('Feature'), { target: { value: 'board' } });
+    fireEvent.change(within(form).getByLabelText('Area'), { target: { value: 'secondbrain-app' } });
+    fireEvent.change(within(form).getByLabelText('Project'), { target: { value: 'board' } });
     fireEvent.click(within(form).getByRole('button', { name: 'Give it to atlas' }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')).toBe(true));
     expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')!.init?.body))).toEqual({
-      board: undefined, title: 'Write the docs', body: undefined, assignee: 'atlas', project: 'secondbrain-app', feature: 'board', kind: 'work', priority: 3,
+      board: undefined, title: 'Write the docs', body: undefined, assignee: 'atlas', area: 'secondbrain-app', project: 'board', kind: 'work', priority: 3,
     });
   });
 });
 
-describe('ticket numbers and project tags', () => {
-  it('every card shows its full id as plain text and its project as a chip that filters the board', async () => {
+describe('ticket numbers and area tags', () => {
+  it('every card shows its full id as plain text and its area as a chip that filters the board', async () => {
     mount('/board');
     await screen.findByText('Build the board');
     // The exact string cli-board prints, so the browser's find matches it.
     for (const id of ['t_00000001', 't_00000002', 't_00000003', 't_00000004']) expect(screen.getByText(id).tagName).toBe('SPAN');
     const running = screen.getByRole('region', { name: 'Running' });
     const chip = within(running).getByRole('link', { name: 'secondbrain-app/board' });
-    expect(chip.getAttribute('href')).toBe('/board?project=secondbrain-app');
+    expect(chip.getAttribute('href')).toBe('/board?area=secondbrain-app');
     expect(within(screen.getByRole('region', { name: 'Ready' })).queryByRole('link', { name: /secondbrain-app/ })).toBeNull();
   });
 
-  it('the project filter lists the tracker\'s projects, parked ones hidden, not only those on loaded cards', async () => {
+  it('the area filter lists the tracker\'s areas, parked ones hidden, not only those on loaded cards', async () => {
     const calls = mount('/board');
     await screen.findByText('Build the board');
-    const filter = screen.getByLabelText('Any project');
+    const filter = screen.getByLabelText('Any area');
     await within(filter).findByRole('option', { name: 'argo-second-brain' });
-    expect(within(filter).getAllByRole('option').map((o) => o.textContent)).toEqual(['Any project', 'argo-second-brain', 'secondbrain-app']);
+    expect(within(filter).getAllByRole('option').map((o) => o.textContent)).toEqual(['Any area', 'argo-second-brain', 'secondbrain-app']);
     fireEvent.change(filter, { target: { value: 'argo-second-brain' } });
-    await waitFor(() => expect(calls.some((c) => c.url.includes('/api/board/cards?') && c.url.includes('project=argo-second-brain'))).toBe(true));
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/api/board/cards?') && c.url.includes('area=argo-second-brain'))).toBe(true));
   });
 
   it('?id= is a deep link that filters the board to those cards, with a way back', async () => {
@@ -183,7 +183,7 @@ describe('ticket numbers and project tags', () => {
     await waitFor(() => expect(screen.queryByText(/Only t_00000001/)).toBeNull());
   });
 
-  it('the card panel shows the full id with a copy button, and sets, changes or clears the project', async () => {
+  it('the card panel shows the full id with a copy button, and sets, changes or clears the area', async () => {
     const writeText = vi.fn(async () => undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
     const calls = mount('/board/t_00000001');
@@ -191,15 +191,15 @@ describe('ticket numbers and project tags', () => {
     await within(panel).findByText('GET /api/board');
     fireEvent.click(within(panel).getByRole('button', { name: 'Copy t_00000001' }));
     expect(writeText).toHaveBeenCalledWith('t_00000001');
-    const project = within(panel).getByLabelText('Card project');
+    const project = within(panel).getByLabelText('Card area');
     await within(project).findByRole('option', { name: 'argo-second-brain' });
     expect(within(project).queryByRole('option', { name: 'old-thing' })).toBeNull();
     fireEvent.change(project, { target: { value: 'argo-second-brain' } });
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/t_00000001/project'))).toBe(true));
-    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/t_00000001/project'))!.init?.body))).toEqual({ project: 'argo-second-brain', feature: null });
-    fireEvent.change(within(panel).getByLabelText('Card feature'), { target: { value: '' } });
+    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/t_00000001/project'))!.init?.body))).toEqual({ area: 'argo-second-brain', project: null });
+    fireEvent.change(within(panel).getByLabelText('Card project'), { target: { value: '' } });
     fireEvent.change(project, { target: { value: '' } });
-    await waitFor(() => expect(calls.filter((c) => c.url.endsWith('/t_00000001/project')).map((c) => JSON.parse(String(c.init?.body)))).toContainEqual({ project: null, feature: null }));
+    await waitFor(() => expect(calls.filter((c) => c.url.endsWith('/t_00000001/project')).map((c) => JSON.parse(String(c.init?.body)))).toContainEqual({ area: null, project: null }));
   });
 });
 

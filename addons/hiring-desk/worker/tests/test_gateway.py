@@ -30,7 +30,10 @@ def test_budget_reservation_is_atomic_across_concurrent_calls(tmp_path, monkeypa
     db_path = tmp_path / "gateway.sqlite3"
     monkeypatch.setattr(gateway, "DB", str(db_path))
     capability = claims(maxCostAtomic="50")
-    barrier = threading.Barrier(8)
+    # Create the file and its schema once. Eight first connections racing on PRAGMA journal_mode=WAL can raise
+    # "database is locked" in one thread before it reaches the barrier, and the other seven then wait forever.
+    connect().close()
+    barrier = threading.Barrier(8, timeout=30)
 
     def attempt(_):
         db = connect()

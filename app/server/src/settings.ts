@@ -276,7 +276,7 @@ const TelegramBot = z.object({
   agent: z.enum(['claude-code', 'hermes', 'zen-agent']),
   /** The bot's Telegram username, without @ (informational) */
   username: z.string().optional(),
-  /** Hermes: the profile whose gateway polls this bot ('main' for ~/.hermes). Unset: any profile */
+  /** Hermes: the profile whose gateway polls this bot. 'main' or unset means the main Hermes home. */
   profile: z.string().optional(),
   /** zen-agent: the persona the bridge runs */
   persona: z.string().optional(),
@@ -440,8 +440,14 @@ const Settings = z.object({
     .prefault({}),
   projects: z
     .object({
-      /** Vault-relative file `cli-projects render` writes the report to. */
+      /** Vault-relative file `cli-areas render` writes the report to. The key and its default kept their names through the PARA rename. */
       reportFile: z.string().default('projects.md'),
+    })
+    .prefault({}),
+  areas: z
+    .object({
+      /** Vault-relative folder `cli-areas review` writes the weekly review to, one file per ISO week (`<reviewDir>/2026-W46.md`). */
+      reviewDir: z.string().min(1).default('Areas/weekly-review'),
     })
     .prefault({}),
   /** `secondbrain garden`: the nightly vault gardener (docs/garden.md). */

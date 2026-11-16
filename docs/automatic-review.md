@@ -162,9 +162,35 @@ Completion attests that the accepted merge was deployed and passed exact-revisio
 
 Behind or conflicting open PRs are readiness rejections, not endless tool-error retries. Findings instruct the original builder to update the same branch and rerun checks. These flags are false for merged PRs; legacy snapshots normalize absent flags to false. A branch falling behind invalidates a paused approval before merge.
 
+## PR size is never a finding
+
+The gate does not reject a PR for its size. No count of changed files, gathered sources, source characters or diff characters produces a finding, and the reviewer is never handed cut text: the worker keeps the whole aggregate diff and every changed source with its immediate imports in the snapshot.
+
+One reviewer call holds at most 500,000 characters. When a snapshot is larger, `review/passes.ts` reviews it in several passes:
+
+| Part of the snapshot | Where it goes |
+|---|---|
+| Ticket, comments, conversations, notes, builder evidence, PR threads | Every pass |
+| A file's diff and its source | The same pass, together; files are packed in path order |
+| A file larger than a whole pass | Its own pass, uncut |
+
+Each pass is told which files it holds and the full list of files in the PR, and returns a verdict bound to the same reviewer, repository, PR, head, base and evidence hash as the whole snapshot. The verdicts are merged into one: any rejecting pass rejects the PR, findings are kept most severe first (30 at most, with a note when more exist), and each category's rationale is labelled by pass. A pass that fails, or answers for another revision, fails the review as a whole, so nothing is accepted half-read. A snapshot that fits one call is reviewed in one call, as before.
+
+Up to three passes run at a time. A very large PR costs more reviewer calls and takes longer; that is the trade for not sending builders back to split work that has to land together. A single Git read is bounded at 64 MB as a memory guard, which is not a review limit.
+
+## Telling the owner about a rejection or a block
+
+When the host policy has a `notify` program, the worker calls it once with one argument, a short plain-text line, when a review ends in `rejected` (changes requested, with the PR, the round, up to five findings and who holds the card) or enters `blocked` (with the error and whether the PR was already merged). A blocked job that is retried and blocks again on the same error sends nothing further; a different error sends a new line. Waiting for CI and a paused shipping switch are not blocks and send nothing.
+
+```json
+"notify": { "argv": ["/usr/local/bin/your-notifier"], "cwd": "/" }
+```
+
+The program is owner-registered like a deploy target: an absolute path from the root-owned host policy, never from a PR, ticket or model output. It receives no credentials from the worker and runs with the worker's minimal child environment, so it must find its own token (for Telegram, a wrapper around `app/deploy/org-notify.sh` works). A missing program or a failing one never changes the review: the result is already on the card and the PR. Without `notify`, behaviour is unchanged.
+
 ## Scope checkpoints before building and submitting
 
-The public `review scope` contract implements catalog card `t_45a48733`. A coordinator can use it before launching a builder and after committing the complete intended change. It shares file selection, immediate import resolution and capacity evaluation with the review adapter. It does not launch agents, execute plan commands, register jobs, grant approval or install anything.
+The public `review scope` contract implements catalog card `t_45a48733`. A coordinator can use it before launching a builder and after committing the complete intended change. It shares file selection and immediate import resolution with the review adapter. Its budgets are planning advice: `decompose` means the review will take more than one reviewer pass, never that the gate will reject the PR (see [PR size is never a finding](#pr-size-is-never-a-finding)). It does not launch agents, execute plan commands, register jobs, grant approval or install anything.
 
 After `cd app && npm ci && npm run build`, these commands work in a standalone checkout:
 
@@ -179,7 +205,7 @@ When the board module is enabled, `secondbrain review scope ...` reaches the sam
 
 Copy [review-scope.example.json](https://github.com/kon-rad/argo/blob/main/app/deploy/review-scope.example.json) to an owner-controlled location. Omit the optional config argument to use `{"softTarget":24,"exclude":[]}`. `exclude` is an owner-maintained list of repository-relative private path prefixes, shared with the host review policy's exclusions. The coordinator must supply the same exclusions at both checkpoints and to the registered reviewer. Keep this configuration outside planner control. Only `softTarget` (1 through 30) and `exclude` are configurable; plans cannot supply hard caps or override policy. Scope config is separate from application environment settings and the privileged worker host policy.
 
-Hard defaults remain 100 changed files, 30 changed reviewable files, 80 gathered code sources including immediate local imports, 80,000 characters per source, 250,000 diff characters and 500,000 combined evidence characters. Equality passes. Forecasts also use the default soft target of 24 changed reviewable files, leaving six files below the reviewer hard limit. Tests, docs, fixtures, configuration and deletions count by the existing reviewer extension rules. A rename counts once under its destination; both paths are validated. Lock files and binary files count toward 100 and contribute to diff size, but are not selected as code sources. Imports are deduplicated, resolved against tracked head paths, and collected one level from changed head sources. Deletions use base contents without collecting their imports.
+The planning budgets are 100 changed files, 30 changed reviewable files, 80 gathered code sources including immediate local imports, 80,000 characters per source, 250,000 diff characters and 500,000 combined evidence characters. Equality passes. Forecasts also use the default soft target of 24 changed reviewable files, leaving six files below the reviewer hard limit. Tests, docs, fixtures, configuration and deletions count by the existing reviewer extension rules. A rename counts once under its destination; both paths are validated. Lock files and binary files count toward 100 and contribute to diff size, but are not selected as code sources. Imports are deduplicated, resolved against tracked head paths, and collected one level from changed head sources. Deletions use base contents without collecting their imports.
 
 Live review and actual preflight both measure the final aggregate with `git diff --no-ext-diff --no-textconv --binary <base> <head> --` against full commit IDs. The live adapter fetches those immutable objects into its trusted repository, validates changed paths before reading the diff, and rechecks the PR base/head after source collection. Revision drift blocks collection for a fresh attempt. Correction commits do not multiply the diff input: interim lines that were reverted or removed are absent from the final aggregate. Commit-series `gh pr diff --patch` is not used. Earlier reviewer findings, card comments, PR review threads and exact-revision changed sources/imports remain review evidence. Full-history gitleaks and all required CI, merge, deployment and health checks still apply.
 

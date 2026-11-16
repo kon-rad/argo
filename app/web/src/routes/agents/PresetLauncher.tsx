@@ -61,7 +61,7 @@ export default function PresetLauncher() {
   };
 
   return (
-    <div className="border-b border-[var(--rule)] p-3">
+    <div className="border-b border-[var(--rule)] p-3 max-md:max-h-[60dvh] max-md:overflow-y-auto">
       <div className="flex items-center gap-2">
         <button type="button" onClick={onPreset} disabled={launch.isPending}
           className="flex flex-1 items-center justify-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
