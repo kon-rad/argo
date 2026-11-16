@@ -4,7 +4,7 @@ import { query } from '../src/db.js';
 import { importOrg } from '../src/org.js';
 import { createCard, finishCard, getCard, moveCard } from '../src/board.js';
 import { truncateAll } from './helpers.js';
-import type { HostConfig, Repository } from '../src/review/adapters.js';
+import { GitHub, type HostConfig, type Repository } from '../src/review/adapters.js';
 import { parseOwnerMergeArgs, reconcileOwnerMerge } from '../src/review/reconcile.js';
 
 const workerName = 'sb_review_fixture';
@@ -21,27 +21,45 @@ async function as(user: string, sql: string, params: unknown[] = []): Promise<pg
 
 const HEAD = 'a'.repeat(40), MERGE = 'c'.repeat(40), BASE_TIP = 'd'.repeat(40), OTHER = 'e'.repeat(40);
 const repo: Repository = { github: 'example/engine', gitDir: '/srv/review/engine.git', base: 'main', target: 'fixture', checks: ['tests'], notes: ['AGENTS.md'] };
-const host = { repositories: { engine: repo } } as unknown as HostConfig;
+const host = { repositories: { engine: repo }, home: '/tmp', gh: '/usr/bin/false', git: '/usr/bin/false' } as unknown as HostConfig;
+const OWNER_MERGE = 'Unknown prior merge, owner reconciliation required';
+const NO_REVIEW = 'Merged revision has no accepted review; reconciliation required';
+const fabricated = () => JSON.stringify({ state: 'MERGED', merged: MERGE, pr: 12, repo: 'example/engine', head: HEAD });
 
-/** A fake GitHub: the PR as GitHub reports it, and the git calls the verifier makes. */
-function github(pr: { state?: 'OPEN' | 'MERGED' | 'CLOSED'; merge?: string | null; onBase?: boolean; branch?: string } = {}) {
-  const calls: string[][] = [];
+type Facts = { state?: 'OPEN' | 'MERGED' | 'CLOSED'; merge?: string | null; onBase?: boolean; branch?: string; base?: string; crossRepository?: boolean };
+/**
+ * The production GitHub adapter with only its two process doors stubbed: `gh` answers `pr view` as GitHub would,
+ * `git` answers the base-tip and ancestry checks. Repository, base, cross-repository and branch-to-card checks are
+ * the real `GitHub.pr`.
+ */
+function github(facts: Facts = {}) {
+  const gh: string[][] = [], calls: string[][] = [];
   return {
-    calls,
-    connect: () => ({
-      pr: async (card: string, number?: number) => ({
-        number: number!, state: pr.state ?? 'MERGED', mergeCommit: pr.merge === null ? null : { oid: pr.merge ?? MERGE },
-        headRefOid: HEAD, baseRefOid: BASE_TIP, headRefName: pr.branch ?? `card/${card}-fixture`, baseRefName: 'main',
-      }) as never,
-      git: async (args: string[]) => {
+    gh, calls,
+    connect: (r: Repository) => {
+      const g = new GitHub(host, r);
+      g.gh = async args => {
+        gh.push(args);
+        if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({
+          number: Number(args[2]), body: '', headRefOid: HEAD, baseRefOid: BASE_TIP, baseRefName: facts.base ?? 'main',
+          headRefName: facts.branch ?? 'card/' + current.card + '-fixture', isCrossRepository: facts.crossRepository ?? false, isDraft: false,
+          mergeStateStatus: 'UNKNOWN', mergeable: 'UNKNOWN', reviewDecision: null, state: facts.state ?? 'MERGED',
+          mergeCommit: facts.merge === null ? null : { oid: facts.merge ?? MERGE }, statusCheckRollup: [],
+        });
+        throw new Error('Unexpected GitHub call: ' + args.join(' '));
+      };
+      g.git = async args => {
         calls.push(args);
-        if (args[0] === 'ls-remote') return `${BASE_TIP}\trefs/heads/main\n`;
-        if (args[0] === 'merge-base' && pr.onBase === false) throw new Error('exit 1');
+        if (args[0] === 'ls-remote') return BASE_TIP + '\trefs/heads/main\n';
+        if (args[0] === 'merge-base' && facts.onBase === false) throw new Error('exit 1');
         return '';
-      },
-    }),
+      };
+      return g;
+    },
   };
 }
+/** The card the fake GitHub's default branch names. */
+const current = { card: '' };
 
 beforeEach(async () => {
   await query(`UPDATE review_policy SET enabled=false,reviewer=NULL,worker_login=NULL`);
@@ -54,17 +72,23 @@ beforeEach(async () => {
 });
 afterAll(async () => { await query('UPDATE review_policy SET enabled=false,reviewer=NULL,worker_login=NULL'); });
 
-/** A gated card whose PR the owner merged by hand: the worker blocked it exactly as gate.ts does in production. */
-async function stuck(snapshot = true) {
+/** A gated card submitted for review: its job is queued, exactly as finishCard leaves it. */
+async function submitted() {
   const c = await createCard('owner', { title: 'Owner merged', body: 'Acceptance: tests pass', contract: { objective: 'Fix', verification: 'tests' }, assignee: 'builder', work: 'coding', repo: 'engine' });
+  current.card = c.id;
   const child = await createCard('owner', { title: 'Waits for the merge', assignee: 'builder', deps: [c.id] });
   await finishCard('builder', c.id, { outcome: 'done' });
   const j = (await query('SELECT * FROM review_jobs WHERE card=$1', [c.id])).rows[0]!;
-  await as(workerName, 'SELECT review_save($1,$2)', [j.id, { state: 'blocked', error: 'Unknown prior merge, owner reconciliation required',
-    ...(snapshot ? { snapshot: { repo: 'example/engine', pr: 12, head: HEAD, base: 'b'.repeat(40), branch: 'main', merged: MERGE } } : {}) }]);
-  expect((await getCard(c.id)).card.status).toBe('blocked');
-  expect((await getCard(child.id)).card.status).toBe('todo');
   return { card: c.id, child: child.id, job: Number(j.id) };
+}
+/** A card whose PR the owner merged by hand, blocked by the worker exactly as runReview's catch block leaves it. */
+async function stuck(opts: { snapshot?: boolean; error?: string } = {}) {
+  const s = await submitted();
+  await as(workerName, 'SELECT review_save($1,$2)', [s.job, { state: 'blocked', error: opts.error ?? OWNER_MERGE, merged: MERGE,
+    ...(opts.snapshot !== false ? { snapshot: { repo: 'example/engine', pr: 12, head: HEAD, base: 'b'.repeat(40), branch: 'main', merged: MERGE } } : {}) }]);
+  expect((await getCard(s.card)).card.status).toBe('blocked');
+  expect((await getCard(s.child)).card.status).toBe('todo');
+  return s;
 }
 const request = (card: string, extra: Record<string, unknown> = {}) => ({ card, pr: 12, merge: MERGE, reason: 'Owner merged PR #12 by hand', ...extra });
 async function reconcile(input: unknown, gh = github(), user: string | null = null, agent?: string) {
@@ -72,20 +96,26 @@ async function reconcile(input: unknown, gh = github(), user: string | null = nu
   try { return await reconcileOwnerMerge(client, host, input, gh.connect); } finally { await client.end(); }
 }
 const receipts = async (card: string) => (await query('SELECT * FROM review_owner_merges WHERE card=$1', [card])).rows;
+async function unchanged(s: { card: string; child: string }, status = 'blocked') {
+  expect(await receipts(s.card)).toHaveLength(0);
+  expect((await getCard(s.card)).card.status).toBe(status);
+  expect((await getCard(s.child)).card.status).toBe('todo');
+}
 
-it('reconciles a merged PR to done with an attested receipt, an owner-reconciled event and released dependants', async () => {
-  const s = await stuck();
+it.each([OWNER_MERGE, NO_REVIEW])('reconciles a merged PR blocked with "%s" to done with a receipt, an owner-reconciled event and released dependants', async error => {
+  const s = await stuck({ error });
   const gh = github();
   const receipt = await reconcile(request(s.card), gh);
   expect(receipt).toMatchObject({ card: s.card, job: s.job, repo: 'example/engine', pr: 12, merged: MERGE, reason: 'Owner merged PR #12 by hand' });
   expect(receipt.reconciled_by).toBeTruthy();
+  // The PR is read from the registered repository, never from anything the caller passes.
+  expect(gh.gh).toEqual([expect.arrayContaining(['pr', 'view', '12', '--repo', 'example/engine'])]);
   expect(gh.calls.map(c => c[0])).toEqual(['ls-remote', 'fetch', 'merge-base']);
   const [row] = await receipts(s.card);
   expect(row.attestation).toMatchObject({ state: 'MERGED', merged: MERGE, head: HEAD, base: 'main', baseTip: BASE_TIP, branch: `card/${s.card}-fixture` });
   const j = (await query('SELECT * FROM review_jobs WHERE id=$1', [s.job])).rows[0]!;
   expect(j).toMatchObject({ state: 'done', merged: MERGE, error: null, verdict: null, deployed: null, health: null });
-  const d = await getCard(s.card);
-  expect(d.card.status).toBe('done');
+  expect((await getCard(s.card)).card.status).toBe('done');
   const kinds = (await query('SELECT kind,payload FROM card_events WHERE card_id=$1 ORDER BY id', [s.card])).rows;
   expect(kinds.map(k => k.kind)).toContain('owner-reconciled');
   expect(kinds.map(k => k.kind)).not.toContain('review-shipped');
@@ -96,12 +126,32 @@ it('reconciles a merged PR to done with an attested receipt, an owner-reconciled
   expect(await receipts(s.card)).toHaveLength(1);
 });
 
-it('refuses an unmerged PR and leaves the card stuck', async () => {
+it('refuses an unmerged or closed PR and leaves the card stuck', async () => {
   const s = await stuck();
   await expect(reconcile(request(s.card), github({ state: 'OPEN', merge: null }))).rejects.toThrow(/not merged/);
-  expect(await receipts(s.card)).toHaveLength(0);
-  expect((await getCard(s.card)).card.status).toBe('blocked');
-  expect((await getCard(s.child)).card.status).toBe('todo');
+  await expect(reconcile(request(s.card), github({ state: 'CLOSED', merge: null }))).rejects.toThrow(/closed, unrelated or targets an unregistered base/);
+  await unchanged(s);
+});
+
+it.each([
+  ['an unrelated branch', { branch: 'card/t_0ther99-fixture' }],
+  ['a branch that does not name the card', { branch: 'feat/fixture' }],
+  ['another base', { base: 'release' }],
+  ['another repository (cross-repository PR)', { crossRepository: true }],
+] as const)('refuses a PR from %s through the real GitHub.pr validation', async (_label, facts) => {
+  const s = await stuck();
+  await expect(reconcile(request(s.card), github(facts))).rejects.toThrow(/closed, unrelated or targets an unregistered base/);
+  await unchanged(s);
+});
+
+it('refuses a card whose repository is not registered in the host policy', async () => {
+  const s = await stuck();
+  const client = await connect(null);
+  try {
+    await expect(reconcileOwnerMerge(client, { ...host, repositories: { other: { ...repo, github: 'example/other' } } } as HostConfig, request(s.card), github().connect))
+      .rejects.toThrow(/no repository registered/);
+  } finally { await client.end(); }
+  await unchanged(s);
 });
 
 it('refuses a merge sha that does not match GitHub, the job, or the protected base', async () => {
@@ -110,15 +160,13 @@ it('refuses a merge sha that does not match GitHub, the job, or the protected ba
   await expect(reconcile(request(s.card), github({ onBase: false }))).rejects.toThrow(/not on the protected base main/);
   await expect(reconcile(request(s.card, { pr: 13 }))).rejects.toThrow(/PR #12, not #13/);
   await expect(reconcile(request(s.card, { merge: 'abc123' }))).rejects.toThrow(/40 character/);
-  // A job that recorded its own merge only reconciles that merge, even if the caller skips the precheck.
-  await query('UPDATE review_jobs SET merged=$2 WHERE id=$1', [s.job, OTHER]);
-  await expect(reconcile(request(s.card))).rejects.toThrow(new RegExp(`recorded merge ${OTHER}`));
-  await expect(query('SELECT review_owner_reconcile($1,12,$2,$3,$4::jsonb)', [s.card, MERGE, 'Owner merged by hand', JSON.stringify({ state: 'MERGED', merged: MERGE, pr: 12, repo: 'example/engine', head: HEAD })])).rejects.toThrow(/recorded merge/);
-  expect(await receipts(s.card)).toHaveLength(0);
-  expect((await getCard(s.card)).card.status).toBe('blocked');
+  // The worker recorded the merge it saw; only that merge reconciles, even if the caller skips the precheck.
+  await expect(reconcile(request(s.card, { merge: OTHER }), github({ merge: OTHER }))).rejects.toThrow(new RegExp(`recorded merge ${MERGE}`));
+  await expect(query('SELECT review_owner_reconcile($1,12,$2,$3,$4::jsonb)', [s.card, OTHER, 'Owner merged by hand', JSON.stringify({ state: 'MERGED', merged: OTHER, pr: 12, repo: 'example/engine', head: HEAD })])).rejects.toThrow(/recorded merge/);
+  await unchanged(s);
 });
 
-it('refuses a bot, builder or model caller and a login that is neither owner nor worker', async () => {
+it('refuses a bot, builder, model or worker caller, even with a fabricated attestation', async () => {
   const s = await stuck();
   const args = [s.card, 12, MERGE, 'Owner merged PR #12 by hand', JSON.stringify({ state: 'MERGED', merged: MERGE, pr: 12, repo: 'example/engine', head: HEAD })];
   await expect(as('sb_org', 'SELECT review_owner_reconcile($1,$2,$3,$4,$5::jsonb)', args)).rejects.toThrow(/permission denied/);
@@ -127,35 +175,53 @@ it('refuses a bot, builder or model caller and a login that is neither owner nor
   await expect(reconcile(request(s.card), github(), null, 'builder')).rejects.toThrow(/refused for org identity builder/);
   const owner = await connect(null, 'builder');
   try { await expect(owner.query('SELECT review_owner_reconcile($1,$2,$3,$4,$5::jsonb)', args)).rejects.toThrow(/org identity/); } finally { await owner.end(); }
-  // A worker-role member that is not the configured worker login is refused too.
-  await query('UPDATE review_policy SET worker_login=$1', ['sb_review_other']);
-  await expect(as(workerName, 'SELECT review_owner_reconcile($1,$2,$3,$4,$5::jsonb)', args)).rejects.toThrow(/requires the database owner or the review worker login/);
-  expect(await receipts(s.card)).toHaveLength(0);
-  expect((await getCard(s.card)).card.status).toBe('blocked');
-  // The configured worker login is trusted.
-  await query('UPDATE review_policy SET worker_login=$1', [workerName]);
-  const client = await connect(workerName);
-  try { expect((await reconcileOwnerMerge(client, host, request(s.card), github().connect)).reconciled_by).toBe(workerName); } finally { await client.end(); }
-  expect((await getCard(s.card)).card.status).toBe('done');
+  // The configured worker login cannot skip the GitHub check by calling the SQL write path with made-up facts.
+  await expect(as(workerName, 'SELECT review_owner_reconcile($1,$2,$3,$4,$5::jsonb)', args)).rejects.toThrow(/permission denied/);
+  await expect(as(workerName, 'SELECT review_owner_merge_check($1)', [s.card])).rejects.toThrow(/permission denied/);
+  const worker = await connect(workerName);
+  try { await expect(reconcileOwnerMerge(worker, host, request(s.card), github().connect)).rejects.toThrow(/permission denied/); } finally { await worker.end(); }
+  await unchanged(s);
+});
+
+it('refuses ordinary review work that has no owner-merge problem', async () => {
+  // Queued: submitted and waiting for the worker.
+  const queued = await submitted();
+  await expect(reconcile(request(queued.card))).rejects.toThrow(/is queued \(no error\); no owner-merge problem/);
+  await expect(query('SELECT review_owner_reconcile($1,12,$2,$3,$4::jsonb)', [queued.card, MERGE, 'Owner merged by hand', fabricated()])).rejects.toThrow(/no owner-merge problem/);
+  await unchanged(queued, 'review');
+  // Rejected: the reviewer asked for changes.
+  const rejected = await submitted();
+  await query(`UPDATE review_jobs SET state='rejected' WHERE id=$1`, [rejected.job]);
+  await expect(reconcile(request(rejected.card))).rejects.toThrow(/is rejected .*no owner-merge problem/);
+  expect(await receipts(rejected.card)).toHaveLength(0);
+  expect((await getCard(rejected.child)).card.status).toBe('todo');
+  // Blocked for another reason, even with a merge recorded.
+  const other = await stuck({ error: 'Approval evidence changed after merge; deployment blocked' });
+  await expect(reconcile(request(other.card))).rejects.toThrow(/is blocked \(Approval evidence changed after merge; deployment blocked\); no owner-merge problem/);
+  await unchanged(other);
+  // An assigned gated card with no job yet: submit it for review instead.
+  const assigned = await createCard('owner', { title: 'Assigned', body: 'Acceptance: tests pass', assignee: 'builder', work: 'coding', repo: 'engine' });
+  await expect(reconcile(request(assigned.id))).rejects.toThrow(/has no review job and is assigned to builder/);
 });
 
 it('handles an unassigned running card the gate refused with "original builder required"', async () => {
   const c = await createCard('owner', { title: 'Unassigned', body: 'Acceptance: tests pass', work: 'coding', repo: 'engine' });
+  current.card = c.id;
   const child = await createCard('owner', { title: 'After it', assignee: 'builder', deps: [c.id] });
   await query(`UPDATE cards SET status='running' WHERE id=$1`, [c.id]);
   await expect(moveCard('owner', c.id, 'done')).rejects.toThrow(/original builder required/);
   const receipt = await reconcile({ card: c.id, pr: 178, merge: MERGE, reason: 'Unassigned card, owner merged #178' });
   expect(receipt).toMatchObject({ card: c.id, job: null, pr: 178 });
-  const d = await getCard(c.id);
-  expect(d.card).toMatchObject({ status: 'done', assignee: null });
+  expect((await getCard(c.id)).card).toMatchObject({ status: 'done', assignee: null });
   expect((await query('SELECT * FROM review_jobs WHERE card=$1', [c.id])).rows).toHaveLength(0);
+  expect((await query(`SELECT payload FROM card_events WHERE card_id=$1 AND kind='owner-reconciled'`, [c.id])).rows[0]!.payload).toMatchObject({ job: null, pr: 178, assignee: null });
   expect((await getCard(child.id)).card.status).toBe('ready');
 });
 
-it('refuses a card with no gate job problem, and the receipt does not let a later finish skip review', async () => {
+it('refuses a card with no gate, an already done card, and does not let a later finish skip review', async () => {
   const plain = await createCard('owner', { title: 'Writing', assignee: 'builder', work: 'writing' });
   await expect(reconcile(request(plain.id))).rejects.toThrow(/has no review gate/);
-  const s = await stuck(false);
+  const s = await stuck({ snapshot: false });
   await reconcile(request(s.card));
   await expect(reconcile(request(s.card, { merge: OTHER }))).rejects.toThrow(/already done; nothing to reconcile/);
   // Reopened and finished again: the receipt was for one transaction, so the gate treats it like any closed job.
@@ -171,7 +237,7 @@ it('refuses while the review worker holds the job', async () => {
     await worker.query('SELECT pg_advisory_lock(hashtextextended($1,0))', [`review-job:${s.job}`]);
     await expect(reconcile(request(s.card))).rejects.toThrow(/worker is processing job/);
   } finally { await worker.end(); }
-  expect((await getCard(s.card)).card.status).toBe('blocked');
+  await unchanged(s);
 });
 
 it('parses the command line', () => {

@@ -24,8 +24,10 @@ CREATE TABLE review_owner_merges (
 CREATE TRIGGER review_owner_merges_immutable BEFORE UPDATE OR DELETE ON review_owner_merges FOR EACH ROW EXECUTE FUNCTION review_immutable();
 GRANT SELECT ON review_owner_merges TO sb_review_worker;
 
--- The owner (superuser, database owner or owner of the review tables) or the configured review worker login.
--- Never an org identity: a bot, builder or model connection carries org.agent and is refused even on an owner login.
+-- The owner only: superuser, database owner or owner of the review tables. The review worker login is refused: this
+-- path trusts the caller's GitHub check (the unassigned case has no worker-recorded merge to bind to), and only the
+-- owner, who can already bypass every trigger, may vouch for it. Never an org identity: a bot, builder or model
+-- connection carries org.agent and is refused even on an owner login.
 CREATE FUNCTION review_owner_authorize() RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
   IF coalesce(current_setting('org.agent', true), '') <> '' THEN
@@ -34,10 +36,37 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = session_user AND rolsuper) THEN RETURN; END IF;
   IF session_user = (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database()) THEN RETURN; END IF;
   IF session_user = (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = 'public.review_jobs'::regclass) THEN RETURN; END IF;
-  IF EXISTS (SELECT 1 FROM review_policy p WHERE p.worker_login = session_user AND pg_has_role(session_user, 'sb_review_worker', 'member')) THEN RETURN; END IF;
-  RAISE EXCEPTION 'review: owner reconciliation requires the database owner or the review worker login';
+  RAISE EXCEPTION 'review: owner reconciliation requires the database owner login';
 END $$;
 REVOKE ALL ON FUNCTION review_owner_authorize() FROM PUBLIC;
+
+-- The only states this verb recovers, exactly as the gate leaves them:
+--   1. the latest job is blocked with one of the two owner-merge errors from gate.ts, and the worker recorded the
+--      merge commit it saw on GitHub (j.merged), which must equal the merge being reconciled;
+--   2. the card has no review job and no assignee, so every done write is refused with "original builder required".
+-- Queued, reviewing, rejected, approved or otherwise blocked jobs are ordinary review work and are refused.
+CREATE FUNCTION review_owner_stuck(c cards, j review_jobs, p_merged text) RETURNS text LANGUAGE plpgsql STABLE SET search_path = public AS $$
+BEGIN
+  IF c.id IS NULL THEN RAISE EXCEPTION 'review: no such card'; END IF;
+  IF c.status IN ('done', 'archived') THEN RAISE EXCEPTION 'review: card % is already %; nothing to reconcile', c.id, c.status; END IF;
+  IF NOT review_required(c.id) THEN RAISE EXCEPTION 'review: card % has no review gate; move it normally', c.id; END IF;
+  IF j.id IS NULL THEN
+    IF c.assignee IS NOT NULL THEN
+      RAISE EXCEPTION 'review: card % has no review job and is assigned to %; no owner-merge problem to reconcile', c.id, c.assignee;
+    END IF;
+    RETURN 'unassigned';
+  END IF;
+  IF j.state <> 'blocked' OR j.error IS NULL OR j.error NOT IN ('Unknown prior merge, owner reconciliation required',
+                                                                 'Merged revision has no accepted review; reconciliation required') THEN
+    RAISE EXCEPTION 'review: review job % for card % is % (%); no owner-merge problem to reconcile', j.id, c.id, j.state, coalesce(j.error, 'no error');
+  END IF;
+  IF j.merged IS NULL THEN RAISE EXCEPTION 'review: review job % recorded no merge commit; let the worker retry it first', j.id; END IF;
+  IF p_merged IS NOT NULL AND j.merged <> p_merged THEN
+    RAISE EXCEPTION 'review: review job % recorded merge %, not %', j.id, j.merged, p_merged;
+  END IF;
+  RETURN 'owner-merge';
+END $$;
+REVOKE ALL ON FUNCTION review_owner_stuck(cards, review_jobs, text) FROM PUBLIC;
 
 -- Read-only precheck before any GitHub call: the card must be stuck behind the gate, not already done.
 CREATE FUNCTION review_owner_merge_check(p_card text) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -47,16 +76,12 @@ BEGIN
   SELECT * INTO c FROM cards WHERE id = p_card;
   IF c.id IS NULL THEN RAISE EXCEPTION 'review: no card %', p_card; END IF;
   SELECT * INTO j FROM review_jobs WHERE card = c.id ORDER BY round DESC LIMIT 1;
-  IF c.status IN ('done', 'archived') THEN RAISE EXCEPTION 'review: card % is already %; nothing to reconcile', c.id, c.status; END IF;
-  IF NOT review_required(c.id) THEN RAISE EXCEPTION 'review: card % has no review gate; move it normally', c.id; END IF;
-  IF j.state = 'done' THEN RAISE EXCEPTION 'review: review job % for card % already completed; no gate job problem', j.id, c.id; END IF;
-  RETURN jsonb_build_object('card', c.id, 'status', c.status, 'assignee', c.assignee, 'repo', c.repo, 'body', c.body,
+  RETURN jsonb_build_object('kind', review_owner_stuck(c, j, NULL), 'card', c.id, 'status', c.status, 'assignee', c.assignee, 'repo', c.repo, 'body', c.body,
     'job', j.id, 'state', j.state, 'pr', (j.snapshot->>'pr')::integer, 'merged', j.merged, 'error', j.error);
 END $$;
 REVOKE ALL ON FUNCTION review_owner_merge_check(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION review_owner_merge_check(text) TO sb_review_worker;
 
--- The caller (cli-review reconcile-owner-merge) has already confirmed on GitHub that the PR is merged into the
+-- Owner only. The caller (cli-review reconcile-owner-merge) has already confirmed on GitHub that the PR is merged into the
 -- registered base with exactly this merge commit and that its branch names the card; p_attestation is that record.
 CREATE FUNCTION review_owner_reconcile(p_card text, p_pr integer, p_merged text, p_reason text, p_attestation jsonb)
 RETURNS review_owner_merges LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -76,17 +101,12 @@ BEGIN
   SELECT * INTO prior FROM review_owner_merges WHERE card = c.id AND pr = p_pr AND merged = p_merged;
   IF prior.id IS NOT NULL AND c.status = 'done' THEN RETURN prior; END IF;
   SELECT * INTO j FROM review_jobs WHERE card = c.id ORDER BY round DESC LIMIT 1 FOR UPDATE;
-  IF c.status IN ('done', 'archived') THEN RAISE EXCEPTION 'review: card % is already %; nothing to reconcile', c.id, c.status; END IF;
-  IF NOT review_required(c.id) THEN RAISE EXCEPTION 'review: card % has no review gate; move it normally', c.id; END IF;
-  IF j.state = 'done' THEN RAISE EXCEPTION 'review: review job % for card % already completed; no gate job problem', j.id, c.id; END IF;
+  PERFORM review_owner_stuck(c, j, p_merged);
   IF j.snapshot IS NOT NULL AND (j.snapshot->>'pr')::integer IS DISTINCT FROM p_pr THEN
     RAISE EXCEPTION 'review: review job % is for PR %, not PR %', j.id, j.snapshot->>'pr', p_pr;
   END IF;
   IF j.snapshot IS NOT NULL AND j.snapshot->>'repo' IS DISTINCT FROM p_attestation->>'repo' THEN
     RAISE EXCEPTION 'review: review job % is for repository %, not %', j.id, j.snapshot->>'repo', p_attestation->>'repo';
-  END IF;
-  IF j.merged IS NOT NULL AND j.merged <> p_merged THEN
-    RAISE EXCEPTION 'review: review job % recorded merge %, not %', j.id, j.merged, p_merged;
   END IF;
   -- Never race the worker: it holds these session locks while it reviews or ships this job.
   IF j.id IS NOT NULL AND NOT pg_try_advisory_xact_lock(hashtextextended('review-job:' || j.id, 0)) THEN
@@ -113,7 +133,6 @@ BEGIN
   RETURN r;
 END $$;
 REVOKE ALL ON FUNCTION review_owner_reconcile(text, integer, text, text, jsonb) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION review_owner_reconcile(text, integer, text, text, jsonb) TO sb_review_worker;
 
 -- The gate, unchanged except for one clause: a done write in the same transaction as an owner-merge receipt passes.
 -- The receipt is only writable by review_owner_reconcile, and xact pins it to that one transaction, so a later

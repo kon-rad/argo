@@ -36,12 +36,16 @@ export async function verifyOwnerMerge(github: GitHubReader, repo: Repository, c
   await github.git(['fetch', '--no-tags', remote, merge, baseTip]);
   try { await github.git(['merge-base', '--is-ancestor', merge, baseTip]); }
   catch { throw new Error(`Merge ${merge} is not on the protected base ${repo.base}`); }
-  return { repo: repo.github, pr, state: 'MERGED', merged: merge, head: p.headRefOid, base: repo.base, baseTip, branch: p.headRefName, checkedAt: new Date().toISOString() };
+  if (p.isCrossRepository || p.baseRefName !== repo.base) throw new Error(`PR #${pr} is not a ${repo.github} PR into ${repo.base}`);
+  return { repo: repo.github, pr, state: 'MERGED', merged: merge, head: p.headRefOid, base: p.baseRefName, baseTip, branch: p.headRefName, checkedAt: new Date().toISOString() };
 }
 
 export interface OwnerMergeReceipt { id: number; card: string; job: number | null; repo: string; pr: number; merged: string; reason: string; reconciled_by: string; reconciled_at: string }
 
-/** The owner verb behind `cli-review reconcile-owner-merge`. The database refuses any caller but the owner or worker. */
+/**
+ * The owner verb behind `cli-review reconcile-owner-merge`. The database refuses any caller but the owner login, and
+ * any card that is not stuck in one of the documented owner-merge states.
+ */
 export async function reconcileOwnerMerge(client: pg.Client, host: HostConfig, input: unknown,
   connect: (repo: Repository) => GitHubReader = repo => new GitHub(host, repo)): Promise<OwnerMergeReceipt> {
   const req = OwnerMergeRequest.parse(input);
