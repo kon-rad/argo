@@ -1,230 +1,158 @@
 import { exitFlushed } from '../../cli-exit.js';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { hostname, userInfo } from 'node:os';
-import { dirname, join } from 'node:path';
-import { z } from 'zod';
 import { config } from '../../config.js';
 import { pool } from '../../db.js';
+import { runAreasCli } from './cli-areas.js';
 import {
-  addVerification,
-  buildReport,
-  getBoard,
-  importSeed,
-  TrackerError,
-  upsertFeature,
-  upsertProject,
-  upsertDivision,
-  upsertTeam,
-  removeProject,
+  aliasStillWorks, consoleIo, EXIT_ALIAS_ENDED, parseArgs, patchFrom, printError, PROJECT_FIELDS, target, text, whoAmI,
+  type CliIo,
+} from './cli-shared.js';
+import {
+  addVerification, createProjectNote, listProjects, removeProject, setProjectArchived, STAGES, TrackerError, upsertProject, withTrackerSource, type Stage,
 } from './service/index.js';
-import { renderMarkdown, renderStandup, renderTelegram } from './service/report.js';
-import { settings } from '../../settings.js';
 
-const USAGE = `cli-projects: the project tracker (Postgres). Every agent and the company-report skill use this.
+export { ALIAS_ENDS, parseArgs, patchFrom, writeIfChanged } from './cli-shared.js';
+export { runAreasCli } from './cli-areas.js';
 
-  report [--format markdown|standup|telegram|json]   the company report (default: telegram)
-  list                                               projects and features, one line each
-  render [path]                                      write the markdown report to projects.reportFile (only if it changed)
-  add-project <project> --title T --stage S [fields]
-  remove-project <project> [--into P] [--yes]   deletes it and its features, re-tags its memory facts to P; dry run without --yes
-  add <project>/<feature> --title T [fields]         a new feature (starts in idea = backlog unless --stage)
-  set <project>[/<feature>] [fields]                 update; a stage change is recorded with --note
-  verify <project>/<feature> --pass|--fail --check "what you ran" [--kind test|manual|deploy|review|metric] [--evidence "..."]
-  team <team> --name N [--mission M] [--lead L] [--members a,b]
-  division <division> --name N [--mission M] [--head H] [--sort N]
-  import <file.json>                                 teams + projects + features, idempotent
+const USAGE = `cli-projects: the projects of the tracker (Postgres). A project is an outcome with an end, inside
+one area. Every agent and the company-report skill use this. Areas themselves: see cli-areas.
 
-fields: --title --division --team --area --stage idea|designing|building|testing|live|parked|done --health green|yellow|red
-        --priority N --goals W1,M2 --needs "what the owner must do" --blocked "on what" --started D --due D
-        --devlog PATH --design PATH --paths a,b --repos a,b --owner WHO --notes PATH --note "why"
-        --unverified "why it ships without a passing check" (live/done only)
-        Use "none" to clear a field. --by WHO (default $PROJECTS_BY or user@host)`;
+  report [--format markdown|standup|telegram|json]   the company report (default: telegram); same as cli-areas report
+  list [--area A] [--stage S] [--due-before D] [--archived]   projects across areas, one line each
+  add <area>/<project> --outcome "what done means" [--title T] [fields]
+                                                     a new project (starts in idea = backlog unless --stage). When the area
+                                                     has a home (cli-areas set <area> --home PATH) this also creates
+                                                     <home>/projects/<project>/README.md and never overwrites one
+  set <area>/<project> [fields]                      update; a stage change is recorded with --note
+  verify <area>/<project> --pass|--fail --check "what you ran" [--kind test|manual|deploy|review|metric] [--evidence "..."]
+  archive <area>/<project> [--note "why"]            hide it from every active view; deletes nothing, keeps its stage
+  archive <area>/<project> --purge [--yes]           delete it for good, with its history; dry run without --yes
+  unarchive <area>/<project> [--note "why"]          bring it back as it was
 
-type Args = { pos: string[]; opts: Record<string, string | true> };
+fields: --title --outcome --next "the next action" --stage idea|designing|building|testing|live|parked|done
+        --health green|yellow|red --goals W1,M2 --needs "what the owner must do" --blocked "on what" --started D --due D
+        --owner WHO --notes PATH --note "why" --unverified "why it ships without a passing check" (live/done only)
+        Use "none" to clear a field. --by WHO (default $PROJECTS_BY or user@host)
 
-export function parseArgs(argv: string[]): Args {
-  const pos: string[] = [];
-  const opts: Record<string, string | true> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!;
-    if (!a.startsWith('--')) {
-      pos.push(a);
-      continue;
-    }
-    const key = a.slice(2);
-    const next = argv[i + 1];
-    if (next === undefined || next.startsWith('--')) opts[key] = true;
-    else {
-      opts[key] = next;
-      i++;
-    }
-  }
-  return { pos, opts };
+moved to cli-areas (the old spelling here warns and still works for a while): add-project -> cli-areas add,
+remove-project -> cli-areas archive, set <area> -> cli-areas set, render, team, division, import.`;
+
+/** `cli-projects <old> ...` → `cli-areas <new> ...`, with the warning; exit 2 once the alias has ended. */
+async function forward(old: string, verb: string, rest: string[], io: CliIo, hint?: string): Promise<number> {
+  if (!aliasStillWorks(`cli-projects ${old}`, `cli-areas ${verb}`, io)) return EXIT_ALIAS_ENDED;
+  if (hint) io.err(hint);
+  return runAreasCli([verb, ...rest], io);
 }
 
-const FIELD: Record<string, { key: string; kind: 'text' | 'int' | 'list' }> = {
-  title: { key: 'title', kind: 'text' }, team: { key: 'team', kind: 'text' }, division: { key: 'division', kind: 'text' }, area: { key: 'area', kind: 'text' },
-  stage: { key: 'stage', kind: 'text' }, health: { key: 'health', kind: 'text' }, priority: { key: 'priority', kind: 'int' },
-  goals: { key: 'goals', kind: 'list' }, needs: { key: 'needs_owner', kind: 'text' }, blocked: { key: 'blocked_on', kind: 'text' },
-  started: { key: 'started', kind: 'text' }, due: { key: 'due', kind: 'text' }, devlog: { key: 'devlog_path', kind: 'text' },
-  design: { key: 'design_path', kind: 'text' }, paths: { key: 'paths', kind: 'list' }, repos: { key: 'repos', kind: 'list' },
-  owner: { key: 'owner', kind: 'text' }, notes: { key: 'notes_path', kind: 'text' }, sort: { key: 'sort', kind: 'int' },
-  note: { key: 'note', kind: 'text' }, unverified: { key: 'unverified', kind: 'text' },
-};
-
-/** --flag value pairs → a patch object; "none" clears (null, or [] for lists). */
-export function patchFrom(opts: Args['opts']): Record<string, unknown> {
-  const patch: Record<string, unknown> = {};
-  for (const [flag, raw] of Object.entries(opts)) {
-    const f = FIELD[flag];
-    if (!f) continue;
-    if (raw === true) throw new TrackerError(`--${flag} needs a value`);
-    if (raw === 'none') patch[f.key] = f.kind === 'list' ? [] : null;
-    else if (f.kind === 'int') patch[f.key] = Number(raw);
-    else if (f.kind === 'list') patch[f.key] = raw.split(',').map((s) => s.trim()).filter(Boolean);
-    else patch[f.key] = raw;
-  }
-  return patch;
+/** Everything this CLI writes is recorded in the change history with the source `cli`. */
+export function runProjectsCli(argv: string[], io: CliIo = consoleIo()): Promise<number> {
+  return withTrackerSource('cli', () => projectsCli(argv, io));
 }
 
-function target(ref: string | undefined): { project: string; feature: string | null } {
-  if (!ref) throw new TrackerError('which project? e.g. argo-lifeos or argo-lifeos/phase-1-core');
-  const [project, feature, extra] = ref.split('/');
-  if (!project || extra !== undefined) throw new TrackerError(`bad reference "${ref}"`);
-  return { project, feature: feature || null };
-}
-
-/** Atomic write, and none at all when nothing changed (keeps git quiet). */
-export function writeIfChanged(path: string, text: string): boolean {
-  try {
-    if (readFileSync(path, 'utf8') === text) return false;
-  } catch {
-    // missing: write it
-  }
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = join(dirname(path), `.${process.pid}.projects.tmp`);
-  writeFileSync(tmp, text);
-  renameSync(tmp, path);
-  return true;
-}
-
-async function main(argv: string[]): Promise<number> {
+async function projectsCli(argv: string[], io: CliIo): Promise<number> {
   const [cmd, ...rest] = argv;
   const { pos, opts } = parseArgs(rest);
-  const by = typeof opts.by === 'string' ? opts.by : (config.env.PROJECTS_BY ?? `${userInfo().username}@${hostname().split('.')[0]}`);
-  const vault = config.vaultRoot;
+  const by = whoAmI(opts);
+  const vault = io.vaultRoot ?? config.vaultRoot;
 
   switch (cmd) {
-    case 'report': {
-      const format = z.enum(['markdown', 'standup', 'telegram', 'json']).parse(typeof opts.format === 'string' ? opts.format : 'telegram');
-      const r = await buildReport(vault);
-      console.log(format === 'json' ? JSON.stringify(r, null, 2) : format === 'markdown' ? renderMarkdown(r) : format === 'standup' ? renderStandup(r) : renderTelegram(r));
-      return 0;
-    }
-    case 'render': {
-      const path = pos[0] ?? join(vault, settings(vault).projects.reportFile);
-      const changed = writeIfChanged(path, renderMarkdown(await buildReport(vault)));
-      console.log(changed ? `wrote ${path}` : `${path} unchanged`);
-      return 0;
-    }
+    // The stand-up and every skill call `cli-projects report`, and it only reads: it stays for good.
+    case 'report':
+      return runAreasCli(['report', ...rest], io);
     case 'list': {
-      const b = await getBoard(vault);
-      for (const p of b.projects) {
-        console.log(`${p.slug} [${p.stage}]${p.division ? ` division=${p.division}` : ''}${p.team ? ` team=${p.team}` : ''}${p.needs_owner ? ` NEEDS: ${p.needs_owner}` : ''}`);
-        for (const f of p.features) {
-          const v = f.verification ? ` verified=${f.verification.result}` : '';
-          console.log(`  ${p.slug}/${f.slug} [${f.stage} ${f.days_in_stage}d]${v}${f.needs_owner ? ` NEEDS: ${f.needs_owner}` : ''}  ${f.title}`);
-        }
+      const stage = text(opts.stage);
+      if (stage !== undefined && !(STAGES as readonly string[]).includes(stage)) throw new TrackerError(`--stage is one of ${STAGES.join(', ')}`);
+      const dueBefore = text(opts['due-before']);
+      if (dueBefore !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(dueBefore)) throw new TrackerError('--due-before takes a date, e.g. 2026-12-31');
+      const rows = await listProjects({ area: text(opts.area), stage: stage as Stage | undefined, dueBefore, archived: opts.archived === true });
+      for (const p of rows) {
+        io.out(`${p.area}/${p.slug} [${p.stage}${p.archived_at ? ' archived' : ''}]${p.due ? ` due=${p.due}` : ''}${p.owner ? ` owner=${p.owner}` : ''}${p.needs_owner ? ` NEEDS: ${p.needs_owner}` : ''}  ${p.outcome ?? p.title}`);
       }
-      return 0;
-    }
-    case 'add-project': {
-      const { project } = target(pos[0]);
-      const r = await upsertProject(project, patchFrom(opts), by, { create: true });
-      console.log(r.created ? `added project ${project}` : `updated project ${project}`);
-      return 0;
-    }
-    case 'remove-project': {
-      const { project } = target(pos[0]);
-      const dry = opts.yes !== true;
-      const into = typeof opts.into === 'string' ? opts.into : undefined;
-      const r = await removeProject(project, { dryRun: dry, into });
-      const facts = r.facts ? `, ${r.facts} memory facts ${into ? `re-tagged to ${into}` : 'untagged'}` : '';
-      console.log(dry
-        ? `would remove project ${project} and ${r.features} features${facts}. Re-run with --yes.`
-        : `removed project ${project} and ${r.features} features${facts}`);
+      if (!rows.length) io.err('no projects match (cli-areas list shows the areas)');
       return 0;
     }
     case 'add': {
-      const { project, feature } = target(pos[0]);
-      if (!feature) throw new TrackerError('add takes <project>/<feature>; use add-project for a project');
-      const r = await upsertFeature(project, feature, patchFrom(opts), by, { create: true });
-      console.log(r.created ? `added ${project}/${feature}` : `updated ${project}/${feature}`);
-      return 0;
-    }
-    case 'set': {
-      const { project, feature } = target(pos[0]);
-      const patch = patchFrom(opts);
-      if (!Object.keys(patch).length) throw new TrackerError('nothing to set');
-      if (feature) {
-        const r = await upsertFeature(project, feature, patch, by);
-        console.log(`updated ${project}/${feature}${r.stage_changed ? ` → ${String(patch.stage)}` : ''}`);
-      } else {
-        const r = await upsertProject(project, patch, by);
-        console.log(`updated ${project}${r.stage_changed ? ` → ${String(patch.stage)}` : ''}`);
+      const { area, project } = target(pos[0]);
+      if (!project) throw new TrackerError(`add takes <area>/<project>; for an area use: cli-areas add ${area} --title "..."`);
+      const patch = patchFrom(opts, PROJECT_FIELDS);
+      if (patch.title === undefined && typeof patch.outcome === 'string') patch.title = patch.outcome.slice(0, 200);
+      if (patch.outcome === undefined && typeof patch.title === 'string') {
+        // Old callers pass only --title. Until the aliases end the outcome defaults to it.
+        if (!aliasStillWorks('cli-projects add without --outcome', `cli-projects add ${area}/${project} --outcome "what done means"`, io)) return EXIT_ALIAS_ENDED;
+      }
+      const r = await upsertProject(area, project, patch, by, { create: true });
+      io.out(r.created ? `added ${area}/${project}` : `updated ${area}/${project}`);
+      if (r.created && patch.notes_path === undefined) {
+        const note = await createProjectNote(vault, area, project, by);
+        if (note) io.out(note.written ? `wrote ${note.path}` : `${note.path} exists, left as it is`);
       }
       return 0;
     }
+    case 'set': {
+      const { area, project } = target(pos[0]);
+      if (!project) return forward('set <area>', 'set', rest, io);
+      const patch = patchFrom(opts, PROJECT_FIELDS);
+      if (!Object.keys(patch).length) throw new TrackerError('nothing to set');
+      const r = await upsertProject(area, project, patch, by);
+      io.out(`updated ${area}/${project}${r.stage_changed ? ` → ${String(patch.stage)}` : ''}`);
+      return 0;
+    }
     case 'verify': {
-      const { project, feature } = target(pos[0]);
-      if (!feature) throw new TrackerError('verify takes <project>/<feature>');
+      const { area, project } = target(pos[0]);
+      if (!project) throw new TrackerError('verify takes <area>/<project>');
       if (Boolean(opts.pass) === Boolean(opts.fail)) throw new TrackerError('say --pass or --fail');
       const id = await addVerification(
+        area,
         project,
-        feature,
         {
-          kind: (typeof opts.kind === 'string' ? opts.kind : 'test') as 'test',
-          check: typeof opts.check === 'string' ? opts.check : '',
+          kind: (text(opts.kind) ?? 'test') as 'test',
+          check: text(opts.check) ?? '',
           result: opts.pass ? 'pass' : 'fail',
-          evidence: typeof opts.evidence === 'string' ? opts.evidence : null,
+          evidence: text(opts.evidence) ?? null,
         },
         by,
       );
-      console.log(`recorded verification ${id} (${opts.pass ? 'pass' : 'fail'}) for ${project}/${feature}`);
+      io.out(`recorded verification ${id} (${opts.pass ? 'pass' : 'fail'}) for ${area}/${project}`);
       return 0;
     }
-    case 'team': {
-      const slug = pos[0];
-      if (!slug || typeof opts.name !== 'string') throw new TrackerError('team <slug> --name N');
-      await upsertTeam(slug, {
-        name: opts.name,
-        mission: typeof opts.mission === 'string' ? opts.mission : null,
-        lead: typeof opts.lead === 'string' ? opts.lead : null,
-        members: typeof opts.members === 'string' ? opts.members.split(',').map((s) => s.trim()) : [],
-      });
-      console.log(`saved team ${slug}`);
+    case 'archive': {
+      const { area, project } = target(pos[0]);
+      if (!project) throw new TrackerError(`archive takes <area>/<project>; for an area use: cli-areas archive ${area}`);
+      if (opts.purge === true) {
+        const dry = opts.yes !== true;
+        const r = await removeProject(area, project, { dryRun: dry });
+        io.out(dry
+          ? `would delete ${area}/${project} for good, with its history and ${r.verifications} verifications. Re-run with --yes.`
+          : `deleted ${area}/${project}`);
+        return 0;
+      }
+      const r = await setProjectArchived(area, project, true, by, text(opts.note));
+      io.out(r.changed ? `archived ${area}/${project} (cli-projects unarchive ${area}/${project} brings it back)` : `${area}/${project} was already archived`);
       return 0;
     }
-    case 'division': {
-      const slug = pos[0];
-      if (!slug || typeof opts.name !== 'string') throw new TrackerError('division <slug> --name N');
-      await upsertDivision(slug, {
-        name: opts.name,
-        mission: typeof opts.mission === 'string' ? opts.mission : null,
-        head: typeof opts.head === 'string' ? opts.head : null,
-        sort: typeof opts.sort === 'string' ? Number(opts.sort) : 0,
-      });
-      console.log(`saved division ${slug}`);
+    case 'unarchive': {
+      const { area, project } = target(pos[0]);
+      if (!project) throw new TrackerError(`unarchive takes <area>/<project>; for an area use: cli-areas unarchive ${area}`);
+      const r = await setProjectArchived(area, project, false, by, text(opts.note));
+      io.out(r.changed ? `unarchived ${area}/${project}` : `${area}/${project} was not archived`);
       return 0;
     }
-    case 'import': {
-      if (!pos[0]) throw new TrackerError('import <file.json>');
-      const n = await importSeed(JSON.parse(readFileSync(pos[0], 'utf8')), by);
-      console.log(`imported ${n.teams} teams, ${n.projects} projects, ${n.features} features`);
-      return 0;
-    }
+
+    // ---- moved to cli-areas by the PARA rename; these spellings end on ALIAS_ENDS.
+    case 'render':
+      return forward('render', 'render', rest, io);
+    case 'add-project':
+      return forward('add-project', 'add', rest, io);
+    case 'remove-project':
+      return forward('remove-project', 'archive', rest, io,
+        opts.purge === true ? undefined : 'note: archive hides the area and its projects and deletes nothing. To delete for good: cli-areas archive <area> --purge --yes');
+    case 'team':
+      return forward('team', 'team', rest, io);
+    case 'division':
+      return forward('division', 'division', rest, io);
+    case 'import':
+      return forward('import', 'import', rest, io);
     default:
-      console.log(USAGE);
+      io.out(USAGE);
       return cmd === undefined || cmd === 'help' || cmd === '--help' ? 0 : 1;
   }
 }
@@ -232,11 +160,9 @@ async function main(argv: string[]): Promise<number> {
 if (process.argv[1]?.endsWith('cli-projects.js') || process.argv[1]?.endsWith('cli-projects.ts')) {
   let code = 1;
   try {
-    code = await main(process.argv.slice(2));
+    code = await runProjectsCli(process.argv.slice(2));
   } catch (err) {
-    if (err instanceof TrackerError) console.error(err.message);
-    else if (err instanceof z.ZodError) console.error(err.issues.map((i) => `${i.path.join('.') || 'input'}: ${i.message}`).join('\n'));
-    else console.error(err instanceof Error ? err.message : String(err));
+    printError(err);
   } finally {
     await pool.end();
   }

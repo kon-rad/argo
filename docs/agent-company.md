@@ -111,7 +111,7 @@ The most-used commands (run `cli-org help` for all of them):
 | `post <channel> "<body>" --kind status` | Posts as you |
 | `dm <agent> "<body>"`, `handoff <channel> <agent> "<body>"` | Direct work to someone |
 | `ask-owner "<body>" [--urgent]`, `standup "<body>"` | Leads only |
-| `task create <bot> "<title>" --project p --type t [--repo r]` | One card, one bot; refused if the bot lacks the capability the card type needs |
+| `task create <bot> "<title>" --area a [--project p] --type t [--repo r]` | One card, one bot; refused if the bot lacks the capability the card type needs |
 | `ship request <card> "<summary>" --pr <url>` | Ask the owner to merge or deploy; `ship approve <id>` is the owner only |
 | `recall "<query>"`, `remember "<subject>" "<claim>" --source <ref>` | Shared memory across all runtimes |
 | `route decide --card <id>` | Which model would run this card, and why |
