@@ -73,6 +73,50 @@ export async function zenAgentsWithOpenWakeups(): Promise<ZenAgentRow[]> {
   return rows;
 }
 
+/**
+ * Cards that wait on dependencies which have all closed, yet were never promoted: the trigger only fires when a
+ * dependency finishes, so a card moved to `todo` (or dependency-blocked) after that, or one whose open dependency was
+ * unlinked, waits for ever. Only cards with at least one dependency: a `todo` card with none is someone's backlog.
+ */
+export async function waitingCardsWithClosedDeps(): Promise<string[]> {
+  const { rows } = await query<{ id: string }>(
+    `SELECT c.id FROM cards c
+      WHERE (c.status = 'todo' OR (c.status = 'blocked' AND c.block_kind = 'dependency'))
+        AND (c.scheduled_for IS NULL OR c.scheduled_for <= now())
+        AND EXISTS (SELECT 1 FROM card_deps d WHERE d.card_id = c.id)
+        AND NOT EXISTS (SELECT 1 FROM card_deps d JOIN cards p ON p.id = d.depends_on
+                         WHERE d.card_id = c.id AND p.status NOT IN ('done', 'archived'))
+      ORDER BY c.priority, c.created_at`);
+  return rows.map((r) => r.id);
+}
+
+/** board_promote moves the card to ready and wakes its bot; false when the board's own checks say not yet. */
+export async function promoteCard(card: string): Promise<boolean> {
+  const { rows } = await query<{ ok: boolean }>(`SELECT board_promote($1) AS ok`, [card]);
+  return rows[0]?.ok === true;
+}
+
+/**
+ * Ready cards whose bot has nothing to wake it: assigned to a live, unpaused bot (any lane: cc-dispatcher reads the
+ * same wakeups through `cli-org wake-claim`), no open task wakeup, no unfinished run. A card's wake is consumed when
+ * its run ends, so one that ends with the card still ready (a budget stop, a crash, a routed park) is owed another.
+ * At most `retries` wakes per ready stint (since it was created, moved, assigned or reclaimed): past that the card
+ * waits for a person, as addWakeup's hold says, and a person moving it starts a new stint.
+ */
+export async function readyCardsOwedAWake(retries: number): Promise<{ card: string; agent: string }[]> {
+  const { rows } = await query<{ card: string; agent: string }>(
+    `SELECT c.id AS card, c.assignee AS agent FROM cards c JOIN org_agents_effective a ON a.name = c.assignee
+      WHERE c.status = 'ready' AND a.retired_at IS NULL AND NOT a.paused AND a.runtime NOT IN ('human', 'session')
+        AND board_dispatch_enabled(c.board_slug)
+        AND NOT EXISTS (SELECT 1 FROM org_wakeups w WHERE w.agent_name = c.assignee AND w.reason = 'task' AND w.ref = c.id AND w.done_at IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM card_runs r WHERE r.card_id = c.id AND r.finished_at IS NULL)
+        AND (SELECT count(*) FROM org_wakeups w WHERE w.agent_name = c.assignee AND w.reason = 'task' AND w.ref = c.id
+               AND w.created_at >= coalesce((SELECT max(e.at) FROM card_events e WHERE e.card_id = c.id
+                                              AND e.kind IN ('created', 'moved', 'assigned', 'reclaimed')), c.created_at)) <= $1
+      ORDER BY c.priority, c.created_at`, [retries]);
+  return rows;
+}
+
 export async function lastCodexSession(agent: string, card: string): Promise<string | null> {
   const { rows } = await query<{ session_id: string }>(
     `SELECT session_id FROM usage_runs WHERE runtime = 'codex' AND agent_name = $1 AND task_id = $2

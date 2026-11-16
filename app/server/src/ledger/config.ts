@@ -21,6 +21,7 @@ export function defaultConfig(home = homedir()): LedgerConfig {
     batchBytes: 8 * 1024 * 1024,
     retainDays: null,
     proxy: { enabled: false, port: 18080, upstream: 'https://api.anthropic.com' },
+    ollamaProxy: { enabled: false, listen: 'http://127.0.0.1:11435', upstream: 'http://127.0.0.1:11434' },
   };
 }
 
@@ -28,7 +29,12 @@ export function loadConfig(dir: string): LedgerConfig {
   const file = join(dir, 'ledger.json');
   const base = defaultConfig();
   if (!existsSync(file)) return base;
-  return { ...base, ...(JSON.parse(readFileSync(file, 'utf8')) as Partial<LedgerConfig>) };
+  const saved = JSON.parse(readFileSync(file, 'utf8')) as Partial<LedgerConfig>;
+  return {
+    ...base, ...saved,
+    proxy: { ...base.proxy, ...saved.proxy },
+    ollamaProxy: { ...base.ollamaProxy, ...saved.ollamaProxy },
+  };
 }
 
 /** Written 0600: it holds the device token. */
