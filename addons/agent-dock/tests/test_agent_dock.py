@@ -220,8 +220,15 @@ def test_launch_dry_run_prints_the_terminal_command(vault, fake_bin):
                 env=dict(os.environ))
     assert r.returncode == 0, r.stderr
     command = json.loads(r.stdout)["command"]
-    assert command[0] == "osascript" and command[-1] == "tab"
-    assert " run ada --runtime codex --vault " in command[-2] and "--card t_0123abcd" in command[-2]
+    assert command[0] == "osascript"
+    # `auto` picks Ghostty when it is installed and Terminal.app otherwise (CI has no Ghostty).
+    if "Terminal" in command[2]:
+        assert command[-1] == 'tell application "Terminal" to activate'
+        script = command[2]
+    else:
+        assert command[-1] == "tab"
+        script = command[-2]
+    assert " run ada --runtime codex --vault " in script and "--card t_0123abcd" in script
 
 
 def test_run_records_start_and_end_and_returns_the_exit_code(vault, fake_bin, tmp_path):
