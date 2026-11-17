@@ -1,7 +1,7 @@
 import { withTransaction } from '../db.js';
 import type { Host } from '../archive/types.js';
 import * as store from './store.js';
-import { ingestTranscript, ingestCodex } from './sync.js';
+import { ingestTranscript, ingestCodex, ingestZenTrace } from './sync.js';
 import type { WireLine } from './wire.js';
 
 export interface ImportCounts { lines: number; calls: number; sessions: number; messages: number; plan: number; errors: string[] }
@@ -32,6 +32,13 @@ export async function importLines(input: AsyncIterable<string> | Iterable<string
       await withTransaction(async tx => {
         await tx.query('INSERT INTO usage_hosts (slug, display, kind) VALUES ($1,$1,\'laptop\') ON CONFLICT DO NOTHING', [host]);
         const r = await ingestCodex(tx, host, Buffer.from(w.text));
+        c.calls += r.calls; c.sessions += r.sessions; c.messages += r.messages;
+      });
+    } else if (w?.t === 'zen' && typeof w.path === 'string' && typeof w.text === 'string') {
+      await withTransaction(async (tx) => {
+        await tx.query('INSERT INTO usage_hosts (slug, display, kind) VALUES ($1,$1,\'laptop\') ON CONFLICT DO NOTHING', [host]);
+        const mtime = new Date(Number(w.mtimeMs) || Date.now());
+        const r = await ingestZenTrace(tx, host, w.path, Buffer.from(w.text, 'utf8'), mtime, { wakeRunsOnly: true });
         c.calls += r.calls; c.sessions += r.sessions; c.messages += r.messages;
       });
     } else if (w?.t === 'plan' && w.snap && typeof w.snap === 'object') {

@@ -68,10 +68,10 @@ export const TYPE_SQL = (a: string) => `CASE
     FROM (SELECT ${ENTRY(a)} AS e) x)
   END`;
 
-/** The persona that ran the session: the run's agent, the zen-agent persona, the Telegram bot's configured persona, else the bot itself. Null: none recorded. */
+/** The persona that ran the session: the run's agent, the roster bot a person chose (archive_sessions.bot), the zen-agent persona, the Telegram bot's configured persona, else the bot itself. Null: none recorded. */
 export const PERSONA_SQL = (a: string) => `coalesce(
   (SELECT r.agent_name ${RUNS_OF(a)} AND r.agent_name IS NOT NULL ORDER BY r.started_at DESC NULLS LAST LIMIT 1),
-  nullif(${a}.meta ->> 'persona', ''), nullif(${a}.meta ->> 'channel_persona', ''), nullif(${a}.meta ->> 'channel_bot', ''))`;
+  ${a}.bot, nullif(${a}.meta ->> 'persona', ''), nullif(${a}.meta ->> 'channel_persona', ''), nullif(${a}.meta ->> 'channel_bot', ''))`;
 
 /** The persona facet value: a person at a terminal has none; anything else without a record is unknown, said so. */
 const PERSONA_FACET = (a: string) => `coalesce(${PERSONA_SQL(a)}, CASE WHEN (${TYPE_SQL(a)}) = 'cli' THEN 'none' ELSE 'unknown' END)`;

@@ -6,6 +6,7 @@ import { parseClaudeJsonl } from '../archive/claude.js';
 import { readFrom } from '../archive/ingest.js';
 import { walk } from '../archive/run.js';
 import { fingerprintOf } from '../archive/stage.js';
+import { attributeBots } from '../archive/bot.js';
 import * as archive from '../archive/store.js';
 import type { Host } from '../archive/types.js';
 import { callsFromRecords } from './claudeCalls.js';
@@ -46,6 +47,7 @@ export async function ingestTranscript(tx: TxClient, host: Host, path: string, b
     const msgs = ids.parentSid ? chunk.messages.map((m) => ({ ...m, isSidechain: true })) : chunk.messages;
     messages = await archive.upsertMessages(tx, s.id, msgs);
     await archive.refreshSessionStats(tx, s.id);
+    await attributeBots(tx, [s.id]);
   }
   return { calls: await store.upsertCalls(tx, calls), sessions, messages, consumedBytes, lines };
 }
@@ -61,11 +63,35 @@ export async function ingestCodex(tx: TxClient, host: Host, buf: Buffer) {
     await tx.query(`DELETE FROM archive_messages WHERE session_id=$1 AND NOT (external_id=ANY($2::text[]))`,
       [s.id, parsed.messages.map(m => m.externalId)]);
     messages = await archive.upsertMessages(tx, s.id, parsed.messages);
+    await attributeBots(tx, [s.id]);
     await tx.query(`DELETE FROM usage_calls WHERE source='codex' AND host=$1 AND session_external_id=$2 AND NOT (call_id=ANY($3::text[]))`,
       [host, parsed.session.externalId, parsed.calls.map(c => c.callId)]);
     calls = await store.upsertCalls(tx, parsed.calls, true);
   }
   return { calls, sessions, messages, ...split };
+}
+
+/**
+ * One whole zen-agent trace into the ledger: its run, calls and archive session (with the persona as the
+ * session's bot when it is in the roster). `wakeRunsOnly` (a trace pushed from a laptop): a person's chat gets
+ * no usage_runs row, so its calls stay outside every run and the bots' daily token cap; a wake keeps its run.
+ */
+export async function ingestZenTrace(tx: TxClient, host: Host, path: string, buf: Buffer, mtime: Date, opts: { wakeRunsOnly?: boolean } = {}):
+  Promise<{ runs: number; calls: number; sessions: number; messages: number; consumedBytes: number; lines: number }> {
+  const { records, consumedBytes, lines } = splitJsonLines(buf);
+  const t = parseZenTrace(records, host, path, mtime);
+  let runs = 0, sessions = 0, messages = 0;
+  const keepRun = t.run && (t.wake || !opts.wakeRunsOnly);
+  if (keepRun) runs = await store.upsertRuns(tx, [t.run!]);
+  const calls = await store.upsertCalls(tx, t.calls);
+  if (t.session) {
+    const s = await archive.upsertSession(tx, t.session.input);
+    if (s.changed) sessions++;
+    messages = await archive.upsertMessages(tx, s.id, t.session.messages);
+    await attributeBots(tx, [s.id]);
+  }
+  if (keepRun && opts.wakeRunsOnly) await store.attachCallsToRuns(tx, host);
+  return { runs, calls, sessions, messages, consumedBytes, lines };
 }
 
 async function syncAppendOnly(host: Host, path: string,
@@ -134,16 +160,11 @@ export async function syncUsage(paths: UsageSyncPaths, host: Host): Promise<Usag
         const st = statSync(path);
         const prev = await store.getCursor(host, path);
         if (prev && prev.sizeBytes === st.size) continue;
-        const { records, consumedBytes, lines } = splitJsonLines(readFileSync(path));
-        const t = parseZenTrace(records, host, path, st.mtime);
+        const buf = readFileSync(path);
         await withTransaction(async (tx) => {
-          if (t.run) c.runs += await store.upsertRuns(tx, [t.run]);
-          c.calls += await store.upsertCalls(tx, t.calls);
-          if (t.session) {
-            const s = await archive.upsertSession(tx, t.session.input);
-            if (s.changed) c.sessions++;
-            c.messages += await archive.upsertMessages(tx, s.id, t.session.messages);
-          }
+          const r = await ingestZenTrace(tx, host, path, buf, st.mtime);
+          const { consumedBytes, lines } = r;
+          c.runs += r.runs; c.calls += r.calls; c.sessions += r.sessions; c.messages += r.messages;
           await store.saveCursor(tx, host, path, { fingerprint: 'whole-file', offsetBytes: consumedBytes, lines, sizeBytes: st.size });
         });
         c.files++;

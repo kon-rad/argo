@@ -102,8 +102,10 @@ function eventsSql(filters: Filters, params: unknown[]): string {
     FROM (SELECT uf.*, 'anthropic'::text AS provider FROM usage_facts uf) f
     WHERE f.ts >= $1 AND f.ts < $2${where}),
   hermes_all AS (
-    SELECT h.observed_at AS ts, h.model, nullif(h.billing_provider, '') AS provider, h.host, h.session_id AS sid, 'hermes' AS source, 'hermes' AS surface, true AS headless,
-      h.profile AS agent_name, NULL::text AS team_slug, NULL::text AS reason, NULL::text AS action, NULL::text AS work_type,
+    SELECT h.observed_at AS ts, h.model, nullif(h.billing_provider, '') AS provider, h.host, h.session_id AS sid, 'hermes' AS source,
+      -- A chat a person opened with a bot's persona (archive_sessions.bot) is that bot's owner chat, not the profile's.
+      CASE WHEN hb.bot IS NOT NULL THEN 'owner-chat' ELSE 'hermes' END AS surface, true AS headless,
+      coalesce(hb.bot, h.profile) AS agent_name, hb.team_slug, NULL::text AS reason, NULL::text AS action, NULL::text AS work_type,
       NULL::text AS area_slug, NULL::text AS project_slug, NULL::text AS task_id, NULL::text AS lane, NULL::text AS run_id,
       GREATEST(h.input_tokens - COALESCE(lag(h.input_tokens) OVER w, 0), 0) AS input,
       GREATEST(h.cache_write_tokens - COALESCE(lag(h.cache_write_tokens) OVER w, 0), 0) AS cache_write,
@@ -116,6 +118,11 @@ function eventsSql(filters: Filters, params: unknown[]): string {
            WHEN h.cost_usd IS NULL OR lag(h.cost_usd) OVER w IS NULL THEN NULL
            ELSE GREATEST(h.cost_usd - lag(h.cost_usd) OVER w, 0) END AS cost_usd
     FROM hermes_usage_snapshots h
+    -- One row per Hermes session that has a bot (few; archive_sessions_bot_idx), so the join keeps one row per snapshot.
+    LEFT JOIN (SELECT s.host, s.external_id, min(s.bot) AS bot, min(o.team_slug) AS team_slug
+                 FROM archive_sessions s JOIN org_agents o ON o.name = s.bot
+                WHERE s.bot IS NOT NULL AND s.harness = 'hermes' GROUP BY 1, 2) hb
+      ON hb.host = h.host AND hb.external_id = h.session_id
     WINDOW w AS (PARTITION BY h.host, h.profile, h.session_id ORDER BY h.observed_at)),
   events AS (
     SELECT * FROM claude
@@ -150,9 +157,9 @@ async function sessionRows(from: Date, to: Date, limit: number, only: SessionFil
 const RUNS_CTE = `
   WITH runs AS (
     SELECT r.host, r.run_id, r.session_id, r.task_id, r.board, r.lane, r.model, r.started_at, r.ended_at, r.duration_ms,
-           r.num_turns, r.subtype, r.is_error, r.resumed, r.agent_name, r.wakeup_ids,
+           r.num_turns, r.subtype, r.is_error, r.resumed, coalesce(r.agent_name, s.bot) AS agent_name, r.wakeup_ids,
            r.verify_name, r.verify_passed, r.verify_exit, r.verify_metric, r.verify_output,
-           coalesce(r.team_slug, a.team_slug) AS team_slug,
+           coalesce(r.team_slug, a.team_slug, b.team_slug) AS team_slug,
            coalesce(r.reasons -> 0 ->> 'reason', w.reason) AS reason,
            r.reasons,
            coalesce(tl.work_type, r.work_type,
@@ -160,12 +167,14 @@ const RUNS_CTE = `
                                 WHEN 'cc-writer' THEN 'writing' WHEN 'cc-reviewer' THEN 'coding' END,
                     a.work) AS work_type,
            tl.area_slug, tl.project_slug, tl.title AS card_title,
-           CASE WHEN r.agent_name IS NOT NULL THEN 'bot' ELSE 'cc-lane' END AS surface,
+           CASE WHEN r.agent_name IS NOT NULL THEN 'bot' WHEN s.bot IS NOT NULL THEN 'owner-chat' ELSE 'cc-lane' END AS surface,
            r.runtime AS source, r.runtime, r.tier, r.outcome, r.compactions, r.blocked, true AS headless,
            -- Real dollars only where the runtime priced them; the subscription's API-equivalent figure is never shown.
            CASE WHEN r.runtime = 'claude-code' THEN NULL ELSE r.total_cost_usd END AS cost_usd
     FROM usage_runs r
     LEFT JOIN org_agents a ON a.name = r.agent_name
+    LEFT JOIN archive_sessions s ON r.agent_name IS NULL AND s.host = r.host AND s.source = r.runtime AND s.external_id = r.session_id
+    LEFT JOIN org_agents b ON b.name = s.bot
     LEFT JOIN task_links tl ON tl.task_id = r.task_id
     LEFT JOIN LATERAL (SELECT reason FROM org_wakeups WHERE claimed_by = r.run_id ORDER BY id LIMIT 1) w ON true
     WHERE r.started_at >= $1 AND r.started_at < $2),
@@ -375,9 +384,9 @@ export function usageRouter(): Router {
               round(avg(EXTRACT(EPOCH FROM (w.done_at - w.claimed_at)) / 60)::numeric, 1)::float AS avg_minutes,
               max(w.created_at) AS last_wake,
               (SELECT coalesce(sum(f.input + f.cache_write + f.cache_read + f.output), 0)::bigint FROM usage_facts f
-                WHERE f.agent_name = w.agent_name AND f.ts >= $1 AND f.ts < $2) AS tokens,
+                WHERE f.agent_name = w.agent_name AND f.surface <> 'owner-chat' AND f.ts >= $1 AND f.ts < $2) AS tokens,
               (SELECT coalesce(sum(f.output), 0)::bigint FROM usage_facts f
-                WHERE f.agent_name = w.agent_name AND f.ts >= $1 AND f.ts < $2) AS output
+                WHERE f.agent_name = w.agent_name AND f.surface <> 'owner-chat' AND f.ts >= $1 AND f.ts < $2) AS output
          FROM org_wakeups w JOIN org_agents a ON a.name = w.agent_name
         WHERE w.created_at >= $1 AND w.created_at < $2
         GROUP BY w.agent_name, a.team_slug, a.role ORDER BY wakes DESC, w.agent_name`, [from, to]);
