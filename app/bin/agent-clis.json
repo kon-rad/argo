@@ -1,0 +1,40 @@
+{
+  "generated": "by `secondbrain features agent-clis`; do not edit",
+  "wrappers": [
+    {
+      "name": "cli-projects",
+      "feature": "projects",
+      "door": "server-only"
+    },
+    {
+      "name": "cli-areas",
+      "feature": "projects",
+      "door": "server-only"
+    },
+    {
+      "name": "cli-memory",
+      "feature": "memory",
+      "door": "server-only"
+    },
+    {
+      "name": "cli-org",
+      "feature": "org",
+      "door": "server-only"
+    },
+    {
+      "name": "cli-board",
+      "feature": "board",
+      "door": "https"
+    },
+    {
+      "name": "cli-livestream",
+      "feature": "livestream",
+      "door": "server-only"
+    },
+    {
+      "name": "cli-social",
+      "feature": "social",
+      "door": "server-only"
+    }
+  ]
+}
