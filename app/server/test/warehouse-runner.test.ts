@@ -2,11 +2,11 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { ConnectorDef } from '../src/addons/data/connectors.js';
-import { runConnector, runDue } from '../src/addons/data/runner.js';
+import type { ConnectorDef } from '../src/addons/warehouse/connectors.js';
+import { runConnector, runDue } from '../src/addons/warehouse/runner.js';
 import { query } from '../src/db.js';
 import { encryptToken } from '../src/social/crypto.js';
-import { resetDataSchema } from './data-helpers.js';
+import { resetDataSchema } from './warehouse-helpers.js';
 
 let root: string;
 const rawRoot = () => join(root, 'raw');

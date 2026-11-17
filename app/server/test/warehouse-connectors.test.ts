@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isDue, lastScheduledAt, loadConnectors, nextScheduledAt, parseEvery } from '../src/addons/data/connectors.js';
+import { isDue, lastScheduledAt, loadConnectors, nextScheduledAt, parseEvery } from '../src/addons/warehouse/connectors.js';
 
 function dataDir(entries: Record<string, string>): string {
   const d = mkdtempSync(join(tmpdir(), 'data-conn-'));

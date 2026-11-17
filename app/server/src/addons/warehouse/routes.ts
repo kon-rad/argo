@@ -5,8 +5,8 @@ import { HttpError, wrap } from '../../routes/http.js';
 import { connectorViews, dataPaths, listDashboards, listJobs, listTables, overview, renderDashboard, tableDetail } from './catalog.js';
 import { loadConnectors } from './connectors.js';
 
-/** /api/data: read-only views of the vault's tables, connectors, jobs and dashboards. */
-export function dataRouter(vaultRoot: string, modules: ReadonlySet<string>): Router {
+/** /api/warehouse: read-only views of the vault's tables, connectors, jobs and dashboards. */
+export function warehouseRouter(vaultRoot: string, modules: ReadonlySet<string>): Router {
   const router = Router();
   const load = () => {
     const paths = dataPaths(vaultRoot);
@@ -56,5 +56,5 @@ export function dataRouter(vaultRoot: string, modules: ReadonlySet<string>): Rou
 }
 
 export const routes: FeatureRoutes = ({ vaultRoot, opts }) => [
-  { path: '/api/data', router: dataRouter(vaultRoot, opts.modules ?? config.modules) },
+  { path: '/api/warehouse', router: warehouseRouter(vaultRoot, opts.modules ?? config.modules) },
 ];

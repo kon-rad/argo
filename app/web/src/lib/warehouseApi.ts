@@ -1,6 +1,6 @@
 import { request } from './http.js';
 
-/** /api/data (docs/data.md#the-data-page). */
+/** /api/warehouse (docs/warehouse.md#the-warehouse-page). */
 
 export interface DataQueryResult { columns: string[]; rows: unknown[][]; row_count: number; truncated: boolean; ms: number }
 
@@ -42,14 +42,14 @@ export interface DataJob { kind: 'timer' | 'connector'; name: string; owner: str
 
 export interface DataPanel { title: string; chart: 'number' | 'line' | 'bar' | 'table'; sql: string; x?: string; y?: string[]; result?: DataQueryResult; error?: string }
 
-export const dataApi = {
-  overview: () => request<DataOverview>('/data/overview'),
-  tables: () => request<{ tables: DataTable[] }>('/data/tables'),
-  table: (schema: string, name: string) => request<DataTableDetail>(`/data/tables/${encodeURIComponent(schema)}/${encodeURIComponent(name)}`),
-  connectors: () => request<{ connectors: DataConnector[]; errors: { name: string; error: string }[] }>('/data/connectors'),
-  jobs: () => request<{ jobs: DataJob[] }>('/data/jobs'),
-  dashboards: () => request<{ dashboards: { name: string; title: string; error?: string }[] }>('/data/dashboards'),
-  dashboard: (name: string) => request<{ title: string; description?: string; panels: DataPanel[] }>(`/data/dashboards/${encodeURIComponent(name)}`),
+export const warehouseApi = {
+  overview: () => request<DataOverview>('/warehouse/overview'),
+  tables: () => request<{ tables: DataTable[] }>('/warehouse/tables'),
+  table: (schema: string, name: string) => request<DataTableDetail>(`/warehouse/tables/${encodeURIComponent(schema)}/${encodeURIComponent(name)}`),
+  connectors: () => request<{ connectors: DataConnector[]; errors: { name: string; error: string }[] }>('/warehouse/connectors'),
+  jobs: () => request<{ jobs: DataJob[] }>('/warehouse/jobs'),
+  dashboards: () => request<{ dashboards: { name: string; title: string; error?: string }[] }>('/warehouse/dashboards'),
+  dashboard: (name: string) => request<{ title: string; description?: string; panels: DataPanel[] }>(`/warehouse/dashboards/${encodeURIComponent(name)}`),
 };
 
 export function bytes(b: number): string {

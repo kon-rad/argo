@@ -11,8 +11,8 @@ import type { Feature, FeatureContext, FeatureRoute } from '../features/types.js
 import agentsManifest from './agents/manifest.js';
 import { routes as agentsRoutes } from './agents/routes.js';
 import chatManifest from './chat/manifest.js';
-import dataManifest from './data/manifest.js';
-import { routes as dataRoutes } from './data/routes.js';
+import warehouseManifest from './warehouse/manifest.js';
+import { routes as warehouseRoutes } from './warehouse/routes.js';
 import { routes as chatRoutes } from './chat/routes.js';
 import fundManifest from './fund/manifest.js';
 import { routes as fundRoutes } from './fund/routes.js';
@@ -55,7 +55,7 @@ export const ADDON_FEATURES: readonly AddonFeature[] = [
   { ...fundManifest, routes: fundRoutes },
   { ...chatManifest, routes: chatRoutes },
   { ...voiceManifest, routes: voiceRoutes },
-  { ...dataManifest, routes: dataRoutes },
+  { ...warehouseManifest, routes: warehouseRoutes },
   {
     ...deskManifest,
     routes: deskRoutes,
