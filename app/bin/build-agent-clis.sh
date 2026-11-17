@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# app/bin/build-agent-clis.sh <out-dir> - the client half of the agent CLIs as one file, cli-board.mjs, for a
+# bash app/bin/build-agent-clis.sh <out-dir> - the client half of the agent CLIs as one file, cli-board.mjs, for a
 # machine that is not the server (a laptop, a second Mac, a Linux box). It needs Node >= 22 and nothing else at run
 # time: no node_modules, no server build, no database, no /etc/secondbrain/env. `secondbrain-vault clis install`
 # runs this; it needs app/node_modules (npm ci) only to build. Same pattern as build-ledger.sh.
