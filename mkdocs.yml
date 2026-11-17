@@ -76,6 +76,8 @@ nav:
       - Modules: modules.md
       - Social metrics: social-metrics.md
       - Addons: addons.md
+      - Warehouse guide: warehouse-guide.md
+      - Warehouse reference: warehouse.md
       - Retrieval and the chat module: rag.md
       - Memory, and how to check it works: memory.md
       - Agent harness: agent-harness.md
