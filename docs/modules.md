@@ -30,6 +30,11 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 | [`social`](#social) | (connect + queue, no page UI yet) | Schedule and publish posts with images to LinkedIn (more platforms planned) |
 | [`chat`](#chat) | (a button in the header) | Ask your notes: conversations with an assistant that answers from retrieved passages, with citations, on the provider and model you pick |
 | [`desk`](#desk) | `/desk` | Hiring desk operator console under Work; requires production service wiring for operations |
+| [`observatory`](#observatory) | API only | Authorized evidence windows, coverage and deterministic replay |
+
+## observatory
+
+Off by default. Enable `observatory` through `MODULES` or the vault addons list for the authenticated evidence API. No UI, nav link or timer in this slice. Source modules retain their authorization. See [Observatory API and replay](observatory.md).
 
 ## desk
 
@@ -232,6 +237,17 @@ A ledger of Claude Code, Codex, zen-agent and Hermes usage: tokens per run, whic
 | Timers (server) | `usage-sync`, `credits-sync`, and the usage importer |
 | Summaries | The Summaries tab, `summarize` and the summarize timer are the `summaries` module ([summaries.md](summaries.md)) |
 
+**Chats you start with a bot.** A session you open yourself with a roster bot, on any machine, is counted under that bot as an *owner chat* (surface `owner-chat`), not as a wake. The bot is read at import time from what the harness recorded, and only a name in the roster (`org_agents`, not the human owner) is ever stored:
+
+| Harness | Where the bot comes from |
+|---|---|
+| Claude Code | `claude --agent <name>`: the transcript's `agent-setting` record |
+| Codex | the first prompt you sent (after Codex's own environment and AGENTS.md messages) opens with the compiled persona, `You are **<name>**` (Agent Dock, the Codex dispatcher's preamble) |
+| Hermes | the first user message opens with the compiled persona; a cron session never counts |
+| zen-agent | the trace's `persona`, when no dispatcher labelled the run |
+
+A subagent (and a Hermes compression continuation) takes its parent's bot. Nothing is guessed from a folder name or a title; a session with none of these stays unattributed. Owner chats appear in the agent filter, the sessions list and the by-bot totals; the wake panel (`/org-wakes`), the wake counts and the bots' daily token cap (`ORG_DISPATCH_DAILY_TOKENS`) count dispatcher wakes only. A zen-agent trace with no dispatcher labels is a chat: its run carries no agent, and when it comes from a laptop the server stores no run for it. `usage-push` sends a laptop's zen-agent traces (`ZEN_SESSIONS_DIR`, gitignored in a vault, so this is the only way they reach the server), each one whole when it changes, with the same cursor rules as Codex. For sessions imported before this, run `secondbrain usage-backfill --bots` once on the server; it is safe to run again.
+
 Subscription quotas and prepaid balances are shown only for configured providers. Codex quota windows come from its subscription-authenticated CLI app-server, including five-hour and weekly limits when reported by the account. Header quota meters are consolidated here. Missing CLI/login or a failed refresh is visible in the provider panel; there is no API billing fallback.
 
 ## map
@@ -243,7 +259,7 @@ A 3D graph of the vault: notes, projects, divisions and goals, drawn from wikili
 | Page | `/map` |
 | CLI | `secondbrain map-build`, `secondbrain metrics`, `secondbrain backlinks` |
 | Settings | `map.divisionFolders`, `map.missionFolders`, `metrics[]`, `socialMetrics`, `goalsFile`, `missionFile` in `secondbrain.json`; `YOUTUBE_API_KEY`, `SOCIAL_TOKEN_ENC_KEY` for social metrics |
-| Timers (server) | `map-build` (hourly), `metrics` (daily) |
+| Timers (server) | `map-build` (hourly), `metrics` (daily), `metrics-checkpoints` (hourly: per-post readings at 24 h, 72 h and 7 d) |
 
 The daily `metrics` run also collects **social metrics** when `socialMetrics` lists accounts: follower counts and per-post views, likes and comments for YouTube, Instagram and X, plus LinkedIn numbers entered by hand, with `secondbrain metrics social` for the weekly report. See [social-metrics.md](social-metrics.md).
 

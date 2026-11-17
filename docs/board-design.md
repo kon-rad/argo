@@ -183,7 +183,9 @@ Every write is a `SECURITY DEFINER` function, as `org_dm_channel`, `org_task_fla
 | `board_card_link(card, depends_on)` | No cycles (walk up at most 64 steps). A `todo` card with a new open dependency stays `todo`; a `ready` one goes back to `todo`. |
 | `board_card_flags(card, ship_now, needs)` | `ship_now` only from a human: the owner marks ship-now, by construction. |
 | `board_card_tag(card, project, feature)` | Sets, changes or clears (null) the project and feature; nothing else. A human, a dispatcher, the giver or the assignee. A feature needs a project; both must exist in the tracker. |
-| `board_reclaim()` | For every open run past its lease with no heartbeat in the last lease period: outcome `lost`, card back to `ready`, event `reclaimed`. Called by a timer; cheap. |
+| `board_reclaim(hosts_up)` | For every open run past its lease with no heartbeat in the last lease period: outcome `lost`, card back to `ready`, event `reclaimed`. Also: due schedules to `ready`; every `dependency` block re-tested (links recorded from `t_…` ids in an unlinked block's reason), released with a `released` event; `host-down` blocks on a host in `hosts_up` back to `ready`, at most 3 times a card (`cards.host_retries`); `running` cards whose latest run has ended and hold no live lease to `review` (the run left a branch or PR) or `ready`, event `reconciled`. Never touches a `done` or `archived` card. Called by a timer; cheap. |
+| `board_card_block(card, kind, reason, host, after[])` | A block with its cause as data: `after` links (kind `dependency`; released at once if all are finished), `host` (kind `host-down`). Same rights as a move to `blocked`. |
+| `board_run_output(card, branch, pr)` | The run's agent records what the run left, so `board_reclaim` can route a run that ended without a finish to `review`. |
 
 Reads are plain `SELECT`s under row-level security. Cards are company work, so, as `task_links` today, every roster member reads every card on boards whose `team_slug` is NULL or their own team. A board with a team is that team's and the owner's. That is the whole privacy model for the board; DMs stay in the org module.
 

@@ -82,6 +82,12 @@ export interface FeatureManifest {
   timers: FeatureTimer[];
   /** PATH wrappers deploy.sh installs for the app user, so an agent's `Bash(cli-x *)` rule matches. */
   wrappers: string[];
+  /**
+   * The wrappers above that also work on a client machine (no database, no server env) over the feature's HTTPS
+   * door. `secondbrain-vault clis install` installs these as real commands and every other wrapper as a one-line
+   * server-only notice. Omitted: all of them are server-only off the server.
+   */
+  remoteWrappers?: string[];
   /** The doctor's check for this feature, when it has one. */
   health?: FeatureHealth;
   /** Env keys the feature reads. Each has a row in docs/configuration.md. */

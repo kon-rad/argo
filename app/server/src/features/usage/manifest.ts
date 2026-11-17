@@ -8,7 +8,7 @@ export default defineFeature({
   cli: [
     { command: 'usage-sync', entry: 'cli-usage-sync.js', summary: "this machine's Claude Code and Codex usage into the ledger" },
     { command: 'usage-push', entry: 'cli-usage-push.js', summary: 'send new Claude Code and Codex usage to the server ledger over one SSH call' },
-    { command: 'usage-backfill', entry: 'cli-usage-backfill.js', summary: 'wire lines for archived sessions (pipe to the server importer)' },
+    { command: 'usage-backfill', entry: 'cli-usage-backfill.js', summary: 'wire lines for archived sessions (pipe to the server importer); --actions, --bots label what is already in the ledger' },
     { command: 'credits', entry: 'cli-credits.js', summary: 'show | set <provider> <balance> | sync  prepaid API credit balances' },
     { command: 'ingest-device', entry: 'cli-ingest-device.js', summary: '(server) device tokens for ledgers: add <host> | list | revoke <id>' },
   ],

@@ -4,6 +4,7 @@ import { pool } from './db.js';
 import { collectAll, collectors, curlGet, curlRpc, insertSample, metricViews } from './metrics/collect.js';
 import { metrics } from './metrics/registry.js';
 import { socialMetricKeys } from './metrics/social/accounts.js';
+import { collectCheckpoints, describeCheckpoint } from './metrics/social/checkpoints.js';
 import { collectSocial, describeResult } from './metrics/social/collect.js';
 import { fetchGet } from './metrics/social/http.js';
 import { seedInstagramToken } from './metrics/social/instagram.js';
@@ -15,13 +16,14 @@ import { settings } from './settings.js';
 
 // `cli-metrics collect [--dry-run]`  fetch every source once, write one row each (daily timer):
 //                                    the page collectors in `metrics[]`, then the social API collectors in `socialMetrics`
+// `cli-metrics checkpoints [--dry-run]`  per-post readings at 24 h, 72 h and 7 d into social_post_metrics (hourly timer)
 // `cli-metrics set <metric> <value>`  a manual reading
 // `cli-metrics list`                 latest value and age of every metric
 // `cli-metrics social [--days N] [--top N] [--json]`  follower deltas and top posts, with freshness
 // `cli-metrics social linkedin <account> [--followers N] [--post URL [--views N] [--likes N] [--comments N] [--shares N] [--reach N]] [--date YYYY-MM-DD]`
 // `cli-metrics social token instagram <username> [--system-user]`  store a token read from stdin (encrypted);
 //                                    --system-user: a Business Settings system-user token for a Unified account
-const USAGE = `usage: cli-metrics collect [--dry-run] | set <metric> <value> | list
+const USAGE = `usage: cli-metrics collect [--dry-run] | checkpoints [--dry-run] | set <metric> <value> | list
        cli-metrics social [--days N] [--top N] [--json]
        cli-metrics social linkedin <account> [--followers N] [--post URL [--views N] [--likes N] [--comments N] [--shares N] [--reach N]] [--date YYYY-MM-DD]
        cli-metrics social token instagram <username> [--system-user]   (token on stdin)`;
@@ -68,6 +70,11 @@ try {
     for (const r of socialRes) for (const line of describeResult(r)) console.log(line);
     // Exit 2 = some sources failed (the rest were written); not a unit failure.
     code = res.some((r) => r.error) || socialRes.some((r) => r.error) ? 2 : 0;
+  } else if (cmd === 'checkpoints') {
+    const res = await collectCheckpoints(social, socialDeps(), !args.includes('--dry-run'));
+    for (const r of res) console.log(describeCheckpoint(r));
+    console.log(`checkpoints: ${res.length} due, ${res.filter((r) => r.error).length} with errors`);
+    code = res.some((r) => r.error) ? 2 : 0;
   } else if (cmd === 'set') {
     const [metric, raw] = args;
     const value = Number(raw);

@@ -40,7 +40,7 @@ For a fresh instance, follow [Set up your vault](onboarding/02-set-up-your-vault
 | `B2STORE_CRYPT_PASSWORD`, `B2STORE_CRYPT_PASSWORD2` | unset | uploads: the rclone-crypt passwords when the vault part of the bucket is encrypted (the same rclone-crypt passwords the object-storage tooling uses) |
 | `UPLOADS_MAX_GB` | `50` | uploads: the largest single file the page accepts |
 | `UPLOADS_PULL_TOKEN` | unset | uploads: bearer token (16+ characters) the second machine's puller sends |
-| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `summaries`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`, `uploads`, `garden`. Unknown names are ignored |
+| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `summaries`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`, `uploads`, `garden`, `warehouse`, `observatory`. Observatory is off by default and adds only an evidence API (see [contract](observatory.md)). Unknown names are ignored |
 | `OWNER_NAME` | `owner` | Your name in the authenticator app and as a comment author |
 | `DEV_LOG_PATH`, `DOCS_PATH` | unset | Vault-relative notes the nav bar links to; unset hides the link |
 | `SCAN_INTERVAL_MINUTES` | `0` | Rescan and re-embed every N minutes; `0` means only when asked |
@@ -154,7 +154,7 @@ The engine supplies a real JSON-RPC reader, the explicitly selected settlement a
 | `ORG_DISPATCH_QUIET` | `org` | unset | Local hours with no wakes, `HH-HH` (e.g. `01-07`) |
 | `ORG_DISPATCH_DAILY_TOKENS` | `org` | `0` (off) | Tokens all bots together may spend in one local day before the rest of the day's wakes are held |
 | `ORG_ZEN_COMMAND` | `org` | `zen-agent` | The zen-agent command the dispatcher runs (on the PATH, or absolute) |
-| `ZEN_SESSIONS_DIR` | `usage` | `<vault>/.zen/sessions` | Where zen-agent writes its traces; `usage-sync` reads them into the ledger |
+| `ZEN_SESSIONS_DIR` | `usage` | `<vault>/.zen/sessions` | Where zen-agent writes its traces; `usage-sync` reads them into the ledger on the server, `usage-push` sends a laptop's to the server |
 | `CLASSIFY_PROVIDER` | `org` | `none` | The classify step's provider: `openrouter` (through OpenRouter with `OPENROUTER_API_KEY`) or `typesafe` (with `TYPESAFE_API_KEY`). `none`: every decision falls through to the old path |
 | `CLASSIFY_DAILY_TOKENS` | `org` | `2000000` | Classifier input tokens per day; above it, decisions fall through |
 | `TYPESAFE_API_KEY` | `org` | unset | A direct provider key, when `CLASSIFY_PROVIDER=typesafe` |
@@ -198,7 +198,19 @@ These are schema-validated too. Most are set by launchers, installers, agent run
 
 `secondbrain doctor` checks the whole install and exits non-zero when a critical check fails. The same checks answer at `GET /api/health` (`{"ok": true, "checks": [...]}`), so a monitor and a person read one answer. It checks Node's major version, Postgres, the `vector` extension, pending migrations, unknown names in `MODULES`, a stale `AGENTS.md`, an unparsable `secondbrain.json`, the sync state, and each core feature's tables (the feature's manifest names them).
 
+The CLI (not `/api/health`) also prints one advisory line per agent CLI wrapper the manifests name (`cli:cli-board`, `cli:cli-org`, ...): **installed** (the server's own wrapper, or `cli-board`'s HTTPS client with `BOARD_URL` and `BOARD_TOKEN` set), **server-only** (the one-line notice `secondbrain-vault clis install` writes off the server) or **missing**, with the command that fixes it.
+
 `--deep` adds the checks that only make sense on the deployed server (failed `secondbrain-*` units, the last backup); `?deep=1` does the same over HTTP. `--json` prints the checks as JSON. The doctor is additive: a failed non-critical check (a stale doc, a missing backup) is a warning, not an error.
+
+## Agent CLIs on a client machine
+
+`secondbrain-vault clis install` ([connect machines](onboarding/06-connect-machines.md#the-agent-clis-on-the-laptop-and-every-other-machine)) reads these from the shell environment when it runs. They are per machine and optional; nothing goes in the vault `.env` except `BOARD_URL` and `BOARD_TOKEN` (module settings, above).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SECONDBRAIN_BIN_DIR` | `~/.local/bin` | Where the wrappers are written (`--bin DIR` overrides it); it must be on PATH |
+| `SECONDBRAIN_CLI_HOME` | `$XDG_DATA_HOME/secondbrain/agent-clis`, else `~/.local/share/secondbrain/agent-clis` | Where the `cli-board.mjs` bundle is kept |
+| `SB_VAULT_ENV` | set by the wrapper | The vault `.env` the `cli-board` bundle reads `BOARD_URL` and `BOARD_TOKEN` from when they are not in the environment. The wrapper sets it; you do not |
 
 ## Vault sync
 
@@ -266,6 +278,8 @@ The reference below lists shipped settings. It is not a generic registry for arb
 | `dispatch.tools` | `org` | Per wake reason: zen-agent tool sets (`fs`, `shell`, `skills`, `knowledge`, `kanban`, `org`, `subagent`) |
 | `dispatch.fallback` | `org` | What runs when a connected computer's model is down: `{ "model", "thinking"?, "retryOnError"? }`. Unset: no fallback. See "Model fallback" below |
 | `memory.capture` | `memory` | The capture loop: `{ "enabled", "trigger", "everyMinutes", "maxWakesPerRun", "minTurns", "outcomes", "maxAgeHours", "maxFactsPerWake", "dedupe", "dedupeSimilarity", "scope", "chain", "promptFile", "systemPrompt" }`. Off by default; see [memory.md](memory.md#the-capture-loop-how-a-bots-own-memory-gets-written) |
+| `warehouse.dir` | `warehouse` | The vault folder holding `migrations/`, `connectors/` and `dashboards/` (default `warehouse`). See [warehouse.md](warehouse.md) |
+| `warehouse.rawDir` | `warehouse` | Where connectors keep raw files (default `<app>/data/warehouse-raw`) |
 | `garden.roots` | `garden` | Folders whose immediate subfolders are shelves (default `Projects`, `Areas`, `Research`) |
 | `garden.archiveDir`, `garden.catalogFile`, `garden.reportDir`, `garden.shelfFile` | `garden` | Where archived shelves go (`Archives`), the rendered catalog (`garden/catalog.md`), the nightly reports (`garden/reports`) and the shelf note's file name (`README.md`) |
 | `garden.projectArchiveAfterDays`, `garden.areaProposeAfterDays` | `garden` | Days without a commit before a project shelf is archived (90) or an area shelf is proposed (180) |

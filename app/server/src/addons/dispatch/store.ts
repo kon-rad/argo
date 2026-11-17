@@ -100,7 +100,8 @@ export async function promoteCard(card: string): Promise<boolean> {
  * Ready cards whose bot has nothing to wake it: assigned to a live, unpaused bot (any lane: cc-dispatcher reads the
  * same wakeups through `cli-org wake-claim`), no open task wakeup, no unfinished run. A card's wake is consumed when
  * its run ends, so one that ends with the card still ready (a budget stop, a crash, a routed park) is owed another.
- * At most `retries` wakes per ready stint (since it was created, moved, assigned or reclaimed): past that the card
+ * At most `retries` wakes per ready stint (since it was created, moved, assigned, reclaimed, released by a dependency,
+ * re-queued on host-up or reconciled after a finished run): past that the card
  * waits for a person, as addWakeup's hold says, and a person moving it starts a new stint.
  */
 export async function readyCardsOwedAWake(retries: number): Promise<{ card: string; agent: string }[]> {
@@ -112,9 +113,38 @@ export async function readyCardsOwedAWake(retries: number): Promise<{ card: stri
         AND NOT EXISTS (SELECT 1 FROM card_runs r WHERE r.card_id = c.id AND r.finished_at IS NULL)
         AND (SELECT count(*) FROM org_wakeups w WHERE w.agent_name = c.assignee AND w.reason = 'task' AND w.ref = c.id
                AND w.created_at >= coalesce((SELECT max(e.at) FROM card_events e WHERE e.card_id = c.id
-                                              AND e.kind IN ('created', 'moved', 'assigned', 'reclaimed')), c.created_at)) <= $1
+                                              AND e.kind IN ('created', 'moved', 'assigned', 'reclaimed', 'released', 'host-retry', 'reconciled')), c.created_at)) <= $1
       ORDER BY c.priority, c.created_at`, [retries]);
   return rows;
+}
+
+/**
+ * Open, unclaimed task wakeups whose card is done or archived: nothing will ever run them, yet each one keeps its bot
+ * selected every tick. Closed with result `card closed`. A claimed one belongs to a run in flight and is left to it
+ * (releaseStale reopens it if that run died, and the next pass closes it). Idempotent: a closed wakeup is not open.
+ */
+export async function closeWakeupsOnClosedCards(): Promise<{ id: number; agent: string; card: string }[]> {
+  const { rows } = await query<{ id: number; agent: string; card: string }>(
+    `UPDATE org_wakeups w SET done_at = now(), result = 'card closed'
+       FROM cards c
+      WHERE c.id = w.ref AND w.reason = 'task' AND w.done_at IS NULL AND w.claimed_at IS NULL
+        AND c.status IN ('done', 'archived')
+      RETURNING w.id, w.agent_name AS agent, c.id AS card`);
+  return rows;
+}
+
+/** The card is still running under an unfinished card_runs row: the only state a dispatcher may heartbeat or move. */
+export async function cardHasLiveRun(card: string): Promise<boolean> {
+  const { rowCount } = await query(
+    `SELECT 1 FROM cards c JOIN card_runs r ON r.card_id = c.id AND r.finished_at IS NULL WHERE c.id = $1 AND c.status = 'running' LIMIT 1`, [card]);
+  return (rowCount ?? 0) > 0;
+}
+
+/** The status of each card id that exists; a missing id is absent from the map. */
+export async function cardStatuses(ids: string[]): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  const { rows } = await query<{ id: string; status: string }>(`SELECT id, status FROM cards WHERE id = ANY ($1)`, [ids]);
+  return new Map(rows.map((r) => [r.id, r.status]));
 }
 
 export async function lastCodexSession(agent: string, card: string): Promise<string | null> {

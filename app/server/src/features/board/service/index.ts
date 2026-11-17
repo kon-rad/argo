@@ -3,6 +3,7 @@ import pg from 'pg';
 import { agentSpecProblem } from '../../../agent-spec.js';
 import { config } from '../../../config.js';
 import { query } from '../../../db.js';
+import { BoardError } from './errors.js';
 
 /**
  * The board (board module): the kanban record in the engine. Design: docs/board-design.md.
@@ -13,17 +14,15 @@ import { query } from '../../../db.js';
  * (org_me()) when there is one, exactly as the org module does. Reads are plain SELECTs.
  */
 
-export class BoardError extends Error {
-  constructor(message: string, readonly status: 400 | 403 | 404 = 400) {
-    super(message);
-  }
-}
+export { BoardError } from './errors.js';
 
 export const CARD_ID = /^t_[0-9a-f]{6,32}$/;
 export const STATUSES = ['triage', 'todo', 'scheduled', 'ready', 'running', 'review', 'blocked', 'done', 'archived'] as const;
 export type Status = (typeof STATUSES)[number];
 export const CARD_KINDS = ['work', 'spec', 'build', 'review', 'verify', 'doc', 'status', 'improve', 'revert'] as const;
-export const BLOCK_KINDS = ['dependency', 'needs-owner', 'missing-input', 'tool-error', 'budget', 'review-changes', 'other'] as const;
+export const BLOCK_KINDS = ['dependency', 'needs-owner', 'missing-input', 'tool-error', 'budget', 'review-changes', 'host-down', 'other'] as const;
+export { HOST_RETRIES } from './limits.js';
+const HOST = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
 export const OUTCOMES = ['done', 'blocked', 'partial', 'budget'] as const;
 export type Outcome = (typeof OUTCOMES)[number];
 /** Runtimes that claim and run cards. `human` and `session` are not lanes: nothing wakes them. */
@@ -68,6 +67,10 @@ export interface Card {
   scheduled_for: Date | null;
   block_kind: string | null;
   block_reason: string | null;
+  /** The host a host-down block waits for. */
+  block_host: string | null;
+  /** Automatic host-up retries used so far (at most HOST_RETRIES). */
+  host_retries: number;
   result: string | null;
   created_at: Date;
   started_at: Date | null;
@@ -106,6 +109,9 @@ export interface CardRun {
   outcome: string | null;
   tokens: number | null;
   turns: number | null;
+  /** What the run left behind, if it said. */
+  branch: string | null;
+  pr: string | null;
 }
 
 export interface CardDetail {
@@ -118,7 +124,7 @@ export interface CardDetail {
   runs: CardRun[];
 }
 
-const CARD_COLS = 'id, board_slug, title, body, contract, status, priority, assignee, created_by, area_slug, project_slug, kind, work_type, needs, ship_now, repo, graph, node, rounds, scheduled_for, block_kind, block_reason, result, created_at, started_at, completed_at, updated_at';
+const CARD_COLS = 'id, board_slug, title, body, contract, status, priority, assignee, created_by, area_slug, project_slug, kind, work_type, needs, ship_now, repo, graph, node, rounds, scheduled_for, block_kind, block_reason, block_host, host_retries, result, created_at, started_at, completed_at, updated_at';
 
 /** A Postgres RAISE from a board function becomes a BoardError with a status the API can use. */
 function translate(err: unknown): never {
@@ -366,6 +372,30 @@ export async function finishCard(by: string, id: string, o: FinishOpts): Promise
   ]);
 }
 
+export interface BlockOpts {
+  kind?: string;
+  reason?: string;
+  /** host-down: the host the card waits for. */
+  host?: string;
+  /** dependency: the cards it waits for, recorded as links. */
+  after?: string[];
+}
+
+/** Block a card with its cause as data: `after` links (kind dependency) or a `host` (kind host-down). Same rights as a move. */
+export async function blockCard(by: string, id: string, o: BlockOpts): Promise<Card> {
+  checkId(id);
+  for (const d of o.after ?? []) checkId(d);
+  if (o.kind && !(BLOCK_KINDS as readonly string[]).includes(o.kind)) throw new BoardError(`block kind is one of ${BLOCK_KINDS.join(', ')}`);
+  if (o.host !== undefined && !HOST.test(o.host)) throw new BoardError(`bad host name "${o.host}"`);
+  return fn<Card>(`SELECT * FROM board_card_block($1,$2,$3,$4,$5,$6)`, [by, id, o.kind ?? null, o.reason ?? null, o.host ?? null, o.after?.length ? o.after : null]);
+}
+
+/** Record what a card's run left behind (a branch, a PR), so a run that ends without a finish can still reach review. */
+export async function recordRunOutput(by: string, id: string, o: { branch?: string; pr?: string }): Promise<CardRun> {
+  checkId(id);
+  return fn<CardRun>(`SELECT * FROM board_run_output($1,$2,$3,$4)`, [by, id, o.branch ?? null, o.pr ?? null]);
+}
+
 export async function linkCards(by: string, id: string, dependsOn: string): Promise<void> {
   checkId(id);
   checkId(dependsOn);
@@ -377,9 +407,14 @@ export async function flagCard(by: string, id: string, o: { shipNow?: boolean; n
   return fn<Card>(`SELECT * FROM board_card_flags($1,$2,$3,$4)`, [by, id, o.shipNow ?? null, o.needs ?? null]);
 }
 
-/** Lost runs back to ready, due scheduled cards to ready. For a timer. */
-export async function reclaim(): Promise<number> {
-  const { rows } = await query<{ n: number }>(`SELECT board_reclaim() AS n`);
+/**
+ * The sweep, for a timer: lost runs back to ready, due scheduled cards to ready, dependency blocks re-tested, running
+ * cards whose run already ended reconciled (review with a branch or PR, else ready). `hostsUp` re-queues host-down
+ * blocks on those hosts, at most HOST_RETRIES times per card. Returns how many cards moved.
+ */
+export async function reclaim(hostsUp?: string[]): Promise<number> {
+  for (const h of hostsUp ?? []) if (!HOST.test(h)) throw new BoardError(`bad host name "${h}"`);
+  const { rows } = await query<{ n: number }>(`SELECT board_reclaim($1::text[]) AS n`, [hostsUp?.length ? hostsUp : null]);
   return rows[0]!.n;
 }
 
