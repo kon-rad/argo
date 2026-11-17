@@ -118,7 +118,7 @@ For a process it did not start, the agent's name is read from `--agent` or `--pe
 ## Tests
 
 ```bash
-python3 -m pytest addons/agent-dock        # the CLI: 23 tests, no network, fake runtimes
+python3 -m pytest addons/agent-dock        # the CLI: 24 tests, no network, fake runtimes
 cd addons/agent-dock/app && swift build    # the app compiles
 build/AgentDock.app/Contents/MacOS/AgentDock --snapshot /tmp/dock   # draws each view to a PNG and quits
 ```

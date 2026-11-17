@@ -48,6 +48,15 @@ OLLAMA_DEFAULT = "http://127.0.0.1:11434"
 # Models that embed text and cannot hold a conversation: left out of the model menu.
 EMBEDDING_NAME = re.compile(r"embed|(^|[/-])e5-|bge-|minilm|nomic", re.I)
 AUTH_GROUPS = {"local": "Local", "api-key": "API key", "subscription": "Subscription"}
+# What a running agent session leaves in the environment of its children. A terminal or app that was itself
+# started from inside a session hands these on, and a harness that sees them takes the new chat for a child
+# of that session: Claude Code then keeps no transcript, so the chat never reaches the usage ledger.
+SESSION_MARKERS = (
+    "CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "CLAUDE_EFFORT", "AI_AGENT",
+    "CODEX_THREAD_ID", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED",
+)
 TICKET = re.compile(r"\bt_[0-9a-f]{8}\b")
 PERSONA_NAME = re.compile(r"You are \*\*([A-Za-z0-9][A-Za-z0-9_-]{0,40})\*\*")
 HARNESS_BINARIES = {"claude": "claude", "codex": "codex", "hermes": "hermes", "zen-agent": "zen-agent"}
@@ -455,6 +464,13 @@ def proc_start(pid: int) -> str:
     return " ".join(r.stdout.split())
 
 
+def child_env(environ: dict, agent: str, runtime: str) -> dict:
+    """The agent's environment: the caller's, minus another session's markers, plus who this is."""
+    env = {k: v for k, v in environ.items() if k not in SESSION_MARKERS}
+    env.update(AGENT_DOCK_AGENT=agent, AGENT_DOCK_RUNTIME=runtime)
+    return env
+
+
 def cmd_run(args) -> int:
     vault = find_vault(args.vault)
     settings = load_settings(vault)
@@ -463,7 +479,7 @@ def cmd_run(args) -> int:
                                        provider=args.provider, base_url=args.base_url)
     if not resolve_command(argv[0]):
         raise DockError(f"`{argv[0]}` is not installed on this machine")
-    env = dict(os.environ, AGENT_DOCK_AGENT=args.agent, AGENT_DOCK_RUNTIME=args.runtime)
+    env = child_env(os.environ, args.agent, args.runtime)
     run_id = uuid.uuid4().hex[:12]
     if args.title and sys.stdout.isatty():
         sys.stdout.write(f"\033]2;{args.title}\007")

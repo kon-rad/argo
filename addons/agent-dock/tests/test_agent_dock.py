@@ -48,7 +48,8 @@ def fake_bin(tmp_path, monkeypatch):
     b.mkdir()
     for name in ("claude", "codex", "hermes"):
         f = b / name
-        f.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$FAKE_OUT"\necho "$AGENT_DOCK_AGENT" >> "$FAKE_OUT"\nexit 3\n')
+        f.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$FAKE_OUT"\necho "child=${CLAUDE_CODE_CHILD_SESSION:-none}" >> "$FAKE_OUT"\n'
+                     'echo "$AGENT_DOCK_AGENT" >> "$FAKE_OUT"\nexit 3\n')
         f.chmod(0o755)
     monkeypatch.setenv("PATH", f"{b}{os.pathsep}/usr/bin{os.pathsep}/bin")
     return b
@@ -213,11 +214,13 @@ def test_launch_dry_run_prints_the_terminal_command(vault, fake_bin):
 
 
 def test_run_records_start_and_end_and_returns_the_exit_code(vault, fake_bin, tmp_path):
-    env = dict(os.environ, AGENT_DOCK_STATE=str(tmp_path / "state"), FAKE_OUT=str(tmp_path / "argv.txt"))
+    env = dict(os.environ, AGENT_DOCK_STATE=str(tmp_path / "state"), FAKE_OUT=str(tmp_path / "argv.txt"),
+               CLAUDE_CODE_CHILD_SESSION="1", CLAUDECODE="1", KEEP_ME="yes")
     r = run_cli("run", "ada", "--runtime", "claude", "--card", "t_0123abcd", "--vault", str(vault), env=env)
     assert r.returncode == 3, r.stderr
     seen = (tmp_path / "argv.txt").read_text().splitlines()
     assert seen[:4] == ["-n", "ada", "--agent", "ada"] and seen[-1] == "ada"
+    assert seen[-2] == "child=none", "a parent session's marker must not reach the agent, or its transcript is not saved"
     events = [json.loads(l) for l in (tmp_path / "state" / "history.jsonl").read_text().splitlines()]
     assert [e["event"] for e in events] == ["start", "end"]
     start, end = events
@@ -294,3 +297,11 @@ def test_settings_ignore_unknown_runtimes_and_keep_defaults(vault):
     assert s["terminal"] == "terminal" and dock.pick_terminal(s) == "terminal"
     assert s["runtimes"]["claude"] == {"command": "claude", "model": "opus", "choices": []}
     assert "mystery" not in s["runtimes"]
+
+
+def test_child_env_drops_session_markers_and_keeps_everything_else():
+    env = dock.child_env({"CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_CODE_SESSION_ID": "x", "CODEX_THREAD_ID": "y",
+                          "PATH": "/bin", "ANTHROPIC_BASE_URL": "http://127.0.0.1:1", "CLAUDE_CODE_USE_BEDROCK": "1"},
+                         "ada", "claude")
+    assert env == {"PATH": "/bin", "ANTHROPIC_BASE_URL": "http://127.0.0.1:1", "CLAUDE_CODE_USE_BEDROCK": "1",
+                   "AGENT_DOCK_AGENT": "ada", "AGENT_DOCK_RUNTIME": "claude"}
