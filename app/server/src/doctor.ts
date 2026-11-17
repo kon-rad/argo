@@ -195,7 +195,7 @@ function wrapperBundle(text: string): string | undefined {
 }
 
 export interface AgentCliEnv {
-  /** PATH to search; defaults to process.env.PATH. */
+  /** The command search path; defaults to this process's PATH. */
   path?: string;
   /** Where `secondbrain-vault clis install` writes; searched first. */
   binDir?: string;
@@ -208,9 +208,9 @@ export interface AgentCliEnv {
  * client), server-only (the one-line notice) or missing. Advisory: a laptop without them is still a working install.
  */
 export function checkAgentClis(env: AgentCliEnv = {}): Check[] {
-  const binDir = env.binDir ?? (process.env.SECONDBRAIN_BIN_DIR || join(homedir(), '.local', 'bin'));
+  const binDir = env.binDir ?? (config.env.SECONDBRAIN_BIN_DIR || join(homedir(), '.local', 'bin'));
   const dirs = [binDir, ...(env.path ?? process.env.PATH ?? '').split(delimiter).filter(Boolean)];
-  const door = env.boardDoor ?? Boolean((process.env.BOARD_URL || config.boardUrl) && (process.env.BOARD_TOKEN || config.boardToken));
+  const door = env.boardDoor ?? Boolean(config.boardUrl && config.boardToken);
   return agentClis().map(({ name }) => {
     const key = `cli:${name}`;
     const found = dirs.map((d) => join(d, name)).find((p) => existsSync(p));
