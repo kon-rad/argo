@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { ConnectorDef } from '../src/addons/data/connectors.js';
 import { runConnector, runDue } from '../src/addons/data/runner.js';
 import { query } from '../src/db.js';
+import { encryptToken } from '../src/social/crypto.js';
 import { resetDataSchema } from './data-helpers.js';
 
 let root: string;
@@ -22,7 +23,7 @@ function connector(name: string, script: string, extra: Partial<ConnectorDef> = 
   const dir = join(root, 'connectors', name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'run.mjs'), script);
-  const def = { name, description: '', command: [process.execPath, 'run.mjs'], timeoutSec: 30, tables: ['things', 'nokey'], env: [], config: {}, enabled: true, dir, ...extra };
+  const def = { name, description: '', command: [process.execPath, 'run.mjs'], timeoutSec: 30, tables: ['things', 'nokey'], env: [], secrets: {}, config: {}, enabled: true, dir, ...extra };
   writeFileSync(join(dir, 'connector.json'), JSON.stringify({ ...def, dir: undefined }));
   return def;
 }
@@ -85,6 +86,24 @@ describe('runConnector', () => {
     const r = await runConnector(connector('c7', `setTimeout(() => {}, 60000);`, { timeoutSec: 1 }), { rawRoot: rawRoot() });
     expect(r.error).toMatch(/timed out after 1s/);
   }, 15000);
+});
+
+describe('secrets', () => {
+  const KEY = 'ab'.repeat(32);
+  it('fills a social-token secret into the env and redacts it from errors', async () => {
+    await query(`DELETE FROM social_metric_tokens`);
+    await query(`INSERT INTO social_metric_tokens (platform, account, access_token, token_kind, asset_id) VALUES ('instagram', 'someone', $1, 'facebook-system-user', '1784')`, [encryptToken('the-stored-token-value', KEY)]);
+    const c = connector('s1', `console.error('saw ' + process.env.IG_TOKEN); process.exit(1);`, { secrets: { IG_TOKEN: 'social-token:instagram:someone' } } as Partial<ConnectorDef>);
+    const r = await runConnector(c, { rawRoot: rawRoot(), encKey: KEY });
+    expect(r.error).toBe('exited 1: saw [redacted]');
+  });
+
+  it('fails naming the secret when no token is stored', async () => {
+    await query(`DELETE FROM social_metric_tokens`);
+    const c = connector('s2', out({ log: 'never runs' }), { secrets: { IG_TOKEN: 'social-token:instagram:nobody' } } as Partial<ConnectorDef>);
+    const r = await runConnector(c, { rawRoot: rawRoot(), encKey: KEY });
+    expect(r).toMatchObject({ status: 'failed', error: 'secret IG_TOKEN (social-token:instagram:nobody): no stored token for that account' });
+  });
 });
 
 describe('runDue', () => {

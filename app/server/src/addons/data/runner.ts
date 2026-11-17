@@ -3,7 +3,9 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { query } from '../../db.js';
+import { config } from '../../config.js';
 import { redact } from '../../metrics/social/http.js';
+import { loadToken } from '../../metrics/social/tokens.js';
 import { isDue, loadConnectors, type ConnectorDef } from './connectors.js';
 
 /**
@@ -20,6 +22,8 @@ const LOG_KEEP = 50;
 
 export interface RunOptions {
   args?: string[];
+  /** Key for `social-token:` secrets; default SOCIAL_TOKEN_ENC_KEY. */
+  encKey?: string;
   /** Root for raw files; the run gets `<rawRoot>/<connector>/<run id>/`. */
   rawRoot: string;
   env?: NodeJS.ProcessEnv;
@@ -141,6 +145,23 @@ export async function lastState(sourceIdValue: number): Promise<unknown> {
   return rows[0]?.state ?? null;
 }
 
+/** Resolves `secrets` into env values. Throws naming the env key when a secret can't be read. */
+export async function resolveSecrets(def: ConnectorDef, encKey: string | undefined): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const [envName, ref] of Object.entries(def.secrets)) {
+    const [, platform, account] = ref.split(':');
+    let token;
+    try {
+      token = await loadToken(platform as 'instagram', account!, encKey);
+    } catch (err) {
+      throw new Error(`secret ${envName} (${ref}): ${(err as Error).message}`);
+    }
+    if (!token) throw new Error(`secret ${envName} (${ref}): no stored token for that account`);
+    out[envName] = token.token;
+  }
+  return out;
+}
+
 export async function runConnector(def: ConnectorDef, opts: RunOptions): Promise<RunResult> {
   const src = await sourceId(def);
   const state = await lastState(src);
@@ -153,9 +174,22 @@ export async function runConnector(def: ConnectorDef, opts: RunOptions): Promise
   mkdirSync(rawDir, { recursive: true });
 
   const baseEnv = opts.env ?? process.env;
-  const secrets = def.env.map((k) => baseEnv[k]);
+  let resolved: Record<string, string> = {};
+  let secretError: string | null = null;
+  try {
+    resolved = await resolveSecrets(def, opts.encKey ?? config.socialTokenEncKey);
+  } catch (err) {
+    secretError = (err as Error).message;
+  }
+  const secrets = [...def.env.map((k) => baseEnv[k]), ...Object.values(resolved)];
+  if (secretError) {
+    const error = redact(secretError, secrets);
+    await query(`UPDATE ingest_runs SET status = 'failed', finished_at = now(), error = $2 WHERE id = $1`, [runId, error]);
+    return { connector: def.name, runId, status: 'failed', rows: {}, error };
+  }
   const env: NodeJS.ProcessEnv = {
     ...baseEnv,
+    ...resolved,
     DATA_CONNECTOR: def.name,
     DATA_RUN_ID: String(runId),
     DATA_RAW_DIR: rawDir,

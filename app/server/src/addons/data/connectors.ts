@@ -19,6 +19,12 @@ const Def = z.object({
   timeoutSec: z.number().int().positive().default(900),
   tables: z.array(z.string().regex(/^[a-z_][a-z0-9_]*$/, 'tables: names in schema data, without the schema')).default([]),
   env: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/)).default([]),
+  /**
+   * Env names filled from an engine secret store at run time, e.g.
+   * `{ "IG_TOKEN": "social-token:instagram:konradgnat" }` (the encrypted, refreshed
+   * collector token). The value never touches the vault.
+   */
+  secrets: z.record(z.string().regex(/^[A-Z][A-Z0-9_]*$/), z.string().regex(/^social-token:instagram:[a-z0-9._]+$/, 'secrets: social-token:instagram:<account>')).default({}),
   config: z.record(z.string(), z.unknown()).default({}),
   enabled: z.boolean().default(true),
 });

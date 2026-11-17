@@ -336,6 +336,15 @@ if grep -qsE '^SUMMARIES=on$' /etc/secondbrain/env && ! has summaries; then
   echo "! SUMMARIES=on is deprecated: add summaries to DEPLOY_MODULES. Treating it as on for this deploy."
   MODS="${MODS:+$MODS,}summaries"
 fi
+# The vault's own tables (docs/data.md): applied after the engine's, never rolled back with it.
+# A failing vault migration is reported and left for the owner; the engine deploy stands.
+if has data; then
+  if sudo -u "$APP_USER" bash -c "set -a; . /etc/secondbrain/env; set +a; cd $APP_DIR && DATABASE_URL='postgres:///secondbrain?host=/var/run/postgresql' /usr/bin/node --no-warnings server/dist/cli-data.js migrate"; then
+    echo "→ vault data migrations applied"
+  else
+    echo "! vault data migrations failed: run 'secondbrain data migrate' on the server and fix the file it names"
+  fi
+fi
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.local/bin"
 for w in $(features wrappers); do
   # The script comes from the feature table (server/src/features/registry.ts), not a file, so a command and the
