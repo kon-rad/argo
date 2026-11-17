@@ -17,3 +17,10 @@ Required full-suite checks remain blocked by this environment:
 - `cd zen-agent && npm ci --offline && npm test`: dependencies installed and TypeScript compiled; 95 tests, 80 passed, 15 failed. Fourteen failures reported `listen EPERM: operation not permitted 127.0.0.1`; one cleanup failure then reported `Cannot read properties of undefined (reading 'close')`.
 
 The [API contract](observatory.md) and [read-only production audit](audits/observatory.sql) describe limits and the next verification. No browser scene, live liveness collector, production audit, production completeness claim or deployment is included. The vault is read-only in this run, so this engine log and the runner result are the handoff; a coordinator must reconcile private tracker/dev-log records. Builder completion requires review after the blocked checks pass.
+
+
+## 2026-11-18 verification repair
+
+The coordinator reran verification directly on the M1 host, using only the dedicated scratch database. CI had exposed a fixture error hidden by the worker sandbox: `archive_sessions.harness` is generated and cannot be inserted. The fixture now lets PostgreSQL derive it from `source`, registers and cleans up its synthetic usage host, and includes the `harness: codex` marker written by the real Codex archive importer. Both migrated-database tests pass, including join cardinalities and the historical board boundary query.
+
+Host checks also resolve the worker environment failures: zen-agent reports 94 passed, 0 failed; an isolated `uv run --with pytest python -m pytest harness tools addons` reports 179 passed and 5 skipped. The engine build passes. Source leak scanning passes with zero output after preserving generated browser bundles outside the source tree; scanning those minified bundles alone triggers the existing third-party numeric-literal false positive. No sandbox policy, production data or deployed configuration was changed. Full app-suite results are recorded in the PR handoff.
