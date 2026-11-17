@@ -30,6 +30,8 @@ import uploadsManifest from './uploads/manifest.js';
 import { routes as uploadsRoutes } from './uploads/routes.js';
 import voiceManifest from './voice/manifest.js';
 import { routes as voiceRoutes } from './voice/routes.js';
+import observatoryManifest from './observatory/manifest.js';
+import { routes as observatoryRoutes } from './observatory/routes.js';
 import deskManifest from './desk/manifest.js';
 import { routes as deskRoutes } from './desk/routes.js';
 
@@ -56,6 +58,7 @@ export const ADDON_FEATURES: readonly AddonFeature[] = [
   { ...chatManifest, routes: chatRoutes },
   { ...voiceManifest, routes: voiceRoutes },
   { ...warehouseManifest, routes: warehouseRoutes },
+  { ...observatoryManifest, routes: observatoryRoutes },
   {
     ...deskManifest,
     routes: deskRoutes,
