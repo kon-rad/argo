@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { agentSpecProblem } from './agent-spec.js';
+import { OrgError } from './org-error.js';
 import { config } from './config.js';
 import { query, withTransaction, type TxClient } from './db.js';
 import { assignCard, BoardError, commentCard, createCard, flagCard, linkCards, moveCard, type Card, type Contract } from './board.js';
@@ -21,7 +22,7 @@ import { ALIAS_ENDS, resolveTrackerRef, TrackerError, type TrackerRefInput } fro
  *
  */
 
-export class OrgError extends Error {}
+export { OrgError } from './org-error.js';
 
 /**
  * The area and project a caller named, for the commands that tag a card or a message. Until

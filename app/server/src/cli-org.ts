@@ -74,6 +74,7 @@ import {
 } from './org-memory.js';
 import { search } from './search.js';
 import { settings } from './settings.js';
+import { parseArgs } from './cli-args.js';
 
 const USAGE = `cli-org: the agent company's message board (Postgres). Identity comes from ORG_AGENT, never from an argument.
 
@@ -171,27 +172,7 @@ export function agentDatabaseUrl(base: string, agent: string): string {
   return u.toString();
 }
 
-type Args = { pos: string[]; opts: Record<string, string | true> };
-
-export function parseArgs(argv: string[]): Args {
-  const pos: string[] = [];
-  const opts: Record<string, string | true> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!;
-    if (!a.startsWith('--')) {
-      pos.push(a);
-      continue;
-    }
-    const key = a.slice(2);
-    const next = argv[i + 1];
-    if (next === undefined || next.startsWith('--')) opts[key] = true;
-    else {
-      opts[key] = next;
-      i++;
-    }
-  }
-  return { pos, opts };
-}
+export { parseArgs } from './cli-args.js';
 
 export function identityName(env: NodeJS.ProcessEnv = process.env): string {
   const name = env.ORG_AGENT?.trim();

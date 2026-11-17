@@ -31,6 +31,7 @@ Each addon has one place it is wired, an addon manifest at `app/server/src/addon
 | [`fund`](modules.md#fund) | A read-only view of an agentic fund | - | - |
 | [`chat`](modules.md#chat) | Ask your second brain, answered from retrieved passages | - | - |
 | [`uploads`](uploads.md) | Send 1 GB to 50 GB files from a browser to the B2 bucket | - | - |
+| [`warehouse`](warehouse.md) | Every table, connector, scheduled job and dashboard on one page; the vault owns its tables and connectors | `warehouse` | `warehouse` |
 | [`garden`](garden.md) | A nightly shelf-keeping pass over Projects/, Areas/ and Research/ | `garden` | `garden` |
 | [`routing`](modules.md) | The model-routing pilot: tier selection and the weekly routing report | - | `routing-report` |
 | [`classify`](modules.md) | The wake gate: one calibrated decision about a state, logged | `classify` | - |
