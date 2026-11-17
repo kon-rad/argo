@@ -87,7 +87,7 @@ Everything beyond browse, search, the database page and the editor is a module: 
 - shows no nav link,
 - gets no systemd timers from `deploy.sh`.
 
-Module tables are created by migrations whether or not the module is on, so turning one on later needs no migration step. Per-module detail: [modules.md](modules.md). The core features are each described by one manifest (`app/server/src/features/<name>/manifest.ts`: nav, commands, timers, wrappers, env, docs) that `app.ts`, `/api/meta`, the launcher and `deploy.sh` read, so a feature is wired in one place.
+Module tables are created by migrations whether or not the module is on, so turning one on later needs no migration step. Per-module detail: [modules.md](modules.md). The core features are each described by one manifest (`app/server/src/features/<name>/manifest.ts`: nav, commands, timers, wrappers, env, docs) that `app.ts`, `/api/meta`, the launcher and `deploy.sh` read, so a feature is wired in one place. A wrapper the manifest lists in `remoteWrappers` also runs on a client machine: `secondbrain-vault clis install` reads the generated `app/bin/agent-clis.json` and installs it there as a bundled HTTPS client (today `cli-board`, door 2 of the [board](kanban-board.md#2-the-three-doors)), and every other wrapper as a one-line server-only notice.
 
 ## 5. The agent harness
 
@@ -127,7 +127,7 @@ Both hooks fail open: a payload they can't parse is allowed, so a bug in a hook 
 
 ## Automatic review and shipping boundary
 
-The board's database trigger intercepts coding completion and runner review handoff when owner-managed review policy is enabled. `review_jobs` and append-only `review_attempts` retain submissions, original builders, revision-bound verdicts and shipping receipts. A dedicated database login, separate from org identities and builder logins, coordinates a read-only Codex reviewer with GitHub, an atomic Git base/head comparison and an owner-registered serialized deployment target. Only exact merged-revision deployment and health release dependent work. Existing approval wrappers refuse gated cards. See [automatic review](automatic-review.md) for commands, host isolation, evidence staging and failure recovery.
+The board's database trigger intercepts coding completion and runner review handoff when owner-managed review policy is enabled. `review_jobs` and append-only `review_attempts` retain submissions, original builders, revision-bound verdicts and shipping receipts. A dedicated database login, separate from org identities and builder logins, coordinates a read-only Codex reviewer with GitHub, an atomic Git base/head comparison and an owner-registered serialized deployment target. Only exact merged-revision deployment and health release dependent work, or an owner-only reconciliation (`cli-review reconcile-owner-merge`, refused for the worker login and limited to the gate's owner-merge blocks and unassigned cards) that records an attested `review_owner_merges` receipt for a PR merged outside the gate. Existing approval wrappers refuse gated cards. See [automatic review](automatic-review.md) for commands, host isolation, evidence staging and failure recovery.
 
 Native Codex rollouts join the existing usage SSH wire/import transaction path
 as `codex` complete-prefix envelopes. The collector hashes complete prefixes,

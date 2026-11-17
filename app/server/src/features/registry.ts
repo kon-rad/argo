@@ -37,6 +37,32 @@ export function wrappersFor(modules: ReadonlySet<string>): string[] {
   return enabledManifests(modules).flatMap((m) => m.wrappers);
 }
 
+/** How a wrapper behaves on a client machine: a real command over HTTPS, or a one-line server-only notice. */
+export type ClientDoor = 'https' | 'server-only';
+
+export interface AgentCli {
+  name: string;
+  feature: string;
+  door: ClientDoor;
+}
+
+/**
+ * Every PATH wrapper any manifest names (core and addons, on or off), with its client door. This is the table
+ * `secondbrain-vault clis install` (Python, no build) reads from bin/agent-clis.json; test/agent-clis.test.ts
+ * keeps that file equal to this function. All of them, not only the enabled ones: a client does not know the
+ * server's MODULES, and a wrapper that says "server-only" beats "command not found".
+ */
+export function agentClis(): AgentCli[] {
+  return ALL_MANIFESTS.flatMap((m) =>
+    m.wrappers.map((name) => ({ name, feature: m.name, door: (m.remoteWrappers ?? []).includes(name) ? 'https' as const : 'server-only' as const })),
+  );
+}
+
+/** bin/agent-clis.json, byte for byte. */
+export function agentClisJson(): string {
+  return `${JSON.stringify({ generated: 'by `secondbrain features agent-clis`; do not edit', wrappers: agentClis() }, null, 2)}\n`;
+}
+
 /** The header links the web app shows for this module list. */
 export function navFor(modules: ReadonlySet<string>): FeatureNav[] {
   return enabledManifests(modules).flatMap((m) => m.nav);
