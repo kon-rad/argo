@@ -1,19 +1,19 @@
-# Data
+# Warehouse
 
-Status: **new** - the `data` addon (migrations, connector runner, `/data` page, CLI) ships in this release.
+Status: **new** - the `warehouse` addon (migrations, connector runner, `/warehouse` page, CLI) ships in this release.
 
 The engine ships no use-case tables. Your vault owns its tables and the connectors that fill them. The engine applies the tables, runs the connectors on their schedules, and shows everything on one page: every table in the database with its rows and size, every connector with its last runs and errors, every scheduled job, your dashboards, and the database's total size.
 
-Agents do the building, with three skills: `data-table` (a new table), `data-connector` (a new source) and `data-dashboard` (a new dashboard). See [skills](#skills).
+Agents do the building, with three skills: `warehouse-table` (a new table), `warehouse-connector` (a new source) and `warehouse-dashboard` (a new dashboard). See [skills](#skills).
 
-Module `data`, off until listed: `{ "addons": ["data"] }` in `secondbrain.json`.
+Module `warehouse`, off until listed: `{ "addons": ["warehouse"] }` in `secondbrain.json`.
 
-## The data folder
+## The warehouse folder
 
-Everything lives in one vault folder, `data.dir` in `secondbrain.json` (default `data`, relative to the vault):
+Everything lives in one vault folder, `warehouse.dir` in `secondbrain.json` (default `warehouse`, relative to the vault):
 
 ```
-<data.dir>/
+<warehouse.dir>/
   migrations/0001_instagram.sql      tables, in schema "data"
   connectors/instagram/connector.json
   connectors/instagram/run.mjs       any language
@@ -22,16 +22,16 @@ Everything lives in one vault folder, `data.dir` in `secondbrain.json` (default 
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `data.dir` | `data` | The folder above, vault-relative or absolute |
-| `data.rawDir` | `<app>/data/data-raw` | Where connectors may keep raw responses: `<rawDir>/<connector>/<run id>/` |
+| `warehouse.dir` | `warehouse` | The folder above, vault-relative or absolute |
+| `warehouse.rawDir` | `<app>/data/warehouse-raw` | Where connectors may keep raw responses: `<rawDir>/<connector>/<run id>/` |
 
 ## Tables
 
-Your tables live in the Postgres schema `data`. They're created and changed only by SQL files in `<data.dir>/migrations/`, named `NNNN_slug.sql`:
+Your tables live in the Postgres schema `data`. They're created and changed only by SQL files in `<warehouse.dir>/migrations/`, named `NNNN_slug.sql`:
 
 ```sh
-secondbrain data migrate --dry-run   # what would run
-secondbrain data migrate             # apply, in name order
+secondbrain warehouse migrate --dry-run   # what would run
+secondbrain warehouse migrate             # apply, in name order
 ```
 
 - Each file runs in its own transaction, with `search_path = data`, so `CREATE TABLE instagram_media` lands in `data.instagram_media`.
@@ -78,7 +78,7 @@ A connector is a folder with a `connector.json` and a script:
 
 ### Runner contract
 
-`secondbrain data run <name> [-- args]` runs one connector now; `secondbrain data run --due` runs every enabled connector whose schedule is due. The `secondbrain-data-run` timer calls the second every 15 minutes.
+`secondbrain warehouse run <name> [-- args]` runs one connector now; `secondbrain warehouse run --due` runs every enabled connector whose schedule is due. The `secondbrain-warehouse-run` timer calls the second every 15 minutes.
 
 **The script gets:**
 - its folder as the working directory;
@@ -87,7 +87,7 @@ A connector is a folder with a `connector.json` and a script:
   - `DATA_RAW_DIR`, a fresh folder for this run's raw files;
   - `DATA_CONFIG`, the `config` as JSON;
   - `DATA_STATE`, the JSON state the last successful run saved, or `{}`;
-- any arguments after `--`, e.g. `secondbrain data run instagram -- --backfill`.
+- any arguments after `--`, e.g. `secondbrain warehouse run instagram -- --backfill`.
 
 **The script prints JSON lines on stdout:**
 
@@ -101,11 +101,11 @@ A connector is a folder with a `connector.json` and a script:
 - The script never connects to the database, so it can't write anywhere else.
 - Rows are written in batches of 500; every write is an idempotent upsert, so re-running repairs.
 - Exit 0 is `ok`. A non-zero exit, a timeout or a refused line is `failed`, with the error and the last 2 KB of stderr. The values of the `env` keys are redacted.
-- Runs are recorded in `sources` (`kind = 'data-connector'`) and `ingest_runs`.
+- Runs are recorded in `sources` (`kind = 'warehouse-connector'`) and `ingest_runs`.
 
-Exit codes of `secondbrain data`: 0 ok, 1 error, 2 a connector failed.
+Exit codes of `secondbrain warehouse`: 0 ok, 1 error, 2 a connector failed.
 
-## The /data page
+## The /warehouse page
 
 | Tab | Shows |
 |---|---|
@@ -113,9 +113,9 @@ Exit codes of `secondbrain data`: 0 ok, 1 error, 2 a connector failed.
 | Tables | Every table in every schema: rows (exact under 200,000, the planner's estimate above, marked `~`), size, and its owner (a connector, or the engine module whose health check names it). A table in schema `data` opens to its columns and latest 20 rows |
 | Connectors | Each connector: schedule, tables, missing keys, last 10 runs with rows and errors, the command to run it now. Broken `connector.json` files are listed with their error |
 | Jobs | Connector schedules with their next run, and the timers of every enabled module |
-| Dashboards | Each `<data.dir>/dashboards/<name>.json`, rendered |
+| Dashboards | Each `<warehouse.dir>/dashboards/<name>.json`, rendered |
 
-API, behind the login: `GET /api/data/overview`, `/tables`, `/tables/:schema/:table`, `/connectors`, `/jobs`, `/dashboards`, `/dashboards/:name`.
+API, behind the login: `GET /api/warehouse/overview`, `/tables`, `/tables/:schema/:table`, `/connectors`, `/jobs`, `/dashboards`, `/dashboards/:name`.
 
 ## Dashboards
 
@@ -136,22 +136,22 @@ API, behind the login: `GET /api/data/overview`, `/tables`, `/tables/:schema/:ta
 
 ## Skills
 
-The engine's `skills/` folder has one per move. Each ends by checking its work with `secondbrain data`.
+The engine's `skills/` folder has one per move. Each ends by checking its work with `secondbrain warehouse`.
 
 | Skill | Does |
 |---|---|
-| `data-table` | Writes a migration following the table rules above, dry-runs it, applies it |
-| `data-connector` | Reads the API's docs, scaffolds `connector.json` and the script, pages through everything, supports `--backfill`, runs it and checks the rows |
-| `data-dashboard` | Writes a dashboard spec from existing tables and checks every query |
+| `warehouse-table` | Writes a migration following the table rules above, dry-runs it, applies it |
+| `warehouse-connector` | Reads the API's docs, scaffolds `connector.json` and the script, pages through everything, supports `--backfill`, runs it and checks the rows |
+| `warehouse-dashboard` | Writes a dashboard spec from existing tables and checks every query |
 
 ## CLI
 
 ```sh
-secondbrain data migrate [--dry-run]
-secondbrain data run <connector> [-- args]
-secondbrain data run --due
-secondbrain data status
-secondbrain data tables [--all]
+secondbrain warehouse migrate [--dry-run]
+secondbrain warehouse run <connector> [-- args]
+secondbrain warehouse run --due
+secondbrain warehouse status
+secondbrain warehouse tables [--all]
 ```
 
 ## Not covered yet

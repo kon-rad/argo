@@ -197,7 +197,7 @@ export interface FeatureNav {
 }
 
 export interface AppMeta {
-  modules: ('ring' | 'agents' | 'projects' | 'org' | 'board' | 'usage' | 'summaries' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat' | 'uploads' | 'data')[];
+  modules: ('ring' | 'agents' | 'projects' | 'org' | 'board' | 'usage' | 'summaries' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat' | 'uploads' | 'warehouse')[];
   /** The header links of the core features that are on. */
   nav?: FeatureNav[];
   owner: string;

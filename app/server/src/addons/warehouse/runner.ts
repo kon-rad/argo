@@ -9,13 +9,13 @@ import { loadToken } from '../../metrics/social/tokens.js';
 import { isDue, loadConnectors, type ConnectorDef } from './connectors.js';
 
 /**
- * Runs one connector (docs/data.md#runner-contract). The script prints JSON lines on
+ * Runs one connector (docs/warehouse.md#runner-contract). The script prints JSON lines on
  * stdout; this process validates each row against the connector's declared tables and
  * the table's real columns, and upserts them on the table's primary key in batches.
  * Connectors never hold a database connection, so they can't write anywhere else.
  */
 
-export const SOURCE_KIND = 'data-connector';
+export const SOURCE_KIND = 'warehouse-connector';
 const BATCH = 500;
 const STDERR_TAIL = 2048;
 const LOG_KEEP = 50;
@@ -98,7 +98,7 @@ class Writer {
     let shape = this.shapes.get(table);
     if (!shape) {
       const s = await tableShape(table);
-      if (!s) throw new Error(`table data.${table} does not exist (run secondbrain data migrate)`);
+      if (!s) throw new Error(`table data.${table} does not exist (run secondbrain warehouse migrate)`);
       if (s.pk.length === 0) throw new Error(`table data.${table} has no primary key; upserts need one`);
       this.shapes.set(table, s);
       shape = s;

@@ -93,7 +93,7 @@ done
 echo "→ shipping source to $HOST:$APP_DIR"
 ssh "$HOST" "mkdir -p $APP_DIR"
 # /data is anchored: the app's runtime folder (app/data) stays on the server, but a source folder that happens
-# to be called data (server/src/addons/data) still ships. Unanchored, it silently dropped the data addon's code.
+# to be called data (server/src/addons/data) still ships. Unanchored, it silently dropped the warehouse addon's code (then named data).
 rsync -az --delete \
   --exclude node_modules --exclude dist --exclude 'web/dist' --exclude /data --exclude vault-sync \
   --exclude .git --exclude .DS_Store \
@@ -338,13 +338,13 @@ if grep -qsE '^SUMMARIES=on$' /etc/secondbrain/env && ! has summaries; then
   echo "! SUMMARIES=on is deprecated: add summaries to DEPLOY_MODULES. Treating it as on for this deploy."
   MODS="${MODS:+$MODS,}summaries"
 fi
-# The vault's own tables (docs/data.md): applied after the engine's, never rolled back with it.
+# The vault's own tables (docs/warehouse.md): applied after the engine's, never rolled back with it.
 # A failing vault migration is reported and left for the owner; the engine deploy stands.
-if has data; then
-  if sudo -u "$APP_USER" bash -c "set -a; . /etc/secondbrain/env; set +a; cd $APP_DIR && DATABASE_URL='postgres:///secondbrain?host=/var/run/postgresql' /usr/bin/node --no-warnings server/dist/cli-data.js migrate"; then
-    echo "→ vault data migrations applied"
+if has warehouse; then
+  if sudo -u "$APP_USER" bash -c "set -a; . /etc/secondbrain/env; set +a; cd $APP_DIR && DATABASE_URL='postgres:///secondbrain?host=/var/run/postgresql' /usr/bin/node --no-warnings server/dist/cli-warehouse.js migrate"; then
+    echo "→ vault warehouse migrations applied"
   else
-    echo "! vault data migrations failed: run 'secondbrain data migrate' on the server and fix the file it names"
+    echo "! vault warehouse migrations failed: run 'secondbrain warehouse migrate' on the server and fix the file it names"
   fi
 fi
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.local/bin"

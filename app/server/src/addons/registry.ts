@@ -12,7 +12,7 @@
 import type { FeatureManifest } from '../features/types.js';
 import agents from './agents/manifest.js';
 import chat from './chat/manifest.js';
-import data from './data/manifest.js';
+import warehouse from './warehouse/manifest.js';
 import classify from './classify/manifest.js';
 import dispatch from './dispatch/manifest.js';
 import fund from './fund/manifest.js';
@@ -42,7 +42,7 @@ export const ADDON_MANIFESTS: readonly FeatureManifest[] = [
   chat,
   uploads,
   garden,
-  data,
+  warehouse,
   routing,
   classify,
   dispatch,

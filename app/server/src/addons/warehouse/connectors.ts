@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 /**
- * A connector is a folder `<data.dir>/connectors/<name>/` with a `connector.json`
- * and a script in any language (docs/data.md#connectors). These are pure: reading
+ * A connector is a folder `<warehouse.dir>/connectors/<name>/` with a `connector.json`
+ * and a script in any language (docs/warehouse.md#connectors). These are pure: reading
  * the definitions and deciding what is due.
  */
 

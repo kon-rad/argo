@@ -21,11 +21,11 @@ const PLAIN: Record<string, string> = {
 /** Every DataTable in the app and its phone pattern. Changing one is a design decision: change it here too. */
 const DATA_TABLES: Record<string, string[]> = {
   'routes/Cron.tsx': ['cards'],
-  'routes/Data.tsx': ['cards', 'scroll', 'cards', 'cards'],
   'routes/Database.tsx': ['scroll'],
   'routes/Fund.tsx': ['cards', 'scroll'],
   'routes/Projects.tsx': ['cards', 'cards'],
   'routes/Ring.tsx': ['scroll'],
+  'routes/Warehouse.tsx': ['cards', 'scroll', 'cards', 'cards'],
   'routes/org/Org.tsx': ['cards'],
   'routes/usage/AgentSessions.tsx': ['cards'],
   'routes/usage/Running.tsx': ['cards'],

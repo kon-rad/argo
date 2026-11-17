@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { pool, query } from '../../db.js';
 
 /**
- * The vault's own migrations (docs/data.md#tables). Files `<data.dir>/migrations/*.sql`
+ * The vault's own migrations (docs/warehouse.md#tables). Files `<warehouse.dir>/migrations/*.sql`
  * run in name order, each in its own transaction with search_path set to schema
  * `data`, and are recorded in `data_migrations` with a checksum. An applied file
  * that changes is refused: schema history only moves forward, in new files.

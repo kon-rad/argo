@@ -2,9 +2,9 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { checkSql, migrate } from '../src/addons/data/migrate.js';
+import { checkSql, migrate } from '../src/addons/warehouse/migrate.js';
 import { query } from '../src/db.js';
-import { resetDataSchema } from './data-helpers.js';
+import { resetDataSchema } from './warehouse-helpers.js';
 
 let dir: string;
 beforeEach(async () => {

@@ -1,11 +1,11 @@
 ---
-name: data-connector
-description: Build a connector for the data addon that pulls from an API or another source into the vault's tables on a schedule - a folder with connector.json and a script that prints JSON lines, run by `secondbrain data run`. Use when the user wants data from a service (RevenueCat, Instagram, Stripe, an analytics API, a spreadsheet) stored and refreshed, wants a backfill of all history, or wants a source's schedule changed.
+name: warehouse-connector
+description: Build a connector for the warehouse addon that pulls from an API or another source into the vault's tables on a schedule - a folder with connector.json and a script that prints JSON lines, run by `secondbrain warehouse run`. Use when the user wants data from a service (RevenueCat, Instagram, Stripe, an analytics API, a spreadsheet) stored and refreshed, wants a backfill of all history, or wants a source's schedule changed.
 ---
 
-# data-connector
+# warehouse-connector
 
-A connector is a folder `<data.dir>/connectors/<name>/` with a `connector.json` and a script in any language. The script never connects to the database: it prints JSON lines, and the engine's runner validates and upserts them into the tables the connector declares. Full contract: the engine's `docs/data.md#runner-contract`.
+A connector is a folder `<warehouse.dir>/connectors/<name>/` with a `connector.json` and a script in any language. The script never connects to the database: it prints JSON lines, and the engine's runner validates and upserts them into the tables the connector declares. Full contract: the engine's `docs/warehouse.md#runner-contract`.
 
 ## Steps
 
@@ -17,7 +17,7 @@ A connector is a folder `<data.dir>/connectors/<name>/` with a `connector.json` 
    - how far back history goes.
 
    Write down what the API can't give (for example, past daily follower counts), so nobody expects it later.
-2. **Tables first.** Use the `data-table` skill: entity tables, plus `_daily` snapshot tables for numbers that change. Apply them.
+2. **Tables first.** Use the `warehouse-table` skill: entity tables, plus `_daily` snapshot tables for numbers that change. Apply them.
 3. **Keys stay in env.** Put each key's *name* in `env` (e.g. `REVENUECAT_IMAGYM_API_KEY`) and its value in the server's env file. Never write a value into the folder, a row, a log line or a raw file. Strip tokens from URLs before logging.
 4. **Write `connector.json`:**
 
@@ -41,16 +41,16 @@ A connector is a folder `<data.dir>/connectors/<name>/` with a `connector.json` 
    - print one `{"table": "<name>", "row": {...}}` per row, using exact column names and keys always present;
    - page through every page;
    - back off on HTTP 429 and on rate-limit headers, and retry 5xx a few times;
-   - accept `--backfill` (passed as `secondbrain data run <name> -- --backfill`) to pull all history; the normal run pulls only recent data;
+   - accept `--backfill` (passed as `secondbrain warehouse run <name> -- --backfill`) to pull all history; the normal run pulls only recent data;
    - save a cursor with `{"state": {...}}` if incremental pulls need one, and read it from `DATA_STATE`;
    - write raw responses to `DATA_RAW_DIR` only if they'd be worth re-parsing (gzip big ones);
    - print `{"log": "..."}` for progress and anything skipped, such as a metric the API refused;
    - exit non-zero on a real failure. A metric the API won't give is `null` plus a log line, not a failure.
-6. **Run it:** `secondbrain data run <name>`. Then check:
-   - `secondbrain data status` shows `ok` with row counts;
+6. **Run it:** `secondbrain warehouse run <name>`. Then check:
+   - `secondbrain warehouse status` shows `ok` with row counts;
    - spot-check rows with SQL against what the API's own UI shows.
-7. **Backfill** if history is wanted: `secondbrain data run <name> -- --backfill`. Report the counts and the earliest date reached.
-8. **Confirm the schedule** on the `/data` page (Connectors and Jobs tabs). Say which keys must be set on the server for the timer runs.
+7. **Backfill** if history is wanted: `secondbrain warehouse run <name> -- --backfill`. Report the counts and the earliest date reached.
+8. **Confirm the schedule** on the `/warehouse` page (Connectors and Jobs tabs). Say which keys must be set on the server for the timer runs.
 
 ## Script skeleton
 
@@ -78,4 +78,4 @@ console.log(JSON.stringify({ state: { ...state, lastRun: new Date().toISOString(
 - The run is `ok`, with the rows counted per table.
 - Spot checks match the source.
 - Missing keys are named.
-- The connector shows on `/data` with its next run.
+- The connector shows on `/warehouse` with its next run.

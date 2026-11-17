@@ -1,17 +1,17 @@
 import { exitFlushed } from './cli-exit.js';
 import { config } from './config.js';
 import { pool } from './db.js';
-import { connectorViews, dataPaths, listTables, overview } from './addons/data/catalog.js';
-import { loadConnectors } from './addons/data/connectors.js';
-import { migrate } from './addons/data/migrate.js';
-import { runConnector, runDue } from './addons/data/runner.js';
+import { connectorViews, dataPaths, listTables, overview } from './addons/warehouse/catalog.js';
+import { loadConnectors } from './addons/warehouse/connectors.js';
+import { migrate } from './addons/warehouse/migrate.js';
+import { runConnector, runDue } from './addons/warehouse/runner.js';
 
 /**
- * secondbrain data migrate [--dry-run]
- * secondbrain data run <connector> [-- args...]   one connector now (e.g. -- --backfill)
- * secondbrain data run --due                       every connector whose schedule is due (the timer)
- * secondbrain data status                          connectors, last runs, sizes
- * secondbrain data tables                          every table with rows and size
+ * secondbrain warehouse migrate [--dry-run]
+ * secondbrain warehouse run <connector> [-- args...]   one connector now (e.g. -- --backfill)
+ * secondbrain warehouse run --due                       every connector whose schedule is due (the timer)
+ * secondbrain warehouse status                          connectors, last runs, sizes
+ * secondbrain warehouse tables                          every table with rows and size
  * Exit 0 ok, 1 error, 2 a connector failed (partial).
  */
 const argv = process.argv.slice(2);
@@ -35,7 +35,7 @@ async function main(): Promise<number> {
         return results.some((r) => r.status === 'failed') ? 2 : 0;
       }
       const name = rest[0];
-      if (!name) throw new Error('usage: secondbrain data run <connector> [-- args] | --due');
+      if (!name) throw new Error('usage: secondbrain warehouse run <connector> [-- args] | --due');
       const { defs, errors } = loadConnectors(paths.dir);
       const def = defs.find((d) => d.name === name);
       if (!def) {
@@ -67,7 +67,7 @@ async function main(): Promise<number> {
       return 0;
     }
     default:
-      console.error('usage: secondbrain data migrate [--dry-run] | run <connector> [-- args] | run --due | status | tables [--all]');
+      console.error('usage: secondbrain warehouse migrate [--dry-run] | run <connector> [-- args] | run --due | status | tables [--all]');
       return cmd ? 1 : 0;
   }
 }

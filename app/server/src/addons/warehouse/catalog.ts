@@ -5,15 +5,15 @@ import { config } from '../../config.js';
 import { query } from '../../db.js';
 import { runReadOnly, type QueryResult } from '../../dbExplorer.js';
 import { enabledManifests } from '../../features/registry.js';
-import { settings, type DataSettings } from '../../settings.js';
+import { settings, type WarehouseSettings } from '../../settings.js';
 import { loadConnectors, nextScheduledAt, type ConnectorDef, type ConnectorError } from './connectors.js';
 import { SOURCE_KIND } from './runner.js';
 
-/** What the /data page and `secondbrain data status|tables` read (docs/data.md#the-data-page). */
+/** What the /warehouse page and `secondbrain warehouse status|tables` read (docs/warehouse.md#the-warehouse-page). */
 
-export function dataPaths(vaultRoot = config.vaultRoot, s: DataSettings = settings(vaultRoot).data) {
+export function dataPaths(vaultRoot = config.vaultRoot, s: WarehouseSettings = settings(vaultRoot).warehouse) {
   const dir = isAbsolute(s.dir) ? s.dir : resolve(vaultRoot, s.dir);
-  const rawRoot = s.rawDir ? (isAbsolute(s.rawDir) ? s.rawDir : resolve(vaultRoot, s.rawDir)) : join(config.dataDir, 'data-raw');
+  const rawRoot = s.rawDir ? (isAbsolute(s.rawDir) ? s.rawDir : resolve(vaultRoot, s.rawDir)) : join(config.dataDir, 'warehouse-raw');
   return { dir, rawRoot, migrations: join(dir, 'migrations'), dashboards: join(dir, 'dashboards') };
 }
 
@@ -143,7 +143,7 @@ export async function connectorViews(defs: ConnectorDef[], now = new Date()): Pr
     missingEnv: d.env.filter((k) => !process.env[k]),
     nextDue: d.schedule && d.enabled ? nextScheduledAt(d.schedule, now).toISOString() : null,
     lastRuns: runs.get(d.name) ?? [],
-    runCommand: `secondbrain data run ${d.name}`,
+    runCommand: `secondbrain warehouse run ${d.name}`,
   }));
 }
 
@@ -165,9 +165,9 @@ export function listJobs(defs: ConnectorDef[], modules: ReadonlySet<string>, now
     .map((d) => ({
       kind: 'connector' as const,
       name: d.name,
-      owner: 'data',
+      owner: 'warehouse',
       schedule: `every ${d.schedule!.every}${d.schedule!.at ? ` at ${d.schedule!.at} UTC` : ''}`,
-      command: `secondbrain data run ${d.name}`,
+      command: `secondbrain warehouse run ${d.name}`,
       nextDue: nextScheduledAt(d.schedule!, now).toISOString(),
     }));
   return [...conns, ...timers];

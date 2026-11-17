@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import DataTable from '../components/DataTable.js';
-import { bytes, dataApi, type DataPanel, type DataQueryResult } from '../lib/dataApi.js';
+import { bytes, warehouseApi, type DataPanel, type DataQueryResult } from '../lib/warehouseApi.js';
 import { ago, zoned } from '../lib/time.js';
 
 /**
- * /data: every table, connector, scheduled job and dashboard (docs/data.md).
+ * /warehouse: every table, connector, scheduled job and dashboard (docs/warehouse.md).
  * The vault owns its tables and connectors; this page only shows them.
  */
 
@@ -21,15 +21,15 @@ type Tab = (typeof TABS)[number]['key'];
 
 const fmt = (n: number) => n.toLocaleString();
 
-export default function Data() {
+export default function Warehouse() {
   const { tab = 'overview' } = useParams();
   const active = (TABS.some((t) => t.key === tab) ? tab : 'overview') as Tab;
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 md:px-6">
-      <h1 className="text-lg font-semibold tracking-tight">Data</h1>
+      <h1 className="text-lg font-semibold tracking-tight">Warehouse</h1>
       <nav className="mt-3 flex flex-wrap gap-1 border-b border-[var(--rule)] text-sm">
         {TABS.map((t) => (
-          <Link key={t.key} to={t.key === 'overview' ? '/data' : `/data/${t.key}`}
+          <Link key={t.key} to={t.key === 'overview' ? '/warehouse' : `/warehouse/${t.key}`}
             className={`-mb-px border-b-2 px-3 py-1.5 ${active === t.key ? 'border-[var(--accent)] font-medium' : 'border-transparent text-[var(--ink-dim)]'}`}>
             {t.label}
           </Link>
@@ -63,7 +63,7 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 }
 
 function Overview() {
-  const q = useQuery({ queryKey: ['data-overview'], queryFn: dataApi.overview });
+  const q = useQuery({ queryKey: ['data-overview'], queryFn: warehouseApi.overview });
   if (!q.data) return <Status q={q} />;
   const o = q.data;
   const c = o.connectors;
@@ -81,7 +81,7 @@ function Overview() {
 }
 
 function Tables() {
-  const q = useQuery({ queryKey: ['data-tables'], queryFn: dataApi.tables });
+  const q = useQuery({ queryKey: ['data-tables'], queryFn: warehouseApi.tables });
   const [open, setOpen] = useState<string | null>(null);
   const [all, setAll] = useState(false);
   if (!q.data) return <Status q={q} />;
@@ -91,7 +91,7 @@ function Tables() {
       <label className="mb-2 flex items-center gap-2 text-sm">
         <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Show engine tables too ({q.data.tables.length})
       </label>
-      {rows.length === 0 && <p className="text-sm text-[var(--ink-dim)]">No tables in schema data yet. Add a migration and run <code>secondbrain data migrate</code>.</p>}
+      {rows.length === 0 && <p className="text-sm text-[var(--ink-dim)]">No tables in schema data yet. Add a migration and run <code>secondbrain warehouse migrate</code>.</p>}
       <DataTable label="Tables" phone="cards" className="w-full text-sm">
           <thead className="text-left text-xs text-[var(--ink-dim)]">
             <tr><th className="py-1 pr-3">Table</th><th className="pr-3 text-right">Rows</th><th className="pr-3 text-right">Size</th><th>Owner</th></tr>
@@ -118,7 +118,7 @@ function Tables() {
 }
 
 function TableDetail({ schema, name }: { schema: string; name: string }) {
-  const q = useQuery({ queryKey: ['data-table', schema, name], queryFn: () => dataApi.table(schema, name) });
+  const q = useQuery({ queryKey: ['data-table', schema, name], queryFn: () => warehouseApi.table(schema, name) });
   if (!q.data) return <Status q={q} />;
   return (
     <div className="my-2 max-w-[90vw] md:max-w-3xl">
@@ -157,13 +157,13 @@ function ResultTable({ r }: { r: DataQueryResult }) {
 }
 
 function Connectors() {
-  const q = useQuery({ queryKey: ['data-connectors'], queryFn: dataApi.connectors });
+  const q = useQuery({ queryKey: ['data-connectors'], queryFn: warehouseApi.connectors });
   if (!q.data) return <Status q={q} />;
   const { connectors, errors } = q.data;
   return (
     <div className="space-y-4">
       {connectors.length === 0 && errors.length === 0 && (
-        <p className="text-sm text-[var(--ink-dim)]">No connectors yet. An agent adds one with the <code>data-connector</code> skill.</p>
+        <p className="text-sm text-[var(--ink-dim)]">No connectors yet. An agent adds one with the <code>warehouse-connector</code> skill.</p>
       )}
       {connectors.map((c) => {
         const last = c.lastRuns[0];
@@ -211,7 +211,7 @@ function Connectors() {
 }
 
 function Jobs() {
-  const q = useQuery({ queryKey: ['data-jobs'], queryFn: dataApi.jobs });
+  const q = useQuery({ queryKey: ['data-jobs'], queryFn: warehouseApi.jobs });
   if (!q.data) return <Status q={q} />;
   return (
     <DataTable label="Scheduled jobs" phone="cards" className="w-full text-sm">
@@ -234,11 +234,11 @@ function Jobs() {
 }
 
 function Dashboards() {
-  const q = useQuery({ queryKey: ['data-dashboards'], queryFn: dataApi.dashboards });
+  const q = useQuery({ queryKey: ['data-dashboards'], queryFn: warehouseApi.dashboards });
   const [pick, setPick] = useState<string | null>(null);
   if (!q.data) return <Status q={q} />;
   const list = q.data.dashboards;
-  if (list.length === 0) return <p className="text-sm text-[var(--ink-dim)]">No dashboards yet. An agent adds one with the <code>data-dashboard</code> skill.</p>;
+  if (list.length === 0) return <p className="text-sm text-[var(--ink-dim)]">No dashboards yet. An agent adds one with the <code>warehouse-dashboard</code> skill.</p>;
   const current = pick ?? list[0]!.name;
   return (
     <div>
@@ -256,7 +256,7 @@ function Dashboards() {
 }
 
 function Dashboard({ name }: { name: string }) {
-  const q = useQuery({ queryKey: ['data-dashboard', name], queryFn: () => dataApi.dashboard(name) });
+  const q = useQuery({ queryKey: ['data-dashboard', name], queryFn: () => warehouseApi.dashboard(name) });
   if (!q.data) return <div className="mt-4"><Status q={q} /></div>;
   return (
     <div className="mt-4">
