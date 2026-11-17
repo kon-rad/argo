@@ -4,6 +4,8 @@ Status: **new** - the `warehouse` addon (migrations, connector runner, `/warehou
 
 The engine ships no use-case tables. Your vault owns its tables and the connectors that fill them. The engine applies the tables, runs the connectors on their schedules, and shows everything on one page: every table in the database with its rows and size, every connector with its last runs and errors, every scheduled job, your dashboards, and the database's total size.
 
+New to it? The [warehouse guide](warehouse-guide.md) walks through connecting a source, every parameter, and adding, changing and removing sources.
+
 Agents do the building, with three skills: `warehouse-table` (a new table), `warehouse-connector` (a new source) and `warehouse-dashboard` (a new dashboard). See [skills](#skills).
 
 Module `warehouse`, off until listed: `{ "addons": ["warehouse"] }` in `secondbrain.json`.

@@ -437,7 +437,7 @@ cmd_metrics() {
 }
 
 cmd_features() {
-  # The feature manifests (server/src/features/<name>/manifest.ts): list | units | wrappers | help.
+  # The feature manifests (server/src/features/<name>/manifest.ts): list | units | wrappers | agent-clis | help.
   ensure_deps; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-features.js" "$@"
 }
@@ -494,7 +494,7 @@ secondbrain garden     nightly vault gardener (shadow by default; --write update
 secondbrain metrics    collect | set <metric> <value> | list  the brain map's numbers
 secondbrain ring-pull  copy the ring data from the server into local Postgres
 secondbrain auth-setup  create the password + authenticator login for the server
-secondbrain features   list | units | wrappers | help  the feature manifests and what they wire
+secondbrain features   list | units | wrappers | agent-clis | help  the feature manifests and what they wire
 secondbrain doctor     health checks: Node, Postgres, pgvector, migrations, modules, each feature's tables (--deep adds server checks)
 secondbrain plan       the env file + systemd units the server block implies (writes nothing)
 secondbrain apply      write that plan (only when server.generate is true in secondbrain.json)
