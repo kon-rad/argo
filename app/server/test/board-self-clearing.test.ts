@@ -8,7 +8,7 @@ import { importOrg } from '../src/org.js';
 import { ALL_MODULES, truncateAll } from './helpers.js';
 
 /**
- * Blocks that clear themselves (board module, migration 1756000018800): dependency blocks are links released by
+ * Blocks that clear themselves (board module, migration 1756000019000): dependency blocks are links released by
  * the last dependency's finish or by reclaim, host-down blocks retry on host-up at most 3 times, running cards whose
  * run already ended are reconciled, and none of it ever moves a done or archived card.
  */
