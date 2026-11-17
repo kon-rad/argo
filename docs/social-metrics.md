@@ -177,6 +177,33 @@ The account must be listed under `socialMetrics.linkedin`. Entries are stored wi
 
 The command exits 2 when any source failed (the unit treats that as success, so one broken account doesn't mark the timer failed), and prints one line per account, which `journalctl -u secondbrain-metrics` shows. `secondbrain metrics collect --dry-run` reads everything and writes nothing.
 
+## Checkpoints: every post at 24 h, 72 h and 7 days
+
+Daily rows show a post at whatever age it happened to be at 00:30 UTC, so two posts can't be compared fairly. `secondbrain-metrics-checkpoints.timer` (hourly at :45, installed with the `map` module) runs `secondbrain metrics checkpoints` and writes `social_post_metrics`: one row per post, checkpoint and metric, read from the platform's API once the post is **24 hours**, **72 hours** and **7 days** old. The weekly retro ranks posts on the 72 h rows.
+
+| Platform | Which posts | Metrics | Access |
+|---|---|---|---|
+| YouTube | Every upload the daily collector found on a configured channel, plus every YouTube post the `social` module published (Buffer included), by the video id in its URL | views, likes, comments | `YOUTUBE_API_KEY` (Data API v3, public statistics; 1 quota unit per 50 videos). Watch time, retention and swipe-away need the YouTube Analytics API with the channel owner's OAuth: **not built** |
+| Instagram | Every post the daily collector found on a configured account | views, reach, likes, comments, shares, saves | The account's stored token with `instagram_business_manage_insights`, read only (the daily run refreshes it) |
+| X, LinkedIn | none | | X has no timeline in fxtwitter and LinkedIn has no API here: read by hand |
+
+Rules:
+
+- A checkpoint is taken only inside its window: `24h` from 24 to 72 hours, `72h` from 72 hours to 7 days, `7d` from 7 to 8 days. A missed window leaves no row, never a mislabelled one. `sampled_at - posted_at` is the exact age.
+- When a read fails or access is refused (no key, no token, missing insights scope, quota), the metrics are stored as NULL with the redacted reason in `error`, and the next hourly run tries again while the window is open. When Instagram insights are refused, likes and comments still come from the media fields.
+- A good reading is final: a later run never replaces it.
+- `piece_id` is free text for the content piece a post carries (a vault draft path, or a `media_pieces` id once that table exists). The collector leaves it empty; `social_post_id` links the row to the social module's post when it published it.
+- `secondbrain metrics checkpoints --dry-run` reads what is due and writes nothing. The command prints one line per post and exits 2 when any read failed.
+
+For the retro, 72 h views per post with what published it:
+
+```sql
+SELECT m.platform, m.remote_id, m.posted_at, p.remote_url, m.value AS views_72h, m.error
+  FROM social_post_metrics m LEFT JOIN social_posts p ON p.id = m.social_post_id
+ WHERE m.checkpoint = '72h' AND m.metric = 'views' AND m.posted_at > now() - interval '14 days'
+ ORDER BY m.value DESC NULLS LAST;
+```
+
 ## The report
 
 ```bash
@@ -198,6 +225,7 @@ It lists each account's follower (or subscriber) count with its change over the 
 |---|---|
 | `metric_samples` | Account numbers, one row per reading (unchanged; shared with the brain map) |
 | `social_post_stats` | One row per `(platform, external_id, day)`: `account`, `url`, `posted_at`, `kind`, `views`, `likes`, `comments`, `shares`, `saves`, `reach` (NULL = not reported), `social_post_id` (set when the post was published by the `social` module, matched by id or URL), `source`, `raw`, `sampled_at` |
+| `social_post_metrics` | One row per `(platform, remote_id, checkpoint, metric)`: `piece_id`, `social_post_id`, `account`, `checkpoint` (`24h`, `72h`, `7d`), `metric`, `value` (NULL = not reported or not readable), `posted_at`, `sampled_at`, `source`, `error` (redacted reason when the read failed) |
 | `social_metric_status` | Per collector: last run, last success, last redacted error, posts written |
 | `social_metric_tokens` | Tokens as ciphertext with explicit `token_kind`, per-account `asset_id`, expiry, last refresh and last refresh error |
 | `instagram_login_states` | Hashed single-use OAuth state and callback binding, initiating auth session, intended account/asset and exact redirect; expires in ten minutes |

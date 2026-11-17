@@ -36,7 +36,7 @@ function recovery(username: string): string {
 }
 
 /** The token to use now, refreshing and storing it when due. Throws an actionable error when there is none. */
-async function resolveToken(a: InstagramAccount, deps: SocialDeps, r: SocialResult): Promise<string> {
+export async function resolveToken(a: InstagramAccount, deps: SocialDeps, r: SocialResult): Promise<string> {
   const username = a.account;
   const unified = a.cfg.login === 'unified';
   if (unified) {

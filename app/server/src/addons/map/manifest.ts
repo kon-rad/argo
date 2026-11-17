@@ -37,6 +37,21 @@ export default defineFeature({
         directives: ['SuccessExitStatus=2', 'TimeoutStartSec=180'],
       },
     },
+    {
+      unit: 'secondbrain-metrics-checkpoints',
+      summary: 'read social posts at 24 h, 72 h and 7 d, hourly',
+      calendar: '*-*-* *:45:00',
+      command: 'metrics checkpoints',
+      description: 'Second Brain: per-post social readings at 24 h, 72 h and 7 days (social_post_metrics)',
+      timerDescription: 'Social post checkpoints, hourly',
+      persistent: true,
+      randomizedDelaySec: 120,
+      service: {
+        after: ['network-online.target', 'postgresql.service'],
+        requires: ['postgresql.service'],
+        directives: ['SuccessExitStatus=2', 'TimeoutStartSec=180'],
+      },
+    },
   ],
   wrappers: [],
   // Both optional: the social metrics collectors (docs/social-metrics.md) report a missing key per account.
