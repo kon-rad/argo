@@ -178,6 +178,29 @@ Each pass is told which files it holds and the full list of files in the PR, and
 
 Up to three passes run at a time. A very large PR costs more reviewer calls and takes longer; that is the trade for not sending builders back to split work that has to land together. A single Git read is bounded at 64 MB as a memory guard, which is not a review limit.
 
+## Operator recovery: a PR merged outside the gate
+
+The gate only completes a gated card when its own worker merged, deployed and health-checked the reviewed revision. If the owner merges a card's PR by hand, the job blocks with `Unknown prior merge, owner reconciliation required` or `Merged revision has no accepted review; reconciliation required`, and a card with no assignee is refused with `review: original builder required`. None of these can reach done on their own. The owner verb closes them:
+
+```sh
+REVIEW_DB_URL=postgres://<owner-login>@/<db> \
+node /srv/engine/app/server/dist/cli-review.js reconcile-owner-merge /etc/secondbrain/review-host.json \
+  t_0123abcd --pr 42 --merge <40-char merge commit sha> --reason "Owner merged #42 by hand after manual review"
+```
+
+- **Who may run it.** Only the database owner: a superuser, the database owner or the owner of `review_jobs`. The review worker login is refused (it has no execute grant), because the database cannot check GitHub itself and only the owner, who can already bypass every trigger, may vouch for the GitHub facts. A connection that carries an `org.agent` identity (every bot, builder and model door) is refused even on an owner login, and `sb_org` has no execute grant. Run it as root on the review host with `REVIEW_DB_URL` pointing at the owner login, not the worker's.
+- **Which cards it recovers.** Only the two stuck states the gate leaves, and nothing else:
+  1. The latest review job is `blocked` with exactly `Unknown prior merge, owner reconciliation required` or `Merged revision has no accepted review; reconciliation required`, and the worker recorded the merge commit it saw on GitHub (`review_jobs.merged`). The request must name that same merge commit, and the job's PR if it recorded one.
+  2. The card has no review job and no assignee, so every done write is refused with `review: original builder required`.
+
+  A queued, reviewing, approved or rejected job, a job blocked for any other reason, an assigned card with no job yet, an ungated card and a done or archived card are all refused. A card in `review` whose job is still queued needs one worker tick first (`cli-review tick`): the worker sees the merged PR and blocks the job with `Unknown prior merge`, recording the merge commit.
+- **What it checks on GitHub.** With the host policy's `gh` and `git`, the PR must be in the registered repository (never one the caller names), not a cross-repository PR, target the registered base, come from a branch that names the card, be `MERGED` with exactly that merge commit, and the merge commit must be an ancestor of the base's current tip. An open or closed PR, another sha, another PR, another base, another repository or a branch that does not name the card is refused and nothing is written.
+- **What it writes.** One immutable row in `review_owner_merges` (card, job, repository, PR, merge commit, PR head, reason, `reconciled_by`, `reconciled_at` and the GitHub facts it checked). The job moves to `done` with `merged` set; its verdict, `deployed` and `health` stay as they were, so nothing claims a reviewer accepted it or that the gate deployed it. Active correction runs for the card are cancelled, open card runs are closed as `partial`, the card moves to `done` and its dependants are released. The card event is `owner-reconciled`, never `review-shipped`.
+- **Idempotent and one-shot.** Running the same command again prints the same receipt. The receipt only lets its own transaction past the gate: a card reopened later goes through the gate like any other closed job.
+- **Locks.** It takes the job's and the card's review locks and refuses while the worker holds them; retry after the tick finishes.
+
+Deployment of a hand-merged revision is the owner's responsibility; the receipt records the merge, not a deployment.
+
 ## Telling the owner about a rejection or a block
 
 When the host policy has a `notify` program, the worker calls it once with one argument, a short plain-text line, when a review ends in `rejected` (changes requested, with the PR, the round, up to five findings and who holds the card) or enters `blocked` (with the error and whether the PR was already merged). A blocked job that is retried and blocks again on the same error sends nothing further; a different error sends a new line. Waiting for CI and a paused shipping switch are not blocks and send nothing.

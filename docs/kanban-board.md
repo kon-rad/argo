@@ -68,7 +68,7 @@ One identity model, three ways to reach it. `cli-board` picks its door from the 
 Which to use from where:
 
 - **On your laptop, browsing:** door 1. Nothing to configure.
-- **On your laptop or another machine running agents or scripts:** door 2. This is the door that saves you SSH, and the one worth fixing first when it breaks (section 6).
+- **On your laptop or another machine running agents or scripts:** door 2. This is the door that saves you SSH, and the one worth fixing first when it breaks (section 6). Put `cli-board` on that machine's PATH with `.secondbrain/bin/secondbrain-vault clis install` (once `npm ci` has run in `.secondbrain/app`): it installs a one-file bundle that speaks door 2 only and reads `BOARD_URL` and `BOARD_TOKEN` from the environment, else from the vault `.env` (read literally, never sourced). No database, no `/etc/secondbrain/env`, no server build. The same command installs every other wrapper the manifests name (`cli-org`, `cli-projects`, ...) as a one-line "server-only" notice, so an agent never hits "command not found". [Connect machines](onboarding/06-connect-machines.md#the-agent-clis-on-the-laptop-and-every-other-machine) has the steps.
 - **On the server, as a bot or a timer:** door 3, which is what the users' wrappers do already. `cli-org` and `cli-board` on the server source the env file themselves, so it just works.
 
 A write is attributed to the identity the door supplies. There is no `--author`: a comment is always the caller's. That is deliberate, and it is why door 2 asks the token to name a real roster member.
@@ -196,7 +196,7 @@ BOARD_TOKEN=<the token you copied>
 | Machine | File | Holds |
 |---|---|---|
 | The server | the app's env file (for this engine, `/etc/secondbrain/env`) | `BOARD_URL` is not needed; the door-3 database URL is there, plus `MODULES` including `board` |
-| Your laptop or another host | the vault's `.env` (gitignored) | `BOARD_URL`, `BOARD_TOKEN` |
+| Your laptop or another host | the vault's `.env` (gitignored) | `BOARD_URL`, `BOARD_TOKEN`; the `cli-board` that `secondbrain-vault clis install` writes reads them from there |
 | A server-side bot or timer | the same server env file | nothing extra: the wrapper scripts source it |
 
 Rules that keep this from becoming an incident:
@@ -262,6 +262,8 @@ cli-board import /tmp/local-board.json --board exo               # upserts by id
 **`board 401: bad, revoked or missing board token`.** The token is wrong, revoked, or absent, and the request never reached an identity. Check three things in order: that `BOARD_TOKEN` is actually set in the environment of *this* process; that it has not been revoked (`cli-board token list`, which prints metadata and never the token); and that `BOARD_URL` points at the app that holds that token's database. A token from one server does not work on another. Mint a new one, put it in the machine's env file, and revoke the old id in the same sitting so you do not leave two live credentials behind.
 
 **`board 403: <name> can't move <card>` (or "can't unassign").** The read succeeded and the write was refused, which means the door worked and the identity is the problem. The message names the identity the server resolved, so read it literally: if it is not who you think you are, the environment is supplying someone else's identity. The usual causes are a `BOARD_TOKEN` minted for a different roster member, or `ORG_AGENT` left set from an earlier command in the same shell. Note that `cli-org` and `cli-board` on the server source the server env file themselves, so a variable you unset in your shell can come straight back.
+
+**`cli-board: command not found` on a laptop or agent host.** The agent CLIs are not installed on that machine: run `.secondbrain/bin/secondbrain-vault clis install` there (section 2). `cli-board: BOARD_URL and BOARD_TOKEN not set ...` means they are installed and the two keys are missing from the vault `.env`; `cli-org is server-only: ...` is the expected answer off the server. `secondbrain-vault clis status` lists all of them.
 
 **A card that finished still shows `ready` or `running` on the board.** Check `cli-board show <id>`: it is the only record. If a worker's run ended without `cli-board finish`, the lane blocks the card or the lease expires and the card goes back to `ready`; `cli-board reclaim <id>` does it by hand. A card closed with a plain `hermes kanban complete` never reached this board at all (see the trap above).
 

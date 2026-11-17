@@ -3,6 +3,7 @@ import pg from 'pg';
 import { agentSpecProblem } from '../../../agent-spec.js';
 import { config } from '../../../config.js';
 import { query } from '../../../db.js';
+import { BoardError } from './errors.js';
 
 /**
  * The board (board module): the kanban record in the engine. Design: docs/board-design.md.
@@ -13,19 +14,14 @@ import { query } from '../../../db.js';
  * (org_me()) when there is one, exactly as the org module does. Reads are plain SELECTs.
  */
 
-export class BoardError extends Error {
-  constructor(message: string, readonly status: 400 | 403 | 404 = 400) {
-    super(message);
-  }
-}
+export { BoardError } from './errors.js';
 
 export const CARD_ID = /^t_[0-9a-f]{6,32}$/;
 export const STATUSES = ['triage', 'todo', 'scheduled', 'ready', 'running', 'review', 'blocked', 'done', 'archived'] as const;
 export type Status = (typeof STATUSES)[number];
 export const CARD_KINDS = ['work', 'spec', 'build', 'review', 'verify', 'doc', 'status', 'improve', 'revert'] as const;
 export const BLOCK_KINDS = ['dependency', 'needs-owner', 'missing-input', 'tool-error', 'budget', 'review-changes', 'host-down', 'other'] as const;
-/** Automatic host-up retries a host-down block gets before it waits for a person (board_reclaim's max_retries). */
-export const HOST_RETRIES = 3;
+export { HOST_RETRIES } from './limits.js';
 const HOST = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
 export const OUTCOMES = ['done', 'blocked', 'partial', 'budget'] as const;
 export type Outcome = (typeof OUTCOMES)[number];

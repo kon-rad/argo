@@ -118,6 +118,35 @@ export async function readyCardsOwedAWake(retries: number): Promise<{ card: stri
   return rows;
 }
 
+/**
+ * Open, unclaimed task wakeups whose card is done or archived: nothing will ever run them, yet each one keeps its bot
+ * selected every tick. Closed with result `card closed`. A claimed one belongs to a run in flight and is left to it
+ * (releaseStale reopens it if that run died, and the next pass closes it). Idempotent: a closed wakeup is not open.
+ */
+export async function closeWakeupsOnClosedCards(): Promise<{ id: number; agent: string; card: string }[]> {
+  const { rows } = await query<{ id: number; agent: string; card: string }>(
+    `UPDATE org_wakeups w SET done_at = now(), result = 'card closed'
+       FROM cards c
+      WHERE c.id = w.ref AND w.reason = 'task' AND w.done_at IS NULL AND w.claimed_at IS NULL
+        AND c.status IN ('done', 'archived')
+      RETURNING w.id, w.agent_name AS agent, c.id AS card`);
+  return rows;
+}
+
+/** The card is still running under an unfinished card_runs row: the only state a dispatcher may heartbeat or move. */
+export async function cardHasLiveRun(card: string): Promise<boolean> {
+  const { rowCount } = await query(
+    `SELECT 1 FROM cards c JOIN card_runs r ON r.card_id = c.id AND r.finished_at IS NULL WHERE c.id = $1 AND c.status = 'running' LIMIT 1`, [card]);
+  return (rowCount ?? 0) > 0;
+}
+
+/** The status of each card id that exists; a missing id is absent from the map. */
+export async function cardStatuses(ids: string[]): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  const { rows } = await query<{ id: string; status: string }>(`SELECT id, status FROM cards WHERE id = ANY ($1)`, [ids]);
+  return new Map(rows.map((r) => [r.id, r.status]));
+}
+
 export async function lastCodexSession(agent: string, card: string): Promise<string | null> {
   const { rows } = await query<{ session_id: string }>(
     `SELECT session_id FROM usage_runs WHERE runtime = 'codex' AND agent_name = $1 AND task_id = $2
