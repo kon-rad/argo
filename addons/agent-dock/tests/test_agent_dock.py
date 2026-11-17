@@ -135,11 +135,13 @@ def test_unknown_agent_and_runtime_are_refused(vault, fake_bin):
         dock.build_runtime_command("ada", dock.agent_info(vault, s, "ada"), "zsh", s, vault)
 
 
-def test_ghostty_line_quotes_the_command_for_a_login_shell():
-    cmd = dock.terminal_command("ghostty", "ada · Codex", ["/a b/agent-dock", "run", "ada", "--vault", "/my vault"], shell="/bin/zsh")
-    assert cmd[:5] == ["open", "-na", "Ghostty.app", "--args", "--title=ada · Codex"]
-    assert cmd[5:10] == ["-e", "/bin/zsh", "-l", "-i", "-c"]
-    assert cmd[10] == "exec '/a b/agent-dock' run ada --vault '/my vault'"
+def test_ghostty_opens_a_tab_with_the_command_quoted_for_a_login_shell():
+    cmd = dock.terminal_command("ghostty", "ada", ["/a b/agent-dock", "run", "ada", "--vault", "/my vault"], shell="/bin/zsh")
+    assert cmd[:2] == ["osascript", "-e"] and "new tab in front window with configuration cfg" in cmd[2]
+    assert cmd[3] == "/bin/zsh -l -i -c 'exec '\"'\"'/a b/agent-dock'\"'\"' run ada --vault '\"'\"'/my vault'\"'\"''"
+    assert cmd[4] == "tab"
+    assert dock.terminal_command("ghostty", "ada", ["x"], how="window")[4] == "window"
+    assert "--args" not in cmd, "the command is never handed to a new Ghostty instance on its command line"
 
 
 def test_terminal_app_line_escapes_quotes_for_applescript():
@@ -149,12 +151,65 @@ def test_terminal_app_line_escapes_quotes_for_applescript():
         dock.terminal_command("xterm", "t", ["x"])
 
 
+def test_hermes_on_ollama_becomes_a_custom_endpoint(vault, fake_bin, monkeypatch):
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    (vault / "secondbrain.json").write_text(json.dumps({"agentDock": {"runtimes": {"hermes": {
+        "provider": "ollama", "model": "big-model:27b"}}}}))
+    s = dock.load_settings(vault)
+    info = dock.agent_info(vault, s, "ada")
+    argv, meta = dock.build_runtime_command("ada", info, "hermes", s, vault)
+    assert argv[1:7] == ["chat", "-m", "big-model:27b", "--provider", "custom", "--base-url"]
+    assert argv[7] == "http://127.0.0.1:11434/v1"
+    assert meta == {"model": "big-model:27b", "provider": "ollama"}
+    argv, meta = dock.build_runtime_command("ada", info, "hermes", s, vault, model="cloud-1", provider="together")
+    assert argv[1:6] == ["chat", "-m", "cloud-1", "--provider", "together"] and "--base-url" not in argv
+    assert meta == {"model": "cloud-1", "provider": "together"}
+
+
+def test_ollama_base_accepts_host_setting_and_v1_urls(monkeypatch):
+    monkeypatch.setenv("OLLAMA_HOST", "192.0.2.7:11434")
+    assert dock.ollama_base() == "http://192.0.2.7:11434"
+    assert dock.ollama_base({"baseUrl": "http://192.0.2.9:11434/v1/"}) == "http://192.0.2.9:11434"
+
+
+def test_choices_list_local_models_then_settings_and_mark_the_default():
+    conf = {"provider": "ollama", "model": "big:27b", "choices": [
+        {"label": "Cloud fast", "provider": "together", "model": "cloud-1", "auth": "api-key"},
+        {"provider": "anthropic", "model": "claude-x", "auth": "subscription"},
+        {"provider": "p", "model": "m", "auth": "nonsense"}]}
+    local = [{"name": "big:27b", "bytes": 18}, {"name": "small:9b", "bytes": 9}]
+    out = dock.runtime_choices("hermes", conf, local)
+    assert [(c["label"], c["group"], c["provider"]) for c in out] == [
+        ("big:27b", "Local (Ollama)", "ollama"), ("small:9b", "Local (Ollama)", "ollama"),
+        ("Cloud fast", "API key", "together"), ("claude-x", "Subscription", "anthropic"), ("m", "API key", "p")]
+    assert [c["is_default"] for c in out] == [True, False, False, False, False]
+    assert all("key" not in k.lower() or k == "api-key" for c in out for k in c), "a choice never carries a key"
+    assert dock.runtime_choices("claude", {"model": "sonnet", "choices": [{"model": "opus", "auth": "subscription"}]}, [])[0]["model"] == "opus"
+
+
+def test_embedding_models_are_left_out(monkeypatch):
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return json.dumps({"models": [
+            {"name": "small:9b", "size": 9}, {"name": "big:27b", "size": 18},
+            {"name": "acme/multilingual-e5-large:latest", "size": 1}, {"name": "nomic-embed-text", "size": 1}]}).encode()
+    monkeypatch.setattr(dock.urllib.request, "urlopen", lambda url, timeout=0: Resp())
+    assert [m["name"] for m in dock.ollama_chat_models("http://127.0.0.1:11434")] == ["big:27b", "small:9b"]
+
+
+def test_a_local_ollama_endpoint_is_named_in_the_process_view():
+    rows = dock.parse_ps("  9     1 Tue Jan  1 10:00:00 2030     hermes chat -m big:27b --provider custom --base-url http://127.0.0.1:11434/v1\n")
+    assert dock.classify_processes(rows)[0]["provider"] == "ollama"
+
+
 def test_launch_dry_run_prints_the_terminal_command(vault, fake_bin):
     r = run_cli("launch", "ada", "--runtime", "codex", "--card", "t_0123abcd", "--vault", str(vault), "--dry-run", "--json",
                 env=dict(os.environ))
     assert r.returncode == 0, r.stderr
-    line = json.loads(r.stdout)["command"][-1]
-    assert " run ada --runtime codex --vault " in line and line.endswith("--card t_0123abcd")
+    command = json.loads(r.stdout)["command"]
+    assert command[0] == "osascript" and command[-1] == "tab"
+    assert " run ada --runtime codex --vault " in command[-2] and "--card t_0123abcd" in command[-2]
 
 
 def test_run_records_start_and_end_and_returns_the_exit_code(vault, fake_bin, tmp_path):
@@ -237,5 +292,5 @@ def test_settings_ignore_unknown_runtimes_and_keep_defaults(vault):
         "claude": {"model": "opus"}, "mystery": {"command": "rm"}}}}))
     s = dock.load_settings(vault)
     assert s["terminal"] == "terminal" and dock.pick_terminal(s) == "terminal"
-    assert s["runtimes"]["claude"] == {"command": "claude", "model": "opus"}
+    assert s["runtimes"]["claude"] == {"command": "claude", "model": "opus", "choices": []}
     assert "mystery" not in s["runtimes"]

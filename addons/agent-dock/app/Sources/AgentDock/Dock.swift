@@ -128,12 +128,18 @@ final class Store: ObservableObject {
         }
     }
 
-    func launch(_ agent: Agent, _ runtime: Runtime) {
+    func launch(_ agent: Agent, _ runtime: Runtime, _ choice: Choice? = nil) {
         let v = vault
-        notice = "Opening \(agent.displayName) on \(runtime.label)..."
+        var extra: [String] = []
+        if let choice {
+            extra += ["--model", choice.model]
+            if !choice.provider.isEmpty { extra += ["--provider", choice.provider] }
+            if !choice.base_url.isEmpty { extra += ["--base-url", choice.base_url] }
+        }
+        notice = "Opening \(agent.displayName) on \(runtime.label)\(choice.map { " with \($0.label)" } ?? "")..."
         Task.detached {
             do {
-                _ = try DockCLI.call(Launched.self, ["launch", agent.name, "--runtime", runtime.id, "--vault", v])
+                _ = try DockCLI.call(Launched.self, ["launch", agent.name, "--runtime", runtime.id, "--vault", v] + extra)
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
                 await MainActor.run { self.notice = nil; self.refresh() }
             } catch {

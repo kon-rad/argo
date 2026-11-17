@@ -24,11 +24,40 @@ struct Agent: Codable, Identifiable, Hashable {
     var displayName: String { name.prefix(1).uppercased() + name.dropFirst() }
 }
 
+/// One provider and model a harness can be started with. It never holds a key: the harness keeps those.
+struct Choice: Codable, Identifiable, Hashable {
+    let label: String
+    let group: String
+    let auth: String
+    let provider: String
+    let model: String
+    let base_url: String
+    let bytes: Int
+    let is_default: Bool
+    var id: String { provider + "|" + model + "|" + base_url }
+    var menuTitle: String {
+        var text = label
+        if bytes > 0 { text += "  (" + ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file) + ")" }
+        return is_default ? text + "  - default" : text
+    }
+}
+
 struct Runtime: Codable, Identifiable, Hashable {
     let id: String
     let label: String
     let installed: Bool
     let model: String
+    let provider: String
+    let choices: [Choice]
+    var groups: [(name: String, choices: [Choice])] {
+        var order: [String] = []
+        var byGroup: [String: [Choice]] = [:]
+        for c in choices {
+            if byGroup[c.group] == nil { order.append(c.group) }
+            byGroup[c.group, default: []].append(c)
+        }
+        return order.map { ($0, byGroup[$0]!) }
+    }
     var short: String { id.prefix(1).uppercased() + id.dropFirst() }
 }
 

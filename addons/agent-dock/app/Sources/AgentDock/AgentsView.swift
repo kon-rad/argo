@@ -94,11 +94,28 @@ struct AgentCard: View {
 
             HStack(spacing: 6) {
                 ForEach(runtimes) { rt in
-                    Button(rt.short) { store.launch(agent, rt) }
-                        .controlSize(.small)
-                        .disabled(!rt.installed)
-                        .help(rt.installed ? "Open \(agent.displayName) in a terminal on \(rt.label)"
-                                           : "\(rt.label) is not installed on this machine")
+                    Group {
+                        if rt.choices.isEmpty {
+                            Button(rt.short) { store.launch(agent, rt) }
+                        } else {
+                            // Click starts the default; the arrow lists every provider and model.
+                            Menu(rt.short) {
+                                ForEach(rt.groups, id: \.name) { group in
+                                    Section(group.name) {
+                                        ForEach(group.choices) { choice in
+                                            Button(choice.menuTitle) { store.launch(agent, rt, choice) }
+                                        }
+                                    }
+                                }
+                            } primaryAction: {
+                                store.launch(agent, rt)
+                            }
+                            .fixedSize()
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(!rt.installed)
+                    .help(help(rt))
                 }
             }
         }
@@ -109,6 +126,12 @@ struct AgentCard: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
             .stroke(Color.secondary.opacity(hovering ? 0.45 : 0.18)))
         .onHover { hovering = $0 }
+    }
+
+    private func help(_ rt: Runtime) -> String {
+        guard rt.installed else { return "\(rt.label) is not installed on this machine" }
+        let with = rt.model.isEmpty ? "" : " with \(rt.model)"
+        return "Open \(agent.displayName) in a terminal on \(rt.label)\(with)"
     }
 
     private var defaultRuntime: Runtime? { runtimes.first { $0.installed } }

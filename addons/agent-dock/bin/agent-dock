@@ -36,6 +36,7 @@ ROSTER_RUNTIME = {"claude-code": "claude", "claude": "claude", "codex": "codex",
 PROVIDERS = {"claude": "anthropic", "codex": "openai"}
 DEFAULTS = {
     "terminal": "auto",
+    "open": "tab",
     "roster": ROSTER_DEFAULT,
     "runtimes": {
         "claude": {"command": "claude", "model": "sonnet"},
@@ -43,6 +44,10 @@ DEFAULTS = {
         "hermes": {"command": "hermes", "model": "", "provider": "", "baseUrl": ""},
     },
 }
+OLLAMA_DEFAULT = "http://127.0.0.1:11434"
+# Models that embed text and cannot hold a conversation: left out of the model menu.
+EMBEDDING_NAME = re.compile(r"embed|(^|[/-])e5-|bge-|minilm|nomic", re.I)
+AUTH_GROUPS = {"local": "Local", "api-key": "API key", "subscription": "Subscription"}
 TICKET = re.compile(r"\bt_[0-9a-f]{8}\b")
 PERSONA_NAME = re.compile(r"You are \*\*([A-Za-z0-9][A-Za-z0-9_-]{0,40})\*\*")
 HARNESS_BINARIES = {"claude": "claude", "codex": "codex", "hermes": "hermes", "zen-agent": "zen-agent"}
@@ -92,13 +97,66 @@ def load_settings(vault: Path) -> dict:
             own = json.loads(f.read_text()).get("agentDock") or {}
         except (ValueError, AttributeError) as e:
             raise DockError(f"secondbrain.json is not valid JSON: {e}")
-    for key in ("terminal", "roster"):
+    for key in ("terminal", "open", "roster"):
         if isinstance(own.get(key), str) and own[key]:
             merged[key] = own[key]
     for rt, conf in (own.get("runtimes") or {}).items():
         if rt in merged["runtimes"] and isinstance(conf, dict):
             merged["runtimes"][rt].update({k: v for k, v in conf.items() if isinstance(v, str)})
+            merged["runtimes"][rt]["choices"] = [c for c in conf.get("choices") or []
+                                                 if isinstance(c, dict) and isinstance(c.get("model"), str)]
     return merged
+
+
+# ---------------------------------------------------------------- models to choose from
+
+def ollama_base(conf: dict | None = None, base_url: str | None = None) -> str:
+    """The Ollama server to use, without a path: an explicit URL, the setting, $OLLAMA_HOST, then this machine."""
+    base = base_url or (conf or {}).get("baseUrl") or os.environ.get("OLLAMA_HOST") or OLLAMA_DEFAULT
+    if "://" not in base:
+        base = "http://" + base
+    base = base.rstrip("/")
+    return base[:-3] if base.endswith("/v1") else base
+
+
+def ollama_chat_models(base: str) -> list[dict]:
+    """Chat models an Ollama server has on disk, largest first. Empty when the server does not answer."""
+    try:
+        with urllib.request.urlopen(base + "/api/tags", timeout=0.8) as resp:
+            doc = json.loads(resp.read().decode())
+    except (OSError, ValueError):
+        return []
+    out = []
+    for m in doc.get("models") or []:
+        name = m.get("name") if isinstance(m, dict) else None
+        if not name or EMBEDDING_NAME.search(name):
+            continue
+        out.append({"name": name, "bytes": int(m.get("size") or 0)})
+    out.sort(key=lambda m: (-m["bytes"], m["name"]))
+    return out
+
+
+def runtime_choices(runtime: str, conf: dict, local: list[dict] | None = None) -> list[dict]:
+    """What a harness can be started with here: local models found on the machine, then the ones in settings.
+
+    A choice names a provider and a model, never a key: credentials stay with the harness
+    (its login, its key store or its environment), so nothing secret passes through this tool.
+    """
+    out = []
+    if runtime == "hermes":
+        found = ollama_chat_models(ollama_base(conf if conf.get("provider") == "ollama" else None)) if local is None else local
+        for m in found:
+            out.append({"label": m["name"], "group": "Local (Ollama)", "auth": "local", "provider": "ollama",
+                        "model": m["name"], "base_url": "", "bytes": m["bytes"]})
+    for c in conf.get("choices") or []:
+        auth = c.get("auth") if c.get("auth") in AUTH_GROUPS else "api-key"
+        out.append({"label": c.get("label") or c["model"], "group": AUTH_GROUPS[auth], "auth": auth,
+                    "provider": c.get("provider") or "", "model": c["model"], "base_url": c.get("baseUrl") or "",
+                    "bytes": 0})
+    default = (conf.get("provider") or "", conf.get("model") or "")
+    for c in out:
+        c["is_default"] = bool(default[1]) and (c["provider"], c["model"]) == default
+    return out
 
 
 def state_dir() -> Path:
@@ -147,7 +205,8 @@ def roster_view(vault: Path, settings: dict) -> dict:
     for rt in RUNTIMES:
         conf = settings["runtimes"][rt]
         runtimes.append({"id": rt, "label": LABELS[rt], "installed": bool(resolve_command(conf["command"])),
-                         "model": conf.get("model") or ""})
+                         "model": conf.get("model") or "", "provider": conf.get("provider") or "",
+                         "choices": runtime_choices(rt, conf)})
     return {"vault": str(vault), "company": doc.get("company") or "", "host": host_name(),
             "agents": out, "runtimes": runtimes, "terminal": pick_terminal(settings)}
 
@@ -200,7 +259,8 @@ def pick_model(runtime: str, info: dict, settings: dict, override: str | None) -
 
 
 def build_runtime_command(name: str, info: dict, runtime: str, settings: dict, vault: Path,
-                          model: str | None = None, host: str | None = None) -> tuple[list[str], dict]:
+                          model: str | None = None, host: str | None = None,
+                          provider: str | None = None, base_url: str | None = None) -> tuple[list[str], dict]:
     """The argv for one agent on one harness, and what to record about it (provider, model)."""
     if runtime not in RUNTIMES:
         raise DockError(f"unknown runtime `{runtime}`: one of {', '.join(RUNTIMES)}")
@@ -228,14 +288,21 @@ def build_runtime_command(name: str, info: dict, runtime: str, settings: dict, v
             argv += ["--model", chosen]
         return argv + [opening], meta
 
+    # A provider given for this launch brings its own endpoint; the setting's URL belongs to the setting's provider.
+    use_provider = provider or conf.get("provider") or ""
+    use_url = base_url or ("" if provider and provider != conf.get("provider") else conf.get("baseUrl") or "")
     argv = [exe, "chat"]
     if chosen:
         argv += ["-m", chosen]
-    if conf.get("provider"):
-        argv += ["--provider", conf["provider"]]
-    if conf.get("baseUrl"):
-        argv += ["--base-url", conf["baseUrl"]]
-    meta["provider"] = conf.get("provider") or ""
+    if use_provider == "ollama":
+        # Hermes reaches Ollama as an OpenAI-compatible endpoint; `ollama` is this tool's name for that pair.
+        argv += ["--provider", "custom", "--base-url", ollama_base(base_url=use_url or None) + "/v1"]
+    else:
+        if use_provider:
+            argv += ["--provider", use_provider]
+        if use_url:
+            argv += ["--base-url", use_url]
+    meta["provider"] = use_provider
     return argv + ["-q", opening], meta
 
 
@@ -251,17 +318,36 @@ def pick_terminal(settings: dict) -> str:
     return "terminal"
 
 
-def terminal_command(terminal: str, title: str, argv: list[str], shell: str | None = None) -> list[str]:
-    """The command that opens a new terminal window running argv through the user's login shell.
+GHOSTTY_SCRIPT = """on run argv
+  set theCommand to item 1 of argv
+  set asTab to item 2 of argv
+  tell application "Ghostty"
+    activate
+    set cfg to new surface configuration
+    set command of cfg to theCommand
+    if asTab is "tab" and (count of windows) > 0 then
+      new tab in front window with configuration cfg
+    else
+      new window with configuration cfg
+    end if
+  end tell
+end run"""
+
+
+def terminal_command(terminal: str, title: str, argv: list[str], shell: str | None = None,
+                     how: str = "tab") -> list[str]:
+    """The command that opens a terminal running argv through the user's login shell.
 
     A login, interactive shell so the agent sees the same PATH and keys as one typed by hand.
+    Ghostty is driven through its AppleScript commands: a new tab in the front window (or a
+    window when there is none, or when `how` is "window"). Passing the command to a new
+    Ghostty instance with `open --args -e` proved unreliable, so it is not used.
     """
     shell = shell or os.environ.get("SHELL") or "/bin/zsh"
-    line = "exec " + shlex.join(argv)
+    script = shlex.join([shell, "-l", "-i", "-c", "exec " + shlex.join(argv)])
     if terminal == "ghostty":
-        return ["open", "-na", "Ghostty.app", "--args", f"--title={title}", "-e", shell, "-l", "-i", "-c", line]
+        return ["osascript", "-e", GHOSTTY_SCRIPT, script, "window" if how == "window" else "tab"]
     if terminal == "terminal":
-        script = shlex.join([shell, "-l", "-i", "-c", line])
         quoted = script.replace("\\", "\\\\").replace('"', '\\"')
         return ["osascript", "-e", f'tell application "Terminal" to do script "{quoted}"',
                 "-e", 'tell application "Terminal" to activate']
@@ -286,12 +372,14 @@ def cmd_launch(args) -> int:
     if not resolve_command(conf["command"]):
         raise DockError(f"`{conf['command']}` is not installed on this machine")
     inner = [str(Path(__file__).resolve()), "run", args.agent, "--runtime", args.runtime, "--vault", str(vault)]
-    if args.model:
-        inner += ["--model", args.model]
+    for flag, value in (("--model", args.model), ("--provider", args.provider), ("--base-url", args.base_url)):
+        if value:
+            inner += [flag, value]
     if args.card:
         inner += ["--card", args.card]
     title = f"{args.agent} · {LABELS[args.runtime]}"
-    command = terminal_command(pick_terminal(settings), title, inner)
+    inner += ["--title", title]
+    command = terminal_command(pick_terminal(settings), title, inner, how=settings.get("open") or "tab")
     if args.dry_run:
         emit(args, {"command": command}, shlex.join(command))
         return 0
@@ -299,7 +387,11 @@ def cmd_launch(args) -> int:
         raise DockError("launch opens a macOS terminal; on other systems use `agent-dock run` in your own terminal")
     r = subprocess.run(command, capture_output=True, text=True)
     if r.returncode != 0:
-        raise DockError((r.stderr or r.stdout).strip() or f"terminal exited {r.returncode}")
+        detail = (r.stderr or r.stdout).strip() or f"terminal exited {r.returncode}"
+        if "-1743" in detail or "Not authorized" in detail:
+            detail = ("macOS has not allowed this app to control the terminal: allow it under "
+                      "System Settings > Privacy & Security > Automation, then try again")
+        raise DockError(detail)
     emit(args, {"launched": args.agent, "runtime": args.runtime, "terminal": pick_terminal(settings), "role": info.get("role")},
          f"opened {title}")
     return 0
@@ -367,11 +459,15 @@ def cmd_run(args) -> int:
     vault = find_vault(args.vault)
     settings = load_settings(vault)
     info = agent_info(vault, settings, args.agent)
-    argv, meta = build_runtime_command(args.agent, info, args.runtime, settings, vault, model=args.model)
+    argv, meta = build_runtime_command(args.agent, info, args.runtime, settings, vault, model=args.model,
+                                       provider=args.provider, base_url=args.base_url)
     if not resolve_command(argv[0]):
         raise DockError(f"`{argv[0]}` is not installed on this machine")
     env = dict(os.environ, AGENT_DOCK_AGENT=args.agent, AGENT_DOCK_RUNTIME=args.runtime)
     run_id = uuid.uuid4().hex[:12]
+    if args.title and sys.stdout.isatty():
+        sys.stdout.write(f"\033]2;{args.title}\007")
+        sys.stdout.flush()
     child = subprocess.Popen(argv, cwd=str(vault), env=env)
     append_event({
         "event": "start", "id": run_id, "source": "dock", "agent": args.agent, "role": info.get("role") or "",
@@ -426,6 +522,13 @@ def flag_value(args: list[str], *names: str) -> str:
     return ""
 
 
+def seen_provider(harness: str, args: list[str]) -> str:
+    provider = flag_value(args, "--provider")
+    if provider == "custom" and ":11434" in flag_value(args, "--base-url"):
+        return "ollama"
+    return provider or PROVIDERS.get(harness, "")
+
+
 def run_mode(harness: str, args: list[str]) -> str:
     first = next((a for a in args if not a.startswith("-")), "")
     if harness == "hermes" and first == "gateway":
@@ -464,7 +567,7 @@ def classify_processes(rows: list[dict], cwds: dict[int, str] | None = None) -> 
             "harness": harness, "mode": run_mode(harness, args),
             "agent": flag_value(args, "--agent", "--persona") or (named.group(1) if named else ""),
             "model": flag_value(args, "--model", "-m"),
-            "provider": flag_value(args, "--provider") or PROVIDERS.get(harness, ""),
+            "provider": seen_provider(harness, args),
             "ticket": ticket.group(0) if ticket else "", "cwd": cwd,
             "command": command if len(command) <= 160 else command[:157] + "...",
         }
@@ -499,11 +602,8 @@ def lookup_cwds(pids: list[int]) -> dict[int, str]:
 
 def local_models() -> list[dict]:
     """Models an Ollama server on this machine holds in memory right now. Empty when there is none."""
-    base = os.environ.get("OLLAMA_HOST") or "127.0.0.1:11434"
-    if "://" not in base:
-        base = "http://" + base
     try:
-        with urllib.request.urlopen(base.rstrip("/") + "/api/ps", timeout=0.6) as resp:
+        with urllib.request.urlopen(ollama_base() + "/api/ps", timeout=0.6) as resp:
             doc = json.loads(resp.read().decode())
     except (OSError, ValueError):
         return []
@@ -623,7 +723,10 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("agent")
         p.add_argument("--runtime", default="claude", help="claude, codex or hermes (default claude)")
         p.add_argument("--model", help="override the model for this run")
+        p.add_argument("--provider", help="override the provider (Hermes; `ollama` means a local Ollama server)")
+        p.add_argument("--base-url", help="override the provider's endpoint (Hermes)")
         p.add_argument("--card", help="the board card this chat is about, recorded with the run")
+        p.add_argument("--title", help="the terminal tab's title" if name == "run" else argparse.SUPPRESS)
         if name == "launch":
             p.add_argument("--dry-run", action="store_true", help="print the terminal command, open nothing")
         p.set_defaults(fn=fn)

@@ -12,7 +12,7 @@ A small macOS app, and the CLI under it, for talking to your org's agents in a t
 
 ## What it does
 
-- **Agents.** One card per agent in the roster, grouped by team, leads first: avatar, name, role, team, and one button per harness. A harness that is not installed is greyed out. Clicking the avatar uses the first installed harness. A green dot marks an agent that is running here now.
+- **Agents.** One card per agent in the roster, grouped by team, leads first: avatar, name, role, team, and one button per harness. A harness with more than one model to offer has an arrow beside its button: the button starts the default, the arrow lists every provider and model. A harness that is not installed is greyed out. Clicking the avatar uses the first installed harness. A green dot marks an agent that is running here now.
 - **Running.** Every agent process on this machine: the ones opened here, and any `claude`, `codex`, `hermes` or `zen-agent` started elsewhere (a card runner, a dispatcher, your own terminal). Each row has the agent, harness, mode (interactive, headless or service), provider, model, board card and folder. Models an Ollama server holds in memory are listed underneath.
 - **History.** Past runs, newest first, with how long each took. Search by agent, model or card.
 
@@ -26,11 +26,28 @@ All three harnesses get the same agent: the persona file the roster names (`prom
 |---|---|---|
 | Claude Code | `claude --agent <name> -n <name> --model <model>` | The agent file in `.claude/agents/`; any other persona file goes in `--append-system-prompt` |
 | Codex | `codex --cd <vault> --model <model> "<persona>"` | The opening message, without the Claude Code frontmatter |
-| Hermes | `hermes chat -m <model> --provider <provider> --base-url <url> -q "<persona>"` | The opening message. Point it at a local model with the settings below |
+| Hermes | `hermes chat -m <model> --provider <provider> --base-url <url> -q "<persona>"` | The opening message. See "Hermes: provider and model" below |
 
 The model is, in order: `--model` on the command line, the roster's model when the roster runs that agent on the same harness, then the setting. A roster model for another harness is never passed on (a Codex model name would stop Claude Code from starting).
 
 The agent runs in the vault folder, through your login shell, so it sees the same `PATH`, keys, hooks and permission rules as one you type by hand. Agent Dock adds no permissions and removes none.
+
+## Where the terminal opens
+
+With Ghostty, a click opens a **new tab in the front window** (a window when none is open), through Ghostty's AppleScript commands. The first click makes macOS ask whether Agent Dock may control Ghostty; without that, nothing opens and the app says so (System Settings > Privacy & Security > Automation). Set `"open": "window"` for a window per agent. Terminal.app always gets a new window.
+
+## Hermes: provider and model
+
+The Hermes menu is built from two places:
+
+- **Local (Ollama).** Every chat model the Ollama server on this machine has on disk, largest first, read live from its `/api/tags`. Embedding models are left out. Nothing to configure: pull a model and it appears.
+- **API key** and **Subscription.** The entries you list under `runtimes.hermes.choices`, each with the `auth` it uses.
+
+`"provider": "ollama"` is this tool's name for a local Ollama server; Hermes is started with `--provider custom --base-url http://127.0.0.1:11434/v1` (or `$OLLAMA_HOST`, or the setting's `baseUrl` to use another machine's server).
+
+**A choice names a provider and a model, never a key.** Keys and logins stay where Hermes keeps them (`hermes auth add`, a provider login, or its environment), so no secret passes through this tool, its settings, its run log or a process list. `auth` only says which kind a choice relies on, so the menu can group it.
+
+The same `choices` list works for Claude Code and Codex when you want a model menu there.
 
 ## Build the app
 
@@ -46,7 +63,8 @@ cd addons/agent-dock/app
 
 ```bash
 agent-dock roster                          # agents, teams, which harnesses are installed
-agent-dock launch ada --runtime codex      # open a terminal window (Ghostty, else Terminal)
+agent-dock launch ada --runtime codex      # open a terminal tab (Ghostty, else a Terminal window)
+agent-dock launch ada --runtime hermes --provider ollama --model example-model:7b
 agent-dock run ada --runtime claude        # run in this terminal, and record the run
 agent-dock run ada --card t_0123abcd       # note the board card the chat is about
 agent-dock ps                              # what is running here now
@@ -63,10 +81,17 @@ Optional, in the vault's `secondbrain.json`:
 {
   "agentDock": {
     "terminal": "auto",
+    "open": "tab",
     "runtimes": {
       "claude": { "model": "sonnet" },
-      "codex": { "model": "" },
-      "hermes": { "model": "example-model:7b", "provider": "custom", "baseUrl": "http://127.0.0.1:11434/v1" }
+      "hermes": {
+        "provider": "ollama",
+        "model": "example-model:7b",
+        "choices": [
+          { "label": "Cloud, fast", "provider": "example-provider", "model": "example-model-1", "auth": "api-key" },
+          { "label": "Plan model", "provider": "example-login", "model": "example-model-2", "auth": "subscription" }
+        ]
+      }
     }
   }
 }
@@ -75,10 +100,12 @@ Optional, in the vault's `secondbrain.json`:
 | Key | Default | Meaning |
 |---|---|---|
 | `terminal` | `auto` | `ghostty`, `terminal` (Terminal.app) or `auto`: Ghostty when it is installed |
+| `open` | `tab` | `tab` or `window`, for Ghostty |
 | `roster` | `.agents/org/org-agents.json` | The compiled roster, relative to the vault |
 | `runtimes.<id>.command` | `claude`, `codex`, `hermes` | The executable, a name on `PATH` or a full path |
 | `runtimes.<id>.model` | `sonnet` for Claude Code, empty otherwise | Empty leaves the harness on its own default |
-| `runtimes.hermes.provider`, `baseUrl` | empty | Passed to `hermes chat` as `--provider` and `--base-url`; use them to pick a local model server |
+| `runtimes.hermes.provider`, `baseUrl` | empty | The default provider and its endpoint. `ollama` means a local Ollama server. Empty leaves Hermes on its own default |
+| `runtimes.<id>.choices` | none | Extra menu entries: `label`, `provider`, `model`, optional `baseUrl`, and `auth` (`api-key` or `subscription`) |
 
 ## Where history comes from
 
@@ -91,7 +118,7 @@ For a process it did not start, the agent's name is read from `--agent` or `--pe
 ## Tests
 
 ```bash
-python3 -m pytest addons/agent-dock        # the CLI: 18 tests, no network, fake runtimes
+python3 -m pytest addons/agent-dock        # the CLI: 23 tests, no network, fake runtimes
 cd addons/agent-dock/app && swift build    # the app compiles
 build/AgentDock.app/Contents/MacOS/AgentDock --snapshot /tmp/dock   # draws each view to a PNG and quits
 ```
