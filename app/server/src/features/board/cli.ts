@@ -2,8 +2,8 @@ import { exitFlushed } from '../../cli-exit.js';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import {
-  assignCard, BoardBus, BoardError, claimCard, commentCard, createToken, driftReport, finishCard, flagCard, getCard, heartbeat, importHermesCards, linkCards, listBoards,
-  listCards, listTokens, moveCard, reclaim, revokeToken, type CardFilter, type ClaimOpts, type Contract, type FinishOpts, type HermesCard,
+  assignCard, blockCard, BoardBus, BoardError, claimCard, commentCard, createToken, driftReport, finishCard, flagCard, getCard, heartbeat, importHermesCards, linkCards, listBoards,
+  listCards, listTokens, moveCard, reclaim, recordRunOutput, revokeToken, type BlockOpts, type CardFilter, type ClaimOpts, type Contract, type FinishOpts, type HermesCard,
 } from './service/index.js';
 import { CLIENT_VERBS, HttpBoard, num, parseVerb, runVerb, str, USAGE, when, type BoardClient } from './cli-core.js';
 import { config } from '../../config.js';
@@ -46,9 +46,13 @@ export class DbBoard implements BoardClient {
     return { escalated: r.escalated, task_id: r.task_id, rounds: r.rounds };
   }
   move(id: string, status: string, note?: string) { return moveCard(this.me, id, status, note); }
+  block(id: string, o: BlockOpts) { return blockCard(this.me, id, o); }
   link(id: string, dependsOn: string) { return linkCards(this.me, id, dependsOn); }
   claim(o: ClaimOpts) { return claimCard(this.viewer === null ? null : this.me, o); }
-  async heartbeat(id: string, o: { tokens?: number; turns?: number; leaseMinutes?: number }) { await heartbeat(this.me, id, o); }
+  async heartbeat(id: string, o: { tokens?: number; turns?: number; leaseMinutes?: number; branch?: string; pr?: string }) {
+    await heartbeat(this.me, id, o);
+    if (o.branch || o.pr) await recordRunOutput(this.me, id, { branch: o.branch, pr: o.pr });
+  }
   finish(id: string, o: FinishOpts) { return finishCard(this.me, id, o); }
   flags(id: string, o: { shipNow?: boolean; needs?: string }) { return flagCard(this.me, id, o); }
   async watch(board: string | undefined, onEvent: (e: unknown) => void): Promise<() => void> {
@@ -56,7 +60,7 @@ export class DbBoard implements BoardClient {
     const off = bus.subscribe((n) => { if (!board || n.board === board) onEvent(n); });
     return () => { off(); void bus.close(); };
   }
-  reclaim() { return reclaim(); }
+  reclaim(hostsUp?: string[]) { return reclaim(hostsUp); }
 }
 
 /** Which door this process uses: HTTPS with a token, else the database (as the RLS role with ORG_AGENT, else the owner). */

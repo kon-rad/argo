@@ -100,7 +100,8 @@ export async function promoteCard(card: string): Promise<boolean> {
  * Ready cards whose bot has nothing to wake it: assigned to a live, unpaused bot (any lane: cc-dispatcher reads the
  * same wakeups through `cli-org wake-claim`), no open task wakeup, no unfinished run. A card's wake is consumed when
  * its run ends, so one that ends with the card still ready (a budget stop, a crash, a routed park) is owed another.
- * At most `retries` wakes per ready stint (since it was created, moved, assigned or reclaimed): past that the card
+ * At most `retries` wakes per ready stint (since it was created, moved, assigned, reclaimed, released by a dependency,
+ * re-queued on host-up or reconciled after a finished run): past that the card
  * waits for a person, as addWakeup's hold says, and a person moving it starts a new stint.
  */
 export async function readyCardsOwedAWake(retries: number): Promise<{ card: string; agent: string }[]> {
@@ -112,7 +113,7 @@ export async function readyCardsOwedAWake(retries: number): Promise<{ card: stri
         AND NOT EXISTS (SELECT 1 FROM card_runs r WHERE r.card_id = c.id AND r.finished_at IS NULL)
         AND (SELECT count(*) FROM org_wakeups w WHERE w.agent_name = c.assignee AND w.reason = 'task' AND w.ref = c.id
                AND w.created_at >= coalesce((SELECT max(e.at) FROM card_events e WHERE e.card_id = c.id
-                                              AND e.kind IN ('created', 'moved', 'assigned', 'reclaimed')), c.created_at)) <= $1
+                                              AND e.kind IN ('created', 'moved', 'assigned', 'reclaimed', 'released', 'host-retry', 'reconciled')), c.created_at)) <= $1
       ORDER BY c.priority, c.created_at`, [retries]);
   return rows;
 }
