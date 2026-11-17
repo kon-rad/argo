@@ -87,7 +87,7 @@ export USAGE_PUSH_HOST USAGE_HOST
 python3 - "$PLIST" "$LABEL" "$NODE" "$BUNDLE" <<'PY'
 import os, plistlib, sys
 path, label, node, bundle = sys.argv[1:]
-keys = ['USAGE_PUSH_HOST', 'USAGE_HOST', 'USAGE_PUSH_STATE', 'CODEX_HOME', 'CLAUDE_PROJECTS_DIR', 'USAGE_PUSH_MAX_BYTES']
+keys = ['USAGE_PUSH_HOST', 'USAGE_HOST', 'USAGE_PUSH_STATE', 'CODEX_HOME', 'CLAUDE_PROJECTS_DIR', 'USAGE_PUSH_MAX_BYTES', 'ZEN_SESSIONS_DIR', 'VAULT_ROOT']
 config = dict(Label=label, EnvironmentVariables={k: os.environ[k] for k in keys if k in os.environ},
     ProgramArguments=[node, '--no-warnings', bundle + '/cli-usage-push.js'], StartInterval=60,
     RunAtLoad=True, ProcessType='Background',

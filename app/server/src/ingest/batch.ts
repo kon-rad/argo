@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { clean } from '../archive/clean.js';
 import { withTransaction } from '../db.js';
+import { attributeBots } from '../archive/bot.js';
 import * as archive from '../archive/store.js';
 import type { ParsedMessage, SessionInput } from '../archive/types.js';
 import * as usage from '../usage/store.js';
@@ -148,6 +149,8 @@ export async function ingestBatch(device: { id: number; host: string }, batch: W
       // Hermes reports its own totals; every other harness's are counted from the messages.
       if (!g.source.startsWith('hermes')) await archive.refreshSessionStats(tx, id);
     }
+    // Messages first, then the bot: the persona line or agent-setting record is a message.
+    await attributeBots(tx, [...ids.values()]);
     counts.calls = await usage.upsertCalls(tx, calls);
     counts.counters = await usage.recordHermesCounters(tx, counters, new Date());
     for (const b of blobs) {

@@ -10,7 +10,11 @@ import { sha256 } from '../archive/clean.js';
 import { buildRedactor } from '../archive/redact.js';
 import type { WireLine } from './wire.js';
 
-export interface PushInput { claudeProjectsDir: string; planLog: string | null; maxBytes: number; host?: string; codexSessionsDir?: string | null }
+export interface PushInput {
+  claudeProjectsDir: string; planLog: string | null; maxBytes: number; host?: string; codexSessionsDir?: string | null;
+  /** zen-agent traces (`.zen/sessions` in a vault, gitignored, so this is the only way a laptop's reach the server). */
+  zenSessionsDir?: string | null;
+}
 export interface PushCursor { files: Record<string, { fingerprint: string; offset: number; lines: number; processedAt?: number; size?: number; mtimeMs?: number }> }
 
 export function buildPush(input: PushInput, cursor: PushCursor): { lines: string[]; next: PushCursor; bytes: number } {
@@ -85,6 +89,29 @@ export function buildPush(input: PushInput, cursor: PushCursor): { lines: string
     bytes += prefix.length;
     codexSent = true;
     next.files[path] = { fingerprint, offset: parsed.consumedBytes, lines: parsed.lines, processedAt: Date.now(), size: st.size, mtimeMs: st.mtimeMs };
+  }
+  // zen-agent traces: one small file per run, appended while it is live. The same rule as Codex: a file whose
+  // size and mtime moved is read whole and sent when its complete prefix hashes differently; the importer's
+  // upserts are idempotent, so a resend after a failed SSH changes nothing.
+  const zenFiles = input.zenSessionsDir ? walkFiles(input.zenSessionsDir).filter(p => p.endsWith('.jsonl')).sort() : [];
+  for (const path of zenFiles) {
+    if (bytes >= input.maxBytes) break;
+    const st = statSync(path);
+    const previous = cursor.files[path];
+    if (previous?.size === st.size && previous?.mtimeMs === st.mtimeMs) continue;
+    const buf = readFileSync(path);
+    const parsed = splitJsonLines(buf);
+    if (!parsed.consumedBytes) continue;
+    const prefix = buf.subarray(0, parsed.consumedBytes);
+    const fingerprint = sha256(prefix);
+    if (next.files[path]?.fingerprint === fingerprint) {
+      next.files[path] = { ...next.files[path]!, size: st.size, mtimeMs: st.mtimeMs };
+      continue;
+    }
+    const w: WireLine = { t: 'zen', path, mtimeMs: st.mtimeMs, text: safeText(prefix.toString('utf8')) };
+    lines.push(JSON.stringify(w));
+    bytes += prefix.length;
+    next.files[path] = { fingerprint, offset: parsed.consumedBytes, lines: parsed.lines, size: st.size, mtimeMs: st.mtimeMs };
   }
   return { lines, next, bytes };
 }

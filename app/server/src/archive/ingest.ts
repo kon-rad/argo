@@ -9,6 +9,7 @@ import { readHermes } from './hermes.js';
 import { splitLog } from './logs.js';
 import { readFrom } from '../usage/readFrom.js';
 import * as stage from './stage.js';
+import { attributeBots } from './bot.js';
 import * as store from './store.js';
 import type { Host, SessionInput } from './types.js';
 
@@ -59,16 +60,23 @@ export async function ingest(item: Item, errors: string[], bump: Bump): Promise<
     const size = stage.fileState(item.localPath, row).sizeBytes;
     await withTransaction(async (tx) => {
       const ids = new Map<string, number>();
+      const changed: number[] = [];
       for (const s of sessions) {
         // The same channel label agents-sync writes: this upsert replaces meta, so leaving it out would erase it.
         const profile = item.source.includes(':') ? item.source.split(':')[1]! : 'main';
         const r = await store.upsertSession(tx, { ...s, meta: { ...s.meta, ...channelMeta(hermesChannel(s.meta.source), 'hermes', profile) }, b2Path: row.b2Path });
-        ids.set(s.externalId, r.id); if (r.changed) bump('hermes', 'sessions');
+        ids.set(s.externalId, r.id); if (r.changed) { bump('hermes', 'sessions'); changed.push(r.id); }
       }
       const bySession = new Map<string, typeof messages>();
       let orphans = 0;
       for (const m of messages) { if (!ids.has(m.sessionExternalId)) { orphans++; continue; } (bySession.get(m.sessionExternalId) ?? bySession.set(m.sessionExternalId, []).get(m.sessionExternalId)!).push(m); }
-      for (const [sid, msgs] of bySession) bump('hermes', 'messages', await store.upsertMessages(tx, ids.get(sid)!, msgs));
+      const touched = new Set(changed);
+      for (const [sid, msgs] of bySession) {
+        const n = await store.upsertMessages(tx, ids.get(sid)!, msgs);
+        bump('hermes', 'messages', n);
+        if (n) touched.add(ids.get(sid)!);
+      }
+      await attributeBots(tx, [...touched]);
       await store.markIngested(tx, row.id, size, 0, null);
       if (orphans) errors.push(`hermes ${item.host}: ${orphans} messages with unknown session skipped`);
     });
@@ -94,6 +102,7 @@ export async function ingest(item: Item, errors: string[], bump: Bump): Promise<
         const msgs = item.parentSid ? chunk.messages.map((m) => ({ ...m, isSidechain: true })) : chunk.messages;
         bump('claude-code', 'messages', await store.upsertMessages(tx, s.id, msgs));
         await store.refreshSessionStats(tx, s.id);
+        await attributeBots(tx, [s.id]);
       }
       await store.markIngested(tx, row.id, offset + chunk.consumedBytes, startLine + chunk.linesConsumed, st.fingerprint);
     });
