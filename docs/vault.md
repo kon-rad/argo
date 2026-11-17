@@ -64,6 +64,8 @@ The tracker was renamed to these words in one step (what it called a project is 
 .secondbrain/bin/secondbrain-vault link-skills         symlink the engine's skills into .agents/skills/
 .secondbrain/bin/secondbrain-vault sync run|status|install|uninstall|resolve
                                                        keep this checkout in step with your other machines (sync.md)
+.secondbrain/bin/secondbrain-vault clis install|uninstall|status
+                                                       the agent CLIs (cli-board, cli-org, ...) on this machine's PATH
 ```
 
 The vault it acts on is `--vault`, else the folder that holds the engine as `.secondbrain/`, else the current directory. It is Python 3.9+, standard library only.
@@ -71,6 +73,7 @@ The vault it acts on is `--vault`, else the folder that holds the engine as `.se
 - `rules --check` exits non-zero if `AGENTS.md` is stale or was edited by hand. Useful in a pre-commit hook.
 - `rules --force` overwrites a hand-edited `AGENTS.md`.
 - `link-skills` never replaces a real folder: if you have your own skill with the same name as a shared one, yours wins.
+- `clis install` writes every wrapper the feature manifests name into `~/.local/bin`: `cli-board` over HTTPS, the rest as a one-line server-only notice. `init` runs it (`--no-clis` skips); it never overwrites a file it did not write, and does nothing on the server. [Connect machines](onboarding/06-connect-machines.md#the-agent-clis-on-the-laptop-and-every-other-machine).
 - `sync run|install|status|resolve` keeps this checkout in step with your other machines by git, on a timer: [sync.md](sync.md).
 
 ## Rules for agents, in layers
@@ -106,6 +109,7 @@ git -C .secondbrain fetch origin
 git -C .secondbrain checkout origin/main          # or a tag, or a specific commit
 .secondbrain/bin/secondbrain-vault rules          # AGENTS.base.md may have changed
 .secondbrain/bin/secondbrain-vault link-skills    # new shared skills
+.secondbrain/bin/secondbrain-vault clis install   # a new wrapper, or a new cli-board bundle
 secondbrain restart                               # the launcher rebuilds and migrates as needed
 git add .secondbrain AGENTS.md .agents/skills && git commit -m "engine: update"
 ```

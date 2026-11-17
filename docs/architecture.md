@@ -87,7 +87,7 @@ Everything beyond browse, search, the database page and the editor is a module: 
 - shows no nav link,
 - gets no systemd timers from `deploy.sh`.
 
-Module tables are created by migrations whether or not the module is on, so turning one on later needs no migration step. Per-module detail: [modules.md](modules.md). The core features are each described by one manifest (`app/server/src/features/<name>/manifest.ts`: nav, commands, timers, wrappers, env, docs) that `app.ts`, `/api/meta`, the launcher and `deploy.sh` read, so a feature is wired in one place.
+Module tables are created by migrations whether or not the module is on, so turning one on later needs no migration step. Per-module detail: [modules.md](modules.md). The core features are each described by one manifest (`app/server/src/features/<name>/manifest.ts`: nav, commands, timers, wrappers, env, docs) that `app.ts`, `/api/meta`, the launcher and `deploy.sh` read, so a feature is wired in one place. A wrapper the manifest lists in `remoteWrappers` also runs on a client machine: `secondbrain-vault clis install` reads the generated `app/bin/agent-clis.json` and installs it there as a bundled HTTPS client (today `cli-board`, door 2 of the [board](kanban-board.md#2-the-three-doors)), and every other wrapper as a one-line server-only notice.
 
 ## 5. The agent harness
 
@@ -142,3 +142,7 @@ PR size is never a reason the gate rejects: the worker keeps the whole diff and 
 ### Instagram metrics authorization
 
 The optional social addon mounts an app-owned Unified Login connect page and a callback before SPA routing. A dedicated ten-minute Lax cookie bridges the cross-site return while the main auth cookie stays Strict. Hashed one-time state is tied to an existing auth session, intended account and fixed public callback; one atomic delete validates and consumes it before code exchange. Session revocation cascades to pending states. Typed encrypted metrics credentials separate Facebook USER and business-integration SYSTEM_USER tokens and their asset IDs from legacy Instagram Login tokens and publishing credentials. USER tokens prove the asset through a managed Page; SYSTEM_USER tokens through the asset ID in their granular-scope targets. Facebook collection uses asset-node endpoints and never legacy refresh. Other token types fail closed. See [social metrics](social-metrics.md#unified-login) for limitations and setup.
+
+## Observatory evidence and replay
+
+The optional `observatory` addon reads existing source tables through the owner-session boundary and effective database role. Bounded repeatable-read exports feed the pure versioned reducer in `app/shared/observatory.ts`. Archive steps supply tool evidence; usage rows remain usage measurements. Recorded execution intervals govern visibility, while missing lifecycle and sender provenance remain unknown. Five-minute per-session exports pin pagination and revalidate visibility. See [API and replay contract](observatory.md) and [coordinator audit queries](audits/observatory.sql). No new collectors or LLM processing are involved.

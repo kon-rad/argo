@@ -71,6 +71,7 @@ What `init` created, and what each file is for:
 | `.agents/org.json` | The **starter org**: owner, one lead, one coder, one reviewer, two teams. Edit it, then `secondbrain org plan` / `apply` ([From zero](00-from-zero.md) stage 7) |
 | `.env.example`, `secondbrain.example.json`, `.gitignore` | Templates and ignore rules copied by `init`; `.env` is gitignored |
 | `.env`, `secondbrain.json` | Created by the two commands after `init`: machine settings/secrets and an empty active instance configuration |
+| `~/.local/bin/cli-board`, `cli-org`, `cli-projects`, ... | Outside the vault: the agent CLIs, so an agent told to run `cli-board` finds it. `cli-board` reaches a server's board over HTTPS once `BOARD_URL` and `BOARD_TOKEN` are in `.env`; the rest say they are server-only. The `cli-board` bundle is built from `.secondbrain/app` once its dependencies are installed (the first run in Step 3 does that); until then `cli-board` says so. Step 3 re-runs the install; it is safe any time. `init --no-clis` skips this ([details](06-connect-machines.md#the-agent-clis-on-the-laptop-and-every-other-machine)) |
 
 ### Configure this instance
 
@@ -106,6 +107,12 @@ Put the launcher on your PATH so the rest of these docs read naturally:
 ln -s "$PWD/.secondbrain/app/bin/secondbrain" ~/.local/bin/secondbrain
 ```
 
+Now that the app's dependencies are installed, finish the agent CLIs `init` put on PATH (it builds the one-file `cli-board` client; re-running changes nothing else):
+
+```bash
+.secondbrain/bin/secondbrain-vault clis install
+```
+
 | Command | Does |
 |---|---|
 | `secondbrain` | Start (if needed) and open the browser |
@@ -113,7 +120,7 @@ ln -s "$PWD/.secondbrain/app/bin/secondbrain" ~/.local/bin/secondbrain
 | `secondbrain scan` | Re-index the vault now |
 | `secondbrain embed` | Embed new and changed notes for semantic search |
 | `secondbrain dev` | Server and web UI in watch mode, for development |
-| `secondbrain doctor` | Health checks: Node, Postgres, pgvector, migrations, modules |
+| `secondbrain doctor` | Health checks: Node, Postgres, pgvector, migrations, modules, and each agent CLI (installed, server-only or missing) |
 | `secondbrain help` | Every subcommand, including the feature commands |
 
 The launcher reads `<vault>/.env`. It finds the vault by walking up from `.secondbrain/app/bin/`; set `VAULT_ROOT` to point it elsewhere.

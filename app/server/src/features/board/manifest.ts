@@ -18,6 +18,7 @@ export default defineFeature({
     service: { after: ['postgresql.service'], requires: ['postgresql.service'], directives: ['TimeoutStartSec=60'] },
   }],
   wrappers: ['cli-board'],
+  remoteWrappers: ['cli-board'],
   health: { label: 'the board tables answer', tables: ['boards', 'cards', 'card_comments', 'card_events', 'card_deps', 'card_runs'] },
   env: ['REVIEW_DB_URL', 'GH_TOKEN', 'BOARD_URL', 'BOARD_TOKEN', 'ORG_AGENT', 'AGENT_HUB_URL', 'AGENT_HUB_TOKEN'],
   docs: 'docs/kanban-board.md',

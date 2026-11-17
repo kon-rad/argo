@@ -38,7 +38,9 @@ function envReads(): Map<string, string> {
   return found;
 }
 
-const KNOWN = new Set<string>(CONFIG_ENV_KEYS);
+/** The documented baseline: the OS's own variables, read as the OS defines them, never app settings. */
+const OS_BASELINE = ['PATH'];
+const KNOWN = new Set<string>([...CONFIG_ENV_KEYS, ...OS_BASELINE]);
 
 describe('env schema', () => {
   it('lists every process.env key read in the app (schema or documented baseline)', () => {
