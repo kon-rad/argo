@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { tokensToday } from '../src/addons/dispatch/store.js';
 import { createApp } from '../src/app.js';
 import { backfillBots } from '../src/archive/bot.js';
@@ -103,6 +103,9 @@ async function pushLaptop(): Promise<void> {
   const counts = await importLines(push.lines, HOST);
   expect(counts.errors).toEqual([]);
 }
+
+// The importer registers the laptop's host; usage_hosts is not truncated between files, so take it out again.
+afterAll(async () => { await truncateAll(); await query(`DELETE FROM usage_hosts WHERE slug = $1`, [HOST]); });
 
 beforeEach(async () => {
   await truncateAll();
