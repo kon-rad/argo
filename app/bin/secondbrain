@@ -417,6 +417,13 @@ cmd_garden() {
   (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-garden.js" "$@")
 }
 
+cmd_warehouse() {
+  # The warehouse addon (docs/warehouse.md): vault migrations into schema data,
+  # connector runs, status. Needs the master database, so it runs where the app's DB is.
+  ensure_deps; ensure_build
+  (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-warehouse.js" "$@")
+}
+
 cmd_map_build() {
   # Brain map layout (map_* tables). Refused in client mode, like scan.
   ensure_deps; ensure_build
@@ -482,6 +489,7 @@ secondbrain agents-sync  copy Hermes chats and cron history into Postgres
 secondbrain inventory  list/show/add/update gear rows and file their photos (inventory help)
 secondbrain backlinks  add a Related links block to each note (dry run; --write applies, --path limits)
 secondbrain map-build  rebuild the brain map's stored layout (server)
+secondbrain warehouse  vault tables and connectors: migrate | run <name> | run --due | status | tables
 secondbrain garden     nightly vault gardener (shadow by default; --write updates shelf notes and the catalog, --apply also moves)
 secondbrain metrics    collect | set <metric> <value> | list  the brain map's numbers
 secondbrain ring-pull  copy the ring data from the server into local Postgres
@@ -520,6 +528,7 @@ case "${1:-start}" in
   backlinks)     cmd_backlinks "${@:2}" ;;
   map-build)     cmd_map_build "${@:2}" ;;
   garden)        cmd_garden "${@:2}" ;;
+  warehouse)     cmd_warehouse "${@:2}" ;;
   metrics)       cmd_metrics "${@:2}" ;;
   ring-pull)     cmd_ring_pull ;;
   agents-sync)   cmd_agents_sync ;;

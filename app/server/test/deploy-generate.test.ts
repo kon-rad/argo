@@ -80,6 +80,7 @@ describe('env and unit generation (pure)', () => {
       'secondbrain-livestream',
       'secondbrain-social',
       'secondbrain-garden',
+      'secondbrain-warehouse-run',
       'secondbrain-routing-report',
       'secondbrain-dispatch',
       'secondbrain-db-backup',

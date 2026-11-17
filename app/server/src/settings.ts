@@ -450,6 +450,15 @@ const Settings = z.object({
       reviewDir: z.string().min(1).default('Areas/weekly-review'),
     })
     .prefault({}),
+  /** The warehouse addon (docs/warehouse.md): where the vault keeps its migrations, connectors and dashboards. */
+  warehouse: z
+    .object({
+      /** Vault-relative folder holding `migrations/`, `connectors/` and `dashboards/`. */
+      dir: z.string().min(1).default('warehouse'),
+      /** Where connectors may keep raw files; absolute, or relative to the vault. Default: `<app data dir>/warehouse-raw`. */
+      rawDir: z.string().min(1).optional(),
+    })
+    .prefault({}),
   /** `secondbrain garden`: the nightly vault gardener (docs/garden.md). */
   garden: z
     .object({
@@ -482,6 +491,7 @@ const Settings = z.object({
 export type SecondBrainSettings = z.infer<typeof Settings>;
 export type ServerSettings = SecondBrainSettings['server'];
 export type GardenSettings = SecondBrainSettings['garden'];
+export type WarehouseSettings = SecondBrainSettings['warehouse'];
 export type ChatSettingsOverrides = z.infer<typeof Chat>;
 export type ClassifySettings = z.infer<typeof Classify>;
 export type DispatchSettings = z.infer<typeof Dispatch>;

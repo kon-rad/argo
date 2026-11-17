@@ -22,7 +22,7 @@ PARTS=(node_modules shared/dist server/dist web/dist)
 
 rm -rf "$STAGE" "$OLD"
 mkdir -p "$STAGE" "$OLD"
-rsync -a --delete --exclude node_modules --exclude dist --exclude data --exclude .git "$APP_DIR/" "$STAGE/"
+rsync -a --delete --exclude node_modules --exclude dist --exclude /data --exclude .git "$APP_DIR/" "$STAGE/"
 
 echo "→ installing and building in $STAGE"
 (cd "$STAGE" && bash -c "$INSTALL" && bash -c "$BUILD")

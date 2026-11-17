@@ -30,6 +30,11 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 | [`social`](#social) | (connect + queue, no page UI yet) | Schedule and publish posts with images to LinkedIn (more platforms planned) |
 | [`chat`](#chat) | (a button in the header) | Ask your notes: conversations with an assistant that answers from retrieved passages, with citations, on the provider and model you pick |
 | [`desk`](#desk) | `/desk` | Hiring desk operator console under Work; requires production service wiring for operations |
+| [`observatory`](#observatory) | API only | Authorized evidence windows, coverage and deterministic replay |
+
+## observatory
+
+Off by default. Enable `observatory` through `MODULES` or the vault addons list for the authenticated evidence API. No UI, nav link or timer in this slice. Source modules retain their authorization. See [Observatory API and replay](observatory.md).
 
 ## desk
 
