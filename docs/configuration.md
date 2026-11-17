@@ -298,6 +298,8 @@ Example:
 }
 ```
 
+The `agentDock` section is read by the [Agent Dock](https://github.com/kon-rad/argo/blob/main/addons/agent-dock/README.md#settings) add-on, not by the app: the terminal to open and the model each harness starts with. The app ignores it.
+
 ## Model fallback
 
 A bot on a connected computer's model (`OLLAMA_MACHINES`, provider `ollama-<name>`) has no model when that computer is off, asleep or has unloaded the model. One setting names what runs instead:
