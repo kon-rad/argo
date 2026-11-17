@@ -1,0 +1,651 @@
+#!/usr/bin/env python3
+"""agent-dock: start an org agent in a terminal, and see which agents run on this machine.
+
+    agent-dock roster                       the agents, their teams and the runtimes found here
+    agent-dock launch <agent> --runtime R   open a terminal window running that agent
+    agent-dock run <agent> --runtime R      run the agent in this terminal and record the run
+    agent-dock ps                           what is running here now: agents, harnesses, models, tickets
+    agent-dock history                      past runs, newest first
+
+Every command prints JSON with --json; the macOS app in ./app reads only that.
+Python 3.9+, standard library only. See ../README.md.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shlex
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROSTER_DEFAULT = ".agents/org/org-agents.json"
+RUNTIMES = ("claude", "codex", "hermes")
+LABELS = {"claude": "Claude Code", "codex": "Codex", "hermes": "Hermes"}
+# The roster names runtimes its own way; these are the harness each one means here.
+ROSTER_RUNTIME = {"claude-code": "claude", "claude": "claude", "codex": "codex", "hermes": "hermes"}
+PROVIDERS = {"claude": "anthropic", "codex": "openai"}
+DEFAULTS = {
+    "terminal": "auto",
+    "roster": ROSTER_DEFAULT,
+    "runtimes": {
+        "claude": {"command": "claude", "model": "sonnet"},
+        "codex": {"command": "codex", "model": ""},
+        "hermes": {"command": "hermes", "model": "", "provider": "", "baseUrl": ""},
+    },
+}
+TICKET = re.compile(r"\bt_[0-9a-f]{8}\b")
+PERSONA_NAME = re.compile(r"You are \*\*([A-Za-z0-9][A-Za-z0-9_-]{0,40})\*\*")
+HARNESS_BINARIES = {"claude": "claude", "codex": "codex", "hermes": "hermes", "zen-agent": "zen-agent"}
+# Subcommands that are plumbing, not an agent at work.
+NOT_A_RUN = {
+    "claude": {"restart", "daemon", "update", "mcp", "doctor", "install"},
+    "codex": {"app-server", "exec-server", "mcp", "login", "update", "doctor", "completion"},
+    "hermes": {"update", "setup", "status", "model", "auth", "cron", "proxy", "lsp"},
+    "zen-agent": set(),
+}
+
+
+class DockError(Exception):
+    pass
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def host_name() -> str:
+    return socket.gethostname().split(".")[0].lower()
+
+
+# ---------------------------------------------------------------- vault and settings
+
+def find_vault(arg: str | None) -> Path:
+    for candidate in (arg, os.environ.get("SECONDBRAIN_VAULT")):
+        if candidate:
+            p = Path(candidate).expanduser().resolve()
+            if not p.is_dir():
+                raise DockError(f"vault not found: {p}")
+            return p
+    here = Path.cwd().resolve()
+    for d in (here, *here.parents):
+        if (d / "secondbrain.json").is_file() or (d / ROSTER_DEFAULT).is_file():
+            return d
+    raise DockError("no vault here: pass --vault or set SECONDBRAIN_VAULT")
+
+
+def load_settings(vault: Path) -> dict:
+    merged = json.loads(json.dumps(DEFAULTS))
+    f = vault / "secondbrain.json"
+    own = {}
+    if f.is_file():
+        try:
+            own = json.loads(f.read_text()).get("agentDock") or {}
+        except (ValueError, AttributeError) as e:
+            raise DockError(f"secondbrain.json is not valid JSON: {e}")
+    for key in ("terminal", "roster"):
+        if isinstance(own.get(key), str) and own[key]:
+            merged[key] = own[key]
+    for rt, conf in (own.get("runtimes") or {}).items():
+        if rt in merged["runtimes"] and isinstance(conf, dict):
+            merged["runtimes"][rt].update({k: v for k, v in conf.items() if isinstance(v, str)})
+    return merged
+
+
+def state_dir() -> Path:
+    base = os.environ.get("AGENT_DOCK_STATE")
+    if base:
+        return Path(base).expanduser()
+    xdg = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(xdg) / "secondbrain" / "agent-dock"
+
+
+# ---------------------------------------------------------------- roster
+
+def load_roster(vault: Path, settings: dict) -> dict:
+    f = vault / settings["roster"]
+    if not f.is_file():
+        raise DockError(f"no roster at {f}: run `secondbrain org compile` in the vault first")
+    try:
+        doc = json.loads(f.read_text())
+    except ValueError as e:
+        raise DockError(f"{f} is not valid JSON: {e}")
+    agents = doc.get("agents") if isinstance(doc, dict) else None
+    if not isinstance(agents, dict):
+        raise DockError(f"{f} has no `agents` object")
+    return doc
+
+
+def roster_view(vault: Path, settings: dict) -> dict:
+    doc = load_roster(vault, settings)
+    out = []
+    for name, a in doc["agents"].items():
+        if not isinstance(a, dict) or a.get("runtime") == "human":
+            continue
+        avatar = a.get("avatar")
+        avatar_path = str(vault / avatar) if avatar and (vault / avatar).is_file() else None
+        out.append({
+            "name": name,
+            "role": a.get("role") or "",
+            "team": a.get("team") or "",
+            "team_name": a.get("team_name") or a.get("team") or "",
+            "is_lead": bool(a.get("is_lead")),
+            "avatar": avatar_path,
+            "runtime": ROSTER_RUNTIME.get(a.get("runtime") or "", a.get("runtime") or ""),
+            "model": a.get("model") or "",
+        })
+    runtimes = []
+    for rt in RUNTIMES:
+        conf = settings["runtimes"][rt]
+        runtimes.append({"id": rt, "label": LABELS[rt], "installed": bool(resolve_command(conf["command"])),
+                         "model": conf.get("model") or ""})
+    return {"vault": str(vault), "company": doc.get("company") or "", "host": host_name(),
+            "agents": out, "runtimes": runtimes, "terminal": pick_terminal(settings)}
+
+
+def resolve_command(command: str) -> str | None:
+    """Find a runtime's executable: PATH first, then the places installers put them (a GUI app's PATH is short)."""
+    found = shutil.which(command)
+    if found:
+        return found
+    if os.sep in command:
+        return None
+    for d in ("~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "~/bin", "~/.npm-global/bin"):
+        p = Path(d).expanduser() / command
+        if p.is_file() and os.access(p, os.X_OK):
+            return str(p)
+    return None
+
+
+# ---------------------------------------------------------------- what each runtime is started with
+
+def persona_text(vault: Path, info: dict) -> str:
+    rel = info.get("prompt_file")
+    if not rel:
+        return ""
+    f = vault / rel
+    if not f.is_file():
+        return ""
+    text = f.read_text()
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end != -1:
+            text = text[end + 5:]
+    return text.strip()
+
+
+def chat_block(name: str, host: str) -> str:
+    return (
+        f"This is a live terminal chat with the owner on the machine `{host}`, started from Agent Dock. "
+        f"It is not a card wake: nobody assigned you a card, so answer and work with the owner directly. "
+        f"You are {name}; read your memory file before you answer anything about past work."
+    )
+
+
+def pick_model(runtime: str, info: dict, settings: dict, override: str | None) -> str:
+    if override:
+        return override
+    if ROSTER_RUNTIME.get(info.get("runtime") or "") == runtime and info.get("model"):
+        return info["model"]
+    return settings["runtimes"][runtime].get("model") or ""
+
+
+def build_runtime_command(name: str, info: dict, runtime: str, settings: dict, vault: Path,
+                          model: str | None = None, host: str | None = None) -> tuple[list[str], dict]:
+    """The argv for one agent on one harness, and what to record about it (provider, model)."""
+    if runtime not in RUNTIMES:
+        raise DockError(f"unknown runtime `{runtime}`: one of {', '.join(RUNTIMES)}")
+    conf = settings["runtimes"][runtime]
+    exe = resolve_command(conf["command"]) or conf["command"]
+    chosen = pick_model(runtime, info, settings, model)
+    block = chat_block(name, host or host_name())
+    persona = persona_text(vault, info)
+    opening = (persona + "\n\n" + block).strip()
+    meta = {"model": chosen, "provider": PROVIDERS.get(runtime, "")}
+
+    if runtime == "claude":
+        argv = [exe, "-n", name]
+        if (info.get("prompt_file") or "") == f".claude/agents/{name}.md":
+            argv += ["--agent", name, "--append-system-prompt", block]
+        else:
+            argv += ["--append-system-prompt", opening]
+        if chosen:
+            argv += ["--model", chosen]
+        return argv, meta
+
+    if runtime == "codex":
+        argv = [exe, "--cd", str(vault)]
+        if chosen:
+            argv += ["--model", chosen]
+        return argv + [opening], meta
+
+    argv = [exe, "chat"]
+    if chosen:
+        argv += ["-m", chosen]
+    if conf.get("provider"):
+        argv += ["--provider", conf["provider"]]
+    if conf.get("baseUrl"):
+        argv += ["--base-url", conf["baseUrl"]]
+    meta["provider"] = conf.get("provider") or ""
+    return argv + ["-q", opening], meta
+
+
+# ---------------------------------------------------------------- opening a terminal
+
+def pick_terminal(settings: dict) -> str:
+    want = settings.get("terminal") or "auto"
+    if want != "auto":
+        return want
+    for app in ("/Applications/Ghostty.app", str(Path.home() / "Applications" / "Ghostty.app")):
+        if Path(app).is_dir():
+            return "ghostty"
+    return "terminal"
+
+
+def terminal_command(terminal: str, title: str, argv: list[str], shell: str | None = None) -> list[str]:
+    """The command that opens a new terminal window running argv through the user's login shell.
+
+    A login, interactive shell so the agent sees the same PATH and keys as one typed by hand.
+    """
+    shell = shell or os.environ.get("SHELL") or "/bin/zsh"
+    line = "exec " + shlex.join(argv)
+    if terminal == "ghostty":
+        return ["open", "-na", "Ghostty.app", "--args", f"--title={title}", "-e", shell, "-l", "-i", "-c", line]
+    if terminal == "terminal":
+        script = shlex.join([shell, "-l", "-i", "-c", line])
+        quoted = script.replace("\\", "\\\\").replace('"', '\\"')
+        return ["osascript", "-e", f'tell application "Terminal" to do script "{quoted}"',
+                "-e", 'tell application "Terminal" to activate']
+    raise DockError(f"unknown terminal `{terminal}`: ghostty, terminal or auto")
+
+
+def agent_info(vault: Path, settings: dict, name: str) -> dict:
+    agents = load_roster(vault, settings)["agents"]
+    info = agents.get(name)
+    if not isinstance(info, dict) or info.get("runtime") == "human":
+        raise DockError(f"no agent `{name}` in the roster")
+    return info
+
+
+def cmd_launch(args) -> int:
+    vault = find_vault(args.vault)
+    settings = load_settings(vault)
+    info = agent_info(vault, settings, args.agent)
+    conf = settings["runtimes"].get(args.runtime) or {}
+    if args.runtime not in RUNTIMES:
+        raise DockError(f"unknown runtime `{args.runtime}`: one of {', '.join(RUNTIMES)}")
+    if not resolve_command(conf["command"]):
+        raise DockError(f"`{conf['command']}` is not installed on this machine")
+    inner = [str(Path(__file__).resolve()), "run", args.agent, "--runtime", args.runtime, "--vault", str(vault)]
+    if args.model:
+        inner += ["--model", args.model]
+    if args.card:
+        inner += ["--card", args.card]
+    title = f"{args.agent} · {LABELS[args.runtime]}"
+    command = terminal_command(pick_terminal(settings), title, inner)
+    if args.dry_run:
+        emit(args, {"command": command}, shlex.join(command))
+        return 0
+    if sys.platform != "darwin":
+        raise DockError("launch opens a macOS terminal; on other systems use `agent-dock run` in your own terminal")
+    r = subprocess.run(command, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise DockError((r.stderr or r.stdout).strip() or f"terminal exited {r.returncode}")
+    emit(args, {"launched": args.agent, "runtime": args.runtime, "terminal": pick_terminal(settings), "role": info.get("role")},
+         f"opened {title}")
+    return 0
+
+
+# ---------------------------------------------------------------- history: an append-only event log
+
+def history_file() -> Path:
+    return state_dir() / "history.jsonl"
+
+
+def append_event(event: dict) -> None:
+    f = history_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    with f.open("a") as fh:
+        fh.write(json.dumps(event, sort_keys=True) + "\n")
+
+
+def read_events() -> list[dict]:
+    f = history_file()
+    if not f.is_file():
+        return []
+    out = []
+    for line in f.read_text().splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict) and e.get("id"):
+            out.append(e)
+    return out
+
+
+def fold_runs(events: list[dict]) -> list[dict]:
+    """Turn start and end events into one row per run, newest first."""
+    runs: dict[str, dict] = {}
+    for e in events:
+        if e.get("event") == "start":
+            runs[e["id"]] = {k: v for k, v in e.items() if k != "event"}
+            runs[e["id"]].update({"ended_at": None, "exit_code": None})
+        elif e.get("event") == "end" and e["id"] in runs:
+            runs[e["id"]]["ended_at"] = e.get("ended_at")
+            runs[e["id"]]["exit_code"] = e.get("exit_code")
+    out = list(runs.values())
+    for r in out:
+        r["seconds"] = seconds_between(r.get("started_at"), r.get("ended_at"))
+    out.sort(key=lambda r: r.get("started_at") or "", reverse=True)
+    return out
+
+
+def seconds_between(a: str | None, b: str | None) -> int | None:
+    try:
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        return int((datetime.strptime(b, fmt) - datetime.strptime(a, fmt)).total_seconds())
+    except (TypeError, ValueError):
+        return None
+
+
+def proc_start(pid: int) -> str:
+    r = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True)
+    return " ".join(r.stdout.split())
+
+
+def cmd_run(args) -> int:
+    vault = find_vault(args.vault)
+    settings = load_settings(vault)
+    info = agent_info(vault, settings, args.agent)
+    argv, meta = build_runtime_command(args.agent, info, args.runtime, settings, vault, model=args.model)
+    if not resolve_command(argv[0]):
+        raise DockError(f"`{argv[0]}` is not installed on this machine")
+    env = dict(os.environ, AGENT_DOCK_AGENT=args.agent, AGENT_DOCK_RUNTIME=args.runtime)
+    run_id = uuid.uuid4().hex[:12]
+    child = subprocess.Popen(argv, cwd=str(vault), env=env)
+    append_event({
+        "event": "start", "id": run_id, "source": "dock", "agent": args.agent, "role": info.get("role") or "",
+        "team": info.get("team_name") or info.get("team") or "", "harness": args.runtime,
+        "provider": meta["provider"], "model": meta["model"], "ticket": args.card or "", "mode": "interactive",
+        "cwd": str(vault), "host": host_name(), "pid": child.pid, "proc_start": proc_start(child.pid),
+        "started_at": now_iso(),
+    })
+    # Ctrl-C belongs to the agent in the foreground; this wrapper only waits for it.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda s, _f: child.send_signal(s))
+    code = child.wait()
+    append_event({"event": "end", "id": run_id, "ended_at": now_iso(), "exit_code": code})
+    return code if code >= 0 else 128 - code
+
+
+# ---------------------------------------------------------------- what is running
+
+def parse_ps(text: str) -> list[dict]:
+    """Rows of `ps -axo pid=,ppid=,lstart=,command=`: lstart is five words, the command is the rest."""
+    rows = []
+    for line in text.splitlines():
+        parts = line.split(None, 7)
+        if len(parts) < 8 or not parts[0].isdigit() or not parts[1].isdigit():
+            continue
+        rows.append({"pid": int(parts[0]), "ppid": int(parts[1]), "proc_start": " ".join(parts[2:7]), "command": parts[7]})
+    return rows
+
+
+def harness_of(command: str) -> tuple[str, list[str]] | None:
+    """Which harness a process is, and its arguments. Looks past an interpreter (`node /x/claude ...`)."""
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = command.split()
+    for i, w in enumerate(words[:2]):
+        base = os.path.basename(w)
+        for harness, binary in HARNESS_BINARIES.items():
+            if base == binary:
+                return harness, words[i + 1:]
+    return None
+
+
+def flag_value(args: list[str], *names: str) -> str:
+    for i, a in enumerate(args):
+        for n in names:
+            if a == n and i + 1 < len(args):
+                return args[i + 1]
+            if a.startswith(n + "="):
+                return a[len(n) + 1:]
+    return ""
+
+
+def run_mode(harness: str, args: list[str]) -> str:
+    first = next((a for a in args if not a.startswith("-")), "")
+    if harness == "hermes" and first == "gateway":
+        return "service"
+    if harness == "zen-agent" and first == "serve":
+        return "service"
+    if harness == "claude" and ("-p" in args or "--print" in args):
+        return "headless"
+    if harness == "codex" and first in ("exec", "review"):
+        return "headless"
+    if harness == "hermes" and ("-z" in args or "--oneshot" in args or "-Q" in args):
+        return "headless"
+    if harness == "zen-agent" and first == "run":
+        return "headless"
+    return "interactive"
+
+
+def classify_processes(rows: list[dict], cwds: dict[int, str] | None = None) -> list[dict]:
+    """The agent runs among a process table. A child of a run on the same harness is part of that run."""
+    cwds = cwds or {}
+    found: dict[int, dict] = {}
+    for row in rows:
+        hit = harness_of(row["command"])
+        if not hit:
+            continue
+        harness, args = hit
+        first = next((a for a in args if not a.startswith("-")), "")
+        if first in NOT_A_RUN[harness]:
+            continue
+        cwd = cwds.get(row["pid"], "")
+        command = row["command"]
+        named = PERSONA_NAME.search(command)
+        ticket = TICKET.search(cwd) or TICKET.search(command)
+        found[row["pid"]] = {
+            "source": "process", "pid": row["pid"], "ppid": row["ppid"], "proc_start": row["proc_start"],
+            "harness": harness, "mode": run_mode(harness, args),
+            "agent": flag_value(args, "--agent", "--persona") or (named.group(1) if named else ""),
+            "model": flag_value(args, "--model", "-m"),
+            "provider": flag_value(args, "--provider") or PROVIDERS.get(harness, ""),
+            "ticket": ticket.group(0) if ticket else "", "cwd": cwd,
+            "command": command if len(command) <= 160 else command[:157] + "...",
+        }
+    return [p for p in found.values()
+            if not (p["ppid"] in found and found[p["ppid"]]["harness"] == p["harness"])]
+
+
+def lookup_cwds(pids: list[int]) -> dict[int, str]:
+    if not pids:
+        return {}
+    out: dict[int, str] = {}
+    if sys.platform.startswith("linux"):
+        for pid in pids:
+            try:
+                out[pid] = os.readlink(f"/proc/{pid}/cwd")
+            except OSError:
+                pass
+        return out
+    try:
+        r = subprocess.run(["lsof", "-a", "-d", "cwd", "-Fpn", "-p", ",".join(map(str, pids))],
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return out
+    pid = None
+    for line in r.stdout.splitlines():
+        if line.startswith("p") and line[1:].isdigit():
+            pid = int(line[1:])
+        elif line.startswith("n") and pid is not None:
+            out[pid] = line[1:]
+    return out
+
+
+def local_models() -> list[dict]:
+    """Models an Ollama server on this machine holds in memory right now. Empty when there is none."""
+    base = os.environ.get("OLLAMA_HOST") or "127.0.0.1:11434"
+    if "://" not in base:
+        base = "http://" + base
+    try:
+        with urllib.request.urlopen(base.rstrip("/") + "/api/ps", timeout=0.6) as resp:
+            doc = json.loads(resp.read().decode())
+    except (OSError, ValueError):
+        return []
+    out = []
+    for m in doc.get("models") or []:
+        if isinstance(m, dict) and m.get("name"):
+            out.append({"provider": "ollama", "name": m["name"], "bytes": int(m.get("size") or 0),
+                        "expires_at": m.get("expires_at") or ""})
+    return out
+
+
+def snapshot() -> dict:
+    r = subprocess.run(["ps", "-axo", "pid=,ppid=,lstart=,command="], capture_output=True, text=True)
+    rows = parse_ps(r.stdout)
+    candidates = [row for row in rows if harness_of(row["command"])]
+    procs = classify_processes(rows, lookup_cwds([row["pid"] for row in candidates]))
+    alive = {(row["pid"], row["proc_start"]) for row in rows}
+
+    runs = []
+    dock_pids = set()
+    for run in fold_runs(read_events()):
+        if run.get("ended_at") or run.get("source") != "dock":
+            continue
+        if (run.get("pid"), run.get("proc_start")) in alive:
+            dock_pids.add(run["pid"])
+            runs.append(run)
+    for p in procs:
+        if p["pid"] in dock_pids:
+            continue
+        p["started_at"] = lstart_iso(p["proc_start"])
+        p["host"] = host_name()
+        runs.append(p)
+    runs.sort(key=lambda x: x.get("started_at") or "", reverse=True)
+    return {"host": host_name(), "at": now_iso(), "runs": runs, "models": local_models()}
+
+
+def lstart_iso(lstart: str) -> str:
+    try:
+        local = datetime.strptime(lstart, "%a %b %d %H:%M:%S %Y")
+        return datetime.fromtimestamp(time.mktime(local.timetuple()), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return ""
+
+
+def record_observed(runs: list[dict]) -> None:
+    """Keep history for runs this tool did not start: note one when first seen, close it when it is gone."""
+    f = state_dir() / "observed.json"
+    try:
+        open_runs = json.loads(f.read_text()) if f.is_file() else {}
+    except ValueError:
+        open_runs = {}
+    seen = {}
+    for r in runs:
+        if r.get("source") != "process":
+            continue
+        key = f"{r['pid']}:{r['proc_start']}"
+        seen[key] = open_runs.get(key) or uuid.uuid4().hex[:12]
+        if key not in open_runs:
+            append_event({"event": "start", "id": seen[key], **{k: r.get(k, "") for k in (
+                "source", "agent", "harness", "provider", "model", "ticket", "mode", "cwd", "host", "pid",
+                "proc_start", "started_at")}})
+    for key, run_id in open_runs.items():
+        if key not in seen:
+            append_event({"event": "end", "id": run_id, "ended_at": now_iso(), "exit_code": None})
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(seen))
+
+
+def cmd_ps(args) -> int:
+    snap = snapshot()
+    if args.record:
+        record_observed(snap["runs"])
+    lines = [f"{r.get('agent') or '-':<12} {r['harness']:<9} {r.get('mode', ''):<11} {r.get('model') or '-':<22} "
+             f"{r.get('ticket') or '-':<11} pid {r['pid']}" for r in snap["runs"]]
+    lines += [f"model {m['name']} ({m['provider']}) loaded" for m in snap["models"]]
+    emit(args, snap, "\n".join(lines) or "nothing running")
+    return 0
+
+
+def cmd_history(args) -> int:
+    runs = fold_runs(read_events())[: args.limit]
+    lines = [f"{r.get('started_at', ''):<21} {r.get('agent') or '-':<12} {r.get('harness', ''):<9} "
+             f"{r.get('model') or '-':<22} {r.get('ticket') or '-':<11} "
+             f"{'running' if not r.get('ended_at') else str(r.get('seconds')) + 's'}" for r in runs]
+    emit(args, {"host": host_name(), "runs": runs}, "\n".join(lines) or "no runs yet")
+    return 0
+
+
+def cmd_roster(args) -> int:
+    vault = find_vault(args.vault)
+    view = roster_view(vault, load_settings(vault))
+    lines = [f"{a['name']:<14} {a['team_name']:<22} {a['role']}" for a in view["agents"]]
+    emit(args, view, "\n".join(lines))
+    return 0
+
+
+def emit(args, doc: dict, text: str) -> None:
+    print(json.dumps(doc, indent=2) if args.json else text)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="agent-dock", description=__doc__.split("\n\n")[0])
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    def common(p, vault=True):
+        p.add_argument("--json", action="store_true", help="print JSON")
+        if vault:
+            p.add_argument("--vault", help="the vault (default: $SECONDBRAIN_VAULT, or the one around the current folder)")
+
+    p = sub.add_parser("roster", help="the agents and the runtimes found on this machine")
+    common(p)
+    p.set_defaults(fn=cmd_roster)
+    for name, fn, text in (("launch", cmd_launch, "open a terminal window running an agent"),
+                           ("run", cmd_run, "run an agent in this terminal and record the run")):
+        p = sub.add_parser(name, help=text)
+        common(p)
+        p.add_argument("agent")
+        p.add_argument("--runtime", default="claude", help="claude, codex or hermes (default claude)")
+        p.add_argument("--model", help="override the model for this run")
+        p.add_argument("--card", help="the board card this chat is about, recorded with the run")
+        if name == "launch":
+            p.add_argument("--dry-run", action="store_true", help="print the terminal command, open nothing")
+        p.set_defaults(fn=fn)
+    p = sub.add_parser("ps", help="agents, harnesses, models and tickets running here now")
+    common(p, vault=False)
+    p.add_argument("--record", action="store_true", help="also keep history for runs this tool did not start")
+    p.set_defaults(fn=cmd_ps)
+    p = sub.add_parser("history", help="past runs, newest first")
+    common(p, vault=False)
+    p.add_argument("--limit", type=int, default=200)
+    p.set_defaults(fn=cmd_history)
+
+    args = parser.parse_args(argv)
+    try:
+        return args.fn(args)
+    except DockError as e:
+        if getattr(args, "json", False):
+            print(json.dumps({"error": str(e)}))
+        else:
+            print(f"agent-dock: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

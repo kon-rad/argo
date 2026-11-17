@@ -37,7 +37,7 @@ Each addon has one place it is wired, an addon manifest at `app/server/src/addon
 | [`dispatch`](modules.md) | The zen-agent and Codex dispatcher: one run per bot with open wakeups | `dispatch` | `dispatch` |
 | [`improve`](modules.md) | The self-improvement loop (proposal) | - | - |
 
-The [kiosk](https://github.com/kon-rad/argo/blob/main/addons/tv-kiosk/README.md) and [Telegram bridge](https://github.com/kon-rad/argo/blob/main/addons/telegram-bridge/README.md) run outside the app. Follow their own README setup instructions.
+The [kiosk](https://github.com/kon-rad/argo/blob/main/addons/tv-kiosk/README.md) and [Telegram bridge](https://github.com/kon-rad/argo/blob/main/addons/telegram-bridge/README.md) run outside the app. Follow their own README setup instructions. [Agent Dock](https://github.com/kon-rad/argo/blob/main/addons/agent-dock/README.md) is a macOS app and CLI that opens an org agent in a terminal on Claude Code, Codex or Hermes; it reads the optional `agentDock` section of `secondbrain.json`.
 
 ## Pilot and proposal addons
 

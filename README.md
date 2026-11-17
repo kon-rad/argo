@@ -108,6 +108,7 @@ Markdown is the source of truth. Postgres is an index over it: drop the database
 | [`zen-agent/`](docs/zen-agent.md) | A minimal headless agent runtime: personas, skills, any provider, the board and the knowledge base as tools, budgets and traces |
 | `bin/secondbrain-vault` | Starts a vault, compiles its `AGENTS.md`, links the skills |
 | [`addons/tv-kiosk/`](addons/tv-kiosk/README.md) | Flash a Raspberry Pi that shows the app full screen on a TV |
+| [`addons/agent-dock/`](addons/agent-dock/README.md) | A macOS app and CLI: click an agent to open it in a terminal on Claude Code, Codex or Hermes, and see what runs on this machine |
 | [`docs/`](docs/README.md) | How it all works, how to set it up, every setting. Published at [kon-rad.github.io/argo](https://kon-rad.github.io/argo/) |
 
 ## Modules
