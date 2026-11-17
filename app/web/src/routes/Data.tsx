@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
+import DataTable from '../components/DataTable.js';
 import { bytes, dataApi, type DataPanel, type DataQueryResult } from '../lib/dataApi.js';
 import { ago, zoned } from '../lib/time.js';
 
@@ -91,8 +92,7 @@ function Tables() {
         <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Show engine tables too ({q.data.tables.length})
       </label>
       {rows.length === 0 && <p className="text-sm text-[var(--ink-dim)]">No tables in schema data yet. Add a migration and run <code>secondbrain data migrate</code>.</p>}
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+      <DataTable label="Tables" phone="cards" className="w-full text-sm">
           <thead className="text-left text-xs text-[var(--ink-dim)]">
             <tr><th className="py-1 pr-3">Table</th><th className="pr-3 text-right">Rows</th><th className="pr-3 text-right">Size</th><th>Owner</th></tr>
           </thead>
@@ -112,8 +112,7 @@ function Tables() {
               );
             })}
           </tbody>
-        </table>
-      </div>
+      </DataTable>
     </div>
   );
 }
@@ -141,8 +140,8 @@ function cellText(v: unknown): string {
 
 function ResultTable({ r }: { r: DataQueryResult }) {
   return (
-    <div className="max-h-96 overflow-auto rounded border border-[var(--rule)]">
-      <table className="text-xs">
+    <div>
+      <DataTable label="Rows" phone="scroll" className="text-xs" scrollClassName="max-h-96 overflow-auto rounded border border-[var(--rule)]">
         <thead className="sticky top-0 bg-[var(--paper,white)]"><tr>{r.columns.map((c) => <th key={c} className="px-2 py-1 text-left font-medium">{c}</th>)}</tr></thead>
         <tbody>
           {r.rows.map((row, i) => (
@@ -151,7 +150,7 @@ function ResultTable({ r }: { r: DataQueryResult }) {
             </tr>
           ))}
         </tbody>
-      </table>
+      </DataTable>
       {r.truncated && <p className="px-2 py-1 text-xs text-[var(--ink-dim)]">First {r.row_count} rows.</p>}
     </div>
   );
@@ -182,8 +181,9 @@ function Connectors() {
             <p className="mt-1 text-xs text-[var(--ink-dim)]">Writes {c.tables.map((t) => `data.${t}`).join(', ') || 'nothing'} · run now: <code>{c.runCommand}</code></p>
             {c.missingEnv.length > 0 && <p className="mt-1 text-xs text-red-600">Missing keys on this server: {c.missingEnv.join(', ')}</p>}
             {c.lastRuns.length > 0 && (
-              <div className="mt-2 overflow-x-auto">
-                <table className="text-xs">
+              <div className="mt-2">
+                <DataTable label={`Runs of ${c.name}`} phone="cards" className="text-xs">
+                  <thead className="text-left text-[var(--ink-dim)]"><tr><th className="pr-3 font-normal">Started</th><th className="pr-3 font-normal">Result</th><th className="pr-3 font-normal">Rows</th><th className="font-normal">Error</th></tr></thead>
                   <tbody>
                     {c.lastRuns.map((r) => (
                       <tr key={r.id} className="border-t border-[var(--rule)] align-top">
@@ -194,7 +194,7 @@ function Connectors() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
             )}
           </section>
@@ -214,8 +214,7 @@ function Jobs() {
   const q = useQuery({ queryKey: ['data-jobs'], queryFn: dataApi.jobs });
   if (!q.data) return <Status q={q} />;
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+    <DataTable label="Scheduled jobs" phone="cards" className="w-full text-sm">
         <thead className="text-left text-xs text-[var(--ink-dim)]">
           <tr><th className="py-1 pr-3">Job</th><th className="pr-3">Owner</th><th className="pr-3">Schedule</th><th className="pr-3">Next</th><th>Command</th></tr>
         </thead>
@@ -230,8 +229,7 @@ function Jobs() {
             </tr>
           ))}
         </tbody>
-      </table>
-    </div>
+    </DataTable>
   );
 }
 
