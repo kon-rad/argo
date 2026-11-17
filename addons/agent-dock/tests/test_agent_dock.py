@@ -46,7 +46,7 @@ def fake_bin(tmp_path, monkeypatch):
     """A folder on PATH holding fake `claude`, `codex` and `hermes` that write their argv and exit 3."""
     b = tmp_path / "bin"
     b.mkdir()
-    for name in ("claude", "codex", "hermes"):
+    for name in ("claude", "codex", "hermes", "zen-agent"):
         f = b / name
         f.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$FAKE_OUT"\necho "child=${CLAUDE_CODE_CHILD_SESSION:-none}" >> "$FAKE_OUT"\n'
                      'echo "$AGENT_DOCK_AGENT" >> "$FAKE_OUT"\nexit 3\n')
@@ -305,3 +305,48 @@ def test_child_env_drops_session_markers_and_keeps_everything_else():
                          "ada", "claude")
     assert env == {"PATH": "/bin", "ANTHROPIC_BASE_URL": "http://127.0.0.1:1", "CLAUDE_CODE_USE_BEDROCK": "1",
                    "AGENT_DOCK_AGENT": "ada", "AGENT_DOCK_RUNTIME": "claude"}
+
+
+def test_zen_agent_takes_the_persona_by_name_and_a_local_model_as_a_machine(vault, fake_bin, monkeypatch):
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    (vault / "secondbrain.json").write_text(json.dumps({"agentDock": {"runtimes": {"zen": {
+        "provider": "ollama", "model": "big-model:27b"}}}}))
+    s = dock.load_settings(vault)
+    info = dock.agent_info(vault, s, "ada")
+    argv, meta = dock.build_runtime_command("ada", info, "zen", s, vault)
+    assert argv[1:] == ["chat", "--persona", "ada", "--model", "ollama-local/big-model:27b"]
+    assert meta == {"model": "big-model:27b", "provider": "ollama", "env": {"OLLAMA_MACHINES": "local=http://127.0.0.1:11434"}}
+    argv, meta = dock.build_runtime_command("ada", info, "zen", s, vault, model="fast-1", provider="example")
+    assert argv[1:] == ["chat", "--persona", "ada", "--model", "example/fast-1"] and "env" not in meta
+    plain = dock.load_settings(vault / "..")  # no settings file: zen-agent keeps its own default model
+    argv, meta = dock.build_runtime_command("ada", info, "zen", plain, vault)
+    assert argv[1:] == ["chat", "--persona", "ada"] and meta == {"model": "", "provider": ""}
+
+
+def test_run_sets_the_local_machine_for_zen_agent(vault, fake_bin, tmp_path, monkeypatch):
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    (vault / "secondbrain.json").write_text(json.dumps({"agentDock": {"runtimes": {"zen": {
+        "provider": "ollama", "model": "big-model:27b"}}}}))
+    (fake_bin / "zen-agent").write_text('#!/bin/sh\necho "$OLLAMA_MACHINES" > "$FAKE_OUT"\nexit 0\n')
+    env = dict(os.environ, AGENT_DOCK_STATE=str(tmp_path / "state"), FAKE_OUT=str(tmp_path / "out.txt"))
+    r = run_cli("run", "ada", "--runtime", "zen", "--vault", str(vault), env=env)
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "out.txt").read_text().strip() == "local=http://127.0.0.1:11434"
+    start = json.loads((tmp_path / "state" / "history.jsonl").read_text().splitlines()[0])
+    assert (start["harness"], start["provider"], start["model"]) == ("zen", "ollama", "big-model:27b")
+    assert "env" not in start
+
+
+def test_zen_agent_processes_are_recognised_through_node():
+    rows = dock.parse_ps("  9     1 Tue Jan  1 10:00:00 2030     node --no-warnings /v/.secondbrain/zen-agent/dist/src/cli.js chat --persona ada --model ollama-local/big:27b\n"
+                         " 10     1 Tue Jan  1 10:00:00 2030     zen-agent wake t_0a1b2c3d --persona bo --model example/fast-1\n")
+    runs = {r["pid"]: r for r in dock.classify_processes(rows)}
+    assert (runs[9]["harness"], runs[9]["agent"], runs[9]["provider"], runs[9]["mode"]) == ("zen-agent", "ada", "ollama", "interactive")
+    assert (runs[10]["agent"], runs[10]["provider"], runs[10]["mode"], runs[10]["ticket"]) == ("bo", "example", "headless", "t_0a1b2c3d")
+
+
+def test_a_zen_agent_bot_keeps_its_roster_model(vault, fake_bin):
+    s = dock.load_settings(vault)
+    info = dict(dock.agent_info(vault, s, "ada"), runtime="zen-agent", model="ollama-box/big:27b")
+    argv, meta = dock.build_runtime_command("ada", info, "zen", s, vault)
+    assert argv[1:] == ["chat", "--persona", "ada"] and meta == {"model": "ollama-box/big:27b", "provider": "ollama"}

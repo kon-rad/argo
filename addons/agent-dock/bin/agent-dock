@@ -29,10 +29,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROSTER_DEFAULT = ".agents/org/org-agents.json"
-RUNTIMES = ("claude", "codex", "hermes")
-LABELS = {"claude": "Claude Code", "codex": "Codex", "hermes": "Hermes"}
+RUNTIMES = ("claude", "codex", "hermes", "zen")
+LABELS = {"claude": "Claude Code", "codex": "Codex", "hermes": "Hermes", "zen": "zen-agent"}
 # The roster names runtimes its own way; these are the harness each one means here.
-ROSTER_RUNTIME = {"claude-code": "claude", "claude": "claude", "codex": "codex", "hermes": "hermes"}
+ROSTER_RUNTIME = {"claude-code": "claude", "claude": "claude", "codex": "codex", "hermes": "hermes", "zen-agent": "zen"}
 PROVIDERS = {"claude": "anthropic", "codex": "openai"}
 DEFAULTS = {
     "terminal": "auto",
@@ -42,6 +42,7 @@ DEFAULTS = {
         "claude": {"command": "claude", "model": "sonnet"},
         "codex": {"command": "codex", "model": ""},
         "hermes": {"command": "hermes", "model": "", "provider": "", "baseUrl": ""},
+        "zen": {"command": "zen-agent", "model": "", "provider": "", "baseUrl": ""},
     },
 }
 OLLAMA_DEFAULT = "http://127.0.0.1:11434"
@@ -152,7 +153,7 @@ def runtime_choices(runtime: str, conf: dict, local: list[dict] | None = None) -
     (its login, its key store or its environment), so nothing secret passes through this tool.
     """
     out = []
-    if runtime == "hermes":
+    if runtime in ("hermes", "zen"):
         found = ollama_chat_models(ollama_base(conf if conf.get("provider") == "ollama" else None)) if local is None else local
         for m in found:
             out.append({"label": m["name"], "group": "Local (Ollama)", "auth": "local", "provider": "ollama",
@@ -297,6 +298,13 @@ def build_runtime_command(name: str, info: dict, runtime: str, settings: dict, v
             argv += ["--model", chosen]
         return argv + [opening], meta
 
+    if runtime == "zen":
+        if not model and ROSTER_RUNTIME.get(info.get("runtime") or "") == "zen" and info.get("model"):
+            # zen-agent reads its own bot's model from the roster; naming it again would only risk a mismatch.
+            head = info["model"].split("/", 1)[0]
+            return [exe, "chat", "--persona", name], {"model": info["model"], "provider": "ollama" if head.startswith("ollama") else head}
+        return zen_command(exe, name, conf, chosen, provider, base_url)
+
     # A provider given for this launch brings its own endpoint; the setting's URL belongs to the setting's provider.
     use_provider = provider or conf.get("provider") or ""
     use_url = base_url or ("" if provider and provider != conf.get("provider") else conf.get("baseUrl") or "")
@@ -313,6 +321,28 @@ def build_runtime_command(name: str, info: dict, runtime: str, settings: dict, v
             argv += ["--base-url", use_url]
     meta["provider"] = use_provider
     return argv + ["-q", opening], meta
+
+
+def zen_command(exe: str, name: str, conf: dict, chosen: str, provider: str | None,
+                base_url: str | None) -> tuple[list[str], dict]:
+    """zen-agent takes the persona by name and builds the prompt itself (definition, memory file, rules).
+
+    Its models are `provider/model`. A local Ollama server is offered to it as the machine `local`
+    through OLLAMA_MACHINES, which this returns in meta["env"] for the run to set.
+    """
+    use_provider = provider or conf.get("provider") or ""
+    use_url = base_url or ("" if provider and provider != conf.get("provider") else conf.get("baseUrl") or "")
+    argv = [exe, "chat", "--persona", name]
+    meta = {"model": chosen, "provider": use_provider}
+    if use_provider == "ollama":
+        meta["env"] = {"OLLAMA_MACHINES": "local=" + ollama_base(base_url=use_url or None)}
+        if chosen:
+            argv += ["--model", "ollama-local/" + chosen]
+    elif chosen:
+        argv += ["--model", f"{use_provider}/{chosen}" if use_provider else chosen]
+        if not use_provider and "/" in chosen:
+            meta["provider"] = chosen.split("/", 1)[0]
+    return argv, meta
 
 
 # ---------------------------------------------------------------- opening a terminal
@@ -480,6 +510,7 @@ def cmd_run(args) -> int:
     if not resolve_command(argv[0]):
         raise DockError(f"`{argv[0]}` is not installed on this machine")
     env = child_env(os.environ, args.agent, args.runtime)
+    env.update(meta.pop("env", {}))
     run_id = uuid.uuid4().hex[:12]
     if args.title and sys.stdout.isatty():
         sys.stdout.write(f"\033]2;{args.title}\007")
@@ -520,7 +551,9 @@ def harness_of(command: str) -> tuple[str, list[str]] | None:
         words = shlex.split(command)
     except ValueError:
         words = command.split()
-    for i, w in enumerate(words[:2]):
+    for i, w in enumerate(words[:3]):
+        if w.endswith("zen-agent/dist/src/cli.js"):
+            return "zen-agent", words[i + 1:]
         base = os.path.basename(w)
         for harness, binary in HARNESS_BINARIES.items():
             if base == binary:
@@ -539,6 +572,10 @@ def flag_value(args: list[str], *names: str) -> str:
 
 
 def seen_provider(harness: str, args: list[str]) -> str:
+    if harness == "zen-agent":
+        model = flag_value(args, "--model")
+        head = model.split("/", 1)[0] if "/" in model else ""
+        return "ollama" if head.startswith("ollama") else head
     provider = flag_value(args, "--provider")
     if provider == "custom" and ":11434" in flag_value(args, "--base-url"):
         return "ollama"
@@ -557,7 +594,7 @@ def run_mode(harness: str, args: list[str]) -> str:
         return "headless"
     if harness == "hermes" and ("-z" in args or "--oneshot" in args or "-Q" in args):
         return "headless"
-    if harness == "zen-agent" and first == "run":
+    if harness == "zen-agent" and first in ("run", "wake", "lane"):
         return "headless"
     return "interactive"
 
@@ -737,10 +774,10 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name, help=text)
         common(p)
         p.add_argument("agent")
-        p.add_argument("--runtime", default="claude", help="claude, codex or hermes (default claude)")
+        p.add_argument("--runtime", default="claude", help="claude, codex, hermes or zen (default claude)")
         p.add_argument("--model", help="override the model for this run")
-        p.add_argument("--provider", help="override the provider (Hermes; `ollama` means a local Ollama server)")
-        p.add_argument("--base-url", help="override the provider's endpoint (Hermes)")
+        p.add_argument("--provider", help="override the provider (Hermes, zen-agent; `ollama` means a local Ollama server)")
+        p.add_argument("--base-url", help="override the provider's endpoint (Hermes, zen-agent)")
         p.add_argument("--card", help="the board card this chat is about, recorded with the run")
         p.add_argument("--title", help="the terminal tab's title" if name == "run" else argparse.SUPPRESS)
         if name == "launch":

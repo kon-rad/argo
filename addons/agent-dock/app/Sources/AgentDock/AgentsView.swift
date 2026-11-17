@@ -31,7 +31,7 @@ struct AgentsView: View {
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                                 .kerning(0.8)
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 178, maximum: 230), spacing: 14)],
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 232, maximum: 280), spacing: 14)],
                                       alignment: .leading, spacing: 14) {
                                 ForEach(team.agents) { agent in
                                     AgentCard(agent: agent, runtimes: roster.runtimes)
@@ -92,7 +92,7 @@ struct AgentCard: View {
                 Text(agent.team_name).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
 
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 ForEach(runtimes) { rt in
                     Group {
                         if rt.choices.isEmpty {
@@ -114,6 +114,7 @@ struct AgentCard: View {
                         }
                     }
                     .controlSize(.small)
+                    .fixedSize()
                     .disabled(!rt.installed)
                     .help(help(rt))
                 }
