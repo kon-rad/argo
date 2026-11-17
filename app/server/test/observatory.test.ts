@@ -141,3 +141,13 @@ describe('uncertain evidence', () => {
     await expect(loadWindow(db, { from: 0, to: 100 }, new Set(['usage']))).rejects.toHaveProperty('status', 413);
   });
 });
+
+describe('recorded ordering', () => {
+  it('preserves same-time source part order without manufacturing timestamps', () => {
+    const events = archiveEvents([{ id: 1, session_id: 1, seq: 4, ts: new Date(10), role: 'assistant', kind: 'assistant', raw: { type: 'assistant', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'hidden' }, { type: 'text', text: 'response' }, { type: 'tool_use', id: 'one', name: 'read', input: {} }, { type: 'tool_use', id: 'two', name: 'write', input: {} }] } }, text: '', host: 'test-host', source: 'claude-code', external_id: 's', harness: 'claude-code', observed_at: null }]);
+    expect(events.map(e => e.kind)).toEqual(['thinking', 'response', 'tool_call', 'tool_call']);
+    expect(events.map(e => e.part)).toEqual([0, 1, 2, 3]); expect(new Set(events.map(e => e.at))).toEqual(new Set([10]));
+    expect(new Set(events.map(e => e.id)).size).toBe(4);
+    expect(() => replay(window(), 100)).toThrow(/outside/);
+  });
+});
