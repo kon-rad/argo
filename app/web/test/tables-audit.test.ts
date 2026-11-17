@@ -25,6 +25,7 @@ const DATA_TABLES: Record<string, string[]> = {
   'routes/Fund.tsx': ['cards', 'scroll'],
   'routes/Projects.tsx': ['cards', 'cards'],
   'routes/Ring.tsx': ['scroll'],
+  'routes/Warehouse.tsx': ['cards', 'scroll', 'cards', 'cards'],
   'routes/org/Org.tsx': ['cards'],
   'routes/usage/AgentSessions.tsx': ['cards'],
   'routes/usage/Running.tsx': ['cards'],

@@ -22,12 +22,14 @@ export const ADDON_MODULES = [
   'chat',
   'uploads',
   'garden',
+  'warehouse',
   // Pilots and proposals: each has a manifest and a docs-only Status line. Off unless listed.
   'routing',
   'classify',
   'dispatch',
   'improve',
   'desk',
+  'observatory',
 ] as const;
 
 export const MODULE_NAMES = [...CORE_MODULES, ...ADDON_MODULES] as const;
