@@ -39,7 +39,7 @@ DEFAULTS = {
     "open": "tab",
     "roster": ROSTER_DEFAULT,
     "runtimes": {
-        "claude": {"command": "claude", "model": "sonnet"},
+        "claude": {"command": "claude", "model": "sonnet", "tools": "full"},
         "codex": {"command": "codex", "model": ""},
         "hermes": {"command": "hermes", "model": "", "provider": "", "baseUrl": ""},
         "zen": {"command": "zen-agent", "model": "", "provider": "", "baseUrl": ""},
@@ -256,7 +256,9 @@ def chat_block(name: str, host: str) -> str:
     return (
         f"This is a live terminal chat with the owner on the machine `{host}`, started from Agent Dock. "
         f"It is not a card wake: nobody assigned you a card, so answer and work with the owner directly. "
-        f"You are {name}; read your memory file before you answer anything about past work."
+        f"You are {name}; read your memory file before you answer anything about past work. "
+        f"Any tool list in your persona describes card wakes. In this chat you have whatever this terminal "
+        f"session gives you (files, shell, git and the machine's own commands), under the vault's rules."
     )
 
 
@@ -284,7 +286,15 @@ def build_runtime_command(name: str, info: dict, runtime: str, settings: dict, v
 
     if runtime == "claude":
         argv = [exe, "-n", name]
-        if (info.get("prompt_file") or "") == f".claude/agents/{name}.md":
+        compiled = (info.get("prompt_file") or "") == f".claude/agents/{name}.md"
+        if persona and conf.get("tools", "full") != "roster":
+            # A chat with the owner at the keyboard. The compiled agent file carries the tool list of a card
+            # wake (a few board commands, often no Write), which leaves a chat unable to run git or read a
+            # folder. Defining the agent inline keeps the name on the session (so usage can label it) and
+            # the persona, without that list. `"tools": "roster"` restores the wake's list.
+            inline = {name: {"description": f"{name}, {info.get('role') or 'org agent'}", "prompt": persona}}
+            argv += ["--agents", json.dumps(inline), "--agent", name, "--append-system-prompt", block]
+        elif compiled:
             argv += ["--agent", name, "--append-system-prompt", block]
         else:
             argv += ["--append-system-prompt", opening]

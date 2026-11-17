@@ -24,7 +24,7 @@ All four harnesses get the same agent: the persona file the roster names (`promp
 
 | Harness | Command | Persona reaches it as |
 |---|---|---|
-| Claude Code | `claude --agent <name> -n <name> --model <model>` | The agent file in `.claude/agents/`; any other persona file goes in `--append-system-prompt` |
+| Claude Code | `claude --agents '{"<name>": {persona}}' --agent <name> -n <name> --model <model>` | The persona file's text, as an agent defined on the command line under the bot's name. The session carries the name (usage can label it) and has the full tool set of a terminal session. `"tools": "roster"` starts the compiled agent file in `.claude/agents/` instead, with the tool list of a card wake |
 | Codex | `codex --cd <vault> --model <model> "<persona>"` | The opening message, without the Claude Code frontmatter |
 | Hermes | `hermes chat -m <model> --provider <provider> --base-url <url> -q "<persona>"` | The opening message. See "Hermes: provider and model" below |
 | zen-agent | `zen-agent chat --persona <name> --model <provider/model>` | By name: zen-agent builds the prompt itself from the roster, the definition file and the memory file |
@@ -87,7 +87,7 @@ Optional, in the vault's `secondbrain.json`:
     "terminal": "auto",
     "open": "tab",
     "runtimes": {
-      "claude": { "model": "sonnet" },
+      "claude": { "model": "sonnet", "tools": "full" },
       "hermes": {
         "provider": "ollama",
         "model": "example-model:7b",
@@ -122,7 +122,7 @@ For a process it did not start, the agent's name is read from `--agent` or `--pe
 ## Tests
 
 ```bash
-python3 -m pytest addons/agent-dock        # the CLI: 28 tests, no network, fake runtimes
+python3 -m pytest addons/agent-dock        # the CLI: 29 tests, no network, fake runtimes
 cd addons/agent-dock/app && swift build    # the app compiles
 build/AgentDock.app/Contents/MacOS/AgentDock --snapshot /tmp/dock   # draws each view to a PNG and quits
 ```

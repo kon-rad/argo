@@ -86,22 +86,33 @@ def test_missing_roster_is_a_clear_error(tmp_path):
     assert "no roster" in json.loads(r.stdout)["error"]
 
 
-def test_claude_uses_the_agent_file_and_overrides_a_foreign_model(vault, fake_bin):
+def test_claude_chat_keeps_the_name_and_persona_without_the_wake_tool_list(vault, fake_bin):
     s = dock.load_settings(vault)
     info = dock.agent_info(vault, s, "ada")
     argv, meta = dock.build_runtime_command("ada", info, "claude", s, vault, host="box")
-    assert argv[1:5] == ["-n", "ada", "--agent", "ada"]
+    assert argv[1:3] == ["-n", "ada"] and argv[argv.index("--agent") + 1] == "ada"
+    inline = json.loads(argv[argv.index("--agents") + 1])
+    assert set(inline) == {"ada"} and "tools" not in inline["ada"], "an inline agent without a tool list gets them all"
+    assert "You are **ada**" in inline["ada"]["prompt"] and not inline["ada"]["prompt"].startswith("---")
     assert argv[argv.index("--model") + 1] == "sonnet", "the roster's Codex model must not reach Claude Code"
     assert "live terminal chat" in argv[argv.index("--append-system-prompt") + 1]
     assert meta == {"model": "sonnet", "provider": "anthropic"}
 
 
-def test_claude_without_an_agent_file_gets_the_persona_as_system_prompt(vault, fake_bin):
+def test_claude_tools_roster_uses_the_compiled_agent_file(vault, fake_bin):
+    s = dock.load_settings(vault)
+    s["runtimes"]["claude"]["tools"] = "roster"
+    argv, _ = dock.build_runtime_command("ada", dock.agent_info(vault, s, "ada"), "claude", s, vault, host="box")
+    assert argv[1:5] == ["-n", "ada", "--agent", "ada"] and "--agents" not in argv
+    argv, _ = dock.build_runtime_command("bo", dock.agent_info(vault, s, "bo"), "claude", s, vault)
+    assert "--agent" not in argv, "no compiled file: the persona goes in the system prompt"
+    assert "You are **bo**" in argv[argv.index("--append-system-prompt") + 1]
+
+
+def test_claude_keeps_a_roster_model_for_the_same_harness(vault, fake_bin):
     s = dock.load_settings(vault)
     argv, meta = dock.build_runtime_command("bo", dock.agent_info(vault, s, "bo"), "claude", s, vault)
-    assert "--agent" not in argv
-    assert "You are **bo**" in argv[argv.index("--append-system-prompt") + 1]
-    assert meta["model"] == "opus", "a roster model for the same harness is kept"
+    assert meta["model"] == "opus"
 
 
 def test_codex_gets_the_persona_without_frontmatter_and_its_roster_model(vault, fake_bin):
@@ -219,7 +230,7 @@ def test_run_records_start_and_end_and_returns_the_exit_code(vault, fake_bin, tm
     r = run_cli("run", "ada", "--runtime", "claude", "--card", "t_0123abcd", "--vault", str(vault), env=env)
     assert r.returncode == 3, r.stderr
     seen = (tmp_path / "argv.txt").read_text().splitlines()
-    assert seen[:4] == ["-n", "ada", "--agent", "ada"] and seen[-1] == "ada"
+    assert seen[:2] == ["-n", "ada"] and seen[seen.index("--agent") + 1] == "ada" and seen[-1] == "ada"
     assert seen[-2] == "child=none", "a parent session's marker must not reach the agent, or its transcript is not saved"
     events = [json.loads(l) for l in (tmp_path / "state" / "history.jsonl").read_text().splitlines()]
     assert [e["event"] for e in events] == ["start", "end"]
@@ -295,7 +306,7 @@ def test_settings_ignore_unknown_runtimes_and_keep_defaults(vault):
         "claude": {"model": "opus"}, "mystery": {"command": "rm"}}}}))
     s = dock.load_settings(vault)
     assert s["terminal"] == "terminal" and dock.pick_terminal(s) == "terminal"
-    assert s["runtimes"]["claude"] == {"command": "claude", "model": "opus", "choices": []}
+    assert s["runtimes"]["claude"] == {"command": "claude", "model": "opus", "tools": "full", "choices": []}
     assert "mystery" not in s["runtimes"]
 
 
