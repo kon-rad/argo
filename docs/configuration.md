@@ -198,7 +198,19 @@ These are schema-validated too. Most are set by launchers, installers, agent run
 
 `secondbrain doctor` checks the whole install and exits non-zero when a critical check fails. The same checks answer at `GET /api/health` (`{"ok": true, "checks": [...]}`), so a monitor and a person read one answer. It checks Node's major version, Postgres, the `vector` extension, pending migrations, unknown names in `MODULES`, a stale `AGENTS.md`, an unparsable `secondbrain.json`, the sync state, and each core feature's tables (the feature's manifest names them).
 
+The CLI (not `/api/health`) also prints one advisory line per agent CLI wrapper the manifests name (`cli:cli-board`, `cli:cli-org`, ...): **installed** (the server's own wrapper, or `cli-board`'s HTTPS client with `BOARD_URL` and `BOARD_TOKEN` set), **server-only** (the one-line notice `secondbrain-vault clis install` writes off the server) or **missing**, with the command that fixes it.
+
 `--deep` adds the checks that only make sense on the deployed server (failed `secondbrain-*` units, the last backup); `?deep=1` does the same over HTTP. `--json` prints the checks as JSON. The doctor is additive: a failed non-critical check (a stale doc, a missing backup) is a warning, not an error.
+
+## Agent CLIs on a client machine
+
+`secondbrain-vault clis install` ([connect machines](onboarding/06-connect-machines.md#the-agent-clis-on-the-laptop-and-every-other-machine)) reads these from the shell environment when it runs. They are per machine and optional; nothing goes in the vault `.env` except `BOARD_URL` and `BOARD_TOKEN` (module settings, above).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SECONDBRAIN_BIN_DIR` | `~/.local/bin` | Where the wrappers are written (`--bin DIR` overrides it); it must be on PATH |
+| `SECONDBRAIN_CLI_HOME` | `$XDG_DATA_HOME/secondbrain/agent-clis`, else `~/.local/share/secondbrain/agent-clis` | Where the `cli-board.mjs` bundle is kept |
+| `SB_VAULT_ENV` | set by the wrapper | The vault `.env` the `cli-board` bundle reads `BOARD_URL` and `BOARD_TOKEN` from when they are not in the environment. The wrapper sets it; you do not |
 
 ## Vault sync
 

@@ -7,7 +7,8 @@ import { healthy, runChecks, type Check } from './doctor.js';
  * install is well. Node, Postgres, pgvector, pending migrations, unknown
  * modules, a stale AGENTS.md, an unparsable settings file, the sync state and
  * each core feature's tables. `--deep` adds the checks that need the deployed
- * server (failed timers, the last backup). `--json` prints the same checks the
+ * server (failed timers, the last backup). Each agent CLI wrapper gets a line: installed,
+ * server-only or missing on this machine (secondbrain-vault clis install). `--json` prints the same checks the
  * /api/health route returns. Exits 1 when a critical check fails.
  */
 function line(c: Check): string {
@@ -16,7 +17,7 @@ function line(c: Check): string {
 }
 
 const argv = process.argv.slice(2);
-const checks = await runChecks({ deep: argv.includes('--deep') });
+const checks = await runChecks({ deep: argv.includes('--deep'), clis: true });
 const ok = healthy(checks);
 
 if (argv.includes('--json')) {

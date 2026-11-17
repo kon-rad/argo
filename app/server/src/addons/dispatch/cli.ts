@@ -83,7 +83,7 @@ export async function main(argv: string[]): Promise<number> {
       }
     }
     const r = await d.tick();
-    console.log(`tick: ${r.routines} routines, ${r.released} released, ${r.promoted} promoted, ${r.woken} re-woken, ${r.agents} bots, ${r.runs} runs, ${r.acks} acks, ${r.gated} gated` +
+    console.log(`tick: ${r.routines} routines, ${r.released} released, ${r.promoted} promoted, ${r.woken} re-woken, ${r.closed} closed, ${r.agents} bots, ${r.runs} runs, ${r.acks} acks, ${r.gated} gated` +
       (r.held ? `, held: ${r.held}` : ''));
     for (const e of r.errors) console.error(`  ! ${e}`);
     return r.errors.length ? 2 : 0;

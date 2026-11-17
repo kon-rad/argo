@@ -245,6 +245,8 @@ const Schema = z.object({
   // minted by `cli-board token create` (door 2 of docs/board-design.md). Unset: the database connection is used.
   BOARD_URL: z.string().url().optional(),
   BOARD_TOKEN: z.string().min(20).optional(),
+  // Where `secondbrain-vault clis install` writes the agent CLI wrappers (default ~/.local/bin); the doctor looks there.
+  SECONDBRAIN_BIN_DIR: z.string().optional(),
   // Read-only bearer token for a kiosk's Projects panel (GET /api/feed/projects).
   // Unset = the feed route does not exist.
   PROJECTS_FEED_TOKEN: z.string().min(32).optional(),

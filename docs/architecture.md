@@ -87,7 +87,7 @@ Everything beyond browse, search, the database page and the editor is a module: 
 - shows no nav link,
 - gets no systemd timers from `deploy.sh`.
 
-Module tables are created by migrations whether or not the module is on, so turning one on later needs no migration step. Per-module detail: [modules.md](modules.md). The core features are each described by one manifest (`app/server/src/features/<name>/manifest.ts`: nav, commands, timers, wrappers, env, docs) that `app.ts`, `/api/meta`, the launcher and `deploy.sh` read, so a feature is wired in one place.
+Module tables are created by migrations whether or not the module is on, so turning one on later needs no migration step. Per-module detail: [modules.md](modules.md). The core features are each described by one manifest (`app/server/src/features/<name>/manifest.ts`: nav, commands, timers, wrappers, env, docs) that `app.ts`, `/api/meta`, the launcher and `deploy.sh` read, so a feature is wired in one place. A wrapper the manifest lists in `remoteWrappers` also runs on a client machine: `secondbrain-vault clis install` reads the generated `app/bin/agent-clis.json` and installs it there as a bundled HTTPS client (today `cli-board`, door 2 of the [board](kanban-board.md#2-the-three-doors)), and every other wrapper as a one-line server-only notice.
 
 ## 5. The agent harness
 
