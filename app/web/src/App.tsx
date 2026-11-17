@@ -16,6 +16,7 @@ import MobileMenu, { MenuButton } from './components/MobileMenu.js';
 import Tv from './routes/Tv.js';
 import Media from './routes/Media.js';
 import Uploads from './routes/Uploads.js';
+import Data from './routes/Data.js';
 import Fund from './routes/Fund.js';
 // three.js is large: the map loads only when it's opened.
 const MapPage = lazy(() => import('./routes/Map.js'));
@@ -243,6 +244,8 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           {modules.has('tv') && <Route path="/tv" element={<Tv />} />}
           {modules.has('media') && <Route path="/media" element={<Media />} />}
           {modules.has('uploads') && <Route path="/uploads" element={<Uploads />} />}
+          {modules.has('data') && <Route path="/data" element={<Data />} />}
+          {modules.has('data') && <Route path="/data/:tab" element={<Data />} />}
           {modules.has('fund') && <Route path="/fund" element={<Fund />} />}
           {/* The page was /argo-tv before the engine port; old kiosk URLs land on /tv. */}
           {modules.has('tv') && <Route path="/argo-tv" element={<Navigate to={`/tv${location.search}`} replace />} />}
