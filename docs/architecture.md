@@ -137,6 +137,15 @@ with stable host/session/counter IDs. The forward migration includes Codex in
 `usage_facts`; archives remain the transcript store. No provider pricing is
 inferred. Recent Codex sessions are observations with a 20-minute stale window.
 
+Laptop zen-agent traces travel the same wire as `zen` whole-file envelopes. Every
+ingest path (usage-sync, usage-import, the ledger's batches, agents-sync, the
+archive) ends by calling `archive/bot.ts`, which sets `archive_sessions.bot` (a
+foreign key to `org_agents`) from what the harness recorded: Claude Code's
+`agent-setting` record, a Codex or Hermes first message that opens with the
+compiled persona, a zen-agent persona. `usage_facts` labels a call with the
+run's agent when it is in a run (surface `bot`), else with the session's bot
+(surface `owner-chat`), so wakes and the daily token cap are unchanged.
+
 PR size is never a reason the gate rejects: the worker keeps the whole diff and every source, and `review/passes.ts` splits a snapshot too large for one reviewer call into passes and merges their verdicts. `review/policy.ts` holds the per-call budget and the planning budgets of the offline admission CLI, as one versioned, hashed policy. `review/scope.ts` selects changed reviewable paths and immediate imports for both GitHub and local Git objects. `review/plan.ts` validates acceptance/test/dependency mappings and bounded uncertainty; `review/preflight.ts` supplies read-only forecast and actual-diff checkpoints through `cli-review scope`. This adds no database state or shipping authority. The actual worker still gathers and verifies its own complete revision-bound evidence, and tells the owner through the host policy's optional `notify` program when a review is rejected or blocked. See [the public CLI contract](automatic-review.md#scope-checkpoints-before-building-and-submitting).
 
 ### Instagram metrics authorization
