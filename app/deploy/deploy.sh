@@ -92,8 +92,10 @@ done
 
 echo "→ shipping source to $HOST:$APP_DIR"
 ssh "$HOST" "mkdir -p $APP_DIR"
+# /data is anchored: the app's runtime folder (app/data) stays on the server, but a source folder that happens
+# to be called data (server/src/addons/data) still ships. Unanchored, it silently dropped the data addon's code.
 rsync -az --delete \
-  --exclude node_modules --exclude dist --exclude 'web/dist' --exclude data --exclude vault-sync \
+  --exclude node_modules --exclude dist --exclude 'web/dist' --exclude /data --exclude vault-sync \
   --exclude .git --exclude .DS_Store \
   "$APP_ROOT/" "$HOST:$APP_DIR/"
 # The vault sync is one stdlib Python file from tools/, outside app/: ship it next to the app.
