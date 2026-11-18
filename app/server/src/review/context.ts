@@ -21,9 +21,15 @@ export function boardSources(ref: string, raw: unknown): Source[] {
   if (!ref.endsWith(':earlier_findings') || !Array.isArray(raw) || raw.length > 100) return [boardSource(ref, raw)];
   const full = source(ref, raw, true, Number.MAX_SAFE_INTEGER);
   const incomplete = raw.some(row => row && typeof row === 'object' && row.truncated === true);
-  const count = Math.max(1, Math.ceil(full.text.length / POLICY.sourceChars));
-  return Array.from({ length: count }, (_, part) => {
-    const text = full.text.slice(part * POLICY.sourceChars, (part + 1) * POLICY.sourceChars);
+  const chunks: string[] = [];
+  for (let start = 0; start < full.text.length;) {
+    let end = Math.min(start + POLICY.sourceChars, full.text.length);
+    const last = full.text.charCodeAt(end - 1);
+    if (end < full.text.length && last >= 0xd800 && last <= 0xdbff) end--;
+    chunks.push(full.text.slice(start, end)); start = end;
+  }
+  const count = chunks.length;
+  return chunks.map((text, part) => {
     return { ...full, ref: count === 1 ? ref : `${ref}:part-${part + 1}-of-${count}`, text,
       revision: digest(`${full.revision}\0${part}\0${text}`), truncated: incomplete };
   });

@@ -399,3 +399,12 @@ it('dispatches complete supported verdicts in bounded transport parts, and block
   const g = fixture(), bad = snapshot(); bad.sources.push(...boardSources('board:t_123abc:earlier_findings', raw)); g.setCurrent(bad);
   await runReview(g.job, ['test'], g.io); expect(g.counts().reviews).toBe(0); expect(g.job.state).toBe('blocked');
 });
+
+it('keeps Unicode characters intact at a prior-findings transport boundary', () => {
+  const prefix = JSON.stringify([{verdict:'',truncated:false}]).indexOf('","truncated');
+  const raw = [{verdict:'x'.repeat(POLICY.sourceChars-1-prefix)+'😀'+'y'.repeat(100),truncated:false}];
+  const parts=boardSources('board:t_123abc:earlier_findings',raw);
+  expect(parts.length).toBe(2);
+  expect(JSON.parse(parts.map(p=>p.text).join(''))).toEqual(raw);
+  expect(parts.every(p=>!/[\uD800-\uDBFF]$/.test(p.text))).toBe(true);
+});
