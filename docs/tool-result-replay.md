@@ -46,4 +46,4 @@ SB_TEST_DB=sb_tool_results_test npm test -- server/test/agent-sessions-api.test.
 npm run build
 ```
 
-The database suite rebuilds only the named scratch database. Production canary readback is a separate trusted-operator check. See [architecture](architecture.md) and the [app guide](../app/README.md).
+The database suite rebuilds only the named scratch database. Production canary readback is a separate trusted-operator check. See [architecture](architecture.md) and the [module guide](modules.md).
