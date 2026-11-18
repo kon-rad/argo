@@ -329,6 +329,8 @@ export class Dispatcher {
       }
       throw new Error(problem);
     }
+    // Invalid accounting configuration must leave cards and wakes available for a corrected launch.
+    const host = await withTransaction(tx => store.codexUsageHost(tx, this.deps.config.orgCodexHost));
     const startedAt = this.now();
     const runId = runIdFor(agent.name, startedAt);
     const wakeups = await claimWakeups(agent.name, runId);
@@ -383,7 +385,6 @@ export class Dispatcher {
       // A fresh session learns who it is and whether it can write; a resumed one already holds that.
       if (!resume) prompt = codexPreamble(codexPersona(this.deps.config.vaultRoot, agent.name), Boolean(card)) + prompt;
       const args = codexCommand(model, this.deps.config.vaultRoot, prompt, resume, Boolean(card));
-      const host = await withTransaction(tx => store.codexUsageHost(tx, this.deps.config.orgCodexHost));
       const reason = primaryReason(selected);
       const launch: LaunchEnvelope = { v: 1, runId, source: 'codex', runtime: 'codex', sessionId: resume,
         entrypoint: 'exec', trigger: reason === 'routine' ? 'cron' : reason === 'task' ? 'board' : reason,
