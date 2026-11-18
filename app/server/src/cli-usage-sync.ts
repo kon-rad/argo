@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import type { Host } from './archive/types.js';
 import { config } from './config.js';
 import { pool } from './db.js';
+import { hermesTelegram } from './livestream-x.js';
+import { checkPlanAlerts } from './usage/planAlert.js';
 import { syncUsage } from './usage/sync.js';
 
 // `secondbrain usage-sync`: this machine's Claude Code transcripts, cc-runs logs, plan readings and zen-agent traces -> the ledger.
@@ -25,6 +27,20 @@ try {
     `${c.runs} runs, ${c.plan} plan readings changed, ${c.attached} calls attached to runs`);
   for (const e of c.errors) console.error(`  ! ${e}`);
   code = c.errors.length ? 2 : 0;
+  // The droplet holds the plan readings from every machine (the Mac pushes its own), so it is the one place that alerts.
+  if (host === 'droplet' && process.env.PLAN_ALERTS !== 'off') {
+    try {
+      const a = await checkPlanAlerts(hermesTelegram());
+      for (const s of a.sent) console.log(`plan-alert: sent ${s.window} ${Math.max(...s.crossed)}% (at ${Math.round(s.reading.usedPct)}%)`);
+      for (const f of a.failed) {
+        console.error(`  ! plan-alert ${f.window}: ${f.error}`);
+        code = 2;
+      }
+    } catch (err) {
+      console.error(`  ! plan-alert: ${err instanceof Error ? err.message : String(err)}`);
+      code = 2;
+    }
+  }
 } catch (err) {
   console.error(`usage-sync failed: ${err instanceof Error ? err.message : String(err)}`);
 } finally {
