@@ -26,10 +26,10 @@ AI coding agents are welcome contributors. They follow [AGENTS.md](AGENTS.md), w
 
 ## Set up a development environment
 
-You need git, Node.js 22+, Python 3.9+ (3.11+ recommended), and PostgreSQL 15+ with pgvector built for that Postgres. [docs/getting-started.md](docs/getting-started.md#1-install-the-prerequisites) has install steps for macOS and Ubuntu.
+You need git, Node.js 22+, Python 3.9+ (3.11+ recommended), and PostgreSQL 15+ with pgvector built for that Postgres. [docs/onboarding/02-set-up-your-vault.md](docs/onboarding/02-set-up-your-vault.md#step-1-install-the-prerequisites) has install steps for macOS and Ubuntu.
 
 ```bash
-git clone https://github.com/kon-rad/secondbrain.git
+git clone https://github.com/kon-rad/argo.git
 cd secondbrain/app
 npm ci
 npm run build
@@ -37,6 +37,7 @@ npm test
 cd ..
 python3 -m pip install pytest
 python3 -m pytest harness tools addons
+cd zen-agent && npm ci && npm test && cd ..   # the standalone agent runtime; no Postgres, no keys
 ```
 
 The app tests run against a **real** Postgres: they connect with the standard `PG*` variables (`PGHOST`, `PGUSER`, `PGPASSWORD`) and rebuild a `secondbrain_test` database (override with `SB_TEST_DB`) from the migrations on every run. No mocked `pg`. Your user needs permission to create databases.
@@ -58,6 +59,7 @@ Put a few fake notes in it. If you want a realistic shape, write fake notes in t
 | `app/web/` | React UI | TypeScript, React 19, Tailwind |
 | `app/db/migrations/` | Schema, forward-only | SQL (node-pg-migrate) |
 | `app/deploy/` | `deploy.sh`, systemd units, Caddy template, server env example | Bash |
+| `zen-agent/` | Standalone agent runtime on the pi agent core; own `package.json`, tests (`node --test`) and README | TypeScript (ESM, strict) |
 | `app/bin/secondbrain` | The launcher CLI | Bash |
 | `harness/hooks/` | `guard.py`, `devlog_gate.py` and their tests | Python, stdlib only |
 | `harness/claude/` | Claude Code settings and agents copied into new vaults | JSON, markdown |
@@ -74,6 +76,7 @@ Put a few fake notes in it. If you want a realistic shape, write fake notes in t
 |---|---|---|
 | App typecheck and build | `cd app && npm run build` | `app` job |
 | App tests (Vitest + Supertest, real Postgres with pgvector) | `cd app && npm test` | `app` job |
+| Table layouts in a browser at phone and desktop widths (when you touch a table or `index.css`) | `cd app && npm run e2e:install -w web && npm run e2e:tables -w web` | no |
 | Python tests (harness, vault CLI, add-ons) | `python3 -m pytest harness tools addons` | `python` job |
 | Leak check | `scripts/check-public.sh` | `leaks` job |
 | Secret scan over all history | `gitleaks detect --source . --log-opts=--all --redact` | `leaks` job |
@@ -131,15 +134,27 @@ Then:
 
 Structured settings (lists, maps, accounts) go in `secondbrain.json` through `app/server/src/settings.ts`, with an empty default and an example in `vault-template/secondbrain.example.json`.
 
-### Adding a module
+### Adding a feature
 
-A new optional feature is a new module, **off by default**.
+A feature is wired in one place: its folder `app/server/src/features/<name>/`. `manifest.ts` is data (the nav link, the `secondbrain` commands, the timers, the PATH wrappers, the env keys, the doc page); `routes.ts` mounts its API. `app.ts`, `/api/meta`, the launcher, `deploy.sh` and `test/features.test.ts` all read the manifest, so nothing else lists the feature. The core features (`projects`, `org`, `board`, `usage`, `summaries`) work this way; the other modules still use the older wiring below until they move to `addons/`.
+
+1. Add its name to `MODULE_NAMES` in `app/server/src/config.ts`.
+2. Create `features/<name>/manifest.ts` with `defineFeature({...})` and `features/<name>/routes.ts` exporting `routes: FeatureRoutes`. A route that checks its own token mounts `public`; one that parses its own body mounts `raw`; everything else sits behind the login.
+3. Register both in `features/registry.ts` (the manifest) and `features/index.ts` (manifest plus routes).
+4. Pages: add the feature's `<Route>`s to `app/web/src/features.tsx` under its name. The nav link comes from the manifest through `/api/meta`.
+5. Tables go in a new migration. They exist whether or not the feature is on.
+6. Timers: add one complete `timers` entry to the manifest; the deploy generator renders and installs both unit halves when the feature is on.
+7. A CLI: an entry point `app/server/src/cli-<name>.ts`, named in `cli`; `secondbrain <command>` reaches it with no launcher change.
+8. Tests: `test/features.test.ts` already checks that every file the manifest names exists; add the feature's own route tests, on and off.
+9. Docs: the page named in `docs`, its settings in [docs/configuration.md](docs/configuration.md), and a row in the module tables of `README.md` and `app/README.md`.
+
+### Adding a module (older wiring, until it moves to an addon)
 
 1. Add its name to `MODULE_NAMES` in `app/server/src/config.ts`.
 2. Mount its routes only when it is on: `if (modules.has('<name>'))` in `app/server/src/app.ts`.
 3. Show its nav link and routes only when it is on (`app/web/src/App.tsx` reads the module list from `/api/meta`).
 4. Tables go in a new migration. They exist whether or not the module is on.
-5. Timers: add the `.service` and `.timer` to `app/deploy/`, and install them in `deploy.sh` only when the module is in `DEPLOY_MODULES`.
+5. Timers: add one complete `timers` entry to the manifest; the deploy generator renders and installs both unit halves only when the module is on.
 6. A CLI: add a subcommand to `app/bin/secondbrain` and an entry point in `app/server/src/cli-<name>.ts`.
 7. Tests: the module on, and the module off (routes return 404, nothing in the nav).
 8. Docs: a section in [docs/modules.md](docs/modules.md), its settings in [docs/configuration.md](docs/configuration.md), and a row in the module tables of `README.md` and `app/README.md`.
@@ -183,12 +198,13 @@ An add-on runs outside the app (a device, a separate service). It lives in `addo
 
 | You changed | Update |
 |---|---|
-| Install or first-run behaviour | [docs/getting-started.md](docs/getting-started.md) |
+| Install or first-run behaviour | [docs/onboarding/02-set-up-your-vault.md](docs/onboarding/02-set-up-your-vault.md) |
 | A setting | [docs/configuration.md](docs/configuration.md) and the `.example` files |
 | A module | [docs/modules.md](docs/modules.md) |
 | The guard, the gate, or agent wiring | [docs/agent-harness.md](docs/agent-harness.md) |
 | `deploy.sh` or server units | [docs/deployment.md](docs/deployment.md) |
 | The template or `secondbrain-vault` | [docs/vault.md](docs/vault.md) |
+| Vault sync (`secondbrain-vault sync`) | [docs/sync.md](docs/sync.md) |
 | How the parts fit together | [docs/architecture.md](docs/architecture.md) |
 
 Write plainly, use tables for options and settings, use example values (never real ones), and make every command copy-pasteable.

@@ -4,7 +4,8 @@ import { pullLocalAi } from './localai/pull.js';
 
 // `secondbrain local-ai-pull`: copy the local model host's call log (LOCAL_AI_EXPORT_URL) into local_ai_*.
 // On the server a systemd timer runs it every 5 minutes (deploy/secondbrain-localai-pull.*) when the
-// localai module is on. The host being off is normal: each table records the error and the next run retries.
+// localai addon is on. Its manifest generates the units; no static service files are needed.
+// The host being off is normal: each table records the error and the next run retries.
 let code = 1;
 try {
   if (!config.localAiExportUrl) {

@@ -8,11 +8,12 @@ const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? 
 const epoch = (v: unknown): Date | null => { const n = num(v); return n === null ? null : new Date(n * 1000); };
 
 // Columns lifted into typed fields; everything else goes to meta. SELECT * so a
-// Hermes version with more or fewer columns (Mac vs droplet) still reads.
+// Hermes version with more or fewer columns still reads.
 const SESSION_FIELDS = new Set(['id', 'parent_session_id', 'cwd', 'title', 'model', 'started_at', 'ended_at',
   'message_count', 'input_tokens', 'output_tokens', 'estimated_cost_usd', 'actual_cost_usd']);
 
-export function readHermes(dbPath: string, host: Host): {
+/** `source` labels the Hermes home: 'hermes' (main), 'hermes:<profile>', or 'hermes:user' for a second home on the same host. */
+export function readHermes(dbPath: string, host: Host, source: SessionInput['source'] = 'hermes'): {
   sessions: SessionInput[];
   messages: Array<ParsedMessage & { sessionExternalId: string }>;
 } {
@@ -22,7 +23,7 @@ export function readHermes(dbPath: string, host: Host): {
       const meta: Row = {};
       for (const [k, v] of Object.entries(r)) if (!SESSION_FIELDS.has(k)) meta[k] = typeof v === 'bigint' ? Number(v) : v;
       return {
-        source: 'hermes', host, externalId: String(r.id), parentExternalId: str(r.parent_session_id),
+        source, host, externalId: String(r.id), parentExternalId: str(r.parent_session_id),
         project: str(r.cwd), title: str(r.title), model: str(r.model),
         startedAt: epoch(r.started_at), endedAt: epoch(r.ended_at),
         messageCount: num(r.message_count), inputTokens: num(r.input_tokens), outputTokens: num(r.output_tokens),

@@ -5,7 +5,7 @@ import { HttpError, parseOr400, wrap } from './http.js';
 
 /**
  * Local model usage on the Usage board: the rows `local-ai-pull` copies from a home model host's
- * logging gateway (local_ai_* tables, migration 1756000013500). Read-only. Tokens, speed and energy;
+ * logging gateway (local_ai_* tables, migration 1756000020300). Read-only. Tokens, speed and energy;
  * there is no money here, a local call costs electricity only.
  */
 const TEXT_LIMIT = 20000;

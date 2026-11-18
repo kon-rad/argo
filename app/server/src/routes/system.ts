@@ -1,10 +1,18 @@
 import { Router } from 'express';
+import { config } from '../config.js';
 import { query } from '../db.js';
 import { log } from '../logger.js';
+import { readSyncState, syncStateFile } from '../syncState.js';
 import { wrap } from './http.js';
 
-export function systemRouter(vaultRoot: string, onShutdown?: () => void): Router {
+export function systemRouter(vaultRoot: string, onShutdown?: () => void, syncFile = syncStateFile(config.syncStateDir)): Router {
   const router = Router();
+
+  // The vault sync's last run on this machine (secondbrain-vault sync, docs/sync.md). Not installed: { installed: false }.
+  router.get('/sync', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(readSyncState(syncFile) ?? { installed: false });
+  });
 
   router.get(
     '/system',

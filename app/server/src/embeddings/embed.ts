@@ -4,6 +4,8 @@ import { query, withTransaction } from '../db.js';
 import { log } from '../logger.js';
 import type { Connector, RunContext } from '../connectors/types.js';
 import { chunkMarkdown } from './chunk.js';
+import { llmContextualizer, type Contextualizer } from './contextualize.js';
+import { buildChatProvider, pickProvider, providerCatalog } from '../llm/registry.js';
 import {
   createProvider,
   isContextLengthError,
@@ -19,6 +21,8 @@ export interface EmbedStats {
   chunksDeleted: number;
   tokensEstimated: number;
   apiCalls: number;
+  /** Notes that got a model-written context line in front of each chunk. */
+  filesContextualized: number;
   model: string;
   durationMs: number;
 }
@@ -28,6 +32,8 @@ export interface EmbedOptions {
   maxChunkTokens: number;
   overlapTokens: number;
   batchSize: number;
+  /** Writes one line of context per chunk before embedding (contextual retrieval). Absent: plain chunks. */
+  contextualizer?: Contextualizer;
   onProgress?: (p: { phase: string; filesDone: number; filesTotal: number; currentPath: string }) => void;
   signal?: AbortSignal;
 }
@@ -43,6 +49,9 @@ interface Candidate {
 
 /** pgvector's text input format. */
 const toVectorLiteral = (v: readonly number[]): string => `[${v.join(',')}]`;
+
+/** What the encoder sees: the context line (when there is one) in front of the chunk. */
+export const embedText = (c: Chunk): string => (c.context ? `${c.context}\n\n${c.content}` : c.content);
 
 /** Below this a further split is pointless; the content is pathological. */
 const MIN_SPLITTABLE_CHARS = 200;
@@ -106,7 +115,7 @@ async function embedChunks(
 
     try {
       onApiCall();
-      const vectors = await provider.embed(group.map((c) => c.content));
+      const vectors = await provider.embed(group.map(embedText));
       outChunks.push(...group);
       outVectors.push(...vectors);
       return;
@@ -188,15 +197,21 @@ export async function embedVault(opts: EmbedOptions): Promise<EmbedStats> {
   let chunksWritten = 0;
   let tokensEstimated = 0;
   let apiCalls = 0;
+  let filesContextualized = 0;
   let filesDone = 0;
 
   for (const file of candidates) {
     if (opts.signal?.aborted) throw new Error('embedding run aborted');
 
-    const chunks = chunkMarkdown(file.body, file.title ?? file.name, {
+    let chunks = chunkMarkdown(file.body, file.title ?? file.name, {
       maxTokens: opts.maxChunkTokens,
       overlapTokens: opts.overlapTokens,
     });
+    if (opts.contextualizer && chunks.length > 0) {
+      const contexts = await opts.contextualizer({ title: file.title ?? file.name, path: file.path, body: file.body }, chunks);
+      chunks = chunks.map((c, i) => ({ ...c, context: contexts[i] ?? '' }));
+      if (contexts.some((c) => c)) filesContextualized++;
+    }
 
     if (chunks.length === 0) {
       // Nothing embeddable, but the stale rows still have to go or the next
@@ -223,10 +238,10 @@ export async function embedVault(opts: EmbedOptions): Promise<EmbedStats> {
       await tx.query(
         `INSERT INTO vault_chunks
            (file_id, chunk_index, heading_path, content, token_estimate,
-            char_start, char_end, content_hash, model, embedding)
-         SELECT $1, t.idx, t.heading, t.content, t.tokens, t.cstart, t.cend, $2, $3, t.vec::vector
-         FROM unnest($4::int[], $5::text[], $6::text[], $7::int[], $8::int[], $9::int[], $10::text[])
-              AS t(idx, heading, content, tokens, cstart, cend, vec)`,
+            char_start, char_end, content_hash, model, embedding, context)
+         SELECT $1, t.idx, t.heading, t.content, t.tokens, t.cstart, t.cend, $2, $3, t.vec::vector, t.ctx
+         FROM unnest($4::int[], $5::text[], $6::text[], $7::int[], $8::int[], $9::int[], $10::text[], $11::text[])
+              AS t(idx, heading, content, tokens, cstart, cend, vec, ctx)`,
         [
           file.id,
           file.content_hash,
@@ -238,6 +253,7 @@ export async function embedVault(opts: EmbedOptions): Promise<EmbedStats> {
           embedded.map((c) => c.charStart),
           embedded.map((c) => c.charEnd),
           vectors.map(toVectorLiteral),
+          embedded.map((c) => c.context ?? ''),
         ],
       );
     });
@@ -262,6 +278,7 @@ export async function embedVault(opts: EmbedOptions): Promise<EmbedStats> {
     chunksDeleted,
     tokensEstimated,
     apiCalls,
+    filesContextualized,
     model: provider.model,
     durationMs: Date.now() - started,
   };
@@ -277,6 +294,12 @@ const ConfigSchema = z
     max_chunk_tokens: z.number().int().positive().default(400),
     overlap_tokens: z.number().int().min(0).default(60),
     batch_size: z.number().int().positive().max(128).default(32),
+    // Contextual retrieval: a chat model writes one line of context per chunk
+    // before it is embedded (docs/rag.md). One call per changed note.
+    contextualize: z.boolean().default(false),
+    // A preset provider id and one of its models; unset: the chat's default provider and its default model.
+    context_provider: z.string().optional(),
+    context_model: z.string().optional(),
   })
   .passthrough();
 
@@ -300,6 +323,27 @@ export function providerFromConfig(raw: Record<string, unknown>): EmbeddingProvi
   });
 }
 
+/**
+ * The contextualizer the source config asks for, or undefined when the step
+ * is off or no chat provider has a key: a missing key degrades to plain
+ * chunks with a warning, never a failed run, because the vectors are still
+ * worth having.
+ */
+export function contextualizerFromConfig(raw: Record<string, unknown>, signal?: AbortSignal): Contextualizer | undefined {
+  const cfg = ConfigSchema.parse(raw);
+  if (!cfg.contextualize) return undefined;
+  try {
+    const catalog = providerCatalog();
+    const option = pickProvider(catalog, cfg.context_provider);
+    if (!option) throw new Error('no chat provider has a key');
+    const model = cfg.context_provider === option.id && cfg.context_model ? cfg.context_model : option.default;
+    return llmContextualizer(buildChatProvider(option.id, model), { signal });
+  } catch (err) {
+    log.warn(`contextualize is on but no model can be called (${(err as Error).message}); embedding plain chunks`);
+    return undefined;
+  }
+}
+
 export const embeddingsConnector: Connector<EmbedStats> = {
   id: 'embeddings',
   configSchema: ConfigSchema,
@@ -310,6 +354,7 @@ export const embeddingsConnector: Connector<EmbedStats> = {
       maxChunkTokens: cfg.max_chunk_tokens,
       overlapTokens: cfg.overlap_tokens,
       batchSize: cfg.batch_size,
+      contextualizer: contextualizerFromConfig(ctx.config, ctx.signal),
       onProgress: (p) => ctx.onProgress(p),
       signal: ctx.signal,
     });

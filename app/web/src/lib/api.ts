@@ -1,3 +1,16 @@
+/** @deprecated Moving into per-feature clients. Search, board, and projects have moved. */
+import { ApiError, json, request, url, type Params } from './http.js';
+import { searchApi } from './searchApi.js';
+import { boardApi } from '../routes/board/api.js';
+import { projectsApi } from '../routes/Projects.api.js';
+
+export { ApiError, AUTH_EXPIRED_EVENT, fileHref, request } from './http.js';
+export type { AgentHit, GlobalSearchResponse, RecordHit, SearchHit, SearchMode, SearchResponse, SearchScope, SearchSection } from '@secondbrain/contracts/search';
+export { BOARD_STATUSES } from '@secondbrain/contracts/board';
+export type { BoardCard, BoardCardDetail, BoardCardFilter, BoardContract, BoardInfo, BoardStatus, BoardToken, NewBoardCard } from '@secondbrain/contracts/board';
+export { STAGES } from '@secondbrain/contracts/projects';
+export type { AreaStatus, Stage, TrackerArea, TrackerGoal, TrackerItem, TrackerProject, TrackerReport, TrackerRollup, TrackerVerification } from '@secondbrain/contracts/projects';
+
 export interface TreeDir {
   name: string;
   path: string;
@@ -50,32 +63,6 @@ export interface FileResponse {
   backlinks: Backlink[];
 }
 
-export type SearchMode = 'keyword' | 'semantic' | 'hybrid';
-
-export interface SearchHit {
-  source_kind: string;
-  ref_id: string;
-  ref_path: string;
-  title: string | null;
-  snippet: string;
-  rank: number;
-  occurred_at: string;
-  /** Present in semantic and hybrid modes only. */
-  match_kind?: 'text' | 'filename' | 'semantic' | 'hybrid';
-  similarity?: number | null;
-  heading_path?: string | null;
-}
-
-export interface SearchResponse {
-  q: string;
-  mode: SearchMode;
-  results: SearchHit[];
-  total: number;
-  has_more: boolean;
-  /** Hybrid only: the vector branch was unreachable and this is keyword-only. */
-  degraded?: boolean;
-}
-
 export interface Run {
   id: number;
   source_id: number;
@@ -112,13 +99,54 @@ export interface SystemInfo {
   embeddings: EmbeddingInfo;
 }
 
-export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
+export interface FundTokenBalance { symbol: string; amount: number; usd: number | null }
+export interface FundWallet {
+  key: 'safe' | 'agent' | 'deck' | 'phone' | 'savings';
+  label: string;
+  role: string;
+  address: string | null;
+  balances: FundTokenBalance[];
+  usd: number | null;
+  partial: boolean;
+  error: string | null;
+}
+export interface FundVote { partner: string; vote: string; reason: string }
+export interface FundProposal {
+  id: string; created: string; kind: string; title: string; status: string; tally: string; meeting: string;
+  votes: FundVote[]; txHash: string | null; result: string | null;
+}
+export interface FundTransaction {
+  when: string;
+  kind: 'swap' | 'withdraw' | 'transfer-in' | 'transfer-out' | 'failed' | 'refused' | 'expired';
+  title: string;
+  hash: string | null;
+  proposal: string | null;
+  confirmed: boolean | null;
+  gasEth: number | null;
+}
+export interface FundFileItem { name: string; path: string; title: string; note: string }
+export interface FundRun { skill: string; at: string; failed: boolean; reason: string | null; file: string }
+export interface FundOverview {
+  configured: boolean;
+  dir: string;
+  chainId: number | null;
+  explorer: string;
+  threshold: number | null;
+  ethUsd: number | null;
+  navUsd: number | null;
+  navPartial: boolean;
+  wallets: FundWallet[];
+  pending: FundProposal[];
+  proposals: FundProposal[];
+  transactions: FundTransaction[];
+  meetings: FundFileItem[];
+  research: FundFileItem[];
+  reviews: FundFileItem[];
+  harness: { header: string[]; rows: string[][] };
+  runs: FundRun[];
+  warnings: string[];
+  chainErrors: string[];
+  asOf: string;
 }
 
 export interface RingDay {
@@ -161,13 +189,47 @@ export interface RingNight {
 }
 
 /** What this install has turned on (server: GET /api/meta). */
+/** A header link a core feature's manifest declares (server/src/features/<name>/manifest.ts). */
+export interface FeatureNav {
+  section: 'Vault' | 'Work' | 'Life';
+  label: string;
+  path: string;
+}
+
 export interface AppMeta {
-  modules: ('ring' | 'agents' | 'projects' | 'org' | 'usage' | 'map' | 'tv' | 'voice' | 'livestream' | 'localai')[];
+  modules: ('ring' | 'agents' | 'projects' | 'org' | 'board' | 'usage' | 'summaries' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat' | 'uploads' | 'warehouse' | 'localai')[];
+  /** The header links of the core features that are on. */
+  nav?: FeatureNav[];
   owner: string;
   devLogPath: string | null;
   docsPath: string | null;
   robot: boolean;
+  /** The vault's current IANA time zone (secondbrain.json `timezone`); null or absent: use the browser's. */
+  timezone?: string | null;
+  /** The app's own version, from package.json, and the commit it was built from. */
+  version: string;
+  commit: string | null;
+  commitShort: string | null;
+  builtAt: string | null;
 }
+
+/** This machine's vault sync (server: GET /api/sync). `installed: false` when no sync runs here. */
+export type SyncState =
+  | { installed: false }
+  | {
+      installed: true;
+      machine: string;
+      role: string;
+      policy: string;
+      last_run: string | null;
+      last_success: string | null;
+      last_result: string | null;
+      last_error: string | null;
+      ahead: number;
+      behind: number;
+      conflict_files: string[];
+      push_failures: number;
+    };
 
 export interface AgentSession {
   id: number;
@@ -240,7 +302,7 @@ export interface SystemdTimer {
   last: string | null;
 }
 
-/** agent-hub (droplet only): Telegram + default agent. */
+/** agent-hub (server only): Telegram + default agent. */
 export interface TelegramStatus {
   default: 'claude' | 'hermes';
   claude_running: boolean;
@@ -249,21 +311,13 @@ export interface TelegramStatus {
   bots_distinct: boolean;
 }
 
-export interface HubAgent {
-  name: string;
-  family: 'claude' | 'hermes' | 'org';
-  description?: string;
-  model?: string;
-  team?: string | null;
-}
-
-/** A card for a bot with its tracker project and feature (task_links); status lives on the kanban. */
+/** A card for a bot with its tracker area and project (GET /api/org/tasks, read from the board's cards). */
 export interface TaskLink {
   task_id: string;
   board: string;
   title: string;
+  area_slug: string | null;
   project_slug: string | null;
-  feature_slug: string | null;
   assignee: string;
   created_by: string;
   rounds: number;
@@ -274,29 +328,6 @@ export interface TaskLink {
   created_at: string;
 }
 
-export interface KanbanTask {
-  id: string;
-  title: string;
-  body: string | null;
-  assignee: string | null;
-  status: string;
-  priority: number;
-  created_by: string | null;
-  created_at: number;
-  started_at: number | null;
-  completed_at: number | null;
-  result: string | null;
-}
-
-export interface KanbanTaskDetail {
-  task: KanbanTask;
-  latest_summary: string | null;
-  parents: string[];
-  children: string[];
-  comments: { author: string; body: string; created_at: number }[];
-  events: { kind: string; payload: Record<string, unknown> | null; created_at: number }[];
-}
-
 /** One line of a Claude Code stream-json log (or a line agent-hub added: "you", "hub"). */
 export type StreamEvent = Record<string, unknown> & { type: string };
 
@@ -304,6 +335,70 @@ export interface EventPage {
   events: StreamEvent[];
   offset: number;
   size: number;
+  /** Set by hosts whose log lives in memory: a new value means the log was rebuilt (a restart) and the reader starts over. */
+  epoch?: string;
+}
+
+/** `zen-agent serve` behind /api/zen: one row per provider and per model, with what the pickers grey out. */
+export interface ZenProvider {
+  id: string;
+  name: string;
+  /** From zen.json's `providers` (a local or custom endpoint), not one pi-ai ships. */
+  custom: boolean;
+  /** A key (or keyless auth) resolves on the server. Never the key itself. */
+  configured: boolean;
+  /** The environment variable a custom endpoint's key comes from. */
+  key_env: string | null;
+  key_name: string | null;
+  base_url: string | null;
+  /** Custom endpoints only: the host's liveness probe answered. */
+  reachable: boolean | null;
+}
+export interface ZenModel {
+  provider: string;
+  id: string;
+  name: string;
+  context_window: number;
+  reasoning: boolean;
+  configured: boolean;
+  reachable: boolean | null;
+}
+export interface ZenPersona { name: string; role: string; team: string | null; runtime: string }
+export const ZEN_THINKING = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ZenThinking = (typeof ZEN_THINKING)[number];
+export interface ZenUsage { input: number; output: number; cacheRead: number; cacheWrite: number; total: number; cost: number }
+/** A zen-agent chat: its config is fixed for its life; "continue as a new session" makes another with `from` set. */
+export interface ZenChat {
+  id: string;
+  title: string;
+  session_id: string;
+  persona: string | null;
+  model: string;
+  tools: string[];
+  thinking: ZenThinking;
+  from: string | null;
+  created_at: string;
+  updated_at: string;
+  status: 'idle' | 'working' | 'error';
+  error: string | null;
+  turns: number;
+  usage: ZenUsage;
+}
+export interface NewZenChat {
+  persona?: string | null;
+  model?: string;
+  tools?: 'full' | 'read-only' | string[];
+  thinking?: ZenThinking;
+  title?: string;
+  from?: string;
+}
+
+/** A saved way to start a chat (the Chat tab's Preset button). Launching it is the create call of its harness. */
+export interface ChatPreset {
+  name: string;
+  harness: 'claude-code' | 'zen-agent';
+  config: { model?: string; role?: string; persona?: string; tools?: 'full' | 'read-only'; thinking?: ZenThinking };
+  updated_at: string;
 }
 
 export interface ClaudeChat {
@@ -329,6 +424,24 @@ export interface UsagePlan {
   history: { observed_at: string; window: PlanWindowName; used_pct: number }[];
 }
 export type CreditProvider = 'openrouter' | 'fal' | 'gemini';
+export type SubscriptionProvider = 'codex' | 'claude-code';
+export type UsageSection = 'running' | 'ledger' | 'sessions' | 'summaries';
+export interface UsageConfig {
+  subscriptions: SubscriptionProvider[];
+  credits: CreditProvider[];
+  sections: UsageSection[];
+}
+export interface QuotaWindow {
+  key: string; label: string; window_minutes: number;
+  used_pct: number | null; left_pct: number | null; resets_at: string | null;
+  observed_at: string | null; reset_since_reading: boolean; last_pct: number | null;
+}
+export interface SubscriptionUsage {
+  provider: SubscriptionProvider; label: string; status: 'ok' | 'unavailable';
+  observed_at: string | null; source: string; message: string | null; stale: boolean;
+  windows: QuotaWindow[];
+}
+export interface UsageSubscriptions { providers: SubscriptionUsage[] }
 export interface CreditRow {
   provider: CreditProvider; origin: 'api' | 'manual'; status: 'ok' | 'error' | 'unsupported'; observed_at: string;
   balance: number | null; total_credits: number | null; total_usage: number | null; currency: string; error: string | null; note: string | null;
@@ -339,12 +452,12 @@ export interface UsageCredits {
 }
 export interface UsageSeriesRow { bucket: string; key: string; input: number; cache_write: number; cache_read: number; output: number; calls: number }
 /** The labels every call carries (usage_facts); a filter is `dimension=a,b` and a group is one dimension. */
-export const USAGE_DIMENSIONS = ['agent', 'team', 'reason', 'action', 'work_type', 'project', 'feature', 'task', 'host', 'headless', 'surface', 'lane', 'model', 'source'] as const;
+export const USAGE_DIMENSIONS = ['agent', 'team', 'reason', 'action', 'work_type', 'area', 'project', 'task', 'host', 'headless', 'surface', 'lane', 'model', 'provider', 'source'] as const;
 export type UsageDimension = (typeof USAGE_DIMENSIONS)[number];
 export type UsageFilters = Partial<Record<UsageDimension, string[]>>;
 export const USAGE_DIMENSION_LABELS: Record<UsageDimension, string> = {
-  agent: 'bot', team: 'team', reason: 'woken by', action: 'action', work_type: 'work', project: 'project', feature: 'feature', task: 'card',
-  host: 'host', headless: 'headless', surface: 'surface', lane: 'lane', model: 'model', source: 'runtime',
+  agent: 'bot', team: 'team', reason: 'woken by', action: 'action', work_type: 'work', area: 'area', project: 'project', task: 'card',
+  host: 'host', headless: 'headless', surface: 'surface', lane: 'lane', model: 'model', provider: 'provider', source: 'runtime',
 };
 export function usageFilterParams(f: UsageFilters): Record<string, string> {
   return Object.fromEntries(USAGE_DIMENSIONS.filter((d) => f[d]?.length).map((d) => [d, f[d]!.join(',')]));
@@ -357,23 +470,43 @@ export interface UsageSessionRow {
   started_at: string | null; ended_at: string | null;
   calls: number; input: number; cache_write: number; cache_read: number; output: number; cost_usd: number | null;
   task_id: string | null; lane: string | null; archive_id: number | null;
-  agent_name?: string | null; project_slug?: string | null; work_type?: string | null; runs?: number;
+  agent_name?: string | null; area_slug?: string | null; work_type?: string | null; runs?: number;
 }
-/** One `claude -p` run: a bot's wake or a lane's card, with its labels and token sums (tokens null when its calls are not in yet). */
+/** One headless run (claude-code or zen-agent): a bot's wake or a lane's card, with its labels and token sums (tokens null when its calls are not in yet). */
 export interface UsageRun {
   host: string; run_id?: string; session_id: string; task_id: string | null; lane: string | null; board: string | null; model: string | null;
   started_at: string | null; ended_at: string | null; duration_ms: number | null; num_turns: number | null; subtype: string | null;
   is_error: boolean | null; verify_name: string | null; verify_passed: boolean | null;
   verify_exit: number | null; verify_metric: number | null; verify_output: string | null;
   agent_name?: string | null; team_slug?: string | null; reason?: string | null; reasons?: { reason: string | null; ref: string | null }[];
-  work_type?: string | null; project_slug?: string | null; feature_slug?: string | null; card_title?: string | null; resumed?: boolean | null;
+  work_type?: string | null; area_slug?: string | null; project_slug?: string | null; card_title?: string | null; resumed?: boolean | null;
   surface?: string; calls?: number | null; input?: number | null; cache_write?: number | null; cache_read?: number | null; output?: number | null;
+  /** 'claude-code' or 'zen-agent'; cost_usd is real dollars for an API runtime and null for the subscription. */
+  runtime?: string; source?: string; tier?: string | null; outcome?: string | null; cost_usd?: number | null;
+  compactions?: number | null; blocked?: number | null;
 }
 export interface OrgWakeRow {
   agent_name: string; team_slug: string | null; role: string; wakes: number; done: number; open: number; routine: number;
   dm?: number; mention?: number; task?: number; tokens?: number; output?: number;
   avg_minutes: number | null; last_wake: string | null;
 }
+/** One agent process (or an unfinished claim) alive on the server's host right now: GET /usage/running. */
+export interface RunningRow {
+  kind: 'bot' | 'lane' | 'other'; name: string; runtime: string; model: string | null; pid: number | null; user: string | null;
+  elapsedSec: number | null; startedAt: string | null; runId: string | null; reason: string | null; ref: string | null;
+  state: 'running' | 'claimed'; configured: { runtime: string; model: string | null } | null; detail: string | null;
+}
+export interface RunningNow { host: string; at: string; rows: RunningRow[]; configured: Record<string, number> }
+/** One agent working now, from GET /usage/live. Mirrors server/src/usage/live.ts. */
+export interface LiveAgent {
+  id: string; machine: string; harness: string; name: string; model: string | null;
+  task: { cardId: string | null; label: string | null; reason: string | null } | null;
+  source: 'process' | 'session'; turns: number | null; tokens: { input: number; output: number } | null;
+  startedAt: string | null; lastActivityAt: string | null; elapsedSec: number | null;
+  log: { host: string; externalId: string; source: string } | null; pid: number | null; runId: string | null; stoppable: boolean;
+}
+export interface LiveMachine { slug: string; display: string; kind: string | null; agents: LiveAgent[] }
+export interface LiveNow { at: string; serverMachine: string; total: number; machines: LiveMachine[] }
 export interface LocalAiAgg {
   runs: number; errors: number; prompt: number; cached: number; output: number;
   avg_output_tps: number | null; avg_ttft_ms: number | null; energy_wh: number; audio_seconds: number;
@@ -392,151 +525,164 @@ export interface LocalAiRun {
   audio_seconds: number | null; voice: string | null; energy_j: number | null; error: string | null;
 }
 export interface UsageHost { slug: string; display: string; kind: 'laptop' | 'server' | 'pi'; chip: string | null; notes: string | null }
+/** One summary of a finished agent session (`secondbrain summarize`). touched and metrics are computed, the rest is model-written. */
+export interface AgentSummary {
+  id: number; session_id: number; harness: string | null; host: string; profile: string | null; project: string | null;
+  started_at: string | null; ended_at: string | null; request: string; done: string; learned: string; open_items: string;
+  outcome: 'finished' | 'partial' | 'blocked' | 'failed' | 'unknown';
+  touched: { files_edited: string[]; files_read: number; cards: string[]; tools: Record<string, number>; skills: string[] };
+  metrics: { steps: number; prompts: number; tool_calls: number; error_steps: number; duration_s: number | null; calls: number;
+    input_tokens: number; cache_write_tokens: number; cache_read_tokens: number; output_tokens: number; models: string[] };
+  writer_provider: string | null; writer_model: string | null; title: string | null; external_id: string; source: string; proposed_facts: number;
+}
+export interface SummaryFilters { outcome?: string[]; harness?: string[]; host?: string[]; project?: string[]; q?: string }
+export interface SummaryOverview {
+  from: string; to: string; tz: string; summarized: number; skipped: number; proposed_facts: number;
+  outcomes: { key: string; n: number }[];
+  days: { day: string; sessions: number; finished: number; stuck: number; tokens: number; errors_per_session: number }[];
+  writers: { key: string; n: number; input: number; output: number }[];
+}
+export interface SummaryFact {
+  id: number; summary_id: number; subject: string; claim: string; status: 'proposed' | 'promoted' | 'rejected'; fact_id: number | null;
+  project: string | null; harness: string | null; host: string; session_id: number; external_id: string; source: string; request: string;
+}
+/** One row of /usage/agent-sessions: a session from any harness and host. `cost_usd` only for non-Claude harnesses (Hermes's own estimate). */
+export interface AgentSessionRow {
+  task_ids?: string[];
+  id: number; source: string; harness: string; profile: string | null; provider: string | null; host: string;
+  external_id: string; parent_external_id: string | null; project: string | null; title: string | null; first_prompt: string | null;
+  /** Where the prompts came from when not a keyboard: 'telegram', 'web', 'remote-control'; the bot's configured name. */
+  channel: string | null; channel_bot: string | null;
+  /** 'telegram', 'cli', 'headless', another channel's own name ('web', 'remote-control'), or 'unknown' when nothing recorded it. */
+  session_type?: string | null;
+  /** The persona that ran it (run agent, zen persona, bot's persona, else the bot); null: none recorded. */
+  persona?: string | null;
+  /** One line under 100 characters, and where it came from; null when nothing usable was found. */
+  display_title?: string | null; title_source?: 'task' | 'skill' | 'title' | 'prompt' | null;
+  /** The prompt size of the session's latest main call (what the context held then), and when; null: no call recorded. */
+  context_tokens?: number | null; context_at?: string | null;
+  /** The context window recorded with the session; null: unknown (never guessed from the model name). */
+  context_window?: number | null;
+  started_at: string | null; ended_at: string | null; steps: number; tool_calls: number; errors: number; subagents: number;
+  models: string[]; calls: number; input: number; cache_write: number; cache_read: number; output: number; reasoning: number;
+  cost_usd?: number | null;
+}
+export type AgentStepKind = 'prompt' | 'response' | 'thinking' | 'tool_call' | 'tool_result' | 'system' | 'meta';
+export interface AgentStep {
+  id: number; key: string; step: AgentStepKind; ts: string | null; text: string; length: number; truncated: boolean;
+  toolName: string | null; toolCallId: string | null; isError: boolean | null; subagent: string | null;
+  call: { model: string; input: number; cache_write: number; cache_read: number; output: number; reasoning: number } | null;
+}
+export interface AgentSessionRun {
+  run_id: string; agent_name: string | null; task_id: string | null; lane: string | null; started_at: string | null;
+  num_turns: number | null; subtype: string | null; verify_name: string | null; verify_passed: boolean | null;
+  verify_metric: number | null; verify_output: string | null;
+}
+export interface AgentSessionFilters {
+  harness?: string[]; host?: string[]; profile?: string[]; provider?: string[]; channel?: string[]; tool?: string[];
+  type?: string[]; persona?: string[];
+  q?: string; errors?: boolean; subagents?: boolean;
+}
+export type AgentSessionFacets = Record<'harness' | 'host' | 'profile' | 'provider' | 'channel' | 'tool', Array<{ value: string; n: number }>> & Partial<Record<'type' | 'persona', Array<{ value: string; n: number }>>>;
+const agentParams = (f: AgentSessionFilters): Params => ({
+  harness: f.harness?.join(','), host: f.host?.join(','), profile: f.profile?.join(','), provider: f.provider?.join(','),
+  channel: f.channel?.join(','), type: f.type?.join(','), persona: f.persona?.join(','), tool: f.tool?.join(','), q: f.q, errors: f.errors ? '1' : undefined, subagents: f.subagents ? '1' : undefined,
+});
+
 export interface UsageMessage {
   id: number; seq: number; role: string; kind: string; ts: string | null; text: string; truncated: boolean; length: number;
   is_sidechain: boolean; call: { model: string; input: number; cache_write: number; cache_read: number; output: number; action?: string | null; tool?: string | null; run_id?: string | null } | null;
 }
 
-type Params = Record<string, string | number | boolean | undefined>;
+// ---- the chat module (/api/chat) ----
 
-function url(path: string, params?: Params): string {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params ?? {})) {
-    if (value !== undefined && value !== '') search.set(key, String(value));
-  }
-  const qs = search.toString();
-  return `/api${path}${qs ? `?${qs}` : ''}`;
+export interface ChatProviderOption {
+  id: string;
+  label: string;
+  configured: boolean;
+  env: string | null;
+  default: string;
+  models: { id: string; label?: string }[];
+  /** A connected computer running Ollama; `offline` when it did not answer. */
+  machine?: boolean;
+  offline?: boolean;
 }
 
-/** Fired when any call answers 401, so the shell can swap to the login screen. */
-export type Stage = 'idea' | 'designing' | 'building' | 'testing' | 'live' | 'parked' | 'done';
-export const STAGES: Stage[] = ['idea', 'designing', 'building', 'testing', 'live', 'parked', 'done'];
-
-export interface TrackerVerification {
-  kind: string;
-  check: string;
-  result: 'pass' | 'fail';
-  evidence: string | null;
-  at: string;
-  by: string | null;
-}
-
-export interface TrackerFeature {
-  id: number;
-  slug: string;
-  title: string;
-  stage: Stage;
-  health: string | null;
-  owner: string | null;
-  goals: string[];
-  needs_owner: string | null;
-  blocked_on: string | null;
-  due: string | null;
-  shipped_at: string | null;
-  notes_path: string | null;
-  updated_at: string;
-  updated_by: string | null;
-  days_in_stage: number;
-  verification: TrackerVerification | null;
-  verifications_total: number;
-}
-
-export interface TrackerProject {
-  slug: string;
-  title: string;
-  team: string | null;
-  division: string | null;
-  area: string | null;
-  stage: Stage;
-  health: string | null;
-  priority: number | null;
-  goals: string[];
-  needs_owner: string | null;
-  blocked_on: string | null;
-  due: string | null;
-  devlog_path: string | null;
-  design_path: string | null;
-  updated_at: string;
-  days_in_stage: number;
-  next_action: string | null;
-  features: TrackerFeature[];
-  counts: Record<Stage, number>;
-  progress: number | null;
-}
-
-export interface TrackerItem {
-  project: string;
-  feature: string | null;
-  title: string;
-  detail: string;
-}
-
-export interface TrackerGoal {
-  code: string;
-  horizon: string;
-  goal: string;
-  due: string | null;
-  status: string;
-  projects: string[];
-  features: string[];
-}
-
-export interface TrackerRollup {
-  slug: string;
+export interface ChatPersona {
+  id: string;
   name: string;
-  projects: string[];
-  in_flight: number;
-  shipped_7d: number;
-  needs_owner: number;
-  stages: Record<Stage, number>;
+  role: string;
+  team: string | null;
+  builtin: boolean;
 }
 
-export interface TrackerReport {
-  as_of: string | null;
-  generated_at: string;
-  totals: { projects: Record<Stage, number>; features: Record<Stage, number> };
-  needs_owner: (TrackerItem & { priority: number | null; due: string | null })[];
-  divisions: TrackerRollup[];
-  teams: (TrackerRollup & { lead: string | null })[];
-  goals: TrackerGoal[];
-  gaps: {
-    goals_uncovered: TrackerGoal[];
-    unverified_shipped: TrackerItem[];
-    failing: TrackerItem[];
-    testing_unverified: TrackerItem[];
-    stale: TrackerItem[];
-    overdue: TrackerItem[];
-    no_team: string[];
-    no_division: string[];
-    no_features: string[];
-  };
-  oldest: TrackerItem[];
-  backlog: { total: number; by_project: { project: string; count: number; oldest_days: number }[] };
-  moved_7d: { project: string; feature: string | null; title: string; from: string | null; to: string; at: string; by: string | null; note: string | null }[];
-  shipped_7d: TrackerItem[];
-  verified_7d: { pass: number; fail: number };
-  projects: TrackerProject[];
+export interface ChatRetrieval {
+  top_k: number;
+  multi_query: boolean;
+  rerank: boolean;
 }
 
-export const AUTH_EXPIRED_EVENT = 'secondbrain:auth-expired';
+export interface ChatSettings {
+  provider: string | null;
+  model: string | null;
+  persona: string;
+  system_prompt: string | null;
+  retrieval: ChatRetrieval;
+  resolved: { provider: string | null; model: string | null; system_prompt: string; rerank_available: boolean; embeddings: boolean };
+}
 
-export async function request<T>(path: string, params?: Params, init?: RequestInit): Promise<T> {
-  const res = await fetch(url(path, params), { credentials: 'same-origin', ...init });
-  if (res.status === 401 && !path.startsWith('/auth/')) {
-    window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
-  }
-  if (!res.ok) {
-    // The server always answers with { error: { message } }; a proxy in front
-    // of it might not, so fall back to the status line rather than throwing
-    // inside the error path.
-    const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-    throw new ApiError(res.status, body?.error?.message ?? `${res.status} ${res.statusText}`);
-  }
-  return (await res.json()) as T;
+export interface ChatSettingsPatch {
+  provider?: string | null;
+  model?: string | null;
+  persona?: string;
+  system_prompt?: string | null;
+  retrieval?: Partial<ChatRetrieval>;
+}
+
+export interface ChatOptions {
+  providers: ChatProviderOption[];
+  default_provider: string;
+  default_system_prompt: string;
+  personas: ChatPersona[];
+  settings: ChatSettings;
+  embeddings: { chunks: number; model: string | null; configured: boolean };
+  rerank: { available: boolean; model: string };
+}
+
+export interface ChatConversation {
+  id: number;
+  title: string;
+  persona: string;
+  provider: string | null;
+  model: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface ChatSource {
+  n: number;
+  path: string;
+  title: string;
+  heading_path: string;
+  chunk_from: number;
+  chunk_to: number;
+  score: number;
+  snippet: string;
+}
+
+export interface ChatMessage {
+  id: number;
+  conversation_id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  sources: ChatSource[];
+  meta: { provider?: string; model?: string; persona?: string; error?: string; partial?: boolean; retrieval?: { queries?: string[]; vector?: boolean; keyword?: boolean; reranked?: boolean; ms?: number } };
+  created_at: string;
 }
 
 export interface AuthState {
-  /** False on the Mac, where localhost is the boundary and there is no login. */
+  /** False on a local install, where localhost is the boundary and there is no login. */
   required: boolean;
   authenticated: boolean;
 }
@@ -548,19 +694,13 @@ export interface FileSource {
   hash: string;
 }
 
-const json = (method: string, body: unknown): RequestInit => ({
-  method,
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(body),
-});
-
 export interface FriendlyStatus {
   status: 'running' | 'starting' | 'stopped';
   port: number;
 }
 
 export interface VoiceSettings {
-  /** Claude Code on this Mac speaks a one-line summary when a long task finishes. */
+  /** Claude Code on this machine speaks a one-line summary when a long task finishes. */
   autoSpeak: boolean;
   voice: string;
   minTaskSeconds: number;
@@ -571,7 +711,7 @@ export interface VoiceStatus {
   server: { url: string; model: string; up: boolean };
 }
 
-/** A note read aloud by the Kokoro server on this Mac, as an MP3 blob. */
+/** A note read aloud by the Kokoro server on this machine, as an MP3 blob. */
 async function speakNote(path: string): Promise<{ audio: Blob; truncated: boolean }> {
   const res = await fetch(url('/voice/speak'), {
     credentials: 'same-origin',
@@ -624,8 +764,8 @@ export interface OrgMessage {
   mentions: string[];
   urgent: boolean;
   task_id: string | null;
+  area_slug: string | null;
   project_slug: string | null;
-  feature_slug: string | null;
   run_id: string | null;
   created_at: string;
 }
@@ -671,6 +811,8 @@ export interface OrgChartAgent {
   reports_to: string | null;
   model: string | null;
   expertise: string | null;
+  /** Vault-relative portrait (served at /api/org/avatar/<name>), or null. */
+  avatar?: string | null;
   is_lead: boolean;
   session_id: string | null;
   session_started: string | null;
@@ -681,6 +823,33 @@ export interface OrgChartAgent {
 export interface OrgChart {
   teams: { slug: string; name: string; lead: string | null }[];
   agents: OrgChartAgent[];
+}
+
+export interface OrgApproval {
+  id: number;
+  task_id: string;
+  pr_url: string | null;
+  deploy_target: string | null;
+  summary: string;
+  requested_by: string;
+  status: 'pending' | 'approved' | 'denied';
+  ship_now: boolean;
+  decided_by: string | null;
+  decided_at: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface OrgFact {
+  id: number;
+  subject: string;
+  claim: string;
+  source: string;
+  author: string;
+  via: string | null;
+  area_slug: string | null;
+  confidence: 'confirmed' | 'inferred';
+  valid_from: string;
 }
 
 export interface OrgWakeup {
@@ -708,14 +877,109 @@ export interface OrgAgentPage {
   prompt: string | null;
   memory: string | null;
   memory_path: string;
+  episodes: OrgEpisode[];
+}
+
+export interface OrgEpisode {
+  id: number;
+  run_id: string;
+  task_id: string | null;
+  reason: string;
+  outcome: 'done' | 'blocked' | 'request_changes' | 'no_report' | 'error';
+  corrected: boolean;
+  turn_count: number | null;
+  cost_usd: string | null;
+  duration_s: number | null;
+  summary: string;
+  log_path: string | null;
+  reflected_at: string | null;
+  created_at: string;
+}
+
+export interface MemoryFact {
+  id: number;
+  subject: string;
+  claim: string;
+  source: string;
+  author: string;
+  via: string | null;
+  area_slug: string | null;
+  agent: string | null;
+  confidence: 'confirmed' | 'inferred';
+  supersedes: number | null;
+  valid_from: string;
+  valid_to: string | null;
+  retired_by: string | null;
+  retired_why: string | null;
+}
+
+export interface MemoryCandidate {
+  id: number;
+  summary_id: number;
+  subject: string;
+  claim: string;
+  status: 'proposed' | 'promoted' | 'rejected';
+  fact_id: number | null;
+  agent: string | null;
+  area_slug: string | null;
+  harness: string;
+  host: string;
+  external_id: string | null;
+  source: string | null;
+  request: string | null;
+  created_at: string;
 }
 
 export const api = {
+  localAiSummary: (from: string, to: string, bucket: 'hour' | 'day', tz: string) => request<LocalAiSummary>('/local-ai/summary', { from, to, bucket, tz }),
+  localAiRuns: (from: string, to: string, caller?: string) => request<{ runs: LocalAiRun[] }>('/local-ai/runs', { from, to, caller, limit: 50 }),
+  search: searchApi.search,
+  globalSearch: searchApi.globalSearch,
+  projectsReport: projectsApi.report,
+  projectsMarkdown: projectsApi.markdown,
+  boardBoards: boardApi.boards,
+  boardCards: boardApi.cards,
+  boardCard: boardApi.card,
+  boardCreate: boardApi.create,
+  boardComment: boardApi.comment,
+  boardAssign: boardApi.assign,
+  boardMove: boardApi.move,
+  boardFinish: boardApi.finish,
+  boardTag: boardApi.tag,
+  boardFlags: boardApi.flags,
+  boardLink: boardApi.link,
+  boardLog: boardApi.log,
+  boardTokens: boardApi.tokens,
+  boardRevokeToken: boardApi.revokeToken,
+  setArea: projectsApi.setArea,
+  setProject: projectsApi.setProject,
+  verifyProject: projectsApi.verifyProject,
+  memoryFacts: (params: { agent?: string; area?: string; subject?: string; author?: string; all?: boolean; limit?: number } = {}) =>
+    request<{ facts: MemoryFact[] }>('/memory', params),
+  memoryCandidates: (status: MemoryCandidate['status'] = 'proposed') => request<{ candidates: MemoryCandidate[] }>('/memory/candidates', { status }),
+  retireMemoryFact: (id: number, why: string) => request<{ id: number; status: 'retired' }>(`/memory/${id}/retire`, undefined, json('POST', { why })),
+
+  chatOptions: () => request<ChatOptions>('/chat/options'),
+  chatSettings: () => request<{ settings: ChatSettings }>('/chat/settings'),
+  putChatSettings: (patch: ChatSettingsPatch) => request<{ settings: ChatSettings }>('/chat/settings', undefined, json('PUT', patch)),
+  chatConversations: () => request<{ conversations: ChatConversation[] }>('/chat/conversations'),
+  newChatConversation: (body: { persona?: string } = {}) =>
+    request<{ conversation: ChatConversation }>('/chat/conversations', undefined, json('POST', body)),
+  chatConversation: (id: number) => request<{ conversation: ChatConversation; messages: ChatMessage[] }>(`/chat/conversations/${id}`),
+  patchChatConversation: (id: number, patch: { title?: string; persona?: string }) =>
+    request<{ conversation: ChatConversation }>(`/chat/conversations/${id}`, undefined, json('PATCH', patch)),
+  deleteChatConversation: async (id: number): Promise<void> => {
+    const res = await fetch(url(`/chat/conversations/${id}`), { method: 'DELETE', credentials: 'same-origin' });
+    if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  },
   tree: (path: string, offset = 0, limit = 200) =>
     request<TreeResponse>('/tree', { path, offset, limit }),
   file: (path: string) => request<FileResponse>('/file', { path }),
-  search: (q: string, source?: string, offset = 0, limit = 25, mode: SearchMode = 'keyword') =>
-    request<SearchResponse>('/search', { q, source, offset, limit, mode }),
+  /** Each ref (a vault path or a wikilink name) to the indexed path it points at, or null. */
+  resolveRefs: (refs: string[]) =>
+    request<{ resolved: Record<string, string | null> }>(
+      `/file/resolve?${new URLSearchParams(refs.map((ref) => ['ref', ref])).toString()}`,
+    ),
   sources: () => request<{ sources: Source[] }>('/sources'),
   runs: (params: { active?: boolean; source_id?: number; limit?: number } = {}) =>
     request<{ runs: Run[] }>('/runs', {
@@ -767,28 +1031,30 @@ export const api = {
   telegram: () => request<TelegramStatus>('/hub/telegram'),
   setTelegram: (change: { default: 'claude' | 'hermes' } | { claude: 'on' | 'off' }) =>
     request<TelegramStatus>('/hub/telegram', undefined, json('POST', change)),
-  hubAgents: () => request<{ lanes: HubAgent[]; profiles: HubAgent[]; bots?: HubAgent[] }>('/hub/agents'),
-  boards: () => request<{ boards: { slug: string; name: string }[] }>('/hub/boards'),
-  board: (board: string) => request<{ board: string; tasks: KanbanTask[] }>('/hub/board', { board }),
-  task: (id: string, board: string) => request<KanbanTaskDetail>(`/hub/tasks/${id}`, { board }),
-  taskLog: (id: string, offset: number) => request<EventPage>(`/hub/tasks/${id}/log`, { offset }),
-  createTask: (t: { board: string; title: string; body: string; assignee: string; project?: string; feature?: string }) =>
-    request<KanbanTask & { link?: TaskLink }>('/hub/tasks', undefined, json('POST', t)),
-  commentTask: (id: string, board: string, text: string) =>
-    request<{ ok: true }>(`/hub/tasks/${id}/comment`, undefined, json('POST', { board, text })),
-  /** Moves a card to a lane, a Hermes profile or a bot (a bot needs the tracker project; "none" unassigns). */
-  assignTask: (id: string, t: { board: string; assignee: string; project?: string; feature?: string }) =>
-    request<KanbanTask & { link?: TaskLink }>(`/hub/tasks/${id}/assign`, undefined, json('POST', t)),
   claudeChats: () => request<{ chats: ClaudeChat[] }>('/hub/chats'),
+  chatPresets: () => request<{ presets: ChatPreset[] }>('/presets'),
+  putChatPreset: (name: string, body: Pick<ChatPreset, 'harness' | 'config'>) =>
+    request<{ preset: ChatPreset }>(`/presets/${name}`, undefined, json('PUT', body)),
+  deleteChatPreset: (name: string) => request<{ ok: true }>(`/presets/${name}`, undefined, { method: 'DELETE' }),
   newClaudeChat: (model?: string) => request<ClaudeChat>('/hub/chats', undefined, json('POST', model ? { model } : {})),
   claudeChatEvents: (id: string, offset: number) =>
     request<EventPage & { chat: ClaudeChat }>(`/hub/chats/${id}/events`, { offset }),
   sendClaudeChat: (id: string, text: string) =>
     request<ClaudeChat>(`/hub/chats/${id}/messages`, undefined, json('POST', { text })),
   stopClaudeChat: (id: string) => request<{ ok: true }>(`/hub/chats/${id}/interrupt`, undefined, { method: 'POST' }),
+  zenModels: () => request<{ providers: ZenProvider[]; models: ZenModel[] }>('/zen/models'),
+  zenPersonas: () => request<{ personas: ZenPersona[] }>('/zen/personas'),
+  zenChats: () => request<{ chats: ZenChat[] }>('/zen/chats'),
+  newZenChat: (body: NewZenChat) => request<ZenChat>('/zen/chats', undefined, json('POST', body)),
+  zenChat: (id: string) => request<ZenChat>(`/zen/chats/${id}`),
+  zenChatEvents: (id: string, offset: number) =>
+    request<EventPage & { chat: ZenChat; epoch: string }>(`/zen/chats/${id}/events`, { offset }),
+  sendZenChat: (id: string, text: string) => request<ZenChat>(`/zen/chats/${id}/messages`, undefined, json('POST', { text })),
+  steerZenChat: (id: string, text: string) => request<ZenChat>(`/zen/chats/${id}/steer`, undefined, json('POST', { text })),
+  stopZenChat: (id: string) => request<{ ok: true; chat: ZenChat }>(`/zen/chats/${id}/interrupt`, undefined, { method: 'POST' }),
   meta: () => request<AppMeta>('/meta'),
-  projectsReport: () => request<TrackerReport>('/projects/report'),
-  projectsMarkdown: () => request<{ text: string; as_of: string | null }>('/projects/report', { format: 'markdown' }),
+  syncState: () => request<SyncState>('/sync'),
+  fund: (refresh = false) => request<FundOverview>('/fund', refresh ? { refresh: '1' } : undefined),
   orgChart: () => request<OrgChart>('/org/chart'),
   orgChannels: () => request<{ channels: OrgChannel[] }>('/org/channels'),
   orgMembers: (slug: string) => request<{ members: OrgMember[] }>(`/org/channels/${encodeURIComponent(slug)}/members`),
@@ -801,13 +1067,12 @@ export const api = {
   orgPost: (body: { channel: string; body: string; thread?: number; kind?: 'message' | 'status' | 'decision' }) =>
     request<OrgMessage>('/org/post', undefined, json('POST', body)),
   orgDm: (body: { to: string; body: string }) => request<OrgMessage>('/org/dm', undefined, json('POST', body)),
-  orgTasks: (f: { project?: string; feature?: string; agent?: string } = {}) => request<{ tasks: TaskLink[] }>('/org/tasks', f),
-  setProject: (slug: string, patch: Record<string, unknown>) =>
-    request<{ stage_changed: boolean }>(`/projects/${slug}`, undefined, json('PATCH', patch)),
-  setFeature: (slug: string, feature: string, patch: Record<string, unknown>) =>
-    request<{ stage_changed: boolean }>(`/projects/${slug}/features/${feature}`, undefined, json('PATCH', patch)),
-  verifyFeature: (slug: string, feature: string, v: { kind: string; check: string; result: 'pass' | 'fail'; evidence?: string }) =>
-    request<{ id: number }>(`/projects/${slug}/features/${feature}/verifications`, undefined, json('POST', v)),
+  orgApprovals: () => request<OrgApproval[]>('/org/approvals'),
+  orgDecide: (id: number, decision: 'approve' | 'deny', note?: string) =>
+    request<OrgApproval>(`/org/approvals/${id}/${decision}`, undefined, json('POST', { note })),
+  orgFacts: () => request<OrgFact[]>('/org/facts'),
+  orgTasks: (f: { area?: string; project?: string; agent?: string } = {}) => request<{ tasks: (TaskLink & { status?: string })[] }>('/org/tasks', f),
+
   source: (path: string) => request<FileSource>('/file/source', { path }),
   save: (path: string, content: string, baseHash: string) =>
     request<{ path: string; hash: string; mtime: string; size_bytes: number }>(
@@ -815,26 +1080,41 @@ export const api = {
       undefined,
       json('PUT', { path, content, base_hash: baseHash }),
     ),
+  usageConfig: () => request<UsageConfig>('/usage/config'),
+  usageSubscriptions: () => request<UsageSubscriptions>('/usage/subscriptions'),
   usagePlan: (from?: string, to?: string) => request<UsagePlan>('/usage/plan', { from, to }),
   usageCredits: (from?: string, to?: string) => request<UsageCredits>('/usage/credits', { from, to }),
   usageSeries: (p: { from: string; to: string; bucket: 'hour' | 'day'; tz: string; group: 'type' | UsageDimension }, f: UsageFilters = {}) =>
     request<{ bucket: string; tz: string; rows: UsageSeriesRow[] }>('/usage/series', { ...p, ...usageFilterParams(f) }),
   usageFacets: (from: string, to: string, f: UsageFilters = {}) => request<UsageFacets>('/usage/facets', { from, to, ...usageFilterParams(f) }),
+  summaries: (from: string, to: string, f: SummaryFilters = {}) =>
+    request<{ summaries: AgentSummary[] }>('/summaries', { from, to, q: f.q, outcome: f.outcome?.join(','), harness: f.harness?.join(','), host: f.host?.join(','), project: f.project?.join(',') }),
+  summaryOverview: (from: string, to: string, tz: string) => request<SummaryOverview>('/summaries/overview', { from, to, tz }),
+  summaryFacts: (status: 'proposed' | 'promoted' | 'rejected' = 'proposed') => request<{ facts: SummaryFact[] }>('/summaries/facts', { status }),
   usageHosts: () => request<{ hosts: UsageHost[] }>('/usage/hosts'),
   usageSessions: (from: string, to: string, f: UsageFilters = {}) => request<{ sessions: UsageSessionRow[] }>('/usage/sessions', { from, to, ...usageFilterParams(f) }),
   usageSession: (host: string, externalId: string, source: string) =>
     request<{ session: UsageSessionRow; run: UsageRun | null; runs?: UsageRun[]; messages: UsageMessage[] }>(
       `/usage/sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}`, { source }),
-  usageMessage: (id: number) => request<{ id: number; raw: unknown }>(`/usage/messages/${id}`),
+  usageMessage: (id: number, full = false, part?: string) =>
+    request<{ id: number; raw: unknown; text?: string }>(`/usage/messages/${id}`, { full: full ? '1' : undefined, part }),
+  agentSessions: (from: string, to: string, f: AgentSessionFilters = {}, offset = 0) =>
+    request<{ sessions: AgentSessionRow[]; total: number }>('/usage/agent-sessions', { from, to, offset, ...agentParams(f) }),
+  agentSessionFacets: (from: string, to: string) => request<{ facets: AgentSessionFacets }>('/usage/agent-sessions/facets', { from, to }),
+  agentSession: (host: string, externalId: string, source: string | null, offset = 0) =>
+    request<{ session: AgentSessionRow; runs: AgentSessionRun[]; steps: AgentStep[]; next: number | null }>(
+      `/usage/agent-sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}`, { source: source ?? undefined, offset, meta: '1' }),
   usageRuns: (from: string, to: string, f: UsageFilters = {}) => request<{ runs: UsageRun[] }>('/usage/runs', { from, to, ...usageFilterParams(f) }),
+  usageRunning: () => request<RunningNow>('/usage/running'),
+  usageLive: () => request<LiveNow>('/usage/live'),
+  usageLiveStop: (pid: number, force: boolean, startedAt: string | null) =>
+    request<{ ok: true; pid: number; signal: string }>('/usage/live/stop', undefined, json('POST', { pid, force, ...(startedAt ? { startedAt } : {}) })),
   usageOrgWakes: (from: string, to: string) => request<{ agents: OrgWakeRow[] }>('/usage/org-wakes', { from, to }),
-  localAiSummary: (from: string, to: string, bucket: 'hour' | 'day', tz: string) => request<LocalAiSummary>('/local-ai/summary', { from, to, bucket, tz }),
-  localAiRuns: (from: string, to: string, caller?: string) => request<{ runs: LocalAiRun[] }>('/local-ai/runs', { from, to, caller, limit: 50 }),
 };
 
 export const rawUrl = (path: string): string => url('/raw', { path });
 export const downloadUrl = (path: string): string => url('/raw', { path, download: 1 });
-/** The file a `.b2.md` stub stands in for: local original on the Mac, streamed from B2 on the server. */
+/** The file a `.b2.md` stub stands in for: local original on a local install, streamed from B2 on the server. */
 export const b2Url = (stubPath: string, download = false): string =>
   url('/b2', download ? { path: stubPath, download: 1 } : { path: stubPath });
 
@@ -843,10 +1123,6 @@ export const EDITABLE_EXTS = new Set([
   '.md', '.markdown', '.txt', '.csv', '.tsv', '.json', '.yaml', '.yml', '.toml',
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.py', '.sh', '.css', '.html', '.xml', '.svg', '.sql',
 ]);
-
-/** Vault paths are slash-separated and go straight into the route. */
-export const fileHref = (path: string): string =>
-  `/file/${path.split('/').map(encodeURIComponent).join('/')}`;
 
 /** One tv module episode, as /api/tv/episodes lists it from the vault's episode notes. */
 export interface TvEpisode {
@@ -866,6 +1142,43 @@ export const tvApi = {
     request<{ episodes: TvEpisode[]; shows: Record<string, string>; episodesDir: string }>('/tv/episodes'),
 };
 
+export type MediaKind = 'image' | 'video' | 'audio';
+
+export interface MediaItem {
+  path: string;
+  folder: string;
+  name: string;
+  ext: string;
+  kind: MediaKind;
+  size_bytes: number | null;
+  mtime: string | null;
+  /** 'b2' when only a .b2.md stub is here and the file streams from B2. */
+  source: 'local' | 'b2';
+  /** False when the index lists the file but this machine's disk doesn't have it. */
+  available: boolean;
+  url: string;
+}
+
+export interface MediaQuery {
+  kind?: 'all' | MediaKind;
+  path?: string;
+  q?: string;
+  sort?: 'new' | 'name' | 'size';
+  limit?: number;
+  offset?: number;
+}
+
+export interface MediaResponse {
+  items: MediaItem[];
+  total: number;
+  has_more: boolean;
+  counts: Record<MediaKind, number>;
+  folders: { path: string; count: number }[];
+}
+
+export const mediaApi = {
+  list: (q: MediaQuery) => request<MediaResponse>('/media', { ...q }),
+};
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ['KB', 'MB', 'GB', 'TB'];

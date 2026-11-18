@@ -3,7 +3,7 @@ import { MODULE_NAMES } from '../src/config.js';
 
 /** Truncates every data table between tests. Migrations stay applied. */
 export async function truncateAll(): Promise<void> {
-  await query(`TRUNCATE vault_files, vault_links, vault_tags, vault_chunks,
+  await query(`TRUNCATE route_decisions, route_outcomes, config_applies, vault_files, vault_links, vault_tags, vault_chunks,
                discord_reactions, discord_embeds, discord_attachments,
                discord_message_versions, discord_messages, discord_authors,
                discord_channels, discord_guilds, archive_messages, archive_sessions,
@@ -12,11 +12,15 @@ export async function truncateAll(): Promise<void> {
                ring_raw, ring_daily, ring_samples, ring_sleep_stages, wallets,
                cron_jobs, cron_runs, cron_outputs, agents_sync_runs,
                livestream_sessions, livestream_viewer_samples, livestream_x_broadcasts, livestream_notices,
-               task_links, org_wakeups, org_reads, org_messages, org_channel_members, org_channels, org_agents,
-               verifications, stage_changes, features, projects, teams, divisions,
+               org_agent_episodes, memory_facts, org_approvals, board_tokens, org_agent_overrides, card_runs, card_events, card_comments, card_deps, cards, board_settings, boards, org_wakeups, org_reads, org_messages, org_channel_members, org_channels, org_agents,
+               verifications, kpi_readings, tracker_events, projects, areas, teams, divisions,
+               ingest_batches, ingest_devices, llm_exchanges, llm_blobs,
                usage_calls, usage_runs, plan_usage_snapshots, hermes_usage_snapshots, usage_files, provider_credit_snapshots,
                metric_samples, map_edges, map_nodes, map_layouts,
-               local_ai_runs, local_ai_texts, local_ai_run_texts, local_models, local_model_loads, local_ai_cursors
+               social_post_metrics, social_post_stats, social_metric_status, social_metric_tokens, instagram_login_states,
+               social_post_media, social_posts, social_accounts,
+               chat_messages, chat_conversations, chat_settings, classify_decisions, uploads
+               , local_ai_runs, local_ai_texts, local_ai_run_texts, local_models, local_model_loads, local_ai_cursors
                RESTART IDENTITY CASCADE`);
 }
 

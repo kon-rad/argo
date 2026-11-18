@@ -55,7 +55,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await query('TRUNCATE auth_sessions, auth_totp_state');
+  await query('TRUNCATE instagram_login_states, auth_sessions, auth_totp_state');
 });
 
 afterAll(() => rm(root, { recursive: true, force: true }));

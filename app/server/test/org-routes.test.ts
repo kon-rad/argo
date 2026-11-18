@@ -17,7 +17,7 @@ const ORG = {
   agents: {
     owner: { runtime: 'human', role: 'CEO', channels: ['*'] },
     atlas: { role: 'Head of Platform', team: 'platform', reports_to: 'owner', model: 'opus' },
-    rune: { role: 'Platform engineer', team: 'platform', reports_to: 'atlas' },
+    rune: { role: 'Platform engineer', team: 'platform', reports_to: 'atlas', avatar: 'pics/rune.png', avatar_prompt: 'A bust holding a wrench.' },
     juno: { role: 'Head of Media', team: 'media', reports_to: 'owner', model: 'opus' },
     lena: { role: 'Writer', team: 'media', reports_to: 'juno' },
   },
@@ -40,6 +40,8 @@ function fixtureVault(): string {
     JSON.stringify({ agents: { atlas: { wakes_per_day: 6, cooldown_minutes: 10, max_runtime_minutes: 30, lane: null, routines: [{ name: 'daily-standup', at: '05:30', kind: 'standup' }] } } }),
   );
   writeFileSync(join(root, '.agents', 'org', 'memory', 'atlas.md'), '# atlas\n\n- 2026-10-15: learned the board\n');
+  mkdirSync(join(root, 'pics'), { recursive: true });
+  writeFileSync(join(root, 'pics', 'rune.png'), Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'));
   writeFileSync(join(root, '.claude', 'agents', 'atlas.md'), '---\nname: atlas\nmodel: opus\n---\n\n# atlas, Head of Platform\n\n**Personality.** Calm, exact.\n');
   return root;
 }
@@ -51,6 +53,25 @@ describe('org views', () => {
   beforeEach(async () => {
     await truncateAll();
     await importOrg(ORG);
+  });
+
+  it('serves an agent portrait from the vault, and 404s for agents without one', async () => {
+    const chart = await request(app()).get('/api/org/chart').expect(200);
+    const rune = chart.body.agents.find((a: { name: string }) => a.name === 'rune');
+    expect(rune.avatar).toBe('pics/rune.png');
+    expect(chart.body.agents.find((a: { name: string }) => a.name === 'atlas').avatar).toBeNull();
+    const img = await request(app()).get('/api/org/avatar/rune').expect(200);
+    expect(img.headers['content-type']).toMatch(/image\/png/);
+    expect(img.headers['cache-control']).toContain('max-age=3600');
+    expect(Buffer.from(img.body).subarray(0, 4)).toEqual(Buffer.from('89504e47', 'hex'));
+    await request(app()).get('/api/org/avatar/atlas').expect(404);
+    await request(app()).get('/api/org/avatar/nobody').expect(404);
+    // A path that leaves the vault is never served, whatever the row says.
+    await query(`UPDATE org_agents SET avatar = '../../etc/hostname' WHERE name = 'lena'`);
+    await request(app()).get('/api/org/avatar/lena').expect(404);
+    // A row whose file is gone 404s instead of erroring.
+    await query(`UPDATE org_agents SET avatar = 'pics/missing.png' WHERE name = 'juno'`);
+    await request(app()).get('/api/org/avatar/juno').expect(404);
   });
 
   it('pages messages newest-last with after/before cursors', async () => {

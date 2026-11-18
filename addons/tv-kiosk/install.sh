@@ -23,7 +23,7 @@ for _ in $(seq 60); do
   sleep 5
 done
 
-# 3. Packages: wtype drives the tab rotation, grim takes screenshots.
+# 3. Packages: wtype sends test key presses over SSH, grim takes screenshots.
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y wtype grim curl
@@ -39,7 +39,7 @@ fi
 raspi-config nonint do_boot_behaviour B4 || true
 raspi-config nonint do_blanking 1 || true
 
-# 6. The kiosk: control script, pages, autostart entry.
+# 6. The kiosk: control script, its page, autostart entry.
 install -m 0755 "$SRC/sb-tv" /usr/local/bin/sb-tv
 install -d -o "$TV_USER" -g "$TV_USER" "$HOME_DIR/.config/sb-tv" "$HOME_DIR/.config/autostart"
 if [ -s "$SRC/pages" ] && [ ! -s "$HOME_DIR/.config/sb-tv/pages" ]; then

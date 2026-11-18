@@ -27,6 +27,10 @@ https://@PUBLIC_HOST@ {
 		reverse_proxy 127.0.0.1:5123
 	}
 
+	# OAuth codes must never enter access logs.
+	@instagramCallback path /socials/ig/auth/callback
+	log_skip @instagramCallback
+
 	log {
 		output file /var/log/caddy/secondbrain.log
 	}

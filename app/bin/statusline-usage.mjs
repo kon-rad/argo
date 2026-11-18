@@ -31,10 +31,11 @@ try {
   if (limits && (limits.five_hour || limits.seven_day)) {
     const key = JSON.stringify(limits);
     let prev = null;
+    let observedAt = 0;
     if (existsSync(LOG)) {
-      try { prev = JSON.stringify(JSON.parse(lastLine(LOG)).rate_limits); } catch { prev = null; }
+      try { const last = JSON.parse(lastLine(LOG)); prev = JSON.stringify(last.rate_limits); observedAt = Date.parse(last.at) || 0; } catch { prev = null; }
     }
-    if (prev !== key) {
+    if (prev !== key || Date.now() - observedAt >= 60_000) {
       mkdirSync(dirname(LOG), { recursive: true });
       appendFileSync(LOG, JSON.stringify({ at: new Date().toISOString(), session_id: data.session_id ?? null, rate_limits: limits }) + '\n');
     }

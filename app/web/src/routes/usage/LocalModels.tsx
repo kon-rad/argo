@@ -22,7 +22,7 @@ export default function LocalModels({ from, to, bucket, tz, fmtBucket }: {
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
   const on = (meta.data?.modules ?? []).includes('localai');
   const [caller, setCaller] = useState<string | undefined>();
-  const summary = useQuery({ queryKey: ['local-ai-summary', from, to, bucket], queryFn: () => api.localAiSummary(from, to, bucket, tz), enabled: on, refetchInterval: 60_000 });
+  const summary = useQuery({ queryKey: ['local-ai-summary', from, to, bucket, tz], queryFn: () => api.localAiSummary(from, to, bucket, tz), enabled: on, refetchInterval: 60_000 });
   const runs = useQuery({ queryKey: ['local-ai-runs', from, to, caller], queryFn: () => api.localAiRuns(from, to, caller), enabled: on, refetchInterval: 60_000 });
 
   const { buckets, series } = useMemo(() => {

@@ -1,0 +1,15 @@
+[Unit]
+Description=Second Brain: nightly vault gardener (shelf notes, catalog, archive moves when garden.apply is on)
+After=network-online.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-garden.js --write
+TimeoutStartSec=900
+PrivateTmp=true
+NoNewPrivileges=true

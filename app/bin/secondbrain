@@ -23,10 +23,10 @@ PORT="${PORT:-5123}"
 URL="http://127.0.0.1:$PORT"
 PG_FORMULA="${PG_FORMULA:-postgresql@15}"
 DB_NAME="${DB_NAME:-secondbrain}"
-# After the 2026-10-14 cutover the master database is the droplet's, reached
-# over Tailscale. SECONDBRAIN_DB_URL (vault-root .env, role sb_app) switches
-# this launcher into client mode: no local Postgres, no migrations (the droplet
-# app owns the schema), and no scan/embed/ring-pull/agents-sync from the Mac.
+# When SECONDBRAIN_DB_URL is set (vault-root .env, role sb_app) the master
+# database lives on another machine. This launcher then runs in client mode: no
+# local Postgres, no migrations (the server app owns the schema), and no
+# scan/embed/ring-pull/agents-sync from a local install.
 # SECONDBRAIN_DB=local forces the old local database (e.g. offline, read-only use).
 # The vault holds the engine at <vault>/.secondbrain/app (VAULT_ROOT overrides),
 # the same rule config.ts and deploy.sh use. Getting this wrong silently falls
@@ -103,6 +103,14 @@ say()  { printf '%s\n' "$*"; }
 warn() { printf '%s\n' "$*" >&2; }
 die()  { warn "error: $*"; exit 1; }
 
+# Open the app in the browser. macOS has `open`, most Linux desktops have
+# `xdg-open`; a headless machine has neither, so just print the URL.
+open_url() {
+  if command -v open >/dev/null 2>&1; then open "$1" 2>/dev/null && return 0; fi
+  if command -v xdg-open >/dev/null 2>&1; then xdg-open "$1" >/dev/null 2>&1 && return 0; fi
+  say "open $1"
+}
+
 # ---------------------------------------------------------------- process state
 
 # A pid file outlives the process that wrote it, and pids get reused. Checking
@@ -131,8 +139,21 @@ healthy() {
 ensure_postgres() {
   [[ "$REMOTE_DB" == 1 ]] && return
   if pg_isready -q -h localhost -p 5432 2>/dev/null; then return; fi
-  say "starting ${PG_FORMULA}…"
-  brew services start "$PG_FORMULA" >/dev/null 2>&1 || die "could not start $PG_FORMULA"
+  # macOS serves it through Homebrew; Linux through systemd or sysvinit. A
+  # non-interactive `sudo -n` is preferred so a Finder/CI launch never blocks on
+  # a password prompt; it falls back to the user's own service manager.
+  if command -v brew >/dev/null 2>&1; then
+    say "starting ${PG_FORMULA}…"
+    brew services start "$PG_FORMULA" >/dev/null 2>&1 || die "could not start $PG_FORMULA"
+  elif command -v systemctl >/dev/null 2>&1; then
+    say "starting postgresql…"
+    sudo -n systemctl start postgresql 2>/dev/null \
+      || systemctl start postgresql 2>/dev/null \
+      || sudo -n service postgresql start 2>/dev/null \
+      || die "could not start PostgreSQL; start it yourself, then retry"
+  else
+    die "PostgreSQL is not answering on localhost:5432; start it, then retry"
+  fi
   for _ in $(seq 1 30); do
     pg_isready -q -h localhost -p 5432 2>/dev/null && return
     sleep 1
@@ -155,7 +176,7 @@ ensure_deps() {
 }
 
 apply_migrations() {
-  # The droplet app (role hermes, the schema owner) runs migrations on deploy.
+  # The server app (the schema owner) runs migrations on deploy.
   [[ "$REMOTE_DB" == 1 ]] && return
   npx --yes node-pg-migrate -m db/migrations -j sql up >/dev/null || die "migrations failed"
 }
@@ -215,11 +236,11 @@ start_detached() {
 
 # ------------------------------------------------------------------- commands
 
-# Scans, embeds, the Ring pull and agents-sync write tables only the droplet
+# Scans, embeds, the Ring pull and agents-sync write tables only the server
 # writes now (see the client-mode note at the top).
 refuse_if_remote() {
   [[ "$REMOTE_DB" == 1 ]] || return 0
-  die "$1 runs on the droplet now (single-database cutover 2026-10-14). Use SECONDBRAIN_DB=local to run it against the old local database."
+  die "$1 runs on the server now. Use SECONDBRAIN_DB=local to run it against the old local database."
 }
 
 cmd_start() {
@@ -233,7 +254,7 @@ cmd_start() {
     fi
     start_detached
   fi
-  open "$URL" 2>/dev/null || say "open $URL"
+  open_url "$URL"
 }
 
 cmd_stop() {
@@ -266,25 +287,8 @@ cmd_status() {
     return
   fi
 
-  local system runs
-  system="$(curl -sf --max-time 2 "$URL/api/system" || true)"
-  runs="$(curl -sf --max-time 2 "$URL/api/runs?limit=1" || true)"
-  [[ -n "$system" ]] && say "index     $(printf '%s' "$system" | node -e '
-    let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-      const j=JSON.parse(s);
-      console.log(`${j.counts.files} files, ${j.counts.markdown} notes, ${j.counts.links} links`);
-    });')"
-  [[ -n "$system" ]] && say "vectors   $(printf '%s' "$system" | node -e '
-    let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-      const e=JSON.parse(s).embeddings;
-      if(!e||!e.chunks){console.log("none — run: secondbrain embed");return;}
-      console.log(`${e.chunks} chunks over ${e.files_embedded}/${e.files_embeddable} notes (${e.model})`);
-    });')"
-  [[ -n "$runs" ]] && say "last scan $(printf '%s' "$runs" | node -e '
-    let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-      const r=JSON.parse(s).runs[0];
-      console.log(r ? `${r.status} at ${new Date(r.started_at).toLocaleString()}` : "never");
-    });')"
+  # The index numbers come from their own entry: this script holds no JSON parsing.
+  node --no-warnings "$APP_ROOT/server/dist/cli-status.js" --url "$URL" || true
 }
 
 cmd_logs() {
@@ -303,86 +307,42 @@ cmd_dev() {
 
 cmd_scan() {
   refuse_if_remote scan
+  ensure_deps; ensure_build
   if healthy; then
     # Through the API so the running server's queue enforces one scan at a
     # time; a second scanner writing the same tables is the one thing the
     # 409 rule exists to prevent.
-    local id
-    id="$(curl -sf "$URL/api/sources" | node -e '
-      let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-        const v=JSON.parse(s).sources.find(x=>x.kind==="vault");
-        if(!v){process.exit(1);} console.log(v.id);
-      });')"
-    curl -sf -X POST "$URL/api/sources/$id/sync" | node -e '
-      let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-        const j=JSON.parse(s); console.log(`run ${j.run_id}: ${j.status}`);
-      });'
+    node --no-warnings "$APP_ROOT/server/dist/cli-scan.js" --api "$URL" || die "scan failed"
     say "watch it with: secondbrain logs"
   else
-    ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
-    node -e '
-      import("./server/dist/connectors/vault/scan.js").then(async (m) => {
-        const { pool } = await import("./server/dist/db.js");
-        const { rows } = await pool.query("SELECT id, config FROM sources WHERE kind=$1", ["vault"]);
-        const stats = await m.scanVault({ root: rows[0].config.root ?? process.cwd() + "/..",
-                                          sourceId: rows[0].id,
-                                          skipDirs: rows[0].config.skip_dirs });
-        console.log(JSON.stringify({ scanned: stats.scanned, inserted: stats.inserted,
-                                     updated: stats.updated, deleted: stats.deleted }));
-        await pool.end();
-      });'
+    ensure_postgres; ensure_database; apply_migrations
+    node --no-warnings "$APP_ROOT/server/dist/cli-scan.js"
   fi
 }
 
 cmd_embed() {
   refuse_if_remote embed
+  ensure_deps; ensure_build
   if healthy; then
     # Same reasoning as cmd_scan: through the API so the serial queue owns it.
-    local id
-    id="$(curl -sf "$URL/api/sources" | node -e '
-      let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-        const v=JSON.parse(s).sources.find(x=>x.kind==="embeddings");
-        if(!v){process.exit(1);} console.log(v.id);
-      });')" || die "no embeddings source — apply migrations first"
-    curl -sf -X POST "$URL/api/sources/$id/sync" | node -e '
-      let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-        const j=JSON.parse(s); console.log(`run ${j.run_id}: ${j.status}`);
-      });'
+    node --no-warnings "$APP_ROOT/server/dist/cli-embed.js" --api "$URL" || die "embed failed"
     say "watch it with: secondbrain logs"
   else
-    ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
-    node -e '
-      Promise.all([
-        import("./server/dist/embeddings/embed.js"),
-        import("./server/dist/db.js"),
-      ]).then(async ([m, db]) => {
-        const { rows } = await db.pool.query("SELECT config FROM sources WHERE kind=$1", ["embeddings"]);
-        if (!rows[0]) { console.error("no embeddings source"); process.exit(1); }
-        const c = rows[0].config;
-        const stats = await m.embedVault({
-          provider: m.providerFromConfig(c),
-          maxChunkTokens: c.max_chunk_tokens ?? 450,
-          overlapTokens: c.overlap_tokens ?? 60,
-          batchSize: c.batch_size ?? 32,
-          onProgress: (p) => process.stderr.write(`\r  ${p.filesDone}/${p.filesTotal} ${p.currentPath.slice(0, 60)}          `),
-        });
-        process.stderr.write("\n");
-        console.log(JSON.stringify(stats, null, 2));
-        await db.pool.end();
-      }).catch((e) => { console.error(e.message); process.exit(1); });'
+    ensure_postgres; ensure_database; apply_migrations
+    node --no-warnings "$APP_ROOT/server/dist/cli-embed.js"
   fi
 }
 
 cmd_auth_setup() {
   # Needs only node and the built server — no Postgres, no running server — so
-  # it can be run on the Mac and the output pasted into the server's env file.
+  # it can be run on a local install and the output pasted into the server's env file.
   ensure_node; ensure_deps; ensure_build
   node "$APP_ROOT/server/dist/cli-auth.js"
 }
 
 cmd_ring_pull() {
   refuse_if_remote ring-pull
-  # Mirrors the droplet's ring_* tables (filled by the Pi's hourly push) into local Postgres.
+  # Mirrors the server's ring_* tables (filled by a Pi's hourly push) into local Postgres.
   ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-ring.js"
 }
@@ -392,33 +352,42 @@ cmd_agents_sync() {
   ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-agents-sync.js"
 }
-cmd_usage_sync() {
-  # This machine's Claude Code transcripts, cc-runs logs and plan readings into the usage ledger.
-  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
-  node --no-warnings "$APP_ROOT/server/dist/cli-usage-sync.js"
+cmd_ledger() {
+  # This machine's agent ledger (local SQLite, syncs to the server). Builds the one-file bundle and
+  # runs it; `secondbrain ledger install --server … --token … --host …` schedules it.
+  ensure_node; ensure_deps
+  "$APP_ROOT/bin/build-ledger.sh" >/dev/null || die "ledger build failed"
+  node --no-warnings "$APP_ROOT/server/dist/ledger/ledger.mjs" "$@"
 }
-cmd_local_ai_pull() {
-  refuse_if_remote local-ai-pull
-  # The local model host's call log (LOCAL_AI_EXPORT_URL) into local_ai_*. The server's timer runs it.
-  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
-  node --no-warnings "$APP_ROOT/server/dist/cli-localai-pull.js"
-}
-cmd_usage_push() {
-  # Mac -> droplet: new Claude Code transcript bytes and plan readings over one SSH call.
-  ensure_node; ensure_build
-  node --no-warnings "$APP_ROOT/server/dist/cli-usage-push.js"
-}
-cmd_usage_backfill() {
-  # One-off wire lines for the Mac sessions already in the archive:
-  #   secondbrain usage-backfill | ssh <server> '/usr/local/bin/secondbrain-usage-import mac'
-  ensure_postgres; ensure_database; ensure_deps; apply_migrations; ensure_build
-  node --no-warnings "$APP_ROOT/server/dist/cli-usage-backfill.js"
-}
-cmd_credits() {
-  # Prepaid API balances (OpenRouter, fal, Gemini) in provider_credit_snapshots.
-  # No local Postgres or migrations: on the Mac SECONDBRAIN_DB_URL is the droplet.
+cmd_archive_steps() {
+  # One-off passes over archive rows stored before the agent-sessions migration:
+  # fill step columns; with --redact, rewrite stored rows that hold keys this machine knows.
+  # No local Postgres: SECONDBRAIN_DB_URL points at the server.
   ensure_deps; ensure_build
-  node --no-warnings "$APP_ROOT/server/dist/cli-credits.js" "$@"
+  node --no-warnings "$APP_ROOT/server/dist/cli-archive-steps.js" "$@"
+}
+cmd_telegram() {
+  # Connect a Telegram bot to an agent, check it, change its allowlist, remove it (docs/onboarding/11-telegram.md).
+  # The token is read from stdin or typed hidden, never passed on the command line.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-telegram.js" "$@"
+}
+cmd_timezone() {
+  # The vault's current time zone (secondbrain.json "timezone"), used by every time the web app shows (docs/timezone.md).
+  # show | set <Area/City> | clear. An agent runs `secondbrain timezone set Asia/Singapore` when the owner travels.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-timezone.js" "$@"
+}
+cmd_summarize() {
+  # One summary per finished agent session (agent_summaries). Server only: it reads the archive.
+  # --digest [HOURS] prints the stand-up's markdown instead. Providers and fallbacks: docs/summaries.md.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-summarize.js" "$@"
+}
+cmd_summarize_eval() {
+  # Grade summaries: --golden [DIR] (real provider chain), --references (no model), --sample N (stored ones); --judge, --min, --out.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-summarize-eval.js" "$@"
 }
 cmd_archive() {
   # Writes only archive_* tables, which nothing else touches, so it runs
@@ -427,15 +396,10 @@ cmd_archive() {
   node --no-warnings "$APP_ROOT/server/dist/cli-archive.js" "$@"
 }
 
-cmd_org() {
-  # The agent company's message board (org_* tables). Identity from ORG_AGENT.
-  (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-org.js" "$@")
-}
-
 cmd_inventory() {
   # Gear rows in inventory_items (agent write helper). No Postgres start or
-  # migrations here: after the cutover SECONDBRAIN_DB_URL points at the
-  # droplet, where this connects as sb_agent and can't migrate anything.
+  # migrations here: SECONDBRAIN_DB_URL points at the
+  # server, where this connects as sb_agent and can't migrate anything.
   ensure_deps; ensure_build
   (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-inventory.js" "$@")
 }
@@ -446,6 +410,20 @@ cmd_backlinks() {
   node --no-warnings "$APP_ROOT/server/dist/cli-backlinks.js" "$@"
 }
 
+cmd_garden() {
+  # The nightly vault gardener (docs/garden.md). Shadow by default; --write
+  # updates shelf notes and the catalog, --apply also moves with git mv.
+  ensure_deps; ensure_build
+  (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-garden.js" "$@")
+}
+
+cmd_warehouse() {
+  # The warehouse addon (docs/warehouse.md): vault migrations into schema data,
+  # connector runs, status. Needs the master database, so it runs where the app's DB is.
+  ensure_deps; ensure_build
+  (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-warehouse.js" "$@")
+}
+
 cmd_map_build() {
   # Brain map layout (map_* tables). Refused in client mode, like scan.
   ensure_deps; ensure_build
@@ -453,9 +431,42 @@ cmd_map_build() {
 }
 
 cmd_metrics() {
-  # Brain map numbers: collect (daily timer on the droplet), set, list.
+  # Brain map numbers: collect (daily timer on the server), set, list.
   ensure_deps; ensure_build
   node --no-warnings "$APP_ROOT/server/dist/cli-metrics.js" "$@"
+}
+
+cmd_features() {
+  # The feature manifests (server/src/features/<name>/manifest.ts): list | units | wrappers | agent-clis | help.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-features.js" "$@"
+}
+
+cmd_doctor() {
+  # Health checks (docs/configuration.md): Node, Postgres, pgvector, migrations, modules,
+  # the vault files, the settings file, the sync state, each core feature's tables.
+  # --deep adds the server-only checks (failed timers, last backup); --json prints them.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-doctor.js" "$@"
+}
+
+cmd_config() {
+  # Config consolidation (proposal section 4): plan | apply | upgrade. plan and a bare upgrade
+  # print the env file and units the server block implies without writing; apply writes them,
+  # and only when server.generate is true in secondbrain.json.
+  ensure_deps; ensure_build
+  node --no-warnings "$APP_ROOT/server/dist/cli-config.js" "$@"
+}
+
+cmd_feature() {
+  # Any command a feature manifest owns (board, org, projects, usage-sync, summarize, ...) runs through
+  # cli-features, which hands the entry its own argv. Identity and the database come from the env, as
+  # before; `secondbrain start` is what applies migrations on a laptop with a local database.
+  ensure_deps; ensure_build
+  local rc=0
+  (cd "$CALLER_PWD" && node --no-warnings "$APP_ROOT/server/dist/cli-features.js" run "$@") || rc=$?
+  if [[ $rc -eq 64 ]]; then warn "unknown command: $1"; cmd_help; exit 1; fi
+  exit "$rc"
 }
 
 cmd_help() {
@@ -468,20 +479,33 @@ secondbrain logs     tail the server log
 secondbrain scan     rescan the vault
 secondbrain embed    embed new and changed notes for semantic search
 secondbrain archive  archive Claude Code + Hermes conversations to B2 and Postgres
+secondbrain ledger   this machine's agent ledger: run | status | install --server URL --token T --host SLUG
+secondbrain archive-steps  fill step columns of old archive rows (--redact: remove stored keys; --relabel: channel labels; --dry-run)
+secondbrain telegram   connect a Telegram bot to an agent: add --agent claude-code|hermes|zen-agent --name X --allow <id> | status | allow | remove
+secondbrain timezone   the vault's current time zone for the app: show | set <Area/City> | clear (e.g. set Asia/Singapore)
+secondbrain summarize  summarize finished agent sessions with a local model, fallbacks in config (--digest for the stand-up)
+secondbrain summarize-eval  grade summaries against transcripts: --golden | --references | --sample N [--judge]
 secondbrain agents-sync  copy Hermes chats and cron history into Postgres
-secondbrain usage-sync   this machine's Claude Code usage into the ledger
-secondbrain local-ai-pull  a local model host's call log into the ledger (localai module)
-secondbrain usage-push   send new Claude Code usage to the droplet ledger (Mac)
-secondbrain usage-backfill  wire lines for archived Mac sessions (pipe to the droplet importer)
-secondbrain credits    show | set <provider> <balance> | sync  prepaid API credit balances
 secondbrain inventory  list/show/add/update gear rows and file their photos (inventory help)
-secondbrain org        the agent company message board: whoami/read/post/dm/handoff/ask-owner/standup (org help)
 secondbrain backlinks  add a Related links block to each note (dry run; --write applies, --path limits)
-secondbrain map-build  rebuild the brain map's stored layout (droplet)
+secondbrain map-build  rebuild the brain map's stored layout (server)
+secondbrain warehouse  vault tables and connectors: migrate | run <name> | run --due | status | tables
+secondbrain garden     nightly vault gardener (shadow by default; --write updates shelf notes and the catalog, --apply also moves)
 secondbrain metrics    collect | set <metric> <value> | list  the brain map's numbers
-secondbrain ring-pull  copy the ring data from the droplet into local Postgres
+secondbrain ring-pull  copy the ring data from the server into local Postgres
 secondbrain auth-setup  create the password + authenticator login for the server
+secondbrain features   list | units | wrappers | agent-clis | help  the feature manifests and what they wire
+secondbrain doctor     health checks: Node, Postgres, pgvector, migrations, modules, each feature's tables (--deep adds server checks)
+secondbrain plan       the env file + systemd units the server block implies (writes nothing)
+secondbrain apply      write that plan (only when server.generate is true in secondbrain.json)
+secondbrain upgrade    the plan as a dry run; --yes writes it
 USAGE
+  # Feature commands come from the manifests, so the list cannot drift from the code.
+  if [[ -f "$APP_ROOT/server/dist/cli-features.js" ]]; then
+    echo
+    echo "Feature commands (secondbrain features list):"
+    node --no-warnings "$APP_ROOT/server/dist/cli-features.js" help
+  fi
 }
 
 case "${1:-start}" in
@@ -494,19 +518,27 @@ case "${1:-start}" in
   scan)          cmd_scan ;;
   embed)         cmd_embed ;;
   archive)       cmd_archive "${@:2}" ;;
+  ledger)        cmd_ledger "${@:2}" ;;
+  archive-steps) cmd_archive_steps "${@:2}" ;;
+  telegram)      cmd_telegram "${@:2}" ;;
+  timezone)      cmd_timezone "${@:2}" ;;
+  summarize)     cmd_summarize "${@:2}" ;;
+  summarize-eval) cmd_summarize_eval "${@:2}" ;;
   inventory)     cmd_inventory "${@:2}" ;;
-  org)           cmd_org "${@:2}" ;;
   backlinks)     cmd_backlinks "${@:2}" ;;
   map-build)     cmd_map_build "${@:2}" ;;
+  garden)        cmd_garden "${@:2}" ;;
+  warehouse)     cmd_warehouse "${@:2}" ;;
   metrics)       cmd_metrics "${@:2}" ;;
-  credits)       cmd_credits "${@:2}" ;;
   ring-pull)     cmd_ring_pull ;;
   agents-sync)   cmd_agents_sync ;;
-  usage-sync)    cmd_usage_sync ;;
-  local-ai-pull) cmd_local_ai_pull ;;
-  usage-push)    cmd_usage_push ;;
-  usage-backfill) cmd_usage_backfill ;;
   auth-setup)    cmd_auth_setup ;;
+  features)      cmd_features "${@:2}" ;;
+  doctor)        cmd_doctor "${@:2}" ;;
+  plan)          cmd_config "$@" ;;
+  apply)         cmd_config "$@" ;;
+  upgrade)       cmd_config "$@" ;;
   help|-h|--help) cmd_help ;;
-  *)             warn "unknown command: $1"; cmd_help; exit 1 ;;
+  # Everything else is a feature's command (board, org, projects, usage-sync, summarize, ...): see its manifest.
+  *)             cmd_feature "$@" ;;
 esac

@@ -4,7 +4,7 @@ import { forceLink, forceManyBody, forceRadial, forceSimulation } from 'd3-force
 import type { Graph, MapNode } from './graph.js';
 
 /**
- * Positions for the brain map, computed once on the droplet and stored, so
+ * Positions for the brain map, computed once on the server and stored, so
  * the page never runs physics and the map doesn't reshuffle between loads.
  *
  * Anchors (mission, goals, divisions, projects, features, metrics) sit on

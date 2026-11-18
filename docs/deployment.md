@@ -1,5 +1,7 @@
 # Deploying to a server
 
+Status: **works** - `deploy.sh` puts the app on a server behind HTTPS and a login, with rollback and the systemd timers below.
+
 The same app can run on a server, over a checkout of your vault that a git sync keeps current, behind HTTPS and a login. You run `deploy.sh` from your own machine; the server needs no GitHub credentials for the app, because the script ships source with rsync.
 
 ## What you need
@@ -8,7 +10,7 @@ The same app can run on a server, over a checkout of your vault that a git sync 
 |---|---|
 | A server | Ubuntu, reachable as root over ssh (an `~/.ssh/config` alias is easiest) |
 | A name | A domain pointed at the server (recommended), or its bare IP |
-| A vault checkout on the server | Kept current by your own git sync (a cron or timer that pulls) |
+| A vault checkout on the server | Kept current by `DEPLOY_VAULT_SYNC=1` ([sync.md](sync.md)), or by your own cron or timer that pulls |
 | Your laptop | With the vault and the engine, and Node 22 for `auth-setup` |
 
 `deploy.sh` installs Node, Postgres with pgvector, and Caddy on first run.
@@ -63,8 +65,10 @@ The app refuses to start in server mode without `AUTH_PASSWORD_HASH`, `AUTH_TOTP
 | `EXTRA_CADDY_IMPORT` | | | Caddyfile snippets for other sites on the same box, comma separated |
 | `DEPLOY_REDIRECT_FROM` | | | Another host (for example the bare IP) that redirects to the public host |
 | `DEPLOY_PAUSE_FILE` | | | A file that holds an agent dispatcher off while the build runs |
+| `DEPLOY_NO_ROLLBACK=1` | | off | Leave a deploy in place when it does not come up. By default the previous build goes back |
 | `DEPLOY_EMBED=1` | | off | Install the nightly embed timer (needs a local Ollama on the server) |
-| `DEPLOY_DB_BACKUP=1` | | off | Install the nightly `pg_dump` backup timer (needs `b2store` for the app user) |
+| `DEPLOY_DB_BACKUP=1` | | off | Install the nightly `pg_dump` backup timer (needs an object-storage client for the app user) |
+| `DEPLOY_VAULT_SYNC=1` | | off | Install the vault sync timer: the server commits what its agents write, pulls and pushes every 15 minutes as `SYNC_ROLE=agent` ([sync.md](sync.md)). The app user needs push access to the vault repo |
 
 ## What runs on the server
 
@@ -74,12 +78,40 @@ The app refuses to start in server mode without `AUTH_PASSWORD_HASH`, `AUTH_TOTP
 | `secondbrain-agents-sync.timer` | Periodic | `agents` |
 | `secondbrain-usage-sync.timer`, `-credits-sync.timer`, usage importer | Periodic | `usage` |
 | `secondbrain-projects-render.timer` | Hourly | `projects` |
+| `secondbrain-areas-review.timer` | Sunday 20:00 in the vault's `timezone` (UTC when unset) | `projects` |
 | `secondbrain-map-build.timer` | Hourly at :20 | `map` |
 | `secondbrain-metrics.timer` | Daily 00:30 UTC | `map` |
+| `secondbrain-metrics-checkpoints.timer` | Hourly at :45 | `map` |
 | `secondbrain-livestream.timer` | Every minute | `livestream` |
 | `secondbrain-localai-pull.timer` | Every 5 minutes | `localai` |
 | `secondbrain-embed.timer` | Daily 02:30 UTC | `DEPLOY_EMBED=1` |
 | `secondbrain-db-backup.timer` | Daily 03:30 UTC | `DEPLOY_DB_BACKUP=1` |
+| `secondbrain-vault-sync.timer` | Every 15 minutes | `DEPLOY_VAULT_SYNC=1` |
+| `claude-telegram.service` + `-clear.timer`, `telegram-bridge.service` | Always, nightly clear 19:00 UTC | `secondbrain telegram add` ([Connect Telegram](onboarding/11-telegram.md)), not `deploy.sh` |
+
+### Unit files are generated
+
+Recurring feature units come only from `app/server/src/features/*/manifest.ts` and
+`app/server/src/addons/*/manifest.ts`. To add a timer, add one `timers` entry to its
+manifest with the unit name, calendar, command, descriptions and any service options.
+The deploy generator renders both the `.service` and `.timer`; do not add either file
+under `app/deploy/`.
+
+Preview the generated env and units without writing them:
+
+```bash
+secondbrain plan
+```
+
+`app/deploy/secondbrain.service` and `app/deploy/zen-agent-serve.service` remain
+hand-written because they are long-running services, not feature timers. The Telegram
+bridge owns its templates under `app/deploy/telegram/`, and Caddy continues to use
+`app/deploy/Caddyfile.template`. Database backup, vault sync and embedding are base
+jobs declared in `app/server/src/deploy/generate.ts` because no feature owns them.
+
+## Which version is live
+
+`deploy.sh` records the commit it shipped in `<app dir>/data/build-info.json` (the deploy rsync excludes `data/`, so the file survives the next deploy). The app reads it at startup and reports it in `GET /api/meta`, which the ⓘ panel in the header shows as `Second Brain v<version> · <short commit>`; the tooltip has the full hash and the build time. On a laptop there is no build file, so the app asks git instead and shows the checkout's commit. Bump `app/package.json`'s `version` when you want a new number in the panel.
 
 Caddy is rendered from `app/deploy/Caddyfile.template`. If you already run Caddy for other sites, diff the rendered file against your live one before the first deploy, and use `EXTRA_CADDY_IMPORT` for the others.
 
@@ -87,11 +119,56 @@ Caddy is rendered from `app/deploy/Caddyfile.template`. If you already run Caddy
 
 One user. The password is hashed with scrypt (128 MiB, verified one at a time); the second factor is RFC 6238 TOTP with single-use codes. Both factors are always checked and failures share one message. Sessions are random 256-bit tokens in a `__Host-` cookie (HttpOnly, Secure, SameSite=Strict); only their SHA-256 is stored. They end after 7 idle days or 30 days total, and `POST /api/auth/logout-all` ends every session. Five failures lock an IP out for 15 minutes; 100 failures in an hour lock everyone out. Every mutating request must carry the right `Origin`.
 
+## How the build is swapped in
+
+`deploy.sh` does not run `npm ci` in the live app directory: npm ci empties `node_modules` first, and any CLI an agent started in that minute (`cli-org recall` from a run already in flight) died with `Cannot find package '<app dir>/node_modules/zod/index.js'`. Instead `app/deploy/build-release.sh` copies the shipped source to `<app dir>/data/release`, runs `npm ci` and `npm run build` there, checks that `server/dist/cli-org.js` and `server/dist/cli-memory.js` load from the new build, then swaps `node_modules`, `shared/dist`, `server/dist` and `web/dist` into place, each with one atomic exchange (`renameat2` on Linux). The CLIs always run from `<app dir>/server/dist` and resolve their packages from `<app dir>/node_modules`. A failed install, build or check leaves the live tree as it was. The stage needs room for a second `node_modules` while it builds.
+
+## When a deploy does not come up
+
+Before it builds, `deploy.sh` keeps the build that is running (`server/dist`, `web/dist` and the build-info file) in `<app dir>/data/rollback`. If the build, the migration or the app itself then fails, it puts that copy back, restarts, and checks the app again:
+
+| Outcome | What you see | Exit code |
+|---|---|---|
+| Normal deploy | `✓ secondbrain running` after `/api/health` answers | 0 |
+| Deploy failed, previous build restored | `✓ rolled back: secondbrain is serving the previous build` | 3 |
+| Deploy failed and the rollback did not come up | `✗ the rollback did not come up either` | 4 |
+
+`DEPLOY_NO_ROLLBACK=1` turns this off, for the deploy that is meant to change something the previous build cannot run against. The health check is the app's own `/api/health` route on `127.0.0.1:$PORT` (from `/etc/secondbrain/env`), polled for 30 seconds.
+
+Two things a rollback is not:
+
+- **It restores code, not the schema.** Migrations are forward-only, so a migration this deploy applied stays applied. Additive changes are fine; a migration that removes or renames what the previous build reads is not, and the rollback then reports exit 4.
+- **It is deploy-time, not a watchdog.** It covers a build or migration that failed and an app that will not start. An app that runs for an hour and then dies is `systemd`'s `Restart=on-failure` business, not this.
+
 ## Updating a server
 
 1. Move your vault's engine pin ([vault.md](vault.md#updating-the-engine)) and commit.
 2. **Compare migrations first.** If anything else has run migrations on the server's database, list `pgmigrations` there and check that every applied migration exists in `app/db/migrations/`. node-pg-migrate refuses to run when the database has a migration the code doesn't.
 3. Run `.secondbrain/app/deploy/deploy.sh` again.
+
+## Hiring desk rollout
+
+The `desk` addon is off by default. A successful app deploy and a green general health check do not prove it is enabled or that its production services are connected.
+
+1. **Ship the merged engine code.** Use the normal deploy procedure above. Compare applied migrations first, run `deploy.sh`, and require a successful build, migration step, service restart and health check. The desk migration is `1756000017000_hiring-desk.sql`; an already-applied migration correctly reports no migrations to run.
+2. **Enable it in the running app's configuration.** On the server, locate the vault selected by the service's `VAULT_ROOT`. Add `"desk"` to its `secondbrain.json` `addons` array, preserving existing entries and settings. The minimal shape is `{"addons":["desk"]}`. Alternatively append `desk` to `MODULES` in `/etc/secondbrain/env` without removing other modules. Keep the intended setting in your normal vault sync process so later syncs preserve it.
+3. **Configure the real services before restarting.** Supply every explicit [desk production setting](configuration.md#hiring-desk-production-settings), including the server-only Arkiv signer and Bee batch. `DESK_RUNTIME_MODULE` exports `createCybazaarDependencies` for provider profiles, ENS, worker/capability controls, artifact reads and non-master wallet intents. The addon constructs Arkiv, ERC-8004, Swarm, PostgreSQL publication and settlement adapters. Missing settings, missing operations or fixture adapters abort production startup.
+4. **Restart and verify activation and operations.** Run `sudo systemctl restart secondbrain` and `systemctl is-active secondbrain`. Visit `/api/health`; require `ok: true` and `desk` in the enabled modules. Reload the browser, sign in, and check **Work → Hiring desk**, `/desk` and authenticated `/api/meta`. Private operators use session-gated `/api/desk`; the Vercel client uses only `/api/desk/public`. Verify execution, reviewed release and payment reconciliation independently. The hash-only payment flow remains pending until its Arc-to-Arkiv evidence linkage is resolved; see the [submission status](https://github.com/kon-rad/argo/blob/0c96d254d517e0203f4e98813cd95569336eb5d9/app/server/src/addons/desk/submission/README.md).
+
+**Code and settings have separate delivery paths.** `deploy.sh` copies the engine's app source, builds, migrates and restarts it. It does not copy your laptop's `secondbrain.json` or `.env` into the server's vault. Changing only the laptop settings and redeploying leaves the server addon disabled until the server vault receives that change. `DEPLOY_MODULES` controls deploy-time module installation; it does not replace runtime activation through the server settings or environment.
+
+| Symptom | Check and action |
+|---|---|
+| No Hiring desk item in Work | Check the live health module list. If `desk` is absent, fix the server vault's `addons` or runtime `MODULES`, then restart |
+| `desk` is enabled but the old menu remains | Reload the browser to refetch authenticated metadata; inspect `/api/meta` navigation and confirm the deployed commit |
+| Desk page opens but data/actions fail | Check operator service injection and the authenticated `/api/desk` endpoints; page visibility alone does not establish service readiness |
+| Startup rejects desk configuration or host services | Supply explicit payment settings and the real `DESK_RUNTIME_MODULE`; disabling the addon removes those requirements |
+| Public API returns unavailable | Check the configured host services and independent RPC availability; no fixture fallback is used |
+| Health is green but desk operations fail | General health checks do not test the complete desk workflow; verify the configured services and operations separately |
+
+To disable the addon, remove `desk` from **both** activation sources if present (`addons` and `MODULES`), restart, and verify it disappears from the enabled module list and Work menu. This leaves the database tables and records intact. Code rollback follows the normal procedure above and does not reverse migrations or restore vault configuration.
+
+See the [desk module reference](modules.md#desk) for the shipped components and configuration boundary.
 
 ## Several machines, one database
 

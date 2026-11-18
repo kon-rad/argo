@@ -1,5 +1,7 @@
 # Privacy: keeping the engine clean
 
+Status: **works** - the leak checks run in CI on every pull request and every push to `main`.
+
 This repo is public. The vaults that use it are private and full of someone's life. This page is how the two stay apart, for the people who maintain the engine and for anyone keeping a fork.
 
 ## The contract
@@ -33,7 +35,7 @@ The generic patterns can't know your name, your hosts or your folder names. Put 
 # names
 Jane Example
 # hosts and paths
-my-droplet
+my-server
 /Users/jane
 ```
 
@@ -63,4 +65,4 @@ git -C .secondbrain config user.email "<id>+<user>@users.noreply.github.com"
 
 1. **Rotate the secret first.** Assume anything that reached a public repo has been copied. Rewriting history doesn't un-publish it.
 2. Remove it from the current tree in a PR.
-3. If it must leave history too, that means rewriting it (`git filter-repo`), and because PR refs can't be rewritten, possibly recreating the repo. Report security problems privately: see [`../SECURITY.md`](../SECURITY.md).
+3. If it must leave history too, that means rewriting it (`git filter-repo`), and because PR refs can't be rewritten, possibly recreating the repo. Report security problems privately: see [`SECURITY.md`](https://github.com/kon-rad/argo/blob/main/SECURITY.md).

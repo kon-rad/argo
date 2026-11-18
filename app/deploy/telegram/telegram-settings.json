@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": [
+      "Bash", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "WebFetch", "WebSearch", "Agent", "Skill",
+      "mcp__plugin_telegram_telegram"
+    ],
+    "deny": [
+      "Bash(sudo *)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(/@BOT_HOME@/.claude/.credentials.json)",
+      "Read(/@BOT_HOME@/.claude/channels/telegram/.env)",
+      "Read(/@BOT_HOME@/.claude/channels/telegram/access.json)",
+      "Read(/@BOT_HOME@/.hermes/auth.json)",
+      "Read(/@BOT_HOME@/.hermes/.env)",
+      "Read(/@BOT_HOME@/.zen/telegram-bridge.env)"
+    ]
+  }
+}

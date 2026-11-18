@@ -3,6 +3,7 @@ import { readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { Router } from 'express';
 import { z } from 'zod';
+import { buildResolver } from '../connectors/vault/resolve.js';
 import { reindexFile } from '../connectors/vault/scan.js';
 import { query } from '../db.js';
 import { HttpError, parseOr400, wrap } from './http.js';
@@ -16,6 +17,9 @@ export const EDITABLE_EXTS = new Set([
 
 /** Past this, a textarea is the wrong tool and a download is the right one. */
 export const MAX_EDIT_BYTES = 5 * 1024 * 1024;
+
+/** A card with more note references than this is not a card. */
+const MAX_RESOLVE_REFS = 100;
 
 const sha256 = (data: string | Buffer): string => createHash('sha256').update(data).digest('hex');
 
@@ -66,6 +70,39 @@ export function fileRouter(vaultRoot: string): Router {
     }),
   );
 
+  // Names to notes, for text that isn't a vault file: kanban cards, comments,
+  // bot results. `?ref=Research/ai/x.md&ref=x` answers each with the indexed
+  // path the scanner would link it to, or null. Same rules as the link graph.
+  // A folder ref ending in `/` answers with the folder path and its slash.
+  router.get(
+    '/resolve',
+    wrap(async (req, res) => {
+      const raw = req.query['ref'];
+      const refs = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw]).filter(
+        (r): r is string => typeof r === 'string' && r.trim() !== '' && r.length <= 500,
+      );
+      if (refs.length > MAX_RESOLVE_REFS) throw new HttpError(400, `at most ${MAX_RESOLVE_REFS} refs per request`);
+      const resolved: Record<string, string | null> = {};
+      if (refs.length > 0) {
+        const { rows: files } = await query<{ id: number; path: string; name: string }>(
+          `SELECT id, path, name FROM vault_files`,
+        );
+        const resolve = buildResolver(files);
+        const pathById = new Map(files.map((f) => [f.id, f.path]));
+        for (const ref of refs) {
+          const id = resolve(ref);
+          resolved[ref] = id === null ? null : (pathById.get(id) ?? null);
+          // A folder ("Areas/x/kit/"): resolves to itself, with the slash, when the index has a file below it.
+          if (resolved[ref] === null && ref.endsWith('/')) {
+            const dir = ref.replace(/^\.\//, '').replace(/\/+$/, '');
+            if (dir && files.some((f) => f.path.startsWith(`${dir}/`))) resolved[ref] = `${dir}/`;
+          }
+        }
+      }
+      res.json({ resolved });
+    }),
+  );
+
   // The editor loads from disk, not from the index: the index can lag the disk
   // by a scan, and its body excludes frontmatter.
   router.get(
@@ -91,7 +128,7 @@ export function fileRouter(vaultRoot: string): Router {
       const next = Buffer.from(body.content, 'utf8');
       if (next.length > MAX_EDIT_BYTES) throw new HttpError(413, 'too large to save from the browser');
 
-      // Optimistic lock. The vault has other writers — Obsidian on the Mac, the
+      // Optimistic lock. The vault has other writers - Obsidian on a laptop, the
       // Hermes agent and the git auto-sync on the server — and silently
       // overwriting one of their changes is the worst thing an editor can do.
       const current = await readFile(abs).catch(() => null);

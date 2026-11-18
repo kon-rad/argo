@@ -1,13 +1,17 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { basename } from 'node:path';
-import { withTransaction } from '../db.js';
+import { query, withTransaction } from '../db.js';
+import { hermesChannel } from './channel.js';
+import { channelMeta, claudeSessionMeta } from './channelMeta.js';
 import { parseClaudeJsonl } from './claude.js';
 import { readHermes } from './hermes.js';
 import { splitLog } from './logs.js';
 import { readFrom } from '../usage/readFrom.js';
 import * as stage from './stage.js';
+import { attributeBots } from './bot.js';
 import * as store from './store.js';
-import type { Host } from './types.js';
+import type { Host, SessionInput } from './types.js';
 
 export type Counts = { files: number; sessions: number; messages: number; logLines: number; memoryVersions: number };
 export type Bump = (s: string, k: keyof Counts, n?: number) => void;
@@ -17,6 +21,7 @@ export interface Item {
   kind: 'claude' | 'hermes-db' | 'log' | 'memory' | 'blob'; parentSid?: string; project?: string;
   rotatedPath?: string; // log: `<name>.1` holding the tail of the previously ingested file
   daily?: boolean; // hermes state: one upload per UTC day
+  dedupeDb?: string; // hermes-db: skip sessions this other state.db (the main home's snapshot) holds
 }
 
 export { readFrom } from '../usage/readFrom.js';
@@ -34,18 +39,44 @@ export async function ingest(item: Item, errors: string[], bump: Bump): Promise<
     return;
   }
   if (item.kind === 'hermes-db') {
-    const { sessions, messages } = readHermes(item.localPath, item.host);
+    const read = readHermes(item.localPath, item.host, item.source as SessionInput['source']);
+    let { sessions, messages } = read;
+    if (item.source === 'hermes:user') {
+      // A second Hermes home on the same machine shares the history it was copied from:
+      // a session id the main home already archived is the same session, not a new one.
+      const { rows } = await query<{ external_id: string }>(
+        `SELECT external_id FROM archive_sessions WHERE source='hermes' AND host=$1 AND external_id = ANY($2::text[])`,
+        [item.host, sessions.map((s) => s.externalId)]);
+      const dup = new Set(rows.map((r) => r.external_id));
+      // Also the main home's own snapshot: its sessions count even if its ingest failed earlier in this run.
+      if (item.dedupeDb && existsSync(item.dedupeDb)) {
+        const main = new DatabaseSync(item.dedupeDb, { readOnly: true });
+        try { for (const r of main.prepare('SELECT id FROM sessions').all() as Array<{ id: unknown }>) dup.add(String(r.id)); }
+        finally { main.close(); }
+      }
+      sessions = sessions.filter((s) => !dup.has(s.externalId));
+      messages = messages.filter((m) => !dup.has(m.sessionExternalId));
+    }
     const size = stage.fileState(item.localPath, row).sizeBytes;
     await withTransaction(async (tx) => {
       const ids = new Map<string, number>();
+      const changed: number[] = [];
       for (const s of sessions) {
-        const r = await store.upsertSession(tx, { ...s, b2Path: row.b2Path });
-        ids.set(s.externalId, r.id); if (r.changed) bump('hermes', 'sessions');
+        // The same channel label agents-sync writes: this upsert replaces meta, so leaving it out would erase it.
+        const profile = item.source.includes(':') ? item.source.split(':')[1]! : 'main';
+        const r = await store.upsertSession(tx, { ...s, meta: { ...s.meta, ...channelMeta(hermesChannel(s.meta.source), 'hermes', profile) }, b2Path: row.b2Path });
+        ids.set(s.externalId, r.id); if (r.changed) { bump('hermes', 'sessions'); changed.push(r.id); }
       }
       const bySession = new Map<string, typeof messages>();
       let orphans = 0;
       for (const m of messages) { if (!ids.has(m.sessionExternalId)) { orphans++; continue; } (bySession.get(m.sessionExternalId) ?? bySession.set(m.sessionExternalId, []).get(m.sessionExternalId)!).push(m); }
-      for (const [sid, msgs] of bySession) bump('hermes', 'messages', await store.upsertMessages(tx, ids.get(sid)!, msgs));
+      const touched = new Set(changed);
+      for (const [sid, msgs] of bySession) {
+        const n = await store.upsertMessages(tx, ids.get(sid)!, msgs);
+        bump('hermes', 'messages', n);
+        if (n) touched.add(ids.get(sid)!);
+      }
+      await attributeBots(tx, [...touched]);
       await store.markIngested(tx, row.id, size, 0, null);
       if (orphans) errors.push(`hermes ${item.host}: ${orphans} messages with unknown session skipped`);
     });
@@ -66,11 +97,12 @@ export async function ingest(item: Item, errors: string[], bump: Bump): Promise<
         const s = await store.upsertSession(tx, { source: 'claude-code', host: 'mac', externalId: sid,
           parentExternalId: item.parentSid ?? null, project: item.project ?? null, title: chunk.title, model: chunk.model,
           startedAt: null, endedAt: null, messageCount: null, inputTokens: null, outputTokens: null, costUsd: null,
-          meta: {}, b2Path: row.b2Path });
+          meta: claudeSessionMeta(chunk), b2Path: row.b2Path });
         if (s.changed) bump('claude-code', 'sessions');
         const msgs = item.parentSid ? chunk.messages.map((m) => ({ ...m, isSidechain: true })) : chunk.messages;
         bump('claude-code', 'messages', await store.upsertMessages(tx, s.id, msgs));
         await store.refreshSessionStats(tx, s.id);
+        await attributeBots(tx, [s.id]);
       }
       await store.markIngested(tx, row.id, offset + chunk.consumedBytes, startLine + chunk.linesConsumed, st.fingerprint);
     });

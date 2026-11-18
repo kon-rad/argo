@@ -4,6 +4,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { z } from 'zod';
+import { readAddonList } from './addons/list.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** app/ regardless of whether we run from src/ (tsx) or dist/ (built). */
@@ -20,19 +21,102 @@ if (existsSync(vaultEnv)) dotenv.config({ path: vaultEnv, quiet: true });
 const Schema = z.object({
   VAULT_ROOT: z.string().default(defaultVaultRoot),
   DATABASE_URL: z.string().default('postgres://localhost:5432/secondbrain'),
+  // Standalone review worker only; never passed to its model subprocess.
+  REVIEW_DB_URL: z.string().optional(),
+  GH_TOKEN: z.string().optional(),
+  // Structured settings path, absolute or relative to VAULT_ROOT.
+  SECONDBRAIN_SETTINGS: z.string().optional(),
+  // plan|apply filesystem overrides, primarily for dry runs and tests.
+  SB_UNIT_DIR: z.string().optional(),
+  SB_ENV_FILE: z.string().optional(),
+  // cli-config, called by deploy.sh: unit files only, and the server fields it overrides.
+  SB_CONFIG_UNITS_ONLY: z.string().optional(),
+  SB_CONFIG_BASE_UNITS: z.string().optional(),
+  SB_APP_USER: z.string().optional(),
+  SB_APP_DIR: z.string().optional(),
+  SB_VAULT_DIR: z.string().optional(),
+  SB_HERMES_HOME: z.string().optional(),
+  // Client-mode database URLs used by launchers and bot-scoped roles.
+  SECONDBRAIN_DB_URL: z.string().optional(),
+  SB_ORG_DB_URL: z.string().optional(),
+  ORG_DB_URL: z.string().optional(),
+  // Calling-agent identity and run metadata supplied by the agent harness.
+  ORG_AGENT: z.string().optional(),
+  ORG_VIA: z.string().optional(),
+  ORG_RUN: z.string().optional(),
+  // Pilot routing and breaker overrides for org commands.
+  ORG_ROUTING_JSON: z.string().optional(),
+  ORG_BREAKER: z.enum(['on', 'off']).optional(),
+  ORG_BREAKER_AS: z.string().optional(),
+  // Attribution override for project report writes.
+  PROJECTS_BY: z.string().optional(),
+  // Local agent and usage filesystem locations.
+  PLAN_USAGE_LOG: z.string().optional(),
+  CLAUDE_PROJECTS_DIR: z.string().optional(),
+  CLAUDE_BIN: z.string().optional(),
+  CC_RUNS_DIR: z.string().optional(),
+  SECONDBRAIN_TELEGRAM_DIR: z.string().optional(),
+  // Usage sync host labels, destinations, credentials and batching controls.
+  USAGE_HOST: z.string().optional(),
+  USAGE_SYNC_HOST: z.string().optional(),
+  USAGE_SYNC_SERVER: z.string().optional(),
+  USAGE_SYNC_TOKEN: z.string().optional(),
+  USAGE_PUSH_HOST: z.string().optional(),
+  USAGE_PUSH_STATE: z.string().optional(),
+  USAGE_PUSH_MAX_BYTES: z.coerce.number().int().positive().default(20_000_000),
+  // Standalone ledger location and an optional token override.
+  SB_LEDGER_DIR: z.string().optional(),
+  SB_LEDGER_TOKEN: z.string().optional(),
+  // Archive and agent-sync machine paths and commands.
+  BOT_REPOS_FILE: z.string().optional(),
+  HERMES_ENV_FILE: z.string().optional(),
+  REMOTE_HERMES_USER: z.string().optional(),
+  AGENTS_SYNC_HOST: z.string().optional(),
+  REDACT_ENV_FILES: z.string().optional(),
+  B2STORE: z.string().optional(),
+  // Provider key-file and API credentials used by credits and avatar jobs.
+  CREDITS_KEYS_FILE: z.string().optional(),
+  FAL_BILLING_KEY: z.string().optional(),
+  GEMINI_API_KEY: z.string().optional(),
+  // Optional public collectors and their output locations.
+  BASE_RPC_URL: z.string().url().default('https://mainnet.base.org'),
+  LIVESTREAM_YOUTUBE: z.string().optional(),
+  LIVESTREAM_TWITCH: z.string().optional(),
+  LIVESTREAM_KICK: z.string().optional(),
+  LIVESTREAM_PUBLIC_DIR: z.string().default('/var/lib/secondbrain-public'),
+  SUMMARIES_LOCAL_URL: z.string().url().optional(),
+  // Standard process metadata used for local paths and service instructions.
+  XDG_CONFIG_HOME: z.string().optional(),
+  USER: z.string().optional(),
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  // Opt-in disposable databases for the desk integration suites.
+  DESK_TEST_DATABASE_URL: z.string().url().optional(),
+  DESK_PUBLICATION_TEST_DATABASE_URL: z.string().url().optional(),
   PORT: z.coerce.number().int().positive().default(5123),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   // Optional: the embeddings source falls back to a local Ollama provider, and
   // the rest of the app runs perfectly well with no embeddings at all.
   TOGETHER_API_KEY: z.string().optional(),
   OLLAMA_URL: z.string().default('http://127.0.0.1:11434'),
+  // Other computers that run Ollama, as `name=url` pairs: `box1=http://192.0.2.10:11434,box2=...`.
+  // Each shows up as a chat provider `ollama-<name>` whose models are discovered live.
+  OLLAMA_MACHINES: z.string().default(''),
+  // Chat providers (chat module, and the optional contextual-enrichment step of the
+  // embedder). A provider is offered only when its key is set; see app/config/llm-presets.json.
+  ANTHROPIC_API_KEY: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional(),
+  OPENROUTER_API_KEY: z.string().optional(),
+  // Reranker for the chat's retrieval (Cohere-compatible /rerank). Unset: reranking is off.
+  RERANK_API_KEY: z.string().optional(),
+  RERANK_URL: z.string().url().optional(),
+  RERANK_MODEL: z.string().default('Salesforce/Llama-Rank-V1'),
   // Writes the SQL for the Database page's "ask" box, on Together with the
   // key above. Checked by a real request on 2026-09-28; Together's catalogue
   // shifts, so swap it here rather than in code when this one goes away.
   SQL_MODEL: z.string().default('deepseek-ai/DeepSeek-V4.1-Flash'),
-  // `local` is the Mac: loopback is the security boundary and there is no
+  // `local` is a local install: loopback is the security boundary and there is no
   // login. `server` is the internet-facing box behind Caddy: every /api route
-  // needs a session, and the Mac-only routes (robot launcher, HTTP shutdown)
+  // needs a session, and the local-only routes (robot launcher, HTTP shutdown)
   // are not mounted at all.
   DEPLOYMENT: z.enum(['local', 'server']).default('local'),
   // The browser-visible origin, e.g. https://brain.example.com. Mutating requests
@@ -43,21 +127,96 @@ const Schema = z.object({
   AUTH_PASSWORD_HASH: z.string().optional(),
   AUTH_TOTP_SECRET: z.string().optional(),
   // `b2store serve` on loopback, for streaming the big files that live only in
-  // B2 (see .hermes/scripts/b2-offload.sh). Unset on the Mac: originals are local.
+  // B2 (see .hermes/scripts/b2-offload.sh). Unset on a local install: originals are local.
   B2_SERVE_URL: z.string().url().optional(),
-  // 0 = never (the Mac, where rescans are a button). The server sets 30.
+  // uploads module: browser uploads go straight to this bucket with presigned S3 multipart URLs (Backblaze B2's
+  // S3-compatible API), then the server streams each file into its encrypted vault path. The same names `b2store` reads.
+  B2_KEY_ID: z.string().optional(),
+  B2_APP_KEY: z.string().optional(),
+  B2_BUCKET: z.string().optional(),
+  B2_S3_ENDPOINT: z.string().url().optional(),
+  B2STORE_CRYPT_PASSWORD: z.string().optional(),
+  B2STORE_CRYPT_PASSWORD2: z.string().optional(),
+  // uploads module: the biggest single file the page accepts, in GB.
+  UPLOADS_MAX_GB: z.coerce.number().positive().default(50),
+  // uploads module: bearer token for the second machine that pulls working copies (unset: that route answers 401).
+  UPLOADS_PULL_TOKEN: z.string().min(16).optional(),
+  // 0 = never (a local install, where rescans are a button). The server sets 30.
   SCAN_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(0),
   // Optional features, comma separated (MODULE_NAMES below). Off unless listed.
   MODULES: z.string().default(''),
+  // Desk values are validated only when the addon boots. Disabled installations
+  // do not require a payment network or any external marketplace services.
+  DESK_DOMAIN: z.string().optional(),
+  DESK_CHAIN_ID: z.string().optional(),
+  DESK_PAYMENT_INTERFACE: z.string().optional(),
+  DESK_USDC_ADDRESS: z.string().optional(),
+  DESK_RPC_URL: z.string().optional(),
+  DESK_PUBLIC_ORIGIN: z.string().optional(),
+  DESK_RUNTIME_MODULE: z.string().optional(),
+  DESK_ARKIV_RPC_URL: z.string().optional(),
+  DESK_ARKIV_CHAIN_ID: z.string().optional(),
+  DESK_ARKIV_PRIVATE_KEY: z.string().optional(),
+  DESK_ARKIV_LIFETIME_BLOCKS: z.string().optional(),
+  DESK_BEE_URL: z.string().optional(),
+  DESK_BEE_POSTAGE_BATCH_ID: z.string().optional(),
+  DESK_IDENTITY_RPC_URL: z.string().optional(),
+  DESK_IDENTITY_CHAIN_ID: z.string().optional(),
+  DESK_ENS_RPC_URL: z.string().optional(),
+  DESK_ENS_CHAIN_ID: z.string().optional(),
+  DESK_ERC8004_REGISTRY_ADDRESS: z.string().optional(),
+  DESK_IDENTITY_METADATA_HOSTS: z.string().optional(),
+  DESK_TRANSPORT_TIMEOUT_MS: z.string().optional(),
+  DESK_MAX_RESPONSE_BYTES: z.string().optional(),
+  DESK_MAX_ARTIFACT_BYTES: z.string().optional(),
+  DESK_PUBLICATION_DESTINATION: z.string().optional(),
+  // Deprecated (one release): `SUMMARIES=on` used to install the summaries timer; `summaries` is a module now.
+  SUMMARIES: z.string().optional(),
   // Shown in the TOTP app and as the comment author on the Agents board.
   OWNER_NAME: z.string().trim().min(1).default('owner'),
   // org module: the name of the human agent in the org (org_agents, runtime human).
   ORG_OWNER: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default('owner'),
+  // org module: the kanban assignee for vault work, a Claude Code session on the owner's machine that no dispatcher
+  // spawns. Boards that predate the setting keep working.
+  ORG_VAULT_ASSIGNEE: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default('vault-session'),
+  // org module: runs one remembered agent session may carry before the next wake starts fresh (1: never resume).
+  ORG_SESSION_MAX_RUNS: z.coerce.number().int().min(1).default(3),
+  // org module: re-wakes of a bot for the same card in 24 h before it is held for a person, and the first
+  // wait between them in minutes (doubles each time).
+  ORG_TASK_WAKE_RETRIES: z.coerce.number().int().min(0).default(2),
+  ORG_TASK_WAKE_BACKOFF_MINUTES: z.coerce.number().int().min(0).default(15),
+  // org module: the local day for "one routine per day" and the dispatcher's quiet hours (an IANA zone name).
+  ORG_TZ: z.string().min(1).default('UTC'),
+  // org module: the engine's dispatcher (secondbrain dispatch; docs/zen-runtime.md). `on` installs its timer and
+  // runs bots whose roster runtime is zen-agent; `off` leaves wakeups to whatever dispatcher the install has.
+  ORG_DISPATCH: z.enum(['on', 'off']).default('off'),
+  ORG_DISPATCH_TICK_SECONDS: z.coerce.number().int().min(10).default(120),
+  ORG_DISPATCH_PARALLEL: z.coerce.number().int().min(1).default(2),
+  // Local hours with no wakes, `HH-HH` (e.g. 01-07); unset: none.
+  ORG_DISPATCH_QUIET: z.string().regex(/^\d{2}-\d{2}$/).optional(),
+  // Tokens all bots together may spend in one local day before the rest of the day's wakes are held; 0: no cap.
+  ORG_DISPATCH_DAILY_TOKENS: z.coerce.number().int().min(0).default(0),
+  // The zen-agent command the dispatcher runs (on the PATH, or an absolute path).
+  ORG_ZEN_COMMAND: z.string().min(1).default('zen-agent'),
+  // Subscription-only Codex CLI. A roster row runs only after ChatGPT login and exact-model preflight.
+  ORG_CODEX_COMMAND: z.string().min(1).default('codex'),
+  // usage_hosts.slug where ORG_CODEX_COMMAND executes. Unset: this server's registered usage host.
+  ORG_CODEX_HOST: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/).optional(),
+  // Native Codex conversation directory; authentication remains owned by the CLI.
+  CODEX_HOME: z.string().min(1).optional(),
+  // Where zen-agent writes its traces (zen.json sessionsDir); usage-sync reads them. Default: <vault>/.zen/sessions.
+  ZEN_SESSIONS_DIR: z.string().optional(),
+  // The classify step (secondbrain classify): `none` falls every decision through to the old path.
+  CLASSIFY_PROVIDER: z.enum(['none', 'openrouter', 'typesafe']).default('none'),
+  CLASSIFY_DAILY_TOKENS: z.coerce.number().int().min(0).default(2_000_000),
+  TYPESAFE_API_KEY: z.string().optional(),
   // Vault-relative notes the nav links to; unset hides the link.
   DEV_LOG_PATH: z.string().optional(),
   DOCS_PATH: z.string().optional(),
-  // Mac only: a script the "start robot" button runs. Unset: the route is not mounted.
+  // Local install only: a script the "start robot" button runs. Unset: the route is not mounted.
   ROBOT_LAUNCH_SCRIPT: z.string().optional(),
+  // Where `secondbrain-vault sync` writes sync.json on this machine (docs/sync.md); the header chip reads it.
+  SYNC_STATE_DIR: z.string().optional(),
   // Hermes's home on this machine and, for the archive, on the server it pulls from.
   HERMES_HOME: z.string().default(resolve(homedir(), '.hermes')),
   REMOTE_HERMES_HOME: z.string().optional(),
@@ -72,31 +231,72 @@ const Schema = z.object({
   // and a Ring pull would replace the master's rows.
   INDEXER: z.enum(['on', 'off']).default('on'),
   RING_PULL_DB: z.string().regex(/^[a-z_][a-z0-9_]*$/).default('secondbrain'),
-  // agent-hub (argo-exo/agents/agent-hub) on the droplet: the kanban board, Claude chats and the Telegram toggle.
-  // Unset on the Mac, where the Agents page's live tabs say so.
+  // agent-hub on the server: the kanban board, Claude chats and the Telegram toggle.
+  // Unset on a local install, where the Agents page's live tabs say so.
   AGENT_HUB_URL: z.string().url().optional(),
   AGENT_HUB_TOKEN: z.string().min(32).optional(),
+  // agents module: `zen-agent serve` (the zen-agent chat host, loopback, bearer token) behind /api/zen. Unset: the
+  // zen-agent chat page says so.
+  ZEN_AGENT_URL: z.string().url().optional(),
+  ZEN_AGENT_TOKEN: z.string().min(16).optional(),
+  // board module: minutes a claimed card's lease lasts without a heartbeat before the board takes it back.
+  BOARD_LEASE_MINUTES: z.coerce.number().int().min(1).default(60),
+  // board module, on a machine that is not the server: cli-board reaches the board over HTTPS with a token
+  // minted by `cli-board token create` (door 2 of docs/board-design.md). Unset: the database connection is used.
+  BOARD_URL: z.string().url().optional(),
+  BOARD_TOKEN: z.string().min(20).optional(),
+  // Where `secondbrain-vault clis install` writes the agent CLI wrappers (default ~/.local/bin); the doctor looks there.
+  SECONDBRAIN_BIN_DIR: z.string().optional(),
   // Read-only bearer token for a kiosk's Projects panel (GET /api/feed/projects).
   // Unset = the feed route does not exist.
   PROJECTS_FEED_TOKEN: z.string().min(32).optional(),
+  // Read-only bearer token for an agent on this machine (zen-agent's knowledge tool): GET /api/search, /api/search/global
+  // and /api/file/source, from loopback only and never through a proxy. Unset = the token does nothing.
+  // A blank value (the line uncommented with nothing after it) means unset, not a startup failure.
+  KNOWLEDGE_TOKEN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(32).optional()),
   // A local OpenAI-compatible speech server (e.g. mlx-audio running Kokoro),
   // localhost only. Used by the voice module's Listen button; never on a server.
   TTS_URL: z.string().url().default('http://127.0.0.1:8880'),
   TTS_MODEL: z.string().default('mlx-community/Kokoro-82M-bf16'),
-  // localai module: a home model host's logging gateway export (http://<host>:<port>, no path) and
-  // the usage_hosts slug its rows are filed under. Unset URL = local-ai-pull does nothing.
   LOCAL_AI_EXPORT_URL: z.string().url().optional(),
   LOCAL_AI_HOST: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/).default('local'),
+  // social module: LinkedIn is the first provider. App-level OAuth credentials
+  // from developer.linkedin.com; one app serves every connected account.
+  LINKEDIN_CLIENT_ID: z.string().optional(),
+  LINKEDIN_CLIENT_SECRET: z.string().optional(),
+  // Base URL the LinkedIn OAuth callback redirects to, e.g. https://brain.example.com.
+  // Must exactly match a redirect URI registered on the LinkedIn app. Defaults to
+  // PUBLIC_ORIGIN (server) or http://localhost:5123 (local dev).
+  SOCIAL_REDIRECT_BASE_URL: z.string().url().optional(),
+  // 32-byte key (64 hex chars) used to AES-256-GCM encrypt stored OAuth tokens.
+  // Required only when the social module is on; generate with
+  // `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`.
+  FACEBOOK_APP_ID: z.string().min(1).optional(),
+  FACEBOOK_APP_SECRET: z.string().min(1).optional(),
+  FACEBOOK_LOGIN_CONFIG_ID: z.string().min(1).optional(),
+  SOCIAL_TOKEN_ENC_KEY: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
+  // A personal key from Buffer (Settings > API). Relays Instagram, YouTube
+  // Shorts and X through the channels connected in that Buffer account;
+  // unset = no Buffer relay.
+  BUFFER_API_KEY: z.string().min(1).optional(),
+  // Public base URL Buffer fetches post media from (it has no upload), e.g.
+  // https://brain.example.com. Must be reachable from the internet.
+  // Defaults to SOCIAL_REDIRECT_BASE_URL.
+  SOCIAL_MEDIA_BASE_URL: z.string().url().optional(),
+  // X counts a post's length by weight; 280 on a free account, 25000 on Premium.
+  SOCIAL_X_MAX_CHARS: z.coerce.number().int().positive().default(280),
+  // YouTube Data API v3 key for the social metrics collector (docs/social-metrics.md).
+  // Unset: configured YouTube accounts report "missing credential" and nothing else changes.
+  YOUTUBE_API_KEY: z.string().min(1).optional(),
 });
 
-export const MODULE_NAMES = ['ring', 'agents', 'projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream', 'localai'] as const;
-export type ModuleName = (typeof MODULE_NAMES)[number];
+/** Every env key the schema validates, sorted. `test/env-schema.test.ts` holds this against every `process.env` read in the source. */
+export const CONFIG_ENV_KEYS: readonly string[] = Object.keys(Schema.shape).sort();
 
-/** `"ring, agents"` → {'ring', 'agents'}; unknown names are ignored. */
-export function parseModules(raw: string): ReadonlySet<ModuleName> {
-  const wanted = raw.split(',').map((m) => m.trim());
-  return new Set(MODULE_NAMES.filter((m) => wanted.includes(m)));
-}
+import { modulesFromEnv } from './modules.js';
+
+/** The module model (core, addons, the parsers) lives in ./modules.ts, which has no env dependency. */
+export * from './modules.js';
 
 const parsed = Schema.safeParse(process.env);
 if (!parsed.success) {
@@ -119,14 +319,68 @@ if (parsed.data.DEPLOYMENT === 'server') {
   }
 }
 
+export interface OllamaMachine {
+  name: string;
+  /** The machine's Ollama base, without /v1 and without a trailing slash. */
+  url: string;
+}
+
+/** Parses `name=url,name=url`. Invalid pairs are returned in `skipped`, never thrown. */
+export function parseOllamaMachines(raw: string): { machines: OllamaMachine[]; skipped: string[] } {
+  const machines: OllamaMachine[] = [];
+  const skipped: string[] = [];
+  for (const pair of raw.split(',').map((x) => x.trim()).filter(Boolean)) {
+    const eq = pair.indexOf('=');
+    const name = eq > 0 ? pair.slice(0, eq).trim() : '';
+    const url = eq > 0 ? pair.slice(eq + 1).trim().replace(/\/+$/, '') : '';
+    let ok = /^[a-z0-9][a-z0-9_-]*$/.test(name) && /^https?:\/\/[^\s/]+/.test(url);
+    if (ok) {
+      try {
+        new URL(url);
+      } catch {
+        ok = false;
+      }
+    }
+    if (!ok || machines.some((m) => m.name === name)) skipped.push(pair);
+    else machines.push({ name, url });
+  }
+  return { machines, skipped };
+}
+
+const ollamaMachines = parseOllamaMachines(parsed.data.OLLAMA_MACHINES);
+if (ollamaMachines.skipped.length) {
+  // The logger imports this file, so the one warning goes to stderr directly.
+  console.warn(`OLLAMA_MACHINES: skipped ${ollamaMachines.skipped.length} invalid entr${ollamaMachines.skipped.length === 1 ? 'y' : 'ies'} (expected name=http://host:11434)`);
+}
+
+const schemaShape = Schema.shape as Record<string, z.ZodType>;
+/** Keep explicit run-scoped overrides observable while validating them through the same schema. */
+const schemaEnv = new Proxy(parsed.data, {
+  get(target, key, receiver) {
+    if (typeof key !== 'string' || !(key in schemaShape) || process.env[key] === undefined) {
+      return Reflect.get(target, key, receiver) as unknown;
+    }
+    const current = schemaShape[key]!.safeParse(process.env[key]);
+    return current.success ? current.data : Reflect.get(target, key, receiver) as unknown;
+  },
+});
+
 export const config = {
+  /** Schema-validated environment for operational settings that do not merit a derived field. */
+  env: schemaEnv,
+  /** True only when the process explicitly supplied a key, regardless of schema defaults. */
+  envHas: (key: keyof typeof parsed.data): boolean => process.env[key] !== undefined,
   appRoot,
   vaultRoot: resolve(parsed.data.VAULT_ROOT),
   databaseUrl: parsed.data.DATABASE_URL,
   port: parsed.data.PORT,
   logLevel: parsed.data.LOG_LEVEL,
   togetherApiKey: parsed.data.TOGETHER_API_KEY,
-  ollamaUrl: parsed.data.OLLAMA_URL,
+  ollamaUrl: parsed.data.OLLAMA_URL.replace(/\/+$/, ''),
+  ollamaMachines: ollamaMachines.machines,
+  rerankApiKey: parsed.data.RERANK_API_KEY,
+  rerankUrl: parsed.data.RERANK_URL?.replace(/\/+$/, ''),
+  rerankModel: parsed.data.RERANK_MODEL,
   sqlModel: parsed.data.SQL_MODEL,
   deployment: parsed.data.DEPLOYMENT,
   publicOrigin: parsed.data.PUBLIC_ORIGIN?.replace(/\/+$/, ''),
@@ -135,13 +389,65 @@ export const config = {
   scanIntervalMinutes: parsed.data.SCAN_INTERVAL_MINUTES,
   indexer: parsed.data.INDEXER === 'on',
   b2ServeUrl: parsed.data.B2_SERVE_URL,
+  b2KeyId: parsed.data.B2_KEY_ID,
+  b2AppKey: parsed.data.B2_APP_KEY,
+  b2Bucket: parsed.data.B2_BUCKET,
+  b2S3Endpoint: parsed.data.B2_S3_ENDPOINT,
+  b2CryptPassword: parsed.data.B2STORE_CRYPT_PASSWORD,
+  b2CryptPassword2: parsed.data.B2STORE_CRYPT_PASSWORD2,
+  uploadsMaxBytes: Math.floor(parsed.data.UPLOADS_MAX_GB * 1024 ** 3),
+  uploadsPullToken: parsed.data.UPLOADS_PULL_TOKEN,
   dataDir: resolve(appRoot, 'data'),
-  modules: parseModules(parsed.data.MODULES),
+  modules: modulesFromEnv(parsed.data.MODULES, parsed.data.SUMMARIES, readAddonList(resolve(parsed.data.VAULT_ROOT))),
+  desk: {
+    domain: parsed.data.DESK_DOMAIN,
+    chainId: parsed.data.DESK_CHAIN_ID,
+    paymentInterface: parsed.data.DESK_PAYMENT_INTERFACE,
+    usdcAddress: parsed.data.DESK_USDC_ADDRESS,
+    rpcUrl: parsed.data.DESK_RPC_URL,
+    publicOrigin: parsed.data.DESK_PUBLIC_ORIGIN,
+    runtimeModule: parsed.data.DESK_RUNTIME_MODULE,
+    arkivRpcUrl: parsed.data.DESK_ARKIV_RPC_URL,
+    arkivChainId: parsed.data.DESK_ARKIV_CHAIN_ID,
+    arkivPrivateKey: parsed.data.DESK_ARKIV_PRIVATE_KEY,
+    arkivLifetimeBlocks: parsed.data.DESK_ARKIV_LIFETIME_BLOCKS,
+    beeUrl: parsed.data.DESK_BEE_URL,
+    beePostageBatchId: parsed.data.DESK_BEE_POSTAGE_BATCH_ID,
+    identityRpcUrl: parsed.data.DESK_IDENTITY_RPC_URL,
+    identityChainId: parsed.data.DESK_IDENTITY_CHAIN_ID,
+    ensRpcUrl: parsed.data.DESK_ENS_RPC_URL,
+    ensChainId: parsed.data.DESK_ENS_CHAIN_ID,
+    erc8004RegistryAddress: parsed.data.DESK_ERC8004_REGISTRY_ADDRESS,
+    metadataHosts: parsed.data.DESK_IDENTITY_METADATA_HOSTS,
+    timeoutMs: parsed.data.DESK_TRANSPORT_TIMEOUT_MS,
+    maxResponseBytes: parsed.data.DESK_MAX_RESPONSE_BYTES,
+    maxArtifactBytes: parsed.data.DESK_MAX_ARTIFACT_BYTES,
+    publicationDestination: parsed.data.DESK_PUBLICATION_DESTINATION,
+  },
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,
+  orgVaultAssignee: parsed.data.ORG_VAULT_ASSIGNEE,
+  orgSessionMaxRuns: parsed.data.ORG_SESSION_MAX_RUNS,
+  orgTaskWakeRetries: parsed.data.ORG_TASK_WAKE_RETRIES,
+  orgTaskWakeBackoffMinutes: parsed.data.ORG_TASK_WAKE_BACKOFF_MINUTES,
+  orgTz: parsed.data.ORG_TZ,
+  orgDispatch: parsed.data.ORG_DISPATCH === 'on',
+  orgDispatchTickSeconds: parsed.data.ORG_DISPATCH_TICK_SECONDS,
+  orgDispatchParallel: parsed.data.ORG_DISPATCH_PARALLEL,
+  orgDispatchQuiet: parsed.data.ORG_DISPATCH_QUIET ?? null,
+  orgDispatchDailyTokens: parsed.data.ORG_DISPATCH_DAILY_TOKENS,
+  orgZenCommand: parsed.data.ORG_ZEN_COMMAND,
+  orgCodexCommand: parsed.data.ORG_CODEX_COMMAND,
+  orgCodexHost: parsed.data.ORG_CODEX_HOST ?? null,
+  zenSessionsDir: parsed.data.ZEN_SESSIONS_DIR ?? resolve(parsed.data.VAULT_ROOT, '.zen', 'sessions'),
+  classifyProvider: parsed.data.CLASSIFY_PROVIDER,
+  classifyDailyTokens: parsed.data.CLASSIFY_DAILY_TOKENS,
+  openrouterApiKey: parsed.data.OPENROUTER_API_KEY,
+  typesafeApiKey: parsed.data.TYPESAFE_API_KEY,
   devLogPath: parsed.data.DEV_LOG_PATH ?? null,
   docsPath: parsed.data.DOCS_PATH ?? null,
   robotLaunchScript: parsed.data.ROBOT_LAUNCH_SCRIPT,
+  syncStateDir: parsed.data.SYNC_STATE_DIR,
   hermesHome: parsed.data.HERMES_HOME,
   remoteHermesHome: parsed.data.REMOTE_HERMES_HOME ?? '~/.hermes',
   archiveSshHost: parsed.data.ARCHIVE_SSH_HOST,
@@ -149,10 +455,29 @@ export const config = {
   ringPullDb: parsed.data.RING_PULL_DB,
   agentHubUrl: parsed.data.AGENT_HUB_URL,
   agentHubToken: parsed.data.AGENT_HUB_TOKEN,
+  zenAgentUrl: parsed.data.ZEN_AGENT_URL,
+  zenAgentToken: parsed.data.ZEN_AGENT_TOKEN,
   projectsFeedToken: parsed.data.PROJECTS_FEED_TOKEN,
+  knowledgeToken: parsed.data.KNOWLEDGE_TOKEN,
+  boardLeaseMinutes: parsed.data.BOARD_LEASE_MINUTES,
+  boardUrl: parsed.data.BOARD_URL?.replace(/\/+$/, ''),
+  boardToken: parsed.data.BOARD_TOKEN,
   ttsUrl: parsed.data.TTS_URL.replace(/\/+$/, ''),
   ttsModel: parsed.data.TTS_MODEL,
   localAiExportUrl: parsed.data.LOCAL_AI_EXPORT_URL?.replace(/\/+$/, ''),
   localAiHost: parsed.data.LOCAL_AI_HOST,
   webDist: resolve(appRoot, 'web', 'dist'),
+  linkedinClientId: parsed.data.LINKEDIN_CLIENT_ID,
+  linkedinClientSecret: parsed.data.LINKEDIN_CLIENT_SECRET,
+  socialRedirectBaseUrl: (parsed.data.SOCIAL_REDIRECT_BASE_URL ?? parsed.data.PUBLIC_ORIGIN ?? `http://localhost:${parsed.data.PORT}`).replace(/\/+$/, ''),
+  socialMediaBaseUrl: (
+    parsed.data.SOCIAL_MEDIA_BASE_URL ?? parsed.data.SOCIAL_REDIRECT_BASE_URL ?? parsed.data.PUBLIC_ORIGIN ?? `http://localhost:${parsed.data.PORT}`
+  ).replace(/\/+$/, ''),
+  facebookAppId: parsed.data.FACEBOOK_APP_ID,
+  facebookAppSecret: parsed.data.FACEBOOK_APP_SECRET,
+  facebookLoginConfigId: parsed.data.FACEBOOK_LOGIN_CONFIG_ID,
+  socialTokenEncKey: parsed.data.SOCIAL_TOKEN_ENC_KEY,
+  bufferApiKey: parsed.data.BUFFER_API_KEY,
+  socialXMaxChars: parsed.data.SOCIAL_X_MAX_CHARS,
+  youtubeApiKey: parsed.data.YOUTUBE_API_KEY,
 } as const;

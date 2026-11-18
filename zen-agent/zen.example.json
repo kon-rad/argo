@@ -1,0 +1,42 @@
+{
+  "$comment": "zen-agent configuration. Copy to zen.json next to your vault (or ~/.zen/zen.json). Paths are relative to the vault. Secrets are never here: name the environment variable that holds them. The model is the cheap default for bot wakes (OPENROUTER_API_KEY); openrouter/deepseek/deepseek-v4-flash is the alternative, and a persona's model field or --model overrides it per run.",
+  "model": "openrouter/deepseek/deepseek-v4.1-flash",
+  "thinking": "off",
+  "vault": ".",
+  "sessionsDir": ".zen/sessions",
+  "rules": ["AGENTS.md"],
+  "skills": [".agents/skills", "~/.zen/skills"],
+  "persona": { "org": ".agents/org/org.json", "definitions": ".claude/agents", "memory": ".agents/org/memory" },
+  "tools": ["fs", "shell", "skills", "knowledge", "kanban", "org", "subagent"],
+  "budget": { "turns": 40, "tokens": 400000, "minutes": 30 },
+  "context": {
+    "cap": 0.6,
+    "keepTurns": 6,
+    "parts": { "rules": 6000, "persona": 3000, "playbook": 2000, "skills": 1500, "handoff": 500, "task": 4000, "thread": 2000, "tracker": 1500, "github": 1500, "recall": 2000 },
+    "fetchers": {},
+    "$fetchers_example": "context fetchers per card work type, team or default, e.g. { \"default\": [\"recall\"], \"coding\": [\"tracker\", \"github\"], \"team:research\": [\"recall\"] }; names: tracker (cli-projects list rows for the card's project), github (gh pr view / run list for the card's branch), recall (cli-org recall for the card's title). All off by default; a wake is always a fresh session"
+  },
+  "guard": {
+    "local": ".agents/guard.local.json",
+    "log": "~/.cache/agent-guard.log",
+    "hooks": {
+      "preToolUse": [],
+      "stop": ["python3 .secondbrain/harness/hooks/devlog_gate.py"]
+    }
+  },
+  "shell": { "timeoutS": 120, "maxOutput": 12000 },
+  "knowledge": { "kind": "secondbrain", "url": "http://127.0.0.1:3000", "headersEnv": "ZEN_SB_HEADERS" },
+  "kanban": { "kind": "board", "url": "http://127.0.0.1:5123", "tokenEnv": "BOARD_TOKEN", "board": "exo" },
+  "org": { "command": "cli-org" },
+  "tracker": { "command": "cli-areas" },
+  "github": { "command": "gh" },
+  "machines": {},
+  "$machines_example": "Connected computers running Ollama, name -> { url, contextWindow? }, e.g. { \"box\": { \"url\": \"http://192.0.2.10:11434\", \"contextWindow\": 32000 } }. Their installed models are discovered live and offered as ollama-box/<tag>. Or set OLLAMA_MACHINES=box=http://192.0.2.10:11434. contextWindow = that server's OLLAMA_CONTEXT_LENGTH.",
+  "providers": {
+    "ollama": {
+      "api": "openai-completions",
+      "baseUrl": "http://127.0.0.1:11434/v1",
+      "models": [{ "id": "qwen3:8b", "contextWindow": 32000, "maxTokens": 8000 }]
+    }
+  }
+}

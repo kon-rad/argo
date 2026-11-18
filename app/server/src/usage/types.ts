@@ -1,7 +1,8 @@
 import type { Host } from '../archive/types.js';
 
 export interface UsageCall {
-  source: 'claude-code';
+  /** 'claude-code', or a Hermes home's archive source ('hermes', 'hermes:builder') for the usage-ledger plugin's calls. */
+  source: string;
   host: Host;
   callId: string;
   requestId: string | null;
@@ -21,6 +22,12 @@ export interface UsageCall {
   /** The first tool the response invoked (Bash, Write, ...), and its class; null for the final text. */
   tool: string | null;
   action: Action | null;
+  /** Who served the call ('anthropic', 'bedrock', ...); null when the collector doesn't know. */
+  provider?: string | null;
+  /** Hermes only: the plugin's key (tool-call ids or a text hash) that ties the call to its stored response. */
+  matchKey?: string | null;
+  /** Real dollars priced by the runtime from its provider catalogue (zen-agent); null for the subscription. */
+  costUsd?: number | null;
 }
 
 export type Action = 'dm' | 'post' | 'ticket' | 'card' | 'tracker' | 'write' | 'read' | 'shell' | 'reply';
@@ -63,6 +70,16 @@ export interface RunRecord {
   modelUsage: unknown;
   verify: VerifyRecord | null;
   logPath: string;
+  /** 'claude-code' (the default) or 'zen-agent'. */
+  runtime?: 'claude-code' | 'zen-agent';
+  /** The classify step's label of the run's result. */
+  outcome?: 'did-work' | 'no-op' | 'blocked' | 'failed' | null;
+  /** zen-agent: the size of every system-prompt part, the budget, the card tier, and how often it compacted or was blocked. */
+  parts?: unknown;
+  budget?: unknown;
+  tier?: string | null;
+  compactions?: number | null;
+  blocked?: number | null;
 }
 
 export type PlanWindow = 'five_hour' | 'seven_day';
