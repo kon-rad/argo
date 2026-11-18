@@ -1,3 +1,4 @@
+import { toolResult, normalizeResult } from '../archive/toolResult.js';
 import { sha256 } from '../archive/clean.js';
 import type { Host, ParsedMessage, SessionInput } from '../archive/types.js';
 import type { UsageCall } from './types.js';
@@ -11,7 +12,7 @@ const textOf = (p: Obj): string => {
   if (typeof p.content === 'string') return p.content;
   if (Array.isArray(p.content)) return p.content.map((b: Obj) => b.text ?? '').join('\n');
   if (Array.isArray(p.summary)) return p.summary.map((b: Obj) => b.text ?? '').join('\n');
-  return String(p.message ?? p.text ?? p.arguments ?? p.input ?? p.output ?? '');
+  return normalizeResult(p.message ?? p.text ?? p.arguments ?? p.input ?? p.output ?? '').text;
 };
 
 /** Parse a complete prefix, replayed on change. Cumulative high-water marks are authoritative;
@@ -44,7 +45,7 @@ export function parseCodex(records: unknown[], host: Host): { session: SessionIn
     if (response || fallback) {
       const type = String(p.type ?? 'message');
       const role = str(p.role) ?? (type === 'user_message' ? 'user' : type.endsWith('_output') ? 'tool' : 'assistant');
-      const content = textOf(p);
+      const content = toolResult({ harness: 'codex', payload: p })?.text ?? textOf(p);
       const id = str(p.id) ?? sha256(JSON.stringify([r.timestamp, p]));
       const externalId = `${sid}:${id}`;
       const raw = { ...r, harness: 'codex' };

@@ -80,6 +80,18 @@ const PERSONA_FACET = (a: string) => `coalesce(${PERSONA_SQL(a)}, CASE WHEN (${T
 const CAPACITY = (a: string) => `(SELECT CASE WHEN v ~ '^[0-9]{3,9}$' THEN v::bigint END FROM (SELECT coalesce(
   ${a}.meta ->> 'context_window', ${a}.meta ->> 'context_length', ${a}.meta ->> 'model_context_window') AS v) c)`;
 
+/** Same invocation and same derived result is an expanded/repeated rendering.
+ * Different invocation IDs (including retries) and changed results remain distinct. */
+const CANONICAL_RESULT = (m: string) => `(${m}.step IS DISTINCT FROM 'tool_result' OR ${m}.tool_call_id IS NULL
+  OR (${m}.raw ->> 'harness' IS DISTINCT FROM 'codex' AND ${m}.raw ->> 'role' IS DISTINCT FROM 'tool') OR NOT EXISTS (
+  SELECT 1 FROM archive_messages prior WHERE prior.session_id=${m}.session_id AND prior.step='tool_result'
+    AND prior.tool_call_id=${m}.tool_call_id AND prior.content_text IS NOT DISTINCT FROM ${m}.content_text
+    AND prior.is_error IS NOT DISTINCT FROM ${m}.is_error AND (prior.seq, prior.id) < (${m}.seq, ${m}.id)
+    AND NOT EXISTS (SELECT 1 FROM archive_messages invocation
+      WHERE invocation.session_id=${m}.session_id AND invocation.step='tool_call'
+        AND (invocation.seq, invocation.id) > (prior.seq, prior.id)
+        AND (invocation.seq, invocation.id) <= (${m}.seq, ${m}.id))))`;
+
 /**
  * One row per session. Without `subagents`, a Claude Code session's subagents are folded
  * into their parent (tokens, steps, tool calls) and only top-level sessions are listed.
@@ -109,7 +121,7 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
   // Content filters look at the session and, when folded, its subagents.
   const famOf = `SELECT c.id FROM archive_sessions c WHERE c.id = a.id OR (NOT $3 AND ${CHILD_OF('c', 'a')})`;
   if (q.tool) add(`EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id IN (${famOf}) AND m.tool_names && $?::text[])`, q.tool);
-  if (q.errors) where.push(`EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id IN (${famOf}) AND m.is_error)`);
+  if (q.errors) where.push(`(EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id IN (${famOf}) AND m.is_error AND ${CANONICAL_RESULT('m')}) OR EXISTS (SELECT 1 ${RUNS_OF('a')} AND r.is_error))`);
   if (q.q) add(`(a.title ILIKE '%' || $? || '%' OR EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id IN (${famOf})
     AND m.tsv @@ plainto_tsquery('simple', $?)))`, q.q);
 
@@ -124,8 +136,9 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
      st AS (
        SELECT f.root, count(m.id)::int AS steps,
               coalesce(sum(cardinality(m.tool_names)) FILTER (WHERE m.step = 'tool_call'), 0)::int AS tool_calls,
-              count(m.id) FILTER (WHERE m.is_error)::int AS errors, (count(DISTINCT f.id) - 1)::int AS subagents
-       FROM fam f LEFT JOIN archive_messages m ON m.session_id = f.id AND m.step IS DISTINCT FROM 'meta' GROUP BY f.root),
+              count(m.id) FILTER (WHERE m.is_error)::int AS errors,
+              count(m.id) FILTER (WHERE m.step = 'tool_result' AND m.is_error IS NULL)::int AS unknown_outcomes, (count(DISTINCT f.id) - 1)::int AS subagents
+       FROM fam f LEFT JOIN archive_messages m ON m.session_id = f.id AND m.step IS DISTINCT FROM 'meta' AND ${CANONICAL_RESULT('m')} GROUP BY f.root),
      ca AS (
        SELECT f.root, count(*)::int AS calls, sum(u.input_tokens)::bigint AS input, sum(u.cache_write_tokens)::bigint AS cache_write,
               sum(u.cache_read_tokens)::bigint AS cache_read, sum(u.output_tokens)::bigint AS output,
@@ -155,7 +168,8 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
                ORDER BY m.seq LIMIT 8) f) AS opening,
             lc.tokens AS context_tokens, lc.ts AS context_at, ${CAPACITY('p')} AS context_window,
             p.started_at, p.ended_at, p.total,
-            st.steps, st.tool_calls, st.errors, st.subagents,
+            st.steps, st.tool_calls, st.errors, st.unknown_outcomes, st.subagents,
+            (SELECT count(*)::int ${RUNS_OF('p')} AND r.is_error) AS run_failures,
             CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.models, CASE WHEN p.model IS NULL THEN '{}'::text[] ELSE ARRAY[p.model] END)
                  ELSE CASE WHEN p.model IS NULL THEN '{}'::text[] ELSE ARRAY[p.model] END END AS models,
             CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.calls, 0) ELSE coalesce((p.meta ->> 'api_call_count')::int, 0) END AS calls,
@@ -299,7 +313,7 @@ export function agentSessionsRouter(): Router {
        FROM fam f JOIN archive_messages m ON m.session_id = f.id
        LEFT JOIN usage_calls u ON f.source IN ('claude-code', 'codex') AND u.source = f.source AND u.host = f.host AND u.session_external_id = f.external_id
          AND u.message_external_id = m.external_id
-       WHERE ($2 OR m.step IS DISTINCT FROM 'meta')
+       WHERE ($2 OR m.step IS DISTINCT FROM 'meta') AND ${CANONICAL_RESULT('m')}
        ORDER BY m.ts NULLS FIRST, f.own DESC, m.session_id, m.seq
        OFFSET $3 LIMIT $4`, [rootId, q.meta, q.offset, q.limit + 1]);
     const more = rows.length > q.limit;

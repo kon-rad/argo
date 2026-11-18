@@ -280,3 +280,5 @@ These are enforced by tests and hold across the codebase.
 | `web/src/routes/` | Browse, Search, Sources |
 | `db/migrations/` | Plain SQL |
 | `bin/secondbrain` | The CLI — the single implementation of all launcher logic |
+
+**Recorded tool outcomes.** Codex and Hermes tool results now decode structured output and recorded exit/outcome fields. Session detail distinguishes failure, success and unknown, and keeps recorded run failures separate. Existing archives can be rebuilt through scoped `secondbrain archive-steps --results --runtime codex|hermes` dry-run/replay without changing tokens. See [the replay and canary procedure](../docs/tool-result-replay.md).

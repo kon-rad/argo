@@ -155,3 +155,7 @@ The optional social addon mounts an app-owned Unified Login connect page and a c
 ## Observatory evidence and replay
 
 The optional `observatory` addon reads existing source tables through the owner-session boundary and effective database role. Bounded repeatable-read exports feed the pure versioned reducer in `app/shared/observatory.ts`. Archive steps supply tool evidence; usage rows remain usage measurements. Recorded execution intervals govern visibility, while missing lifecycle and sender provenance remain unknown. Five-minute per-session exports pin pagination and revalidate visibility. See [API and replay contract](observatory.md) and [coordinator audit queries](audits/observatory.sql). No new collectors or LLM processing are involved.
+
+### Recorded tool result derivation
+
+Codex and Hermes archives use `archive/toolResult.ts` for structured output and nullable success/failure, shared by import and detail expansion. `archive/store.ts` derives persisted fields and records a parser version independent of raw SHA. `archive/replayResults.ts` reuses that derivation for scoped dry-run/replay without rewriting raw, source identity, timestamps or token records. List counts and detail use the same invocation rendering predicate. Explicit run lifecycle failures remain separate from tool failures. See [operator replay](tool-result-replay.md).

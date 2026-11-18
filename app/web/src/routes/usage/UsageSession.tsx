@@ -72,7 +72,7 @@ function StepView({ step, show }: { step: AgentStep; show: Show }) {
     <article aria-label={step.step === 'prompt' ? 'User message' : step.step === 'response' ? 'Assistant message' : label}
       className={`my-3 rounded-xl border border-[var(--rule)] p-4 ${step.step === 'prompt' ? 'ml-auto w-[92%] bg-[var(--paper-sunk)]' : 'mr-auto w-full'} ${step.subagent ? 'ml-6 border-l border-[var(--rule)] pl-2 max-md:w-[calc(100%-1.5rem)]' : ''}`}>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-dim)]">
-        <span className="font-semibold text-[var(--ink)]">{label}</span><span>{time(step.ts)}</span><Sub name={step.subagent} />{details}
+        <span className="font-semibold text-[var(--ink)]">{label}</span>{step.step === 'tool_result' && <span>{step.isError === null ? 'outcome unknown' : step.isError ? 'error' : 'success'}</span>}<span>{time(step.ts)}</span><Sub name={step.subagent} />{details}
       </div>
       <SessionContent text={step.text} literal={step.step === 'tool_result'} /><FullText step={step} />
     </article>
@@ -90,6 +90,8 @@ function ToolCard({ pair, show }: { pair: ToolPair; show: Show }) {
         <span>{time(call.ts)}</span>
         {pair.durationMs !== null && <span>{duration(pair.durationMs)}</span>}
         {failed && <span className="font-semibold text-red-600">✗ error</span>}
+        {result && result.isError === null && <span>outcome unknown</span>}
+        {result?.isError === false && <span>success</span>}
         {!result && <span>no result on this page</span>}
         <Sub name={call.subagent} />
       </summary>
@@ -171,6 +173,8 @@ export default function UsageSession() {
       <div className="text-xs text-[var(--ink-dim)]">
         {s.calls} calls · in {formatTokens(s.input)} · cache w {formatTokens(s.cache_write)} · cache r {formatTokens(s.cache_read)} · out {formatTokens(s.output)}
         {s.reasoning ? ` · reasoning ${formatTokens(s.reasoning)}` : ''} · {s.tool_calls} tool calls{s.errors ? ` (${s.errors} failed)` : ''}
+        {s.unknown_outcomes ? ` · ${s.unknown_outcomes} tool outcomes unknown` : ''}
+        {s.run_failures ? ` · ${s.run_failures} recorded run failures (separate from tools)` : ''}
         {s.subagents ? ` · ${s.subagents} subagents` : ''}
         {s.harness !== 'claude-code' && s.cost_usd != null && ` · ${Number(s.cost_usd).toFixed(2)} USD`}
       </div>

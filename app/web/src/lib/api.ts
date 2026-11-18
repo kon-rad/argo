@@ -546,7 +546,7 @@ export interface AgentSessionRow {
   context_tokens?: number | null; context_at?: string | null;
   /** The context window recorded with the session; null: unknown (never guessed from the model name). */
   context_window?: number | null;
-  started_at: string | null; ended_at: string | null; steps: number; tool_calls: number; errors: number; subagents: number;
+  started_at: string | null; ended_at: string | null; steps: number; tool_calls: number; errors: number; unknown_outcomes?: number; run_failures?: number; subagents: number;
   models: string[]; calls: number; input: number; cache_write: number; cache_read: number; output: number; reasoning: number;
   cost_usd?: number | null;
 }

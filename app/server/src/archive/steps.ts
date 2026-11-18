@@ -5,6 +5,7 @@
  * shows (a Hermes assistant row = thinking + response + one part per tool call).
  * Pure: no database, no IO.
  */
+import { toolResult } from './toolResult.js';
 import { isLocalCommandText, stripChannelTag } from './channel.js';
 
 export type Step = 'prompt' | 'response' | 'thinking' | 'tool_call' | 'tool_result' | 'system' | 'meta';
@@ -104,7 +105,7 @@ function codexFields(raw: Obj): StepFields {
     : ['function_call_output', 'custom_tool_call_output'].includes(type) ? 'tool_result'
     : type === 'reasoning' ? 'thinking' : p.role === 'user' || type === 'user_message' ? 'prompt'
     : p.role === 'assistant' || type === 'agent_message' ? 'response' : 'meta';
-  return { step, toolNames: str(p.name) ? [p.name] : [], toolCallId: str(p.call_id), isError: p.is_error === true ? true : null };
+  return { step, toolNames: str(p.name) ? [p.name] : [], toolCallId: str(p.call_id), isError: toolResult(raw)?.isError ?? null };
 }
 
 export function stepFields(raw: unknown): StepFields {
@@ -117,7 +118,7 @@ export function stepFields(raw: unknown): StepFields {
     if (role === 'user') return { ...none, step: 'prompt' };
     if (role === 'tool') {
       const name = str(raw.tool_name);
-      return { step: 'tool_result', toolNames: name ? [name] : [], toolCallId: str(raw.tool_call_id), isError: null };
+      return { step: 'tool_result', toolNames: name ? [name] : [], toolCallId: str(raw.tool_call_id), isError: toolResult(raw)?.isError ?? null };
     }
     if (role === 'assistant') {
       const calls = hermesCalls(raw.tool_calls);
@@ -147,7 +148,7 @@ export function expandSteps(row: StepRow): StepPart[] {
   const k = String(row.id);
   if (isObj(raw) && raw.harness === 'codex') {
     const f = codexFields(raw);
-    return [{ key: k, step: f.step, text: row.text, toolName: f.toolNames[0] ?? null, toolCallId: f.toolCallId, isError: f.isError }];
+    return [{ key: k, step: f.step, text: toolResult(raw)?.text ?? row.text, toolName: f.toolNames[0] ?? null, toolCallId: f.toolCallId, isError: f.isError }];
   }
   if (isObj(raw) && isZen(raw)) {
     if (raw.type !== 'message' || !isObj(raw.message)) return [{ key: k, step: zenFields(raw).step, text: row.text, ...base }];
@@ -169,7 +170,7 @@ export function expandSteps(row: StepRow): StepPart[] {
   if (isObj(raw) && isHermes(raw)) {
     const f = stepFields(raw);
     if (raw.role !== 'assistant') {
-      return [{ key: k, step: f.step, text: str(raw.content) ?? row.text, toolName: f.toolNames[0] ?? null, toolCallId: f.toolCallId, isError: null }];
+      return [{ key: k, step: f.step, text: toolResult(raw)?.text ?? str(raw.content) ?? row.text, toolName: f.toolNames[0] ?? null, toolCallId: f.toolCallId, isError: f.isError }];
     }
     const parts: StepPart[] = [];
     const thinking = str(raw.reasoning) ?? str(raw.reasoning_content);
