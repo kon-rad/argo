@@ -82,6 +82,38 @@ describe('Codex dispatcher usage recording', () => {
   });
 });
 
+describe('Codex run recorded on the dispatcher, executed elsewhere', () => {
+  it('moves the run to the host whose native calls arrive, drops the summary there, and leaves a run with no native calls alone', async () => {
+    await addHost('dispatcher-a', 'server');
+    await addHost('executor-b');
+    const base = {
+      codexHost: null, agent: 'builder', model: 'example-model', card: null,
+      startedAt: new Date(now.getTime() - 60_000), endedAt: now, state: 'done', text: 'ok', inputTokens: 20, wakeupIds: [],
+    };
+    await dispatchStore.recordCodexRun({ ...base, runId: 'remote-run', sessionId: 'remote-session', outputTokens: 100 });
+    await dispatchStore.recordCodexRun({ ...base, runId: 'local-run', sessionId: 'local-session', outputTokens: 25 });
+    await query(`INSERT INTO usage_calls
+      (source, host, call_id, session_external_id, ts, model, entrypoint, input_tokens, output_tokens)
+      VALUES ('codex','executor-b','remote-1','remote-session',$1,'example-model','exec',8,40),
+             ('codex','executor-b','remote-2','remote-session',$1,'example-model','exec',12,60)`, [now]);
+
+    expect(await withTransaction((tx) => usageStore.attachCallsToRuns(tx, 'executor-b'))).toBe(2);
+    // A second sync, and a sync of the dispatcher's own host, change nothing.
+    expect(await withTransaction((tx) => usageStore.attachCallsToRuns(tx, 'executor-b'))).toBe(0);
+    expect(await withTransaction((tx) => usageStore.attachCallsToRuns(tx, 'dispatcher-a'))).toBe(0);
+
+    expect((await query(`SELECT host, run_id FROM usage_runs ORDER BY run_id`)).rows)
+      .toEqual([{ host: 'dispatcher-a', run_id: 'local-run' }, { host: 'executor-b', run_id: 'remote-run' }]);
+    expect((await query(`SELECT host, call_id, run_id, output_tokens::int AS output FROM usage_calls ORDER BY call_id`)).rows)
+      .toEqual([
+        { host: 'dispatcher-a', call_id: 'local-run', run_id: 'local-run', output: 25 },
+        { host: 'executor-b', call_id: 'remote-1', run_id: 'remote-run', output: 40 },
+        { host: 'executor-b', call_id: 'remote-2', run_id: 'remote-run', output: 60 },
+      ]);
+    expect(await dispatchStore.tokensToday('UTC')).toBe(165);
+  });
+});
+
 describe('Codex host repair migration', () => {
   it('moves a mis-hosted run, attaches native calls, removes its summary, and is idempotent', async () => {
     await addHost('migration-a');
