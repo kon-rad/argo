@@ -1,3 +1,4 @@
+import CollectionHealth from './CollectionHealth.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -432,6 +433,7 @@ export default function Usage() {
   const labels: Record<UsageSection, string> = { running: 'Running now', ledger: 'Ledger', sessions: 'Sessions', summaries: 'Summaries' };
   return (
     <div className="flex h-full flex-col">
+      <CollectionHealth />
       <div className="flex shrink-0 flex-wrap gap-1 border-b border-[var(--rule)] px-4 pt-2">
         <div role="tablist" aria-label="Usage views" className="flex flex-wrap gap-1">
           {sections.map((section) => tab(section, labels[section]))}

@@ -155,3 +155,10 @@ The optional social addon mounts an app-owned Unified Login connect page and a c
 ## Observatory evidence and replay
 
 The optional `observatory` addon reads existing source tables through the owner-session boundary and effective database role. Bounded repeatable-read exports feed the pure versioned reducer in `app/shared/observatory.ts`. Archive steps supply tool evidence; usage rows remain usage measurements. Recorded execution intervals govern visibility, while missing lifecycle and sender provenance remain unknown. Five-minute per-session exports pin pagination and revalidate visibility. See [API and replay contract](observatory.md) and [coordinator audit queries](audits/observatory.sql). No new collectors or LLM processing are involved.
+
+Collection health uses additive Postgres `collection_attempts` and
+`collection_streams`, keyed independently by host, collector instance, runtime and
+path. Device authentication supplies host. Attempt receipt does not update source
+activity. SSH v2 acknowledgements distinguish accepted positions from durable
+`usage_import_quarantine` entries; failed acknowledgements retain local source
+cursors. See [collection health](collection-health.md) for compatibility and bounds.

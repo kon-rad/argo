@@ -41,6 +41,7 @@ const EXACT: Record<string, Reply> = {
   'GET /agents/cron/jobs': fx.cronJobs,
   'GET /agents/cron/timers': fx.cronTimers,
   // usage
+  'GET /usage/health': { streams: [] },
   'GET /usage/config': fx.usageConfig,
   'GET /usage/plan': fx.usagePlan,
   'GET /usage/series': fx.usageSeries,

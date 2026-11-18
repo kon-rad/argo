@@ -1061,6 +1061,8 @@ export const api = {
       undefined,
       json('PUT', { path, content, base_hash: baseHash }),
     ),
+  usageHealth: () => request<{ streams: Array<{ host: string; collector_instance: string; runtime: string; path: string; state: string;
+    ended_at?: string | null; received_at?: string | null; last_success_at?: string | null; backlog?: number | null; reason?: string | null }> }>('/usage/health'),
   usageConfig: () => request<UsageConfig>('/usage/config'),
   usageSubscriptions: () => request<UsageSubscriptions>('/usage/subscriptions'),
   usagePlan: (from?: string, to?: string) => request<UsagePlan>('/usage/plan', { from, to }),

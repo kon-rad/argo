@@ -22,7 +22,7 @@ export default function IndexStatus() {
     : vault.last_run?.status === 'error'
       ? 'last scan failed'
       : lastOk
-        ? `index ${timeAgo(lastOk)}`
+        ? `Vault index ${timeAgo(lastOk)}`
         : 'never scanned';
 
   return (

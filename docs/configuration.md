@@ -403,3 +403,14 @@ Replace the example path with the selected `CODEX_HOME`, keep its ownership with
 ### Review scope CLI configuration
 
 The standalone `review scope` commands take an optional owner-controlled JSON configuration, separate from app env and worker host configuration. Defaults are `softTarget: 24` and `exclude: []`; the soft target accepts 1 through the unchanged hard limit of 30. There are no configurable hard-cap increases. Copy [review-scope.example.json](https://github.com/kon-rad/argo/blob/main/app/deploy/review-scope.example.json), keep private exclusion prefixes outside public source, and supply the same exclusions to the reviewer host. See [scope checkpoints](automatic-review.md#scope-checkpoints-before-building-and-submitting) for the versioned plan, request schema, exit codes and module-off direct Node command.
+
+Session collection liveness is configured separately from Vault sync. See
+[collection health](collection-health.md) for the schema, acknowledgement protocol
+and operator runbook.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `usage.expectedStreams` in secondbrain.json | `[]` | Expected host, collectorInstance, runtime, path, intervalSec (120), state (enabled/paused/retired). Missing enabled streams stay unknown |
+| `USAGE_PUSH_TICK_MS` | `30000` | Collection elapsed budget checked between files, at most 120000 |
+| `USAGE_PUSH_DEADLINE_MS` | `180000` | Overall normal SSH subprocess deadline, at most 600000 |
+| `USAGE_PUSH_BACKFILL_MS` | `600000` | First-attempt SSH deadline, at most 1800000 |
