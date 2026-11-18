@@ -167,3 +167,6 @@ facets use the same attribution functions as `usage_facts`; unknown launch/nativ
 persona evidence is retained without later roster reassignment. The dispatcher writes
 before spawning and captures native identity before finalisation. Transport contracts,
 replay and rollback are in [Usage provenance](usage-provenance.md).
+### Recorded tool result derivation
+
+Codex and Hermes archives use `archive/toolResult.ts` for structured output and nullable success/failure, shared by import and detail expansion. `archive/store.ts` derives persisted fields and records a parser version independent of raw SHA. `archive/replayResults.ts` reuses that derivation for scoped dry-run/replay without rewriting raw, source identity, timestamps or token records. List counts and detail use the same invocation rendering predicate. Explicit run lifecycle failures remain separate from tool failures. See [operator replay](tool-result-replay.md).

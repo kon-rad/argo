@@ -1,3 +1,4 @@
+import { replayResults } from './archive/replayResults.js';
 import { exitFlushed } from './cli-exit.js';
 import { pool } from './db.js';
 import { backfillSteps, redactExisting, relabelChannels } from './archive/backfill.js';
@@ -14,7 +15,21 @@ const log = (m: string) => console.error(`${new Date().toISOString()} ${m}`);
 
 let code = 1;
 try {
-  if (has('--redact')) log(JSON.stringify(await redactExisting({ batch, dryRun: has('--dry-run'), log })));
+  if (has('--results')) {
+    const value = (flag: string) => {
+      if (!has(flag)) return undefined;
+      const v = argv[argv.indexOf(flag) + 1];
+      if (!v || v.startsWith('--')) throw new Error(`missing value for ${flag}`);
+      return v;
+    };
+    const runtime = value('--runtime');
+    if (runtime !== 'codex' && runtime !== 'hermes') throw new Error('--runtime codex|hermes required');
+    if (has('--apply') === has('--dry-run')) throw new Error('choose --dry-run or --apply');
+    log(JSON.stringify(await replayResults({ runtime, dryRun: has('--dry-run'), batch,
+      sessionId: has('--session') ? Number(value('--session')) : undefined,
+      seq: has('--seq') ? Number(value('--seq')) : undefined, from: value('--from'), to: value('--to') })));
+  }
+  else if (has('--redact')) log(JSON.stringify(await redactExisting({ batch, dryRun: has('--dry-run'), log })));
   else if (has('--relabel')) log(JSON.stringify(await relabelChannels({ batch, log })));
   else log(JSON.stringify(await backfillSteps({ batch, log })));
   code = 0;
