@@ -5,6 +5,7 @@ import { redactor } from '../archive/redact.js';
 import { sessionTitle } from '../archive/sessionTitle.js';
 import { expandSteps, hermesResponse, type StepPart } from '../archive/steps.js';
 import { hermesMatchKey } from '../usage/hermesCalls.js';
+import { portableSession } from '../archive/portable.js';
 import { HttpError, parseOr400, wrap } from './http.js';
 
 /**
@@ -242,6 +243,28 @@ async function attachHermesCalls(rootId: number, rows: Array<{ id: number; call:
 
 export function agentSessionsRouter(): Router {
   const router = Router();
+
+  // Read the same archive on any authenticated device. A restart uses this snapshot in a new
+  // process; it never mutates or resumes the source harness's private session file.
+  router.get('/:host/:externalId/portable', wrap(async (req, res) => {
+    const host = parseOr400(z.string().regex(HOST_RE), req.params.host);
+    const sid = String(req.params.externalId);
+    const source = parseOr400(z.object({ source: z.string().min(1) }), req.query).source;
+    const found = await query<{ id: number; harness: string }>(
+      `SELECT id, harness FROM archive_sessions WHERE host=$1 AND external_id=$2 AND source=$3`, [host, sid, source]);
+    const s = found.rows[0];
+    if (!s) throw new HttpError(404, 'no such session in the archive');
+    const { rows } = await query<{ id: number; role: string; kind: string; ts: Date | null; raw: unknown; text: string }>(
+      `SELECT id, role, kind, ts, raw, coalesce(content_text, '') AS text
+       FROM archive_messages WHERE session_id=$1 ORDER BY seq LIMIT 50001`, [s.id]);
+    if (rows.length > 50000) throw new HttpError(413, 'session has more than 50,000 archived records');
+    if (rows.reduce((n, row) => n + row.text.length, 0) > 2_000_000) {
+      throw new HttpError(413, 'session transcript exceeds the 2 million character portable limit');
+    }
+    const portable = portableSession({ host, harness: s.harness, external_id: sid, archive_id: s.id }, rows);
+    if (!portable.turns.length) throw new HttpError(409, 'this session has no archived conversation to restart');
+    res.json(portable);
+  }));
 
   router.get('/', wrap(async (req, res) => {
     const q = parseOr400(listQuery, req.query);

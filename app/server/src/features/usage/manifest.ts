@@ -6,6 +6,7 @@ export default defineFeature({
   summary: 'What your agents cost: a ledger of every run by bot, task, project and host, manifest-selected subscription quotas and API credit balances',
   nav: [{ section: 'Work', label: 'Usage', path: '/usage' }],
   cli: [
+    { command: 'session-restart', entry: 'cli-session-restart.js', summary: 'restart an archived Usage session here with a chosen persona, harness, provider and model' },
     { command: 'usage-sync', entry: 'cli-usage-sync.js', summary: "this machine's Claude Code and Codex usage into the ledger" },
     { command: 'usage-push', entry: 'cli-usage-push.js', summary: 'send new Claude Code and Codex usage to the server ledger over one SSH call' },
     { command: 'usage-backfill', entry: 'cli-usage-backfill.js', summary: 'wire lines for archived sessions (pipe to the server importer); --actions, --bots label what is already in the ledger' },

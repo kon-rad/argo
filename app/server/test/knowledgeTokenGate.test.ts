@@ -23,6 +23,15 @@ describe('knowledgeTokenGate', () => {
     expect([...READ_PATHS].sort()).toEqual(['/file/source', '/search', '/search/global']);
   });
 
+  it('opens only the portable session read under the usage path', () => {
+    const path = '/usage/agent-sessions/laptop/session-123/portable';
+    expect(run({ path }).flagged).toBe(true);
+    expect(run({ path, method: 'POST' }).flagged).toBe(false);
+    expect(run({ path: '/usage/agent-sessions/laptop/session-123' }).flagged).toBe(false);
+    expect(run({ path: '/usage/agent-sessions/laptop/session-123/portable/extra' }).flagged).toBe(false);
+    expect(run({ path, addr: '203.0.113.9' }).flagged).toBe(false);
+  });
+
   it('accepts the IPv6 loopback forms', () => {
     expect(run({ addr: '::1' }).flagged).toBe(true);
     expect(run({ addr: '::ffff:127.0.0.1' }).flagged).toBe(true);
