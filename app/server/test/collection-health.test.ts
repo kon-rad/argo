@@ -50,6 +50,19 @@ it('keeps poison wire records durably and accepts later valid records without st
   expect((await query('SELECT wire FROM usage_import_quarantine')).rows).toEqual([{ wire: 'not json' }]);
 });
 
+it.each([undefined, null])('quarantines malformed health %s and imports later valid items', async malformed => {
+  const lines = [JSON.stringify({ t: 'health', health: malformed }), JSON.stringify({ t: 'health', health: health() })];
+  const result = await importLines(lines, 'test-box', { quarantine: true });
+  expect(result).toMatchObject({ accepted: [2], rejected: [1], quarantined: [1] });
+  expect(acceptedUpload(0, JSON.stringify({ v: 2, ...result }), 2)).toBe(true);
+  expect((await query('SELECT wire,reason FROM usage_import_quarantine')).rows).toEqual([{ wire: lines[0], reason: 'invalid-item' }]);
+  expect((await query('SELECT path,outcome FROM collection_streams')).rows).toEqual([{ path: '/synthetic/sessions', outcome: 'retry' }]);
+  // Retrying the same batch retains one poison fragment and the same accepted stream.
+  await importLines(lines, 'test-box', { quarantine: true });
+  expect((await query('SELECT count(*)::int n FROM usage_import_quarantine')).rows[0]!.n).toBe(1);
+  expect((await query('SELECT count(*)::int n FROM collection_streams')).rows[0]!.n).toBe(1);
+});
+
 it('global bounded expiry removes inactive attempts while retaining streams and unaccepted quarantine', async () => {
   const { cleanupAttempts } = await import('../src/usage/health.js');
   for (let seq = 1; seq <= 3; seq++) await recordHealth('test-box', health(seq));

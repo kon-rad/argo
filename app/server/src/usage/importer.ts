@@ -5,6 +5,7 @@ import { splitJsonLines } from './lines.js';
 import { createHash } from 'node:crypto';
 import { query, withTransaction } from '../db.js';
 import { recordHealth } from './health.js';
+import { healthSchema } from './health-wire.js';
 import type { Host } from '../archive/types.js';
 import * as store from './store.js';
 import { ingestTranscript, ingestCodex, ingestZenTrace } from './sync.js';
@@ -47,18 +48,20 @@ export async function importLines(input: AsyncIterable<string> | Iterable<string
         if (!parsed.success) { await reject(raw, 'invalid launch envelope'); continue; }
         await withTransaction(tx => ingestLaunch(tx, host, parsed.data));
       } else if (w?.t === 'health') {
-        const path = w.health.path;
+        // Validate before reading any nested fields so poison health cannot block the batch.
+        const health = healthSchema.parse(w.health);
+        const path = health.path;
         const affected = [...failedPaths].some(p => !p || p === path || p.startsWith(path + '/'));
         const q = await query(`SELECT count(*) n FROM usage_import_quarantine WHERE host=$1
           AND (origin_path=$2 OR left(origin_path,length($2)+1)=$2||'/')`, [host, path]);
         const quarantined = Number(q.rows[0]!.n);
         const imported = [...acceptedEvents].filter(([p]) => p === path || p.startsWith(path + '/'))
           .reduce<string | null>((best, [, time]) => latest(best, time), null);
-        await recordHealth(host, { ...w.health,
-          importedAt: affected || quarantined ? imported : w.health.importedAt,
-          quarantined, rejected: Math.max(w.health.rejected ?? 0, quarantined),
-          outcome: affected || quarantined ? 'retry' : w.health.outcome,
-          reason: affected || quarantined ? 'rejected' : w.health.reason });
+        await recordHealth(host, { ...health,
+          importedAt: affected || quarantined ? imported : health.importedAt,
+          quarantined, rejected: Math.max(health.rejected ?? 0, quarantined),
+          outcome: affected || quarantined ? 'retry' : health.outcome,
+          reason: affected || quarantined ? 'rejected' : health.reason });
       } else if (w?.t === 'transcript' && typeof w.path === 'string' && typeof w.text === 'string') {
         await withTransaction(async (tx) => {
           await tx.query('INSERT INTO usage_hosts (slug, display, kind) VALUES ($1,$1,\'laptop\') ON CONFLICT DO NOTHING', [host]);
