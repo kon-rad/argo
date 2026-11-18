@@ -1,5 +1,6 @@
 import { lazy, Suspense, type ReactElement } from 'react';
 import { Route } from 'react-router-dom';
+import MediaSchedule from './routes/MediaSchedule.js';
 import BoardPage from './routes/board/Board.js';
 import Memory from './routes/Memory.js';
 import Org from './routes/org/Org.js';
@@ -23,6 +24,7 @@ const skills = (view: 'library' | 'matrix' | 'machines' | 'changes' | 'detail' |
  * renders the entries of the modules /api/meta says are on.
  */
 export const FEATURE_ROUTES: Record<string, ReactElement[]> = {
+  social: [<Route key="media-schedule" path="/media-schedule" element={<MediaSchedule />} />],
   projects: [
     <Route key="areas" path="/areas" element={<Areas />} />,
     <Route key="area" path="/areas/:slug" element={<AreaPage />} />,

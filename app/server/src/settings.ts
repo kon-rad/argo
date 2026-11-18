@@ -356,6 +356,10 @@ const TimeZone = z
   .catch(undefined);
 
 const Settings = z.object({
+  /** Per-brand media schedule configurations, stored as vault markdown. */
+  media: z.object({
+    brands: z.array(z.object({ slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,47}$/), config: z.string().min(1) })).default([]),
+  }).prefault({}),
   server: Server,
   /**
    * The owner's current time zone (IANA, e.g. `Asia/Singapore`): every time the web app shows and the Usage
