@@ -8,6 +8,8 @@ export const BoardContractSchema = z.object({
   objective: z.string().optional(), returns: z.array(z.string()).optional(),
   budget: z.object({ turns: z.number().int().optional(), tokens: z.number().int().optional(), minutes: z.number().int().optional(), wakes: z.number().int().optional() }).optional(),
   scope: z.array(z.string()).optional(), verification: z.string().optional(),
+  cybazaarJobId: z.string().min(1).max(200).optional(),
+  deskJobRef: z.string().min(1).max(500).optional(),
 });
 export type BoardContract = z.infer<typeof BoardContractSchema>;
 

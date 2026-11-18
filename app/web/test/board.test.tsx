@@ -20,13 +20,13 @@ const card = (id: string, title: string, status: string, extra: Record<string, u
   created_at: '2026-10-24T08:00:00Z', started_at: null, completed_at: null, updated_at: '2026-10-24T08:00:00Z', ...extra,
 });
 const CARDS = [
-  card('t_00000001', 'Build the board', 'running', { kind: 'build', started_at: '2026-10-24T09:00:00Z' }),
+  card('t_00000001', 'Build the board', 'running', { kind: 'build', started_at: '2026-10-24T09:00:00Z', contract: { cybazaarJobId: 'market-job-42', deskJobRef: 'arkiv:test/job-42' } }),
   card('t_00000002', 'Review the board', 'todo', { kind: 'review', assignee: 'atlas' }),
   card('t_00000003', 'Think about it', 'ready', { assignee: null, area_slug: null, project_slug: null }),
-  card('t_00000004', 'Stuck', 'blocked', { block_kind: 'needs-owner', block_reason: 'which repo?' }),
+  card('t_00000004', 'Stuck', 'blocked', { block_kind: 'needs-owner', block_reason: 'which repo?', contract: { cybazaarJobId: 'market-job-43' } }),
 ];
 const DETAIL = {
-  card: { ...CARDS[0]!, body: 'GET /api/board', contract: { objective: 'Ship the board', returns: ['a PR'], budget: { turns: 20 } } },
+  card: { ...CARDS[0]!, body: 'GET /api/board', contract: { objective: 'Ship the board', returns: ['a PR'], budget: { turns: 20 }, cybazaarJobId: 'market-job-42', deskJobRef: 'arkiv:test/job-42' } },
   comments: [{ id: 1, author: 'owner', body: 'go', created_at: '2026-10-24T08:10:00Z' }],
   events: [{ id: 1, kind: 'created', actor: 'owner', payload: null, at: '2026-10-24T08:00:00Z' }, { id: 2, kind: 'claimed', actor: 'rune', payload: null, at: '2026-10-24T09:00:00Z' }],
   depends_on: [],
@@ -58,6 +58,7 @@ function mount(path: string) {
         return Response.json({ cards: assignee ? CARDS.filter((c) => (assignee === 'none' ? c.assignee === null : c.assignee === assignee)) : CARDS });
       }
       if (u.pathname === '/api/board/cards/t_00000001') return Response.json(DETAIL);
+      if (u.pathname === '/api/board/cards/t_00000004') return Response.json({ ...DETAIL, card: CARDS[3] });
       if (u.pathname === '/api/board/cards/t_00000001/comment') return Response.json({ comment: { id: 2, author: 'owner', body: 'looks good', created_at: '2026-10-24T09:30:00Z' } }, { status: 201 });
       if (u.pathname === '/api/board/cards/t_00000001/finish') return Response.json({ card: { ...CARDS[0], status: 'done' } });
       if (u.pathname === '/api/board/cards/t_00000001/project') return Response.json({ card: { ...CARDS[0], ...JSON.parse(String(init?.body)) } });
@@ -102,6 +103,10 @@ describe('Board page', () => {
     await screen.findByText('Build the board');
     const running = screen.getByRole('region', { name: 'Running' });
     expect(within(running).getByText('Build the board')).toBeTruthy();
+    const sourced = within(running).getByText('Build the board').closest('li');
+    expect(sourced?.className).toContain('border-l-[#68DFFF]');
+    expect(within(sourced!).getByText('Cybazaar')).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'To do' })).queryByText('Cybazaar')).toBeNull();
     expect(within(running).getByText('build')).toBeTruthy();
     expect(within(screen.getByRole('region', { name: 'To do' })).getByText('Review the board')).toBeTruthy();
     expect(within(screen.getByRole('region', { name: 'Ready' })).getByText('unassigned')).toBeTruthy();
@@ -118,6 +123,8 @@ describe('Board page', () => {
     const panel = await screen.findByRole('complementary', { name: 'Card' });
     await within(panel).findByText('GET /api/board');
     expect(within(panel).getByText('Ship the board')).toBeTruthy();
+    expect(within(panel).getByRole('link', { name: 'Open Desk job' }).getAttribute('href')).toBe('/desk?job=arkiv%3Atest%2Fjob-42');
+    expect(within(panel).queryByText('cybazaarJobId')).toBeNull();
     expect(within(panel).getByText('a PR')).toBeTruthy();
     expect(within(panel).getByText('turns: 20')).toBeTruthy();
     expect(within(panel).getByRole('link', { name: 't_00000002 [todo]' }).getAttribute('href')).toBe('/board/t_00000002');
@@ -131,6 +138,14 @@ describe('Board page', () => {
     fireEvent.click(within(panel).getByRole('button', { name: 'mark done' }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/finish') && c.init?.method === 'POST')).toBe(true));
     expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/finish'))!.init?.body))).toEqual({ outcome: 'done' });
+  });
+
+  it('labels a source-only Cybazaar card without inventing a Desk link', async () => {
+    mount('/board/t_00000004');
+    const panel = await screen.findByRole('complementary', { name: 'Card' });
+    await within(panel).findByText('Stuck');
+    expect(within(panel).getByText('Cybazaar')).toBeTruthy();
+    expect(within(panel).queryByRole('link', { name: 'Open Desk job' })).toBeNull();
   });
 
   it('creates a card for a roster bot, tagged with an area and a project', async () => {
