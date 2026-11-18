@@ -30,7 +30,7 @@ it('authenticates host, refuses spoofed host and separates path freshness', asyn
 it('replay cannot refresh receipt, source-event time or last success', async () => {
   const h = health();
   await recordHealth('test-box', h);
-  await query(`UPDATE collection_streams SET received_at='2021-01-01', last_success_at='2021-01-01'`);
+  await query(`UPDATE collection_streams SET received_at='2021-01-01T00:00:00Z', last_success_at='2021-01-01T00:00:00Z'`);
   await recordHealth('test-box', h);
   let row = (await query('SELECT * FROM collection_streams')).rows[0]!;
   expect(row.received_at.toISOString()).toBe('2021-01-01T00:00:00.000Z');
