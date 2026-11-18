@@ -118,7 +118,7 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
         if (!d) { io.err(`no skill ${args[0]}`); return 1; }
         if (json) { io.out(JSON.stringify(d, null, 2)); return 0; }
         io.out(`${d.name}: ${d.selected?.description ?? ''}`);
-        for (const c of d.row.candidates) io.out(`  ${c.effective ? '*' : ' '} ${c.id}  ${short(c.digest)}  rev ${short(c.revision)}${c.dirty ? ' dirty' : ''}${c.linkOf ? ` link of ${c.linkOf}` : ''}${c.valid ? '' : `  INVALID: ${c.errors.join('; ')}`}`);
+        for (const c of d.row.candidates) io.out(`  ${c.effective ? '*' : ' '} ${c.id}  ${short(c.digest)}  rev ${short(c.revision)}${c.dirty === true ? ' dirty' : c.dirty === null ? ' Git status unknown' : ''}${c.linkOf ? ` link of ${c.linkOf}` : ''}${c.valid ? '' : `  INVALID: ${c.errors.join('; ')}`}`);
         io.out(`  lifecycle: ${d.row.lifecycle.status}${d.row.lifecycle.replacement ? ` -> ${d.row.lifecycle.replacement}` : ''}`);
         io.out(`  files: ${d.files.map((f) => f.path).join(', ')}`);
         for (const a of d.agents.filter((x) => x.state !== 'not-assigned' || x.reference)) io.out(`  ${a.agent}: ${a.state}${a.reference ? ' (knowledge reference)' : ''}`);

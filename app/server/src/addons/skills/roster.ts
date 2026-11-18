@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import yaml from 'js-yaml';
 import type { RosterAgent } from './policy.js';
@@ -17,8 +17,39 @@ const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.i
 const obj = (v: unknown): Obj => isObj(v) ? v : {};
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
-function readYaml(path: string): Obj {
-  try { return obj(yaml.safeLoad(readFileSync(path, 'utf8'))); } catch { return {}; }
+/** Absence is compatible with legacy defaults; an existing bad source is never an empty successful read. */
+function readYaml(path: string, errors: string[], label: string): Obj {
+  let present = false;
+  try {
+    const st = lstatSync(path); present = true;
+    if (!st.isFile() || st.isSymbolicLink()) throw new Error('not a regular source file');
+    const value: unknown = yaml.safeLoad(readFileSync(path, 'utf8'));
+    if (!isObj(value)) throw new Error('not a YAML mapping');
+    return value;
+  } catch (err) {
+    if (!present && (err as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    // Parser diagnostics can include source literals; identify the file without copying its contents.
+    errors.push(`${label} is unreadable or not a valid YAML mapping`);
+    return {};
+  }
+}
+function sourceNames(path: string, errors: string[], label: string): string[] {
+  let present = false;
+  try {
+    const st = lstatSync(path); present = true;
+    if (!st.isDirectory() || st.isSymbolicLink()) throw new Error('not a regular source directory');
+    return readdirSync(path).sort();
+  } catch (err) {
+    if (!present && (err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    errors.push(`${label} cannot be read as a source directory`);
+    return [];
+  }
+}
+const stringList = (value: unknown): boolean => Array.isArray(value) && value.every(x => typeof x === 'string');
+function sourceAgentErrors(agent: Obj, errors: string[], label: string): void {
+  if (agent['runtime'] !== undefined && (typeof agent['runtime'] !== 'string' || !['claude-code', 'hermes', 'codex', 'zen-agent', 'human'].includes(agent['runtime']))) errors.push(`${label} has an invalid runtime`);
+  if (agent['team'] !== undefined && agent['team'] !== null && (typeof agent['team'] !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(agent['team']))) errors.push(`${label} has an invalid team`);
+  if (agent['knowledge'] !== undefined && !stringList(agent['knowledge'])) errors.push(`${label} has invalid knowledge paths`);
 }
 
 export function loadRoster(vaultRoot: string): Roster {
@@ -48,20 +79,29 @@ export function loadRoster(vaultRoot: string): Roster {
       error = `org.json is invalid: ${(err as Error).message}`;
     }
   }
-  const defaults = obj(readYaml(join(configDir, 'org.yaml'))['defaults']);
+  const sourceErrors: string[] = [];
+  const orgSource = readYaml(join(configDir, 'org.yaml'), sourceErrors, 'config/org.yaml');
+  if (orgSource['defaults'] !== undefined && !isObj(orgSource['defaults'])) sourceErrors.push('config/org.yaml has invalid defaults');
+  const defaults = obj(orgSource['defaults']);
+  if (defaults['knowledge'] !== undefined && !stringList(defaults['knowledge'])) sourceErrors.push('config/org.yaml has invalid default knowledge paths');
   const fromConfig: Record<string, Obj> = {};
   const agentsDir = join(configDir, 'agents');
-  if (existsSync(agentsDir)) {
-    for (const f of readdirSync(agentsDir).sort()) {
-      const m = /^([a-z0-9][a-z0-9-]{0,31})\.ya?ml$/.exec(f);
-      if (m) fromConfig[m[1]!] = readYaml(join(agentsDir, f));
+  for (const f of sourceNames(agentsDir, sourceErrors, 'config/agents')) {
+    const m = /^([a-z0-9][a-z0-9-]{0,31})\.ya?ml$/.exec(f);
+    if (m) {
+      const cfg = readYaml(join(agentsDir, f), sourceErrors, `config/agents/${f}`);
+      sourceAgentErrors(cfg, sourceErrors, `config/agents/${f}`);
+      fromConfig[m[1]!] = cfg;
     }
   }
-  if (!compiledPresent) {
-    agents = fromConfig;
-    const teamsDir = join(configDir, 'teams');
-    if (existsSync(teamsDir)) for (const f of readdirSync(teamsDir)) { const m = /^(.+)\.ya?ml$/.exec(f); if (m) teams[m[1]!] = {}; }
+  const sourceTeams: Record<string, Obj> = {};
+  const teamsDir = join(configDir, 'teams');
+  for (const f of sourceNames(teamsDir, sourceErrors, 'config/teams')) {
+    const m = /^(.+)\.ya?ml$/.exec(f);
+    if (m) sourceTeams[m[1]!] = readYaml(join(teamsDir, f), sourceErrors, `config/teams/${f}`);
   }
+  if (!compiledPresent) { agents = fromConfig; teams = sourceTeams; }
+  error = [error, ...sourceErrors].filter(Boolean).join('; ') || null;
   const out: RosterAgent[] = [];
   for (const [name, raw] of Object.entries(agents)) {
     const a = obj(raw);

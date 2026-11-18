@@ -201,6 +201,8 @@ export type DraftCreateRequest = z.infer<typeof DraftCreateRequestSchema>;
 export const PackagePathSchema = z.string().min(1).max(255).regex(/^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9_.\-/]+$/);
 export const DraftFileWriteRequestSchema = z.object({ path: PackagePathSchema, content: z.string().max(512 * 1024), exec: z.boolean().optional(), expectedVersion: z.string().regex(/^[0-9a-f]{64}$/).nullable() }).strict();
 export type DraftFileWriteRequest = z.infer<typeof DraftFileWriteRequestSchema>;
+export const DraftFileDeleteRequestSchema = z.object({ expectedVersion: z.string().regex(/^[0-9a-f]{64}$/) }).strict();
+export type DraftFileDeleteRequest = z.infer<typeof DraftFileDeleteRequestSchema>;
 export const ChangeRequestSchema = z.object({
   kind: ChangeKindSchema, skill: SkillNameSchema, draft: SkillNameSchema.optional(), replacement: SkillNameSchema.optional(),
   note: z.string().max(500).optional(), revision: z.string().regex(/^[0-9a-f]{7,40}$/).optional(), resolve: z.boolean().optional(),

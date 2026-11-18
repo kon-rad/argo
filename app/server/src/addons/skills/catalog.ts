@@ -69,10 +69,10 @@ function listPackages(spec: RootSpec): { found: Found[]; error: string | null } 
         try { isDir = statSync(entry).isDirectory(); } catch { isDir = linked; }
       } catch { continue; }
       if (!isDir) continue;
-      if (existsSync(join(entry, 'SKILL.md')) || (spec.layout === 'flat' && linked)) {
+      if (spec.layout === 'flat' || existsSync(join(entry, 'SKILL.md'))) {
         if (found.length >= MAX_PACKAGES_PER_ROOT) { error ??= `more than ${MAX_PACKAGES_PER_ROOT} packages; the rest are not listed`; return; }
         found.push({ folder: name, category, entry });
-      } else if (spec.layout !== 'flat' && !linked) {
+      } else if (!linked) {
         // A category link must never become an unbounded crawl outside the configured roots.
         if (depth >= 6) { error ??= 'category nesting exceeds six levels; the rest are not listed'; continue; }
         walk(entry, category ? `${category}/${name}` : name, depth + 1);
@@ -110,7 +110,7 @@ export async function buildCatalog(specs: RootSpec[], opts: { git?: boolean } = 
     const g = useGit ? await rootGit(real) : null;
     gits.set(real, g);
     const { found, error } = listPackages({ ...spec, path: real });
-    roots.push({ id: spec.id, source: spec.source, label: spec.label, exists: true, packages: found.length, revision: g?.head ?? null, git: !!g, error });
+    roots.push({ id: spec.id, source: spec.source, label: spec.label, exists: true, packages: found.length, revision: g?.head ?? null, git: !!g, error: [error, g?.error].filter(Boolean).join('; ') || null });
     for (const f of found) {
       const id = candidateId(spec, f);
       const errors: string[] = [];
@@ -163,7 +163,7 @@ export async function buildCatalog(specs: RootSpec[], opts: { git?: boolean } = 
 
   // Git provenance from the repository that actually holds the files (a link's target, for a link).
   await pool(candidates, 8, async (c) => {
-    if (!useGit || !c.valid && !c.digest) return;
+    if (!useGit) return;
     const realRoot = [...gits.keys()].filter((r) => inside(r, c.dir)).sort((a, b) => b.length - a.length)[0];
     const g = realRoot ? gits.get(realRoot) : null;
     if (!g) return;

@@ -109,6 +109,24 @@ export const VIEW_FORMAT = 'secondbrain-skills-view/1';
 const NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 
+/** The engine's source-qualified candidate identity, not a bare skill name. */
+function sourceQualifiedId(value: unknown, name: string): value is string {
+  if (typeof value !== 'string' || value.length > 200) return false;
+  const parts = value.split(':');
+  const source = parts[0];
+  let path: string;
+  if (source === 'external') {
+    if (parts.length !== 3 || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(parts[1]!)) return false;
+    path = parts[2]!;
+  } else {
+    if (!['private', 'engine', 'legacy'].includes(source!) || parts.length !== 2) return false;
+    path = parts[1]!;
+  }
+  const segments = path.split('/');
+  if (segments.length > (source === 'legacy' ? 7 : 1) || !NAME.test(segments.at(-1)!) || segments.at(-1) !== name) return false;
+  return segments.every(segment => segment.length > 0 && segment === segment.trim() && !segment.startsWith('.') && !/[\\\u0000-\u001f\u007f]/.test(segment));
+}
+
 interface ManifestEntry {
   name: string;
   id: string;
@@ -134,15 +152,17 @@ function manifestEntries(raw: unknown): ManifestEntry[] {
     const name = e?.['name'];
     const path = e?.['path'];
     const digest = e?.['digest'];
+    const id = e?.['id'];
     if (typeof name !== 'string' || !NAME.test(name)) throw new Error(`skills[${i}]: bad name`);
     if (seen.has(name)) throw new Error(`skills[${i}]: duplicate name ${name}`);
     seen.add(name);
     if (typeof path !== 'string' || !NAME.test(path) || path === '.' || path === '..') throw new Error(`skills[${i}]: bad path`);
     if (typeof digest !== 'string' || !DIGEST.test(digest)) throw new Error(`skills[${i}]: bad digest`);
+    if (!sourceQualifiedId(id, name)) throw new Error(`skills[${i}]: id must be a valid source-qualified skill identity matching its name`);
     const revision = typeof e['revision'] === 'string' ? (e['revision'] as string) : null;
     return {
       name, path, digest, revision,
-      id: typeof e['id'] === 'string' ? (e['id'] as string) : name,
+      id,
       description: typeof e['description'] === 'string' ? (e['description'] as string) : '',
     };
   });

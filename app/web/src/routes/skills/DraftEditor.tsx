@@ -94,16 +94,21 @@ function FileEditor({ draft, path, exists, exec, onSaved }: { draft: string; pat
       await qc.invalidateQueries({ queryKey: ['skills', 'draft', draft] });
     } finally { setRefreshing(false); }
   };
+  const handleConflict = async (error: Error, backup: string) => {
+    if (error instanceof ApiError && error.status === 409) {
+      setConflict(backup); setExpectedVersion(undefined); await refreshCurrent();
+    }
+  };
   const save = useMutation({
     mutationFn: (value: { content: string; exec: boolean; expectedVersion: string | null }) => skillsApi.writeDraftFile(draft, { path, ...value }),
     onSuccess: async (r) => { await refreshCurrent(); onSaved(r.draft); },
-    onError: async (error, value) => {
-      if (error instanceof ApiError && error.status === 409) {
-        setConflict(value.content); setExpectedVersion(undefined); await refreshCurrent();
-      }
-    },
+    onError: (error, value) => handleConflict(error, value.content),
   });
-  const del = useMutation({ mutationFn: () => skillsApi.deleteDraftFile(draft, path), onSuccess: (r) => onSaved(r.draft) });
+  const del = useMutation({
+    mutationFn: (value: { expectedVersion: string; content: string }) => skillsApi.deleteDraftFile(draft, path, value.expectedVersion),
+    onSuccess: (r) => { setExpectedVersion(null); setText(''); setExecutable(false); setConflict(null); save.reset(); onSaved(r.draft); },
+    onError: (error, value) => handleConflict(error, value.content),
+  });
   if (exists && file.isPending) return <Loading what={path} />;
   if (exists && file.isError && conflict === null) return <ErrorState error={file.error} retry={() => void file.refetch()} />;
   if (file.data?.kind === 'binary' && conflict === null) return <p className="text-xs">{path} is a binary file; it cannot be edited here.</p>;
@@ -111,21 +116,22 @@ function FileEditor({ draft, path, exists, exec, onSaved }: { draft: string; pat
   return (
     <div className="space-y-1">
       <label className="block text-xs text-[var(--ink-dim)]" htmlFor={`draft-${path}`}>{path}{file.data?.truncated ? ' (shown truncated; saving would cut it, edit it outside the app)' : ''}</label>
-      <textarea id={`draft-${path}`} className={`${input} h-72 w-full font-mono text-xs`} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} disabled={save.isPending || conflict !== null} />
+      <textarea id={`draft-${path}`} className={`${input} h-72 w-full font-mono text-xs`} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} disabled={save.isPending || del.isPending || conflict !== null} />
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={primary} disabled={save.isPending || unresolved || file.data?.truncated || refreshing} onClick={() => { if (expectedVersion !== undefined) save.mutate({ content: text, exec: executable, expectedVersion }); }}>{save.isPending ? 'Saving…' : 'Save draft file'}</button>
-        <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={executable} onChange={(e) => setExecutable(e.target.checked)} disabled={save.isPending || conflict !== null} /> executable</label>
-        {exists && <button type="button" className={button} disabled={del.isPending || conflict !== null} onClick={() => del.mutate()}>Remove file</button>}
+        <button type="button" className={primary} disabled={save.isPending || del.isPending || unresolved || file.data?.truncated || refreshing} onClick={() => { if (expectedVersion !== undefined) save.mutate({ content: text, exec: executable, expectedVersion }); }}>{save.isPending ? 'Saving…' : 'Save draft file'}</button>
+        <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={executable} onChange={(e) => setExecutable(e.target.checked)} disabled={save.isPending || del.isPending || conflict !== null} /> executable</label>
+        {exists && <button type="button" className={button} disabled={del.isPending || save.isPending || unresolved || typeof expectedVersion !== 'string' || refreshing} onClick={() => { if (typeof expectedVersion === 'string') del.mutate({ expectedVersion, content: text }); }}>Remove file</button>}
         {save.isSuccess && <span role="status" className="text-xs text-[var(--ink-dim)]">Draft file saved. The draft is not active.</span>}
+        {del.isSuccess && <span role="status" className="text-xs text-[var(--ink-dim)]">Draft file removed.</span>}
         {(save.error || del.error) && <span role="alert" className="text-xs text-[var(--warn)]">{(save.error ?? del.error)!.message}</span>}
       </div>
-      {conflict !== null && <section aria-label="Draft save conflict" className="space-y-1 rounded border border-[var(--warn)] p-2 text-xs">
-        <p role="alert">Another client changed this file. The editor shows the refreshed current file. Your unsaved text is retained below; review and merge before saving again.</p>
+      {conflict !== null && <section aria-label="Draft file conflict" className="space-y-1 rounded border border-[var(--warn)] p-2 text-xs">
+        <p role="alert">Another client changed this file. The editor shows the refreshed current file. Your unsaved text is retained below; review the current file before changing it again.</p>
         <textarea aria-label="Your unsaved draft changes" className={`${input} h-40 w-full font-mono text-xs`} value={conflict} readOnly />
         <div className="flex flex-wrap gap-2">
           <button type="button" className={button} disabled={refreshing} onClick={() => void refreshCurrent()}>Refresh current file</button>
-          <button type="button" className={button} disabled={refreshing || expectedVersion === undefined || file.data?.kind === 'binary'} onClick={() => { setConflict(null); save.reset(); }}>Use current file</button>
-          <button type="button" className={button} disabled={refreshing || expectedVersion === undefined || file.data?.kind === 'binary'} onClick={() => { setText(conflict); setConflict(null); save.reset(); }}>Restore my text to merge</button>
+          <button type="button" className={button} disabled={refreshing || expectedVersion === undefined || file.data?.kind === 'binary'} onClick={() => { setConflict(null); save.reset(); del.reset(); }}>Use current file</button>
+          <button type="button" className={button} disabled={refreshing || expectedVersion === undefined || file.data?.kind === 'binary'} onClick={() => { setText(conflict); setConflict(null); save.reset(); del.reset(); }}>Restore my text to merge</button>
         </div>
       </section>}
       {refreshError && <p role="alert" className="text-xs text-[var(--warn)]">{refreshError}</p>}

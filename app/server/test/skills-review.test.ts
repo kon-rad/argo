@@ -137,12 +137,13 @@ it.each(['node_modules/helper.js', 'cache.pyc'])('explicitly refuses ignored dra
   expect(draft.validation.errors.join(' ')).toMatch(/ignored/);
   await expect(service.propose({kind: 'update', skill: 'report', draft: 'report'})).rejects.toThrow(/does not validate/);
 });
-it('fails acknowledgement explicitly when 65 deployed views exceed the protocol limit', async () => {
+it('refuses 65 planned views before activation when they exceed acknowledgement capacity', async () => {
   const {plan,root}=await fixture();
+  syncViews(root,plan,{env:{PATH:''}}); const previous=readCurrent(root,'alpha','zen-agent').dir;
   plan.views=Array.from({length:65}, (_,i)=>({...plan.views[0]!,agent:`agent-${i}`}));
-  const report=syncViews(root,plan,{env:{PATH:''}});
-  expect(report.views).toHaveLength(65); expect(report.views.every(v=>v.status==='current')).toBe(true);
-  expect(()=>ackPayload(report,null)).toThrow(/65 views.*64/);
+  expect(()=>syncViews(root,plan,{env:{PATH:''}})).toThrow(/65 views.*64/);
+  expect(readCurrent(root,'alpha','zen-agent').dir).toBe(previous);
+  expect(inspectRoot(root).map(view=>view.agent)).toEqual(['alpha']);
 });
 
 it('refuses a policy action when its source policy changed after the inspected preview',async()=>{

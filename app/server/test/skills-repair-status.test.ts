@@ -70,7 +70,7 @@ it('reports dirty non-skill view entries without making the acknowledgement inva
 it('refuses an oversized per-agent view before replacing its active generation',async()=>{
  const {root,plan}=await fixture(),before=readCurrent(root,'alpha','zen-agent').dir;
  plan.views[0]!.skills=Array.from({length:501},(_,i)=>({...plan.views[0]!.skills[0]!,name:`skill-${i}`}));
- const report=syncViews(root,plan);expect(report.views[0]!.status).toBe('failed');expect(report.views[0]!.error).toContain('500');
+ expect(()=>syncViews(root,plan)).toThrow(/at most 500 skills/);
  expect(readCurrent(root,'alpha','zen-agent').dir).toBe(before);
 });
 

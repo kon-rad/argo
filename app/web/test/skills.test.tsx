@@ -166,7 +166,7 @@ it('refreshes a409 draft conflict while retaining unsaved text and requires an e
   await waitFor(()=>expect((screen.getByRole('button',{name:'Save draft file'}) as HTMLButtonElement).disabled).toBe(false));
   fireEvent.change(editor,{target:{value:'Second owner unsaved edit'}});
   fireEvent.click(screen.getByRole('button',{name:'Save draft file'}));
-  await screen.findByRole('region',{name:'Draft save conflict'});
+  await screen.findByRole('region',{name:'Draft file conflict'});
   await waitFor(()=>expect((editor as HTMLTextAreaElement).value).toBe('First owner winning edit'));
   expect((screen.getByRole('textbox',{name:'Your unsaved draft changes'}) as HTMLTextAreaElement).value).toBe('Second owner unsaved edit');
   expect(writes).toHaveBeenCalledTimes(1);expect(writes).toHaveBeenCalledWith('report',expect.objectContaining({expectedVersion:'a'.repeat(64)}));
@@ -201,7 +201,7 @@ it('refreshes executable metadata after an exec-only conflict without reverting 
   await waitFor(()=>expect((screen.getByRole('button',{name:'Save draft file'}) as HTMLButtonElement).disabled).toBe(false));
   expect((screen.getByRole('checkbox',{name:'executable'}) as HTMLInputElement).checked).toBe(false);
   fireEvent.click(screen.getByRole('button',{name:'Save draft file'}));
-  await screen.findByRole('region',{name:'Draft save conflict'});
+  await screen.findByRole('region',{name:'Draft file conflict'});
   await waitFor(()=>expect((screen.getByRole('checkbox',{name:'executable'}) as HTMLInputElement).checked).toBe(true));
   expect(writes).toHaveBeenCalledWith('report',expect.objectContaining({expectedVersion:'a'.repeat(64),exec:false}));
   expect(writes).toHaveBeenCalledTimes(1);
@@ -212,4 +212,23 @@ it('refreshes executable metadata after an exec-only conflict without reverting 
   await waitFor(()=>expect(writes).toHaveBeenCalledTimes(2));
   await screen.findByText('Draft file saved. The draft is not active.');
   expect((screen.getByRole('checkbox',{name:'executable'}) as HTMLInputElement).checked).toBe(true);
+});
+
+it('refreshes stale removal and requires an explicit reviewed retry preserving unsaved text',async()=>{
+ let content='Original',version='a'.repeat(64),removed=false;const path='references/note.md';
+ const draft=()=>({name:'report',base:{id:'private:report',digest:null},files:[{path:'SKILL.md',size:4,exec:false,sha256:version,kind:'text' as const},...(removed?[]:[{path,size:content.length,exec:false,sha256:version,kind:'text' as const}])],updatedAt:'2026-01-01T00:00:00Z',validation:{valid:true,errors:[],warnings:[]},digest:`sha256:${version}`});
+ vi.spyOn(skillsApi,'draft').mockImplementation(async()=>({draft:draft()}));
+ vi.spyOn(skillsApi,'draftFile').mockImplementation(async(_name,p)=>({id:'draft:report',path:p,size:content.length,content:p===path?content:'Root',kind:'text',truncated:false,sha256:version,version,exec:false}));
+ const deletes=vi.spyOn(skillsApi,'deleteDraftFile').mockImplementation(async()=>{content='Winning newer content';version='b'.repeat(64);throw new ApiError(409,'The draft file changed since you loaded it');});
+ const client=new QueryClient({defaultOptions:{queries:{retry:false}}});render(<QueryClientProvider client={client}><DraftEditor name="report" /></QueryClientProvider>);
+ fireEvent.click(await screen.findByRole('button',{name:/references\/note.md/}));const editor=await screen.findByRole('textbox',{name:path});
+ await waitFor(()=>expect((screen.getByRole('button',{name:'Remove file'}) as HTMLButtonElement).disabled).toBe(false));
+ fireEvent.change(editor,{target:{value:'Unsaved local text'}});fireEvent.click(screen.getByRole('button',{name:'Remove file'}));
+ await screen.findByRole('region',{name:'Draft file conflict'});await waitFor(()=>expect((editor as HTMLTextAreaElement).value).toBe('Winning newer content'));
+ expect((screen.getByRole('textbox',{name:'Your unsaved draft changes'}) as HTMLTextAreaElement).value).toBe('Unsaved local text');
+ expect(deletes).toHaveBeenCalledTimes(1);expect(deletes).toHaveBeenCalledWith('report',path,'a'.repeat(64));expect(removed).toBe(false);
+ expect((screen.getByRole('button',{name:'Remove file'}) as HTMLButtonElement).disabled).toBe(true);
+ await waitFor(()=>expect((screen.getByRole('button',{name:'Use current file'}) as HTMLButtonElement).disabled).toBe(false));fireEvent.click(screen.getByRole('button',{name:'Use current file'}));
+ deletes.mockImplementation(async(_name,_path,token)=>{expect(token).toBe('b'.repeat(64));removed=true;return{draft:draft()};});
+ fireEvent.click(screen.getByRole('button',{name:'Remove file'}));await waitFor(()=>expect(deletes).toHaveBeenCalledTimes(2));expect(removed).toBe(true);
 });

@@ -1,7 +1,7 @@
 import express, { Router, type Request } from 'express';
 import { z } from 'zod';
 import {
-  ACK_LIMITS, AckRequestSchema, ChangeRequestSchema, DraftCreateRequestSchema, DraftFileWriteRequestSchema, SkillNameSchema,
+  ACK_LIMITS, AckRequestSchema, ChangeRequestSchema, DraftCreateRequestSchema, DraftFileDeleteRequestSchema, DraftFileWriteRequestSchema, SkillNameSchema,
 } from '@secondbrain/contracts/skills';
 import type { FeatureRoutes } from '../../features/types.js';
 import { findDevice } from '../../ingest/devices.js';
@@ -69,7 +69,8 @@ export function skillsRouter(service: SkillsService): Router {
   }));
   r.delete('/drafts/:name/file', wrap(async (req, res) => {
     const q = parseOr400(z.object({ path: z.string().min(1).max(255) }).strict(), req.query);
-    res.json({ draft: await lifecycle(() => service.deleteDraftFile(nameParam(req), q.path)) });
+    const body = parseOr400(DraftFileDeleteRequestSchema, req.body);
+    res.json({ draft: await lifecycle(() => service.deleteDraftFile(nameParam(req), q.path, body.expectedVersion)) });
   }));
   r.delete('/drafts/:name', wrap(async (req, res) => { await lifecycle(() => service.deleteDraft(nameParam(req))); res.json({ ok: true }); }));
 

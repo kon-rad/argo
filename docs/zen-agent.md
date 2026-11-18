@@ -181,7 +181,7 @@ Managed skills (off by default). With `managedSkills: { "root": "~/.local/share/
 
 This filters the catalog and `read_skill` only (`skills_support: "catalog-filtered"`). It is not a sandbox: with the `fs` or `shell` tool sets a run can still read any file its user can, including other skill folders. Skill availability grants no tool, credential or publishing authority.
 
-A resumed session validates its existing snapshot before looking for a current view, even if that view has been removed or managed discovery has since been disabled. A damaged or mismatched snapshot fails closed instead of falling back to legacy folders. View manifests must name the requested persona and the `zen-agent` runtime. In managed mode `GET /zen/skills` returns an empty unscoped catalog; `GET /zen/chats/:id/skills` returns only that chat's verified snapshot catalog.
+A resumed session validates its existing snapshot before looking for a current view, even if that view has been removed or managed discovery has since been disabled. A damaged or mismatched snapshot fails closed instead of falling back to legacy folders. View manifests must name the requested persona and the `zen-agent` runtime. Every package must have a valid source-qualified identity (`private:report`, `engine:report`, `legacy:media/report` or `external:shared:report`); missing, bare or malformed identities reject the entire view or resumed snapshot. The original identity is retained exactly in the snapshot and trace. In managed mode `GET /zen/skills` returns an empty unscoped catalog; `GET /zen/chats/:id/skills` returns only that chat's verified snapshot catalog.
 
 ## 4. Architecture
 

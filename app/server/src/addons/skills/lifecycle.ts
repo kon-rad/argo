@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, realpathSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import yaml from 'js-yaml';
 import type { Change, ChangeKind, ChangePreview, ChangeRequest, Draft, FileDiff, FileEntry, Validation } from '@secondbrain/contracts/skills';
 import type { Candidate, Catalog } from './catalog.js';
@@ -72,6 +72,50 @@ function assertNoLinks(root: string, target: string): void {
       if (lstatSync(cur).isSymbolicLink()) throw new LifecycleError(400, `refusing to write through the symlink ${relative(root, cur)}`);
     }
   }
+}
+
+/** Policy destinations are ordinary files in a managed tree, never linked or escaping paths. */
+function assertRegularPolicyPath(root: string, target: string): void {
+  const rel = relative(root, target);
+  if (!rel || isAbsolute(rel) || rel.split(sep).some(part => part === '..' || part === '.git')) throw new LifecycleError(422, 'policy destination must be inside the vault and Git worktree, outside Git metadata');
+  const base = lstatSync(root);
+  if (!base.isDirectory() || base.isSymbolicLink()) throw new LifecycleError(422, 'policy tree root must be an unlinked directory');
+  const canonicalRoot = realpathSync(root);
+  let current = root;
+  const parts = rel.split(sep);
+  for (const [index, part] of parts.entries()) {
+    current = join(current, part);
+    let stat: ReturnType<typeof lstatSync>;
+    try { stat = lstatSync(current); }
+    catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue; throw err; }
+    if (stat.isSymbolicLink()) throw new LifecycleError(422, 'policy destination or ancestor is linked; relocate the policy to a regular path');
+    if (index < parts.length - 1 ? !stat.isDirectory() : !stat.isFile()) throw new LifecycleError(422, 'policy destination must be a regular file with directory ancestors');
+    const actual = relative(canonicalRoot, realpathSync(current));
+    if (isAbsolute(actual) || actual.split(sep).includes('..')) throw new LifecycleError(422, 'resolved policy destination leaves its managed tree');
+  }
+}
+function policySource(ctx: LifecycleContext): string {
+  if (isAbsolute(ctx.policyRel) || ctx.policyRel.split(/[\\/]/).some(part => part === '..' || part === '.git')) throw new LifecycleError(422, 'policy changes require a regular path inside the vault');
+  const target = resolve(ctx.vaultRoot, ...ctx.policyRel.split('/'));
+  if (target !== resolve(ctx.policyFile)) throw new LifecycleError(422, 'policy location does not match its vault-relative destination');
+  assertRegularPolicyPath(ctx.vaultRoot, target);
+  return target;
+}
+function withDraftLock<T>(ctx: LifecycleContext, name: string, change: () => T): T {
+  const lock = join(ctx.draftsDir, `${checkName(name)}.write.lock`);
+  assertNoLinks(ctx.draftsDir, lock);
+  let fd: number;
+  try { fd = openSync(lock, 'wx', 0o600); }
+  catch (err) { if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw new LifecycleError(409, 'Another draft edit is in progress; refresh and retry. A stopped edit may leave a lock requiring operator cleanup.'); throw err; }
+  try { return change(); } finally { closeSync(fd); rmSync(lock); }
+}
+function matchDraftVersion(target: string, expectedVersion: string | null | undefined, allowAbsent: boolean): boolean {
+  if (expectedVersion === undefined) throw new LifecycleError(428, 'A loaded file version is required; refresh the draft file before changing it.');
+  if (expectedVersion === null ? !allowAbsent : !/^[0-9a-f]{64}$/.test(expectedVersion)) throw new LifecycleError(400, 'expectedVersion must be a loaded file version; null is allowed only when creating a file');
+  const exec = existsSync(target) ? (lstatSync(target).mode & 0o111) !== 0 : false;
+  const actual = existsSync(target) ? fileVersion(createSha(readFileSync(target)), exec) : null;
+  if (actual !== expectedVersion) throw new LifecycleError(409, 'The draft file changed since you loaded it; refresh and review the current file before changing it.');
+  return exec;
 }
 
 function checkName(name: string): string {
@@ -180,20 +224,12 @@ export function writeDraftFile(ctx: LifecycleContext, name: string, path: string
   const target = join(dir, ...rel.split('/'));
   if (!within(dir, target)) throw new LifecycleError(400, 'path leaves the draft');
   assertNoLinks(dir, target);
-  if (expectedVersion === undefined) throw new LifecycleError(428, 'A loaded file version is required; refresh the draft file, or use null only for a new file.');
-  if (expectedVersion !== null && !/^[0-9a-f]{64}$/.test(expectedVersion)) throw new LifecycleError(400, 'expectedVersion must be a file version token or null for a new file');
-  const lock = join(ctx.draftsDir, `${checkName(name)}.write.lock`);
-  assertNoLinks(ctx.draftsDir, lock);
-  let fd: number;
-  try { fd = openSync(lock, 'wx', 0o600); }
-  catch (err) { if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw new LifecycleError(409, 'Another draft save is in progress; refresh and retry. A stopped writer may leave a lock requiring operator cleanup.'); throw err; }
-  try {
-    const prevExec = existsSync(target) ? (lstatSync(target).mode & 0o111) !== 0 : false;
-    const actualVersion = existsSync(target) ? fileVersion(createSha(readFileSync(target)), prevExec) : null;
-    if (actualVersion !== expectedVersion) throw new LifecycleError(409, 'The draft file changed since you loaded it; refresh and review the current file before saving.');
+  return withDraftLock(ctx, name, () => {
+    assertNoLinks(dir, target);
+    const prevExec = matchDraftVersion(target, expectedVersion, true);
     atomicWrite(target, content, exec ?? prevExec);
     return getDraft(ctx, name);
-  } finally { closeSync(fd); rmSync(lock); }
+  });
 }
 
 export function readDraftFile(ctx: LifecycleContext, name: string, path: string): { path: string; size: number; kind: 'text' | 'binary'; content: string | null; truncated: boolean; sha256: string; version: string; exec: boolean } {
@@ -209,15 +245,19 @@ export function readDraftFile(ctx: LifecycleContext, name: string, path: string)
   return { path: rel, size: buf.length, kind: text ? 'text' : 'binary', content: text ? buf.subarray(0, DRAFT_LIMIT_BYTES).toString('utf8') : null, truncated: buf.length > DRAFT_LIMIT_BYTES, sha256, exec, version: fileVersion(sha256, exec) };
 }
 
-export function deleteDraftFile(ctx: LifecycleContext, name: string, path: string): Draft {
+export function deleteDraftFile(ctx: LifecycleContext, name: string, path: string, expectedVersion?: string): Draft {
   const dir = draftDir(ctx, name);
   const rel = safeRel(path);
   if (rel === 'SKILL.md') throw new LifecycleError(400, 'SKILL.md is required; edit it instead');
   const target = join(dir, ...rel.split('/'));
-  if (!within(dir, target) || !existsSync(target)) throw new LifecycleError(404, `no file ${rel} in draft ${name}`);
+  if (!within(dir, target) || !existsSync(dir)) throw new LifecycleError(404, `no draft file ${rel} in ${name}`);
   assertNoLinks(dir, target);
-  rmSync(target);
-  return getDraft(ctx, name);
+  return withDraftLock(ctx, name, () => {
+    assertNoLinks(dir, target);
+    matchDraftVersion(target, expectedVersion, false);
+    rmSync(target);
+    return getDraft(ctx, name);
+  });
 }
 
 export function deleteDraft(ctx: LifecycleContext, name: string): void {
@@ -399,6 +439,7 @@ export async function previewChange(ctx: LifecycleContext, req: ChangeRequest): 
     target = { files: null, policy: next, targetPath: null };
   }
 
+  if (target.policy) policySource(ctx);
   const policyDiff = target.policy ? unifiedDiff(ctx.policyRel, ctx.policy.text, dumpPolicy(target.policy, ctx.policy.text)) : '';
   const agents = affectedAgents(ctx, name, target.policy);
   const hosts = [...new Set(ctx.observed.filter((o) => o.skills.includes(name) || agents.includes(o.agent)).map((o) => o.host))].sort();
@@ -509,6 +550,7 @@ export function listChanges(ctx: LifecycleContext): Change[] {
  */
 export async function applyChange(ctx: LifecycleContext, id: string, opts: { message?: string } = {}): Promise<{ branch: string; commit: string; worktreeFiles: string[] }> {
   const stored = readStored(ctx, id);
+  if (stored.hasPolicy) policySource(ctx);
   if (stored.kind === 'remove') {
     const current = await previewChange(ctx, stored.request);
     if (current.preview.blocked.length) throw new LifecycleError(409, `not applied: ${current.preview.blocked.join('; ')}`);
@@ -532,8 +574,10 @@ export async function applyChange(ctx: LifecycleContext, id: string, opts: { mes
   const touched: string[] = [];
   try {
     const dir = changeDir(ctx, id);
-    const vaultRelToTop = toPosix(relative(top, ctx.vaultRoot));
+    const vaultRelToTop = toPosix(relative(realpathSync(top), realpathSync(ctx.vaultRoot)));
     const inTree = (rel: string) => join(wt, ...(vaultRelToTop ? vaultRelToTop.split('/') : []), ...rel.split('/'));
+    const policyDest = stored.hasPolicy ? inTree(ctx.policyRel) : null;
+    if (policyDest) assertRegularPolicyPath(wt, policyDest);
     if (stored.hasPackage) {
       if (!stored.targetPath) throw new LifecycleError(500, 'change has a package but no target path');
       // targetPath is repo-relative for update/rollback (gitRel) and vault-relative for create.
@@ -559,7 +603,8 @@ export async function applyChange(ctx: LifecycleContext, id: string, opts: { mes
       touched.push(toPosix(relative(wt, dest)));
     }
     if (stored.hasPolicy) {
-      const dest = inTree(ctx.policyRel);
+      const dest = policyDest!;
+      assertRegularPolicyPath(wt, dest);
       atomicWrite(dest, readFileSync(join(dir, 'policy.yaml')));
       touched.push(toPosix(relative(wt, dest)));
     }

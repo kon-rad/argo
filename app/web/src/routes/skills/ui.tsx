@@ -47,7 +47,7 @@ export function Revision({ revision, dirty }: { revision: string | null; dirty: 
     <span className="inline-flex items-center gap-1 text-xs">
       {revision ? <code title={revision}>{revision.slice(0, 8)}</code> : <span className="text-[var(--ink-faint)]" title="Not in Git, or not committed">no revision</span>}
       {dirty === true && <Chip tone="warn" title="Uncommitted changes in this package">uncommitted</Chip>}
-      {dirty === null && <span className="text-[var(--ink-faint)]" title="Not in a Git checkout">(Git unknown)</span>}
+      {dirty === null && <span className="text-[var(--ink-faint)]" title="Git status is not available">(Git unknown)</span>}
     </span>
   );
 }

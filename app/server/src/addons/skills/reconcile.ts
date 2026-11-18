@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { ACK_LIMITS } from '@secondbrain/contracts/skills';
+import { ACK_LIMITS, AckRequestSchema } from '@secondbrain/contracts/skills';
 import type { AckRequest, AckView, Requirement, SkillRuntime } from '@secondbrain/contracts/skills';
 import type { Catalog } from './catalog.js';
 import { isIgnoredName, isSecretLike, LIMITS, NAME_RE, readMeta, scanPackage } from './package.js';
@@ -24,7 +24,7 @@ import type { Roster } from './roster.js';
 export const VIEW_FORMAT = 'secondbrain-skills-view/1';
 export const ADAPTER_RUNTIMES: SkillRuntime[] = ['zen-agent', 'claude-code', 'hermes', 'codex'];
 
-export interface PlannedSkill { name: string; id: string; digest: string; revision: string | null; dirty: boolean; description: string; depends?: string[]; requires: { bins: string[]; env: string[] } }
+export interface PlannedSkill { name: string; id: string; digest: string; revision: string | null; dirty: boolean | null; description: string; depends?: string[]; requires: { bins: string[]; env: string[] } }
 export interface PackageSource { files: { path: string; exec: boolean; read: () => Buffer }[] }
 export interface ViewPlan { agent: string; runtime: SkillRuntime; skills: PlannedSkill[]; excluded: { name: string; reason: string }[] }
 export interface Plan { policyDigest: string | null; views: ViewPlan[]; packages: Map<string, PackageSource> }
@@ -88,6 +88,25 @@ export function viewDigest(skills: { name: string; digest: string }[]): string {
   return `sha256:${h.digest('hex')}`;
 }
 
+/** Reserve acknowledgement capacity before producing or activating a managed deployment. */
+function plannedAck(view: ViewPlan): AckView {
+  return { agent: view.agent, runtime: view.runtime, status: 'current', error: null,
+    viewDigest: viewDigest(view.skills), generatedAt: new Date().toISOString(), excluded: view.excluded ?? [],
+    skills: view.skills.map(({ name, id, digest }) => ({ name, id, digest })), dirty: [],
+    // A destination may lack every declared prerequisite; its report must still fit.
+    missing: view.skills.filter(skill => skill.requires.bins.length || skill.requires.env.length)
+      .map(skill => ({ skill: skill.name, bins: skill.requires.bins, env: skill.requires.env })) };
+}
+function acknowledgementCapacity(views: AckView[], policyDigest: string | null, engine: string | null = 'x'.repeat(64)): void {
+  if (views.length > ACK_LIMITS.views) throw new ReconcileError(`Cannot acknowledge ${views.length} views: the limit is ${ACK_LIMITS.views}. Sync selected agents/runtimes into separate managed roots and acknowledge each root separately.`);
+  if (views.some(view => view.skills.length > ACK_LIMITS.skillsPerView)) throw new ReconcileError(`A managed view supports at most ${ACK_LIMITS.skillsPerView} skills; narrow this agent's assignments before synchronizing.`);
+  const payload = { v: 1, engine, policyDigest, views };
+  const parsed = AckRequestSchema.safeParse(payload);
+  if (!parsed.success) throw new ReconcileError(`Managed views cannot be acknowledged: ${parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`);
+  if (Buffer.byteLength(JSON.stringify(payload)) > ACK_LIMITS.bytes) throw new ReconcileError(`Managed views exceed the ${ACK_LIMITS.bytes}-byte acknowledgement capacity; select fewer agents or skills in a separate managed root before synchronizing.`);
+}
+function planCapacity(plan: Plan): void { acknowledgementCapacity(plan.views.map(plannedAck), plan.policyDigest); }
+
 /** The managed resolution for the selected agents. Refuses a legacy or unparseable policy: there is nothing approved to deploy. */
 export function planViews(catalog: Catalog, policy: LoadedPolicy, roster: Roster, sel: { agents?: string[]; runtime?: SkillRuntime } = {}): Plan {
   if (policy.mode !== 'managed') throw new ReconcileError('the skills policy is in legacy mode (or missing): runtimes keep their own folders and there is nothing managed to deploy. Set `mode: managed` in the policy through review first.');
@@ -113,12 +132,14 @@ export function planViews(catalog: Catalog, policy: LoadedPolicy, roster: Roster
         continue;
       }
       const cand = selectedCandidate(policy.policy, catalog, c.skill).candidate!;
-      skills.push({ name: c.skill, id: cand.id, digest: cand.digest!, revision: cand.revision, dirty: cand.dirty === true, description: cand.description, depends: cand.metadata.depends, requires: cand.metadata.requires });
+      skills.push({ name: c.skill, id: cand.id, digest: cand.digest!, revision: cand.revision, dirty: cand.dirty, description: cand.description, depends: cand.metadata.depends, requires: cand.metadata.requires });
       if (!packages.has(cand.digest!)) packages.set(cand.digest!, { files: cand.packageFiles.map((f) => ({ path: f.path, exec: f.exec, read: () => readFileSync(f.abs) })) });
     }
     views.push({ agent: name, runtime, skills, excluded });
   }
-  return { policyDigest: policy.digest, views, packages };
+  const plan = { policyDigest: policy.digest, views, packages };
+  planCapacity(plan);
+  return plan;
 }
 
 // ---- bundles: the explicit transport for a host with no vault checkout ----
@@ -133,6 +154,7 @@ export interface Bundle {
 export const BUNDLE_MAX_BYTES = 200 * 1024 * 1024;
 
 export function packBundle(plan: Plan): Bundle {
+  planCapacity(plan);
   const packages: Bundle['packages'] = {};
   let total = 0;
   for (const [digest, src] of plan.packages) {
@@ -161,7 +183,9 @@ export function planFromBundle(b: unknown): Plan {
     if (!NAME_RE.test(v.agent) || !ADAPTER_RUNTIMES.includes(v.runtime)) throw new ReconcileError('bad view in bundle');
     for (const s of v.skills) if (!NAME_RE.test(s.name) || !packages.has(s.digest)) throw new ReconcileError(`bundle lacks the package for ${s.name}`);
   }
-  return { policyDigest: x.policyDigest ?? null, views: x.views, packages };
+  const plan = { policyDigest: x.policyDigest ?? null, views: x.views, packages };
+  planCapacity(plan);
+  return plan;
 }
 
 // ---- staging and activation ----
@@ -311,7 +335,7 @@ function stagePackage(root: string, digest: string, src: PackageSource, hooks: S
 export interface Manifest {
   format: typeof VIEW_FORMAT; agent: string; runtime: SkillRuntime; generatedAt: string; policyDigest: string | null; mode: 'managed';
   support: string; viewDigest: string;
-  skills: { name: string; id: string; digest: string; revision: string | null; dirty: boolean; description: string; path: string }[];
+  skills: { name: string; id: string; digest: string; revision: string | null; dirty: boolean | null; description: string; path: string }[];
 }
 
 /** Validate a generation's identity without assuming that matching directory names confer ownership. */
@@ -424,6 +448,11 @@ export interface SyncReport { root: string; policyDigest: string | null; views: 
 
 export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; hooks?: SyncHooks; env?: NodeJS.ProcessEnv } = {}): SyncReport {
   const hooks = opts.hooks ?? {};
+  planCapacity(plan);
+  const installed = new Map(inspectRoot(root, opts.env).map(view => [`${view.agent}/${view.runtime}`, view]));
+  const projected = new Map(installed);
+  for (const view of plan.views) projected.set(`${view.agent}/${view.runtime}`, plannedAck(view));
+  acknowledgementCapacity([...projected.values()], plan.policyDigest);
   for (const v of plan.views) if (!NAME_RE.test(v.agent) || !ADAPTER_RUNTIMES.includes(v.runtime)) throw new ReconcileError('invalid managed view identity');
   managedRoot(root, true);
   managedDirectory(root, join(root, 'views'), true);
@@ -463,6 +492,9 @@ export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; ho
       const gen = `${v.runtime}.${generatedAt.replace(/[-:.]/g, '').slice(0, 15)}-${randomBytes(3).toString('hex')}`;
       const agentDir = join(root, 'views', v.agent);
       agentDirectory(root, v.agent, true);
+      const candidate: AckView = { ...plannedAck(v), generatedAt, missing };
+      const checkedProjection = new Map(installed); checkedProjection.set(`${v.agent}/${v.runtime}`, candidate);
+      acknowledgementCapacity([...checkedProjection.values()], plan.policyDigest);
       const genDir = join(agentDir, gen);
       mkdirSync(genDir);
       try {
@@ -484,6 +516,7 @@ export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; ho
         const tmp = join(agentDir, `.${v.runtime}.next-${randomBytes(3).toString('hex')}`);
         symlinkSync(gen, tmp);
         renameSync(tmp, join(agentDir, v.runtime)); activated = true; // atomic switch
+        installed.set(`${v.agent}/${v.runtime}`, candidate);
       } catch (err) {
         try { removeManagedDirectory(root, genDir); } catch { /* Never clean through a replaced parent link. */ }
         throw err;
@@ -592,7 +625,7 @@ export function inspectRoot(root: string, env: NodeJS.ProcessEnv = process.env):
 }
 
 export function ackPayload(report: { policyDigest: string | null; views: AckView[] }, engine: string | null): AckRequest {
-  if (report.views.length > 64) throw new ReconcileError(`Cannot acknowledge ${report.views.length} views: the limit is 64. Sync selected agents/runtimes into separate managed roots and acknowledge each root separately.`);
+  acknowledgementCapacity(report.views, report.policyDigest, engine);
   return { v: 1, engine, policyDigest: report.policyDigest, views: report.views };
 }
 

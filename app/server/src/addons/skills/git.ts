@@ -25,9 +25,11 @@ export interface RootGit {
   top: string;
   head: string | null;
   /** Repo-relative paths with uncommitted changes (tracked or untracked) under the root. */
-  dirty: string[];
+  dirty: string[] | null;
   /** Repo-relative tracked files under the root. */
-  tracked: Set<string>;
+  tracked: Set<string> | null;
+  /** A failed provenance command is visible instead of being treated as an empty successful result. */
+  error: string | null;
 }
 
 /** One status and one ls-files per root, so each package's dirty/tracked answer is a prefix check. */
@@ -40,25 +42,26 @@ export async function rootGit(dir: string): Promise<RootGit | null> {
     git(top, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', rel]),
     git(top, ['ls-files', '-z', '--', rel]),
   ]);
-  const dirty: string[] = [];
+  const dirty: string[] | null = status === null ? null : [];
   if (status) {
     const parts = status.split('\0');
     for (let i = 0; i < parts.length; i++) {
       const e = parts[i]!;
       if (e.length < 4) continue;
-      dirty.push(e.slice(3));
+      dirty!.push(e.slice(3));
       if (e[0] === 'R' || e[0] === 'C') i++; // rename source follows
     }
   }
-  return { top, head: head ? head.trim() : null, dirty, tracked: new Set((files ?? '').split('\0').filter(Boolean)) };
+  return { top, head: head ? head.trim() : null, dirty, tracked: files === null ? null : new Set(files.split('\0').filter(Boolean)),
+    error: [status === null ? 'Git status is unavailable; dirty state is unknown' : null, files === null ? 'Git tracked files are unavailable; tracked state is unknown' : null, head === null ? 'Git HEAD is unavailable; revision is unknown' : null].filter(Boolean).join('; ') || null };
 }
 
-export function pathState(g: RootGit, absPath: string): { rel: string; dirty: boolean; tracked: boolean } {
+export function pathState(g: RootGit, absPath: string): { rel: string; dirty: boolean | null; tracked: boolean | null } {
   const rel = toPosix(relative(g.top, absPath));
   const prefix = `${rel}/`;
-  const dirty = g.dirty.some((d) => d === rel || d.startsWith(prefix));
-  let tracked = g.tracked.has(rel);
-  if (!tracked) for (const t of g.tracked) if (t.startsWith(prefix)) { tracked = true; break; }
+  const dirty = g.dirty?.some((d) => d === rel || d.startsWith(prefix)) ?? null;
+  let tracked = g.tracked?.has(rel) ?? null;
+  if (tracked === false && g.tracked) for (const t of g.tracked) if (t.startsWith(prefix)) { tracked = true; break; }
   return { rel, dirty, tracked };
 }
 

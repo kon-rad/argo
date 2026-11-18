@@ -304,7 +304,7 @@ export class SkillsService {
   async createDraft(name: string, from?: string, description?: string): Promise<Draft> { return life.createDraft(await this.lifecycleContext(true), name, from, description); }
   async writeDraftFile(name: string, path: string, content: string, exec?: boolean, expectedVersion?: string | null): Promise<Draft> { return life.writeDraftFile(await this.lifecycleContext(), name, path, content, exec, expectedVersion); }
   async readDraftFile(name: string, path: string) { return life.readDraftFile(await this.lifecycleContext(), name, path); }
-  async deleteDraftFile(name: string, path: string): Promise<Draft> { return life.deleteDraftFile(await this.lifecycleContext(), name, path); }
+  async deleteDraftFile(name: string, path: string, expectedVersion?: string): Promise<Draft> { return life.deleteDraftFile(await this.lifecycleContext(), name, path, expectedVersion); }
   async deleteDraft(name: string): Promise<void> { life.deleteDraft(await this.lifecycleContext(), name); }
   async preview(req: ChangeRequest): Promise<ChangePreview> { return (await life.previewChange(await this.lifecycleContext(true, req.kind === 'remove'), req)).preview; }
   async propose(req: ChangeRequest): Promise<Change> { return life.proposeChange(await this.lifecycleContext(true, req.kind === 'remove'), req); }

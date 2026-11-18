@@ -284,7 +284,7 @@ Draft exports from the app carry the digest shown by the preview. Saving a draft
 
 A managed Zen session records its snapshot identity in its trace. Resume requires that original snapshot, including when management has been disabled or the current view has changed. A missing snapshot exposes no skills until the original is restored. A merge changes source and policy; machine adoption is established separately by sync acknowledgements.
 
-The acknowledgement protocol accepts at most 64 views per request. A root with more views fails acknowledgement explicitly; divide selected agents/runtimes into separate managed roots and acknowledge each. No view is silently omitted.
+The acknowledgement protocol accepts at most 64 views per request. Planning and sync reject more views before activation, including existing unselected views in the managed root. They also check the serialized acknowledgement byte limit, reserving space for declared prerequisites. Divide selected agents/runtimes into separate managed roots; no view is silently omitted.
 
 `skills_packages` in Zen session metadata records the resolved catalog, not use. Only successful `read_skill` tool results prove a read. Managed instruction reads verify the full package again before returning bytes.
 
@@ -301,3 +301,5 @@ Draft file saves require an opaque version token covering the loaded bytes and e
 Managed reconciliation refuses an invalid compiled roster, symlinked structural directories and unmanaged view directories. A missing, denied, disabled or invalid declared skill dependency blocks the dependent skill and preserves the previous deployment. Verified bundle metadata and standalone status use the same dependency checks. Cleanup only removes verified manager generations and unused verified packages; unknown generations and files are left for inspection.
 
 Rollback previews validate reconstructed historical package metadata with the same rules as drafts. Apply validates the actual exported package again, including its full digest, before committing it to a review branch.
+
+Flat source folders remain visible as invalid packages when SKILL.md is missing. Failed Git queries leave provenance unknown, including in bundles and generated manifests. Malformed or unreadable existing roster YAML blocks managed planning even when a compiled roster is available. Policy changes require a regular destination inside the Git worktree without linked ancestors. Draft file removal requires the loaded version and uses the same conflict checks as saving.

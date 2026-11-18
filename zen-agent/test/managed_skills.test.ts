@@ -348,3 +348,51 @@ for (const enforce of [false,true]) test(`a removed managed view never exposes a
   const result=await readSkill!.execute('legacy-control',{name:'global-secret-skill'});
   assert.match((result.content[0] as {text:string}).text,/# global-secret-skill/);
 });
+
+for (const [label,id] of [
+  ['missing',undefined], ['null',null], ['number',42], ['empty',''], ['bare','report'],
+  ['unknown source','other:report'], ['empty source',':report'], ['empty leaf','private:'],
+  ['extra source segment','private:report:extra'], ['flat nested leaf','private:category/report'],
+  ['traversal','legacy:../report'], ['absolute','legacy:/report'], ['hidden category','legacy:.hidden/report'],
+  ['backslash','legacy:media\\reports/report'], ['control character','legacy:media\n/report'],
+  ['external without root','external:report'], ['bad external root','external:Bad_Root:report'],
+  ['private name mismatch','private:other'], ['engine name mismatch','engine:other'],
+  ['legacy name mismatch','legacy:media/other'], ['external name mismatch','external:shared:other'],
+  ['oversized','legacy:'+('category/'.repeat(30))+'report'],
+] as const) test(`a managed view with ${label} identity fails closed`, () => {
+  const root=managedRoot();
+  view(root,'writer',1,[{name:'report',digest:store(root,'report')},{name:'second',digest:store(root,'second')}]);
+  const manifest=join(root,'views','writer','zen-agent','manifest.json');
+  const doc=JSON.parse(readFileSync(manifest,'utf8'));
+  if(id===undefined)delete doc.skills[0].id; else doc.skills[0].id=id;
+  writeFileSync(manifest,JSON.stringify(doc));
+  const resolved=resolveSkills(cfgFor(root,legacy(),false),'writer','invalid-source-id');
+  assert.equal(resolved.mode,'managed-missing');assert.deepEqual(resolved.skills,[]);
+  assert.match(resolved.rejected[0]!.reason,/source-qualified/);
+});
+
+for (const id of ['private:report','engine:report','legacy:media/report','legacy:媒体/report','external:shared-tools:report']) test(`qualified identity is exact through snapshot and resume: ${id}`, () => {
+  const root=managedRoot();view(root,'writer',1,[{name:'report',digest:store(root,'report')}]);
+  const manifest=join(root,'views','writer','zen-agent','manifest.json');
+  const doc=JSON.parse(readFileSync(manifest,'utf8'));doc.skills[0].id=id;writeFileSync(manifest,JSON.stringify(doc));
+  const cfg=cfgFor(root,legacy(),false);
+  const first=resolveSkills(cfg,'writer','qualified-identity');
+  assert.equal(first.mode,'managed');assert.equal(first.skills[0]!.id,id);assert.equal(first.packages[0]!.id,id);
+  const record=JSON.parse(readFileSync(join(first.snapshot!,'.snapshot.json'),'utf8'));
+  assert.equal(record.packages[0].id,id);
+  rmSync(join(root,'views'),{recursive:true,force:true});
+  const resumed=resolveSkills(cfg,'writer','qualified-identity');
+  assert.equal(resumed.mode,'managed');assert.equal(resumed.skills[0]!.id,id);assert.deepEqual(resumed.packages,first.packages);
+});
+
+for (const [label,id] of [['missing',undefined],['bare','report'],['mismatched','private:other']] as const) test(`a snapshot with ${label} identity cannot resume`, () => {
+  const root=managedRoot();view(root,'writer',1,[{name:'report',digest:store(root,'report')}]);
+  const cfg=cfgFor(root,legacy(),false), first=resolveSkills(cfg,'writer','invalid-snapshot-id');
+  const record=join(first.snapshot!,'.snapshot.json');chmodSync(record,0o644);
+  const doc=JSON.parse(readFileSync(record,'utf8'));
+  if(id===undefined)delete doc.packages[0].id;else doc.packages[0].id=id;
+  writeFileSync(record,JSON.stringify(doc));
+  const resumed=resolveSkills(cfg,'writer','invalid-snapshot-id');
+  assert.equal(resumed.mode,'managed-missing');assert.deepEqual(resumed.skills,[]);
+  assert.match(resumed.rejected[0]!.reason,/source-qualified/);
+});
