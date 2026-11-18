@@ -52,6 +52,7 @@ const Schema = z.object({
   PROJECTS_BY: z.string().optional(),
   // Local agent and usage filesystem locations.
   PLAN_USAGE_LOG: z.string().optional(),
+  PLAN_ALERTS: z.enum(['on', 'off']).default('on'),
   CLAUDE_PROJECTS_DIR: z.string().optional(),
   CLAUDE_BIN: z.string().optional(),
   CC_RUNS_DIR: z.string().optional(),

@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { beforeEach, expect, it } from 'vitest';
+import { afterAll, beforeEach, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { query, withTransaction } from '../src/db.js';
 import { ingestBatch } from '../src/ingest/batch.js';
@@ -187,4 +187,10 @@ it('acknowledges trusted launches alongside quarantined fragments and source hea
   expect(stream.observed_at.toISOString()).toBe(at);
   expect(stream.imported_at.toISOString()).toBe(at);
   expect(stream.outcome).toBe('retry');
+});
+
+
+afterAll(async () => {
+  await truncateAll();
+  await query("DELETE FROM usage_hosts WHERE slug IN ('laptop-a', 'laptop-b')");
 });

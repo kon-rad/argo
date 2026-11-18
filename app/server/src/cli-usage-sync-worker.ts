@@ -35,7 +35,7 @@ try {
     for (const e of c.errors) console.error(`  ! ${e}`);
     code = c.errors.length ? 2 : 0;
     // Only the central droplet sends plan-window alerts, within the supervised attempt.
-    if (host === 'droplet' && process.env.PLAN_ALERTS !== 'off') {
+    if (host === 'droplet' && config.env.PLAN_ALERTS !== 'off') {
       try {
         const a = await checkPlanAlerts(hermesTelegram());
         for (const s of a.sent) console.log(`plan-alert: sent ${s.window} ${Math.max(...s.crossed)}% (at ${Math.round(s.reading.usedPct)}%)`);

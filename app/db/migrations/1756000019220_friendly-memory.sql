@@ -99,7 +99,15 @@ CREATE TABLE friendly_jobs (
 -- speaker/request references. Episode, utterance and reflection text is retained;
 -- callers implementing complete erasure must handle that text separately.
 -- sb_app's default grant has no DELETE.
-GRANT DELETE ON friendly_people TO sb_app;
+-- The optional deployment role is created by server installation, not migrations.
+-- Fresh installs and CI may migrate as a database owner without this role.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sb_app') THEN
+    GRANT DELETE ON friendly_people TO sb_app;
+  END IF;
+END;
+$$;
 
 -- No seed row: the robot's host creates its owner through its own sync.
 
