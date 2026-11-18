@@ -55,9 +55,10 @@ it.each(['invalid','missing pin'])('keeps unresolved %s assignments visible thro
  const host=hosts.find(h=>h.host==='readiness-fixture')!;expect(host.status).toBe('failed');expect(host.views[0]!.excluded).toEqual(report.views[0]!.excluded);
  const cliRows=await query('SELECT status,excluded FROM skill_view_acks WHERE host=$1',['readiness-fixture']);expect(cliRows.rows[0].status).toBe('failed');
 });
-it('treats an intentional lifecycle revocation as a deliberate omission',async()=>{
+it('treats an intentional lifecycle revocation without assigned dependents as a deliberate omission',async()=>{
  const f=skillsFixture();write(join(f.vault,SETTINGS.policyFile),MANAGED_POLICY+'\nlifecycle:\n  report: {status: disabled}\n');
  const service=new SkillsService(f.vault,SETTINGS,{engineSkills:f.engine,db:false});const state=await service.current();
- const plan=planViews(state.catalog,state.policy,state.roster,{agents:['alpha']});expect(plan.views[0]!.excluded).toEqual([]);
+ // Beta has no granted dependent on report; Alpha's dependent-failure case is covered separately.
+ const plan=planViews(state.catalog,state.policy,state.roster,{agents:['beta']});expect(plan.views[0]!.excluded).toEqual([]);
  expect(plan.views[0]!.skills.some(s=>s.name==='report')).toBe(false);expect(syncViews(join(f.base,'managed'),plan).views[0]!.status).toBe('current');
 });

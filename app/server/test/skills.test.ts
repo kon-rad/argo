@@ -122,7 +122,9 @@ describe('skills policy', () => {
     s.invalidate();
     const beta = (await s.agent('beta'))!;
     expect(beta.cells.find((c) => c.skill === 'report')!.state).toBe('denied');
-    expect(beta.cells.find((c) => c.skill === 'clip')!.state).toBe('assigned');
+    const betaClip = beta.cells.find((c) => c.skill === 'clip')!;
+    expect(betaClip.state).toBe('unavailable');
+    expect(betaClip.reasons).toContainEqual({ level: 'package', kind: 'deny', detail: 'unresolved skill dependencies: report (denied)' });
   });
 
   it('fails closed on an invalid managed policy and reports lifecycle-disabled skills as unavailable', async () => {
@@ -153,7 +155,7 @@ describe('skills lifecycle', () => {
     symlinkSync(f.outside, join(f.vault, '.agents', 'skill-drafts', 'report', 'linked'));
     await expect(s.writeDraftFile('report', 'linked/new.md', 'x')).rejects.toThrow(/symlink/);
     rmSync(join(f.vault, '.agents', 'skill-drafts', 'report', 'linked'));
-    const edited = await s.writeDraftFile('report', 'SKILL.md', skillMd('report', 'Private report skill, improved.'));
+    const edited = await s.writeDraftFile('report', 'SKILL.md', skillMd('report', 'Private report skill, improved.'), undefined, (await s.readDraftFile('report', 'SKILL.md')).version);
     expect(edited.digest).not.toBe(d.digest);
     // The live package and catalog are untouched.
     expect(readFileSync(join(f.vault, '.agents', 'skills', 'report', 'SKILL.md'), 'utf8')).toMatch(/Private report skill\.$/m);
@@ -170,7 +172,7 @@ describe('skills lifecycle', () => {
     expect(c.status).toBe('proposed');
     expect(readFileSync(join(f.vault, '.agents', 'skills', 'report', 'SKILL.md'), 'utf8')).toMatch(/Private report skill\.$/m);
     // An invalid draft cannot be exported.
-    await s.writeDraftFile('report', 'SKILL.md', '---\nname: report\n---\nno description\n');
+    await s.writeDraftFile('report', 'SKILL.md', '---\nname: report\n---\nno description\n', undefined, (await s.readDraftFile('report', 'SKILL.md')).version);
     await expect(s.propose({ kind: 'update', skill: 'report', draft: 'report' })).rejects.toThrow(/does not validate/);
   });
 

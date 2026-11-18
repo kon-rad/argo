@@ -240,10 +240,10 @@ export function resolveSkills(cfg: Pick<ZenConfig, 'skills' | 'sessionsDir'> & {
 
   if (resume?.managed) return missing('original managed snapshot is missing; restore it before resuming this session');
   if (!m) return legacy();
-  if (!persona) return m.enforce ? missing('no persona: a managed run needs one') : legacy();
+  if (!persona) return missing('no persona: a managed run needs one');
   const view = join(m.root, 'views', persona, 'zen-agent');
   const manifestFile = join(view, 'manifest.json');
-  if (!existsSync(manifestFile)) return m.enforce ? missing(`no managed view for ${persona}`) : legacy();
+  if (!existsSync(manifestFile)) return missing(`no managed view for ${persona}`);
 
   let entries: ManifestEntry[];
   try {

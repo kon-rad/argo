@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import yaml from 'js-yaml';
@@ -7,7 +7,7 @@ import type { Change, ChangeKind, ChangePreview, ChangeRequest, Draft, FileDiff,
 import type { Candidate, Catalog } from './catalog.js';
 import { unifiedDiff } from './diff.js';
 import { blob, git, gitTop, toPosix, treeAt } from './git.js';
-import { digestOf, isIgnoredName, isSecretLike, isText, NAME_RE, readMeta, scanPackage } from './package.js';
+import { digestOf, isIgnoredName, isSecretLike, isText, LIMITS, NAME_RE, readMeta, scanPackage } from './package.js';
 import { dependentsOf, grantsOf, lifecycleOf, parsePolicy, resolveAgent, selectedCandidate, type LoadedPolicy, type Policy } from './policy.js';
 import type { Roster } from './roster.js';
 
@@ -98,7 +98,7 @@ function fileEntries(files: { path: string; size: number; exec: boolean; sha256:
   return files.map((f) => {
     let kind: 'text' | 'binary' = 'binary';
     try { kind = isText(readFileSync(f.abs).subarray(0, 8192)) ? 'text' : 'binary'; } catch { /* unreadable stays binary */ }
-    return { path: f.path, size: f.size, exec: f.exec, sha256: f.sha256, kind };
+    return { path: f.path, size: f.size, exec: f.exec, sha256: f.sha256, version: fileVersion(f.sha256, f.exec), kind };
   });
 }
 
@@ -172,7 +172,7 @@ export function createDraft(ctx: LifecycleContext, name: string, from?: string, 
   return getDraft(ctx, name);
 }
 
-export function writeDraftFile(ctx: LifecycleContext, name: string, path: string, content: string, exec?: boolean): Draft {
+export function writeDraftFile(ctx: LifecycleContext, name: string, path: string, content: string, exec?: boolean, expectedVersion?: string | null): Draft {
   const dir = draftDir(ctx, name);
   if (!existsSync(dir)) throw new LifecycleError(404, `no draft ${name}`);
   const rel = safeRel(path);
@@ -180,12 +180,23 @@ export function writeDraftFile(ctx: LifecycleContext, name: string, path: string
   const target = join(dir, ...rel.split('/'));
   if (!within(dir, target)) throw new LifecycleError(400, 'path leaves the draft');
   assertNoLinks(dir, target);
-  const prevExec = existsSync(target) ? (lstatSync(target).mode & 0o111) !== 0 : false;
-  atomicWrite(target, content, exec ?? prevExec);
-  return getDraft(ctx, name);
+  if (expectedVersion === undefined) throw new LifecycleError(428, 'A loaded file version is required; refresh the draft file, or use null only for a new file.');
+  if (expectedVersion !== null && !/^[0-9a-f]{64}$/.test(expectedVersion)) throw new LifecycleError(400, 'expectedVersion must be a file version token or null for a new file');
+  const lock = join(ctx.draftsDir, `${checkName(name)}.write.lock`);
+  assertNoLinks(ctx.draftsDir, lock);
+  let fd: number;
+  try { fd = openSync(lock, 'wx', 0o600); }
+  catch (err) { if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw new LifecycleError(409, 'Another draft save is in progress; refresh and retry. A stopped writer may leave a lock requiring operator cleanup.'); throw err; }
+  try {
+    const prevExec = existsSync(target) ? (lstatSync(target).mode & 0o111) !== 0 : false;
+    const actualVersion = existsSync(target) ? fileVersion(createSha(readFileSync(target)), prevExec) : null;
+    if (actualVersion !== expectedVersion) throw new LifecycleError(409, 'The draft file changed since you loaded it; refresh and review the current file before saving.');
+    atomicWrite(target, content, exec ?? prevExec);
+    return getDraft(ctx, name);
+  } finally { closeSync(fd); rmSync(lock); }
 }
 
-export function readDraftFile(ctx: LifecycleContext, name: string, path: string): { path: string; size: number; kind: 'text' | 'binary'; content: string | null; truncated: boolean } {
+export function readDraftFile(ctx: LifecycleContext, name: string, path: string): { path: string; size: number; kind: 'text' | 'binary'; content: string | null; truncated: boolean; sha256: string; version: string; exec: boolean } {
   const dir = draftDir(ctx, name);
   const rel = safeRel(path);
   const target = join(dir, ...rel.split('/'));
@@ -193,7 +204,9 @@ export function readDraftFile(ctx: LifecycleContext, name: string, path: string)
   assertNoLinks(dir, target);
   const buf = readFileSync(target);
   const text = isText(buf);
-  return { path: rel, size: buf.length, kind: text ? 'text' : 'binary', content: text ? buf.subarray(0, DRAFT_LIMIT_BYTES).toString('utf8') : null, truncated: buf.length > DRAFT_LIMIT_BYTES };
+  const exec = (lstatSync(target).mode & 0o111) !== 0;
+  const sha256 = createSha(buf);
+  return { path: rel, size: buf.length, kind: text ? 'text' : 'binary', content: text ? buf.subarray(0, DRAFT_LIMIT_BYTES).toString('utf8') : null, truncated: buf.length > DRAFT_LIMIT_BYTES, sha256, exec, version: fileVersion(sha256, exec) };
 }
 
 export function deleteDraftFile(ctx: LifecycleContext, name: string, path: string): Draft {
@@ -330,13 +343,19 @@ export async function previewChange(ctx: LifecycleContext, req: ChangeRequest): 
     const tree = await treeAt(current.gitTop, full.trim(), current.gitRel);
     if (!tree || !tree.length || !tree.some((t) => t.path === 'SKILL.md')) throw new LifecycleError(422, `${current.id} did not exist as a plain package at ${req.revision}`);
     const after = new Map<string, { data: Buffer; exec: boolean }>();
+    let totalBytes = 0;
+    if (tree.length > LIMITS.files) throw new LifecycleError(422, `historical package exceeds ${LIMITS.files} files`);
     for (const t of tree) {
       if (t.path.split('/').some((s) => s === '..' || isSecretLike(s))) throw new LifecycleError(422, `revision ${req.revision} has an unsafe path ${t.path}`);
       const data = await blob(current.gitTop, t.blob);
       if (!data) throw new LifecycleError(500, `could not read ${t.path} at ${req.revision}`);
+      totalBytes += data.length;
+      if (data.length > LIMITS.fileBytes || totalBytes > LIMITS.totalBytes) throw new LifecycleError(422, 'historical package exceeds package byte limits');
       after.set(t.path, { data, exec: t.exec });
     }
     targetDigest = digestOf([...after].map(([path, f]) => ({ path, size: f.data.length, exec: f.exec, sha256: createSha(f.data) })));
+    validation = validateHistorical(after, name).validation;
+    if (!validation.valid) blocked.push('the historical package does not validate');
     files = fileDiffs(readPackage(current), after);
     if (!files.length) blocked.push(`${current.id} already matches ${req.revision.slice(0, 12)}`);
     target = { files: after, policy: null, targetPath: current.gitRel };
@@ -392,7 +411,20 @@ export async function previewChange(ctx: LifecycleContext, req: ChangeRequest): 
   return { preview, target, basePolicyDigest: ctx.policy.digest };
 }
 
+function validateHistorical(files: Map<string, { data: Buffer; exec: boolean }>, name: string): ReturnType<typeof validatePackage> {
+  const dir = mkdtempSync(join(tmpdir(), 'sb-skill-validate-'));
+  try {
+    for (const [path, file] of files) {
+      const target = join(dir, ...path.split('/'));
+      if (!within(dir, target)) throw new LifecycleError(422, 'historical package path leaves its validation folder');
+      atomicWrite(target, file.data, file.exec);
+    }
+    return validatePackage(dir, name);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
 function createSha(b: Buffer): string { return createHash('sha256').update(b).digest('hex'); }
+function fileVersion(sha256: string, exec: boolean): string { return createHash('sha256').update(sha256).update(Buffer.from([0])).update(exec ? 'x' : '-').digest('hex'); }
 function today(): string { return new Date().toISOString().slice(0, 10); }
 
 // ---- proposed changes ----
@@ -480,6 +512,11 @@ export async function applyChange(ctx: LifecycleContext, id: string, opts: { mes
   if (stored.kind === 'remove') {
     const current = await previewChange(ctx, stored.request);
     if (current.preview.blocked.length) throw new LifecycleError(409, `not applied: ${current.preview.blocked.join('; ')}`);
+  }
+  if (stored.hasPackage) {
+    const check = validatePackage(join(changeDir(ctx, id), 'package'), stored.skill);
+    if (!check.validation.valid) throw new LifecycleError(422, `stored package: ${check.validation.errors.join('; ')}`);
+    if (check.digest !== stored.preview.targetDigest) throw new LifecycleError(409, 'the stored package does not match its previewed digest; it was edited after export');
   }
   const change = toChange(ctx, stored);
   if (stored.branch) throw new LifecycleError(409, `already on branch ${stored.branch} (${stored.commit})`);

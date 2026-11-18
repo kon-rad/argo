@@ -302,7 +302,7 @@ export class SkillsService {
   async drafts(): Promise<Draft[]> { return life.listDrafts(await this.lifecycleContext()); }
   async draft(name: string): Promise<Draft> { return life.getDraft(await this.lifecycleContext(), name); }
   async createDraft(name: string, from?: string, description?: string): Promise<Draft> { return life.createDraft(await this.lifecycleContext(true), name, from, description); }
-  async writeDraftFile(name: string, path: string, content: string, exec?: boolean): Promise<Draft> { return life.writeDraftFile(await this.lifecycleContext(), name, path, content, exec); }
+  async writeDraftFile(name: string, path: string, content: string, exec?: boolean, expectedVersion?: string | null): Promise<Draft> { return life.writeDraftFile(await this.lifecycleContext(), name, path, content, exec, expectedVersion); }
   async readDraftFile(name: string, path: string) { return life.readDraftFile(await this.lifecycleContext(), name, path); }
   async deleteDraftFile(name: string, path: string): Promise<Draft> { return life.deleteDraftFile(await this.lifecycleContext(), name, path); }
   async deleteDraft(name: string): Promise<void> { life.deleteDraft(await this.lifecycleContext(), name); }

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import yaml from 'js-yaml';
 import type { RosterAgent } from './policy.js';
@@ -13,7 +13,8 @@ export interface Roster { agents: RosterAgent[]; teams: string[]; error: string 
 
 const AGENT = /^[a-z0-9][a-z0-9-]{0,31}$/;
 type Obj = Record<string, unknown>;
-const obj = (v: unknown): Obj => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : {});
+const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.isArray(v);
+const obj = (v: unknown): Obj => isObj(v) ? v : {};
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
 function readYaml(path: string): Obj {
@@ -27,13 +28,24 @@ export function loadRoster(vaultRoot: string): Roster {
   let teams: Obj = {};
   let error: string | null = null;
   const compiled = join(orgDir, 'org.json');
-  if (existsSync(compiled)) {
+  const compiledPresent = (() => { try { lstatSync(compiled); return true; } catch (err) { return (err as NodeJS.ErrnoException).code !== 'ENOENT'; } })();
+  if (compiledPresent) {
     try {
-      const doc = obj(JSON.parse(readFileSync(compiled, 'utf8')));
-      agents = obj(doc['agents']);
-      teams = obj(doc['teams']);
+      const st = lstatSync(compiled);
+      if (!st.isFile() || st.isSymbolicLink()) throw new Error('compiled roster must be a regular file');
+      const doc: unknown = JSON.parse(readFileSync(compiled, 'utf8'));
+      if (!isObj(doc) || !isObj(doc['agents']) || (doc['teams'] !== undefined && !isObj(doc['teams']))) throw new Error('expected agents and teams objects');
+      for (const [name, agent] of Object.entries(doc['agents'])) {
+        if (!AGENT.test(name) || !isObj(agent)) throw new Error(`invalid agent entry ${name}`);
+        if (agent['runtime'] !== undefined && (typeof agent['runtime'] !== 'string' || !['claude-code', 'hermes', 'codex', 'zen-agent', 'human'].includes(agent['runtime']))) throw new Error(`invalid runtime for ${name}`);
+        if (agent['team'] !== undefined && agent['team'] !== null && typeof agent['team'] !== 'string') throw new Error(`invalid team for ${name}`);
+        if (agent['knowledge'] !== undefined && (!Array.isArray(agent['knowledge']) || agent['knowledge'].some(x => typeof x !== 'string'))) throw new Error(`invalid knowledge paths for ${name}`);
+      }
+      for (const [name, team] of Object.entries(doc['teams'] ?? {})) if (!isObj(team)) throw new Error(`invalid team entry ${name}`);
+      agents = doc['agents']; teams = obj(doc['teams']);
     } catch (err) {
-      error = `org.json does not parse: ${(err as Error).message}`;
+      agents = {}; teams = {};
+      error = `org.json is invalid: ${(err as Error).message}`;
     }
   }
   const defaults = obj(readYaml(join(configDir, 'org.yaml'))['defaults']);
@@ -45,7 +57,7 @@ export function loadRoster(vaultRoot: string): Roster {
       if (m) fromConfig[m[1]!] = readYaml(join(agentsDir, f));
     }
   }
-  if (!Object.keys(agents).length) {
+  if (!compiledPresent) {
     agents = fromConfig;
     const teamsDir = join(configDir, 'teams');
     if (existsSync(teamsDir)) for (const f of readdirSync(teamsDir)) { const m = /^(.+)\.ya?ml$/.exec(f); if (m) teams[m[1]!] = {}; }

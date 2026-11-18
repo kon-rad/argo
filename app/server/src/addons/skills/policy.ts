@@ -201,15 +201,20 @@ export function resolveAgent(agent: RosterAgent, loaded: LoadedPolicy, catalog: 
     }
   }
   for (const n of denied) if (!granted.has(n)) cell(n).state = 'denied';
-  // Dependencies are reported, never granted implicitly.
-  for (const c of cells.values()) {
-    if (c.state !== 'assigned') continue;
-    const sel = selectedCandidate(p, catalog, c.skill).candidate;
-    for (const d of sel?.metadata.depends ?? []) {
-      const dc = cells.get(d);
-      if (!dc || dc.state !== 'assigned') c.reasons.push({ level: 'package', kind: 'note', detail: `depends on ${d}, which this agent is not assigned` });
+  // Dependencies never grant themselves. A missing prerequisite makes its dependents unavailable,
+  // including transitive dependents, rather than advertising an incomplete skill as assigned/ready.
+  let changed: boolean;
+  do {
+    changed = false;
+    for (const c of cells.values()) {
+      if (c.state !== 'assigned') continue;
+      const sel = selectedCandidate(p, catalog, c.skill).candidate;
+      const missing = (sel?.metadata.depends ?? []).filter(d => cells.get(d)?.state !== 'assigned');
+      if (!missing.length) continue;
+      c.state = 'unavailable'; changed = true;
+      c.reasons.push({ level: 'package', kind: 'deny', detail: `unresolved skill dependencies: ${missing.map(d => `${d} (${cells.get(d)?.state ?? 'missing or not assigned'})`).join(', ')}` });
     }
-  }
+  } while (changed);
   return cells;
 }
 

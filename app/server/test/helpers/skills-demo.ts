@@ -35,7 +35,7 @@ write(join(full.vault, 'secondbrain.json'), settingsFor(full.engine));
 write(join(full.vault, '.agents', 'skills-policy.yaml'), `${MANAGED_POLICY}lifecycle:\n  video: { status: deprecated, replacement: clip, note: use clip }\n`);
 const service = new SkillsService(full.vault, { ...SETTINGS, externalRoots: [{ id: 'demo-engine', path: full.engine }] }, { db: false });
 await service.createDraft('report', 'report');
-await service.writeDraftFile('report', 'SKILL.md', skillMd('report', 'Private report skill, revised in a draft.'));
+await service.writeDraftFile('report', 'SKILL.md', skillMd('report', 'Private report skill, revised in a draft.'), undefined, (await service.readDraftFile('report', 'SKILL.md')).version);
 await service.propose({ kind: 'deprecate', skill: 'clip', note: 'demo proposal' });
 
 const empty = join(dir, 'empty');

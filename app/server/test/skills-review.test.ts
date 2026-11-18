@@ -122,7 +122,7 @@ it('binds an exported draft to the digest that was previewed', async () => {
   const {service} = await fixture();
   await service.createDraft('report', 'report');
   const preview = await service.preview({kind: 'update', skill: 'report', draft: 'report'});
-  await service.writeDraftFile('report', 'SKILL.md', skillMd('report', 'Changed after preview.'));
+  await service.writeDraftFile('report', 'SKILL.md', skillMd('report', 'Changed after preview.'), undefined, (await service.readDraftFile('report', 'SKILL.md')).version);
   await expect(service.propose({kind: 'update', skill: 'report', draft: 'report', expectedDraftDigest: preview.targetDigest!})).rejects.toThrow(/changed after preview/);
   expect(await service.changes()).toEqual([]);
   const next = await service.preview({kind: 'update', skill: 'report', draft: 'report'});

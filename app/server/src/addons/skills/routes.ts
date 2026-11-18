@@ -65,7 +65,7 @@ export function skillsRouter(service: SkillsService): Router {
   }));
   r.put('/drafts/:name/file', wrap(async (req, res) => {
     const body = parseOr400(DraftFileWriteRequestSchema, req.body);
-    res.json({ draft: await lifecycle(() => service.writeDraftFile(nameParam(req), body.path, body.content, body.exec)) });
+    res.json({ draft: await lifecycle(() => service.writeDraftFile(nameParam(req), body.path, body.content, body.exec, body.expectedVersion)) });
   }));
   r.delete('/drafts/:name/file', wrap(async (req, res) => {
     const q = parseOr400(z.object({ path: z.string().min(1).max(255) }).strict(), req.query);

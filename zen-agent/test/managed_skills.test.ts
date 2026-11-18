@@ -143,20 +143,21 @@ test('a tampered store package is rejected and listed', () => {
   assert.match(r.rejected[0]!.reason, /does not match the manifest/);
 });
 
-test('missing views: enforce gives no skills, otherwise legacy; default config is legacy exactly', () => {
+test('missing managed views fail closed regardless of enforce; null config is legacy exactly', () => {
   const root = managedRoot();
   const leg = legacy();
   const enforced = resolveSkills(cfgFor(root, leg, true), 'writer', 's1');
   assert.equal(enforced.mode, 'managed-missing');
   assert.deepEqual(enforced.skills, []);
   const loose = resolveSkills(cfgFor(root, leg, false), 'writer', 's2');
-  assert.equal(loose.mode, 'legacy');
-  assert.deepEqual(loose.skills.map((s) => s.name), ['global-secret-skill']);
+  assert.equal(loose.mode, 'managed-missing');
+  assert.deepEqual(loose.skills, []);
   const off = resolveSkills(cfgFor(null, leg), 'writer', 's3');
   assert.equal(off.mode, 'legacy');
   assert.deepEqual(off.packages, []);
   assert.deepEqual(off.skills.map((s) => s.name), ['global-secret-skill']);
   assert.equal(resolveSkills(cfgFor(root, leg, true), null, 's4').skills.length, 0);
+  assert.equal(resolveSkills(cfgFor(root, leg, false), null, 's5').mode, 'managed-missing');
   // loadConfig default
   assert.equal(loadConfig({ workdir: mkdtempSync(join(tmpdir(), 'zen-cfg-')), env: {} }).managedSkills, null);
 });
@@ -325,4 +326,25 @@ test('managed catalog metadata lists both skills while successful loaded-use evi
   assert.deepEqual(trace.find(line=>line.type==='meta').skills_packages.map((skill:{name:string})=>skill.name),['report','unused']);
   const loaded=trace.filter(line=>line.type==='message'&&line.message.role==='toolResult'&&line.message.toolName==='read_skill'&&!line.message.isError);
   assert.deepEqual(loaded.map(line=>line.message.details),[{name:'report',dir:zen.skills[0]!.dir,id:'private:report',digest:report,revision:'a'.repeat(40)}]);
+});
+
+for (const enforce of [false,true]) test(`a removed managed view never exposes a denied legacy skill: enforce=${enforce}`, async () => {
+  const root=managedRoot(), leg=legacy();
+  view(root,'writer',1,[{name:'report',digest:store(root,'report')}]);
+  const cfg=cfgFor(root,leg,enforce);
+  const started=resolveSkills(cfg,'writer','started-before-removal');
+  assert.deepEqual(started.skills.map(s=>s.name),['report']);
+  rmSync(join(root,'views'),{recursive:true,force:true});
+  const missing=resolveSkills(cfg,'writer','new-after-removal');
+  assert.equal(missing.mode,'managed-missing');
+  assert.deepEqual(missing.skills,[]);
+  assert.match(missing.rejected[0]!.reason,/no managed view for writer/);
+  assert.deepEqual(skillTools({skills:missing.skills} as unknown as ToolContext),[]);
+  assert.deepEqual(resolveSkills(cfg,'writer','started-before-removal').packages,started.packages);
+  const unmanaged=resolveSkills({...cfg,managedSkills:null},'writer','explicitly-unmanaged');
+  assert.equal(unmanaged.mode,'legacy');
+  assert.deepEqual(unmanaged.skills.map(s=>s.name),['global-secret-skill']);
+  const [readSkill]=skillTools({skills:unmanaged.skills} as unknown as ToolContext);
+  const result=await readSkill!.execute('legacy-control',{name:'global-secret-skill'});
+  assert.match((result.content[0] as {text:string}).text,/# global-secret-skill/);
 });

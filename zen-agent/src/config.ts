@@ -72,8 +72,9 @@ export interface ZenConfig {
   /**
    * Managed skills (the engine's skills manager): the root its reconcile step writes generated views into.
    * When set, a persona's view `<root>/views/<persona>/zen-agent/` is the whole catalog, pinned per run into a
-   * read-only snapshot under `snapshots` (default: the sessions folder). `enforce`: a run without a view gets no
-   * skills instead of the legacy folders. Null (the default): `skills` folders exactly as before.
+   * read-only snapshot under `snapshots` (default: the sessions folder). An absent persona/view always gives no
+   * skills. `enforce` remains accepted for configuration compatibility; false does not enable legacy fallback.
+   * Null (the default): `skills` folders exactly as before.
    */
   managedSkills: { root: string; enforce: boolean; snapshots: string | null } | null;
   persona: { org: string; definitions: string; memory: string };

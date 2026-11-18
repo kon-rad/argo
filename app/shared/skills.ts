@@ -109,7 +109,7 @@ export const MatrixResponseSchema = z.object({
 });
 export type MatrixResponse = z.infer<typeof MatrixResponseSchema>;
 
-export const FileEntrySchema = z.object({ path: z.string(), size: z.number().int(), exec: z.boolean(), sha256: z.string(), kind: z.enum(['text', 'binary']) });
+export const FileEntrySchema = z.object({ path: z.string(), size: z.number().int(), exec: z.boolean(), sha256: z.string(), version: z.string().regex(/^[0-9a-f]{64}$/).optional(), kind: z.enum(['text', 'binary']) });
 export type FileEntry = z.infer<typeof FileEntrySchema>;
 export const HistoryEntrySchema = z.object({ revision: z.string(), date: z.string(), subject: z.string() });
 export type HistoryEntry = z.infer<typeof HistoryEntrySchema>;
@@ -184,7 +184,7 @@ export const SkillDetailResponseSchema = z.object({
 });
 export type SkillDetailResponse = z.infer<typeof SkillDetailResponseSchema>;
 
-export const FileResponseSchema = z.object({ id: z.string(), path: z.string(), size: z.number().int(), kind: z.enum(['text', 'binary']), content: z.string().nullable(), truncated: z.boolean() });
+export const FileResponseSchema = z.object({ id: z.string(), path: z.string(), size: z.number().int(), kind: z.enum(['text', 'binary']), content: z.string().nullable(), truncated: z.boolean(), sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(), version: z.string().regex(/^[0-9a-f]{64}$/).optional(), exec: z.boolean().optional() });
 export type FileResponse = z.infer<typeof FileResponseSchema>;
 
 export const AgentSkillsResponseSchema = z.object({ agent: AgentInfoSchema, mode: ModeSchema, cells: z.array(AssignmentCellSchema), notes: z.array(z.string()) });
@@ -199,7 +199,7 @@ export const DraftCreateRequestSchema = z.object({ name: SkillNameSchema, from: 
 export type DraftCreateRequest = z.infer<typeof DraftCreateRequestSchema>;
 /** Package-relative path: segments of safe characters, no `..`, no leading dot except `.env.example`-free names. */
 export const PackagePathSchema = z.string().min(1).max(255).regex(/^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9_.\-/]+$/);
-export const DraftFileWriteRequestSchema = z.object({ path: PackagePathSchema, content: z.string().max(512 * 1024), exec: z.boolean().optional() }).strict();
+export const DraftFileWriteRequestSchema = z.object({ path: PackagePathSchema, content: z.string().max(512 * 1024), exec: z.boolean().optional(), expectedVersion: z.string().regex(/^[0-9a-f]{64}$/).nullable() }).strict();
 export type DraftFileWriteRequest = z.infer<typeof DraftFileWriteRequestSchema>;
 export const ChangeRequestSchema = z.object({
   kind: ChangeKindSchema, skill: SkillNameSchema, draft: SkillNameSchema.optional(), replacement: SkillNameSchema.optional(),

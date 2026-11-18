@@ -72,7 +72,7 @@ describe('skills routes and module gating', () => {
     const app = api(f.vault, f.engine);
     expect((await request(app).post('/api/skills/drafts').send({ name: 'newskill', description: 'A new skill.' })).status).toBe(201);
     expect((await request(app).put('/api/skills/drafts/newskill/file').send({ path: '../x', content: 'x' })).status).toBe(400);
-    expect((await request(app).put('/api/skills/drafts/newskill/file').send({ path: 'scripts/run.sh', content: '#!/bin/sh\n', exec: true })).status).toBe(200);
+    expect((await request(app).put('/api/skills/drafts/newskill/file').send({ path: 'scripts/run.sh', content: '#!/bin/sh\n', exec: true, expectedVersion: null })).status).toBe(200);
     const preview = await request(app).post('/api/skills/changes/preview').send({ kind: 'create', skill: 'newskill', draft: 'newskill' });
     expect(preview.status).toBe(200);
     expect(preview.body.preview.blocked).toEqual([]);

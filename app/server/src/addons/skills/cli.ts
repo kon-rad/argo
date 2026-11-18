@@ -24,7 +24,7 @@ Inspect
 Change (writes only drafts and proposals; nothing becomes active here)
   draft list | draft show <name>
   draft new <name> [--from <name|candidate-id>] [--description <text>]
-  draft write <name> <package-path> --file <local-file> [--exec]
+  draft write <name> <package-path> --file <local-file> --expected-version <version|absent> [--exec]
   draft rm <name>
   preview <kind> <skill> [--draft <name>] [--replacement <skill>] [--note <text>] [--revision <sha>] [--resolve]
   propose <kind> <skill> [same options]     export the change for review
@@ -166,8 +166,11 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
           return 0;
         }
         if (sub === 'write' && name && path && typeof opts['file'] === 'string') {
+          const expected = opts['expected-version'];
+          if (typeof expected !== 'string') throw new LifecycleError(428, 'draft write requires --expected-version <loaded version|absent>; read files[].version with draft show before editing (absent creates a new file)');
+          if (expected !== 'absent' && !/^[a-f0-9]{64}$/.test(expected)) throw new LifecycleError(400, '--expected-version must be the loaded 64-character file version, or absent for a new file');
           const content = readFileSync(opts['file'], 'utf8');
-          const d = await service.writeDraftFile(name, path, content, opts['exec'] === true ? true : undefined);
+          const d = await service.writeDraftFile(name, path, content, opts['exec'] === true ? true : undefined, expected === 'absent' ? null : expected);
           io.out(`draft ${name}: wrote ${path}. Digest ${short(d.digest)}; ${d.validation.valid ? 'valid' : `invalid: ${d.validation.errors.join('; ')}`}. Not active.`);
           return 0;
         }
@@ -208,7 +211,11 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
         if (typeof opts['out'] !== 'string') break;
         const s = await service.current(true);
         const bundle = packBundle(planViews(s.catalog, s.policy, s.roster, { agents, runtime }));
-        writeFileSync(opts['out'], JSON.stringify(bundle), { mode: 0o600 });
+        try { writeFileSync(opts['out'], JSON.stringify(bundle), { mode: 0o600, flag: 'wx' }); }
+        catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw new ReconcileError('bundle output already exists; choose a new file (existing files and symlinks are never overwritten)');
+          throw err;
+        }
         io.out(`wrote ${opts['out']}: ${bundle.views.length} views, ${Object.keys(bundle.packages).length} packages, policy ${short(bundle.policyDigest)}. Copy it to the host and run: secondbrain skills sync --bundle <file>`);
         return 0;
       }
@@ -240,10 +247,11 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
       }
       case 'status': {
         const views = inspectRoot(root, io.env);
-        if (json) { io.out(JSON.stringify({ root, views }, null, 2)); return 0; }
+        const code = views.some((v) => v.status !== 'current') ? 2 : 0;
+        if (json) { io.out(JSON.stringify({ root, views }, null, 2)); return code; }
         if (!existsSync(root)) io.out(`no managed root at ${root}`);
         for (const v of views) io.out(`${v.agent}/${v.runtime}: ${v.status} ${short(v.viewDigest)} generated ${v.generatedAt}${v.error ? `: ${v.error}` : ''}`);
-        return views.some((v) => v.status !== 'current') ? 2 : 0;
+        return code;
       }
       case 'ack': {
         let last: { policyDigest: string | null } = { policyDigest: null };

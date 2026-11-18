@@ -143,7 +143,8 @@ Every action shows a preview first: the file diffs, the policy diff, affected ag
 
 ```
 secondbrain skills draft new report --from report
-secondbrain skills draft write report SKILL.md --file ./SKILL.md
+secondbrain skills draft show report                 # read files[].version before editing
+secondbrain skills draft write report SKILL.md --file ./SKILL.md --expected-version <loaded-version>
 secondbrain skills preview update report          # nothing saved
 secondbrain skills propose update report          # exported for review, not active
 secondbrain skills apply <change-id>              # commits on branch skills/<id> in a temporary worktree
@@ -292,3 +293,11 @@ Removal previews and proposals require authoritative deployment observations; un
 The app also binds every lifecycle export to a fingerprint of the inspected preview, including its source, policy and affected machines. If those inputs change, the owner must preview again before exporting.
 
 Repairs stage and verify replacements before moving dirty stores. If a later package or activation fails, replacements are rolled back and the previous view remains readable. Status and acknowledgement report broken links or missing/invalid manifests as failed, including previously deployed views whose active link was removed. Explicit non-null malformed Zen managed settings are configuration errors; they never silently enable legacy discovery.
+
+Bundle export creates a new mode-0600 file exclusively; an existing file or symlink is refused. Choose a fresh output path for every export. Both human and JSON status output return a nonzero exit status for dirty or failed views. Configured managed Zen views never fall back to legacy discovery when missing; only null managed configuration retains legacy discovery.
+
+Draft file saves require an opaque version token covering the loaded bytes and executable mode. HTTP saves send expectedVersion; CLI writes require --expected-version with the loaded files[].version, or absent to create a file. Changed bytes or executable mode return a conflict without replacing the earlier save. Refresh and reconcile the edits before retrying.
+
+Managed reconciliation refuses an invalid compiled roster, symlinked structural directories and unmanaged view directories. A missing, denied, disabled or invalid declared skill dependency blocks the dependent skill and preserves the previous deployment. Verified bundle metadata and standalone status use the same dependency checks. Cleanup only removes verified manager generations and unused verified packages; unknown generations and files are left for inspection.
+
+Rollback previews validate reconstructed historical package metadata with the same rules as drafts. Apply validates the actual exported package again, including its full digest, before committing it to a review branch.

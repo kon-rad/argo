@@ -1,11 +1,11 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { delimiter, join, relative, sep } from 'node:path';
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ACK_LIMITS } from '@secondbrain/contracts/skills';
 import type { AckRequest, AckView, Requirement, SkillRuntime } from '@secondbrain/contracts/skills';
 import type { Catalog } from './catalog.js';
 import { isIgnoredName, isSecretLike, LIMITS, NAME_RE, readMeta, scanPackage } from './package.js';
-import { resolveAgent, selectedCandidate, supportFor, type LoadedPolicy } from './policy.js';
+import { resolveAgent, selectedCandidate, supportFor, unresolvedAssignments, type LoadedPolicy } from './policy.js';
 import type { Roster } from './roster.js';
 
 /**
@@ -24,7 +24,7 @@ import type { Roster } from './roster.js';
 export const VIEW_FORMAT = 'secondbrain-skills-view/1';
 export const ADAPTER_RUNTIMES: SkillRuntime[] = ['zen-agent', 'claude-code', 'hermes', 'codex'];
 
-export interface PlannedSkill { name: string; id: string; digest: string; revision: string | null; dirty: boolean; description: string; requires: { bins: string[]; env: string[] } }
+export interface PlannedSkill { name: string; id: string; digest: string; revision: string | null; dirty: boolean; description: string; depends?: string[]; requires: { bins: string[]; env: string[] } }
 export interface PackageSource { files: { path: string; exec: boolean; read: () => Buffer }[] }
 export interface ViewPlan { agent: string; runtime: SkillRuntime; skills: PlannedSkill[]; excluded: { name: string; reason: string }[] }
 export interface Plan { policyDigest: string | null; views: ViewPlan[]; packages: Map<string, PackageSource> }
@@ -33,6 +33,54 @@ export class ReconcileError extends Error {}
 
 const hex = (digest: string) => digest.slice('sha256:'.length);
 const dirtyNames = (names: string[]) => [...new Set(names.filter(n => NAME_RE.test(n)))].slice(0, ACK_LIMITS.skillsPerView);
+
+const present = (path: string): boolean => { try { lstatSync(path); return true; } catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false; throw err; } };
+const inside = (root: string, path: string): boolean => { const rel = relative(root, path); return rel === '' || rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel); };
+
+/** Never traverse a link inside the explicitly selected root, including during cleanup. */
+function managedDirectory(root: string, path: string, create = false): string | null {
+  root = resolve(root); path = resolve(path);
+  if (!inside(root, path)) throw new ReconcileError('managed directory leaves its root');
+  if (!present(root)) { if (!create) return null; mkdirSync(root, { recursive: true, mode: 0o700 }); }
+  const rootStat = lstatSync(root);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw new ReconcileError('managed root is not a regular directory; refusing links or unmanaged files');
+  const canonical = realpathSync(root);
+  let current = root;
+  for (const part of relative(root, path).split(sep).filter(Boolean)) {
+    current = join(current, part);
+    if (!present(current)) { if (!create) return null; mkdirSync(current, { mode: 0o700 }); }
+    const st = lstatSync(current);
+    if (st.isSymbolicLink() || !st.isDirectory() || !inside(canonical, realpathSync(current))) throw new ReconcileError(`managed directory is a link or unmanaged path: ${relative(root, current)}`);
+  }
+  return current;
+}
+function managedRoot(root: string, create = false): boolean {
+  if (!managedDirectory(root, root, create)) return false;
+  const dirs = new Set(['store', 'views', 'quarantine', '.staging']);
+  for (const name of readdirSync(root)) {
+    const path = join(root, name);
+    if (dirs.has(name)) managedDirectory(root, path);
+    else if (name === 'state.json') {
+      const st = lstatSync(path);
+      if (st.isSymbolicLink() || !st.isFile()) throw new ReconcileError('managed state is not a regular manager file');
+      try {
+        if (st.size > BUNDLE_MAX_BYTES) throw new Error('oversized manager state');
+        const report = JSON.parse(readFileSync(path, 'utf8')) as SyncReport;
+        if (!report || typeof report.root !== 'string' || resolve(report.root) !== resolve(root) || !Array.isArray(report.views)
+          || !Number.isFinite(Date.parse(report.at)) || (report.policyDigest !== null && !/^sha256:[0-9a-f]{64}$/.test(report.policyDigest))) throw new Error('unrecognized manager report');
+        for (const view of report.views) if (!view || !NAME_RE.test(view.agent) || !ADAPTER_RUNTIMES.includes(view.runtime)
+          || !['current', 'dirty', 'failed'].includes(view.status) || !Array.isArray(view.skills) || !Array.isArray(view.missing) || !Array.isArray(view.dirty)) throw new Error('invalid manager view state');
+      } catch { throw new ReconcileError('unmanaged state.json: not a recognized report for this managed root; refusing to replace it'); }
+    } else throw new ReconcileError(`unmanaged entry in the skills root: ${name}`);
+  }
+  return true;
+}
+function removeManagedDirectory(root: string, path: string): void {
+  if (!present(path)) return;
+  managedDirectory(root, path);
+  removeTree(path);
+}
+const generatedName = (runtime: string, name: string) => name.startsWith(`${runtime}.`) && /^\d{8}T\d{6}-[a-f0-9]{6}$/.test(name.slice(runtime.length + 1));
 
 export function viewDigest(skills: { name: string; digest: string }[]): string {
   const h = createHash('sha256');
@@ -44,6 +92,7 @@ export function viewDigest(skills: { name: string; digest: string }[]): string {
 export function planViews(catalog: Catalog, policy: LoadedPolicy, roster: Roster, sel: { agents?: string[]; runtime?: SkillRuntime } = {}): Plan {
   if (policy.mode !== 'managed') throw new ReconcileError('the skills policy is in legacy mode (or missing): runtimes keep their own folders and there is nothing managed to deploy. Set `mode: managed` in the policy through review first.');
   if (!policy.valid) throw new ReconcileError(`the skills policy does not parse (${policy.errors.join('; ')}); nothing deployed, existing deployments left as they are`);
+  if (roster.error) throw new ReconcileError(`the agent roster is invalid (${roster.error}); nothing deployed, existing views left unchanged`);
   const wanted = sel.agents?.length ? sel.agents : roster.agents.map((a) => a.name);
   const views: ViewPlan[] = [];
   const packages = new Map<string, PackageSource>();
@@ -57,15 +106,14 @@ export function planViews(catalog: Catalog, policy: LoadedPolicy, roster: Roster
     }
     const cells = resolveAgent(agent, policy, catalog);
     const skills: PlannedSkill[] = [];
-    const excluded: ViewPlan['excluded'] = [];
+    const excluded: ViewPlan['excluded'] = unresolvedAssignments(cells.values());
     for (const c of [...cells.values()].sort((a, b) => (a.skill < b.skill ? -1 : 1))) {
       if (c.state !== 'assigned') {
         // Explicit denials and lifecycle revocations are intentional omissions. Broken assigned packages are not.
-        if (c.state === 'unavailable' && c.reasons.some(r => r.level === 'package' || r.level === 'policy')) excluded.push({ name: c.skill, reason: c.reasons.filter(r => r.kind === 'deny').map(r => r.detail).join('; ').slice(0, 1000) });
         continue;
       }
       const cand = selectedCandidate(policy.policy, catalog, c.skill).candidate!;
-      skills.push({ name: c.skill, id: cand.id, digest: cand.digest!, revision: cand.revision, dirty: cand.dirty === true, description: cand.description, requires: cand.metadata.requires });
+      skills.push({ name: c.skill, id: cand.id, digest: cand.digest!, revision: cand.revision, dirty: cand.dirty === true, description: cand.description, depends: cand.metadata.depends, requires: cand.metadata.requires });
       if (!packages.has(cand.digest!)) packages.set(cand.digest!, { files: cand.packageFiles.map((f) => ({ path: f.path, exec: f.exec, read: () => readFileSync(f.abs) })) });
     }
     views.push({ agent: name, runtime, skills, excluded });
@@ -181,7 +229,7 @@ function storeOk(root: string, digest: string): boolean {
   } catch { return false; }
 }
 
-interface StoreRepair { final: string; backup: string; mode: number | null }
+interface StoreRepair { root: string; final: string; backup: string; mode: number | null }
 /** Moving a directory needs only its root writable; never traverse or chmod dirty contents. */
 function directoryMode(path: string): number | null {
   const st = lstatSync(path);
@@ -192,12 +240,16 @@ function setDirectoryMode(path: string, mode: number | null): void {
   if (mode !== null && st.isDirectory() && !st.isSymbolicLink()) chmodSync(path, mode);
 }
 function restoreRepair(repair: StoreRepair): void {
-  removeTree(repair.final);
+  managedDirectory(repair.root, join(repair.root, 'store'));
+  managedDirectory(repair.root, join(repair.root, 'quarantine'));
+  removeManagedDirectory(repair.root, repair.final);
   setDirectoryMode(repair.backup, repair.mode === null ? null : 0o755);
   renameSync(repair.backup, repair.final);
   setDirectoryMode(repair.final, repair.mode);
 }
 function stagePackage(root: string, digest: string, src: PackageSource, hooks: SyncHooks, repairs?: StoreRepair[]): void {
+  managedDirectory(root, join(root, 'store'), true);
+  managedDirectory(root, join(root, '.staging'), true);
   const expected = new Set<string>();
   for (const file of src.files) {
     safePkgPath(file.path);
@@ -211,7 +263,7 @@ function stagePackage(root: string, digest: string, src: PackageSource, hooks: S
     if (!repairs) throw new ReconcileError(`store package ${hex(digest).slice(0, 12)} was modified on this machine (dirty); run with --repair to move it to quarantine and redeploy`);
   }
   const staging = join(root, '.staging', `${hex(digest).slice(0, 12)}-${randomBytes(4).toString('hex')}`);
-  mkdirSync(staging, { recursive: true });
+  mkdirSync(staging, { mode: 0o700 });
   let backup: string | null = null, installed = false;
   let mode: number | null = null;
   try {
@@ -227,17 +279,18 @@ function stagePackage(root: string, digest: string, src: PackageSource, hooks: S
       chmodSync(dest, f.exec ? 0o755 : 0o644);
     }
     hooks.afterStage?.(digest, staging);
+    managedDirectory(root, staging);
     const members = strictStoreFiles(staging);
     if (members.length !== expected.size || members.some((p) => !expected.has(p))) throw new ReconcileError('staged package contains files outside its approved manifest');
     const scan = scanPackage(staging);
     if (!scan.ok) throw new ReconcileError(`staged package ${hex(digest).slice(0, 12)}: ${scan.error}`);
     if (scan.digest !== digest) throw new ReconcileError(`staged package digest ${scan.digest.slice(0, 19)} does not match the approved ${digest.slice(0, 19)}; the source changed or was tampered with`);
-    mkdirSync(join(root, 'store'), { recursive: true });
+    managedDirectory(root, join(root, 'store'), true);
     // A dirty entry stays readable until the complete replacement has been staged and verified.
     if (existsSync(final)) {
-      if (storeOk(root, digest)) { removeTree(staging); return; }
+      if (storeOk(root, digest)) { removeManagedDirectory(root, staging); return; }
       if (!repairs) throw new ReconcileError('The destination store became dirty while staging; retry with --repair.');
-      mkdirSync(join(root, 'quarantine'), { recursive: true, mode: 0o700 });
+      managedDirectory(root, join(root, 'quarantine'), true);
       const targetBackup = join(root, 'quarantine', `${hex(digest)}-${Date.now()}-${randomBytes(3).toString('hex')}`);
       mode = directoryMode(final);
       setDirectoryMode(final, mode === null ? null : 0o755);
@@ -245,12 +298,12 @@ function stagePackage(root: string, digest: string, src: PackageSource, hooks: S
     }
     renameSync(staging, final); installed = true;
     lockDown(final);
-    if (backup) repairs!.push({ final, backup, mode });
+    if (backup) repairs!.push({ root, final, backup, mode });
   } catch (err) {
-    if (installed) removeTree(final);
+    if (installed) removeManagedDirectory(root, final);
     if (backup) { setDirectoryMode(backup, mode === null ? null : 0o755); renameSync(backup, final); setDirectoryMode(final, mode); }
     else if (mode !== null && existsSync(final)) setDirectoryMode(final, mode);
-    removeTree(staging);
+    removeManagedDirectory(root, staging);
     throw err;
   }
 }
@@ -261,27 +314,63 @@ export interface Manifest {
   skills: { name: string; id: string; digest: string; revision: string | null; dirty: boolean; description: string; path: string }[];
 }
 
-export function readCurrent(root: string, agent: string, runtime: string): { manifest: Manifest | null; dir: string | null; unmanaged: boolean } {
-  const link = join(root, 'views', agent, runtime);
-  let st;
-  try { st = lstatSync(link); } catch { return { manifest: null, dir: null, unmanaged: false }; }
-  if (!st.isSymbolicLink()) return { manifest: null, dir: null, unmanaged: true };
-  const target = readlinkSync(link);
-  if (!target.startsWith(`${runtime}.`) || !/^[A-Za-z0-9._-]+$/.test(target)) return { manifest: null, dir: null, unmanaged: true };
+/** Validate a generation's identity without assuming that matching directory names confer ownership. */
+function readGeneration(root: string, agent: string, runtime: string, target: string): { manifest: Manifest; dir: string } | null {
+  if (!generatedName(runtime, target)) return null;
   const dir = join(root, 'views', agent, target);
   try {
-    const ds = lstatSync(dir), file = join(dir, 'manifest.json'), fs = lstatSync(file);
-    if (!ds.isDirectory() || ds.isSymbolicLink() || !fs.isFile() || fs.isSymbolicLink() || fs.size > 2_000_000) throw new Error('invalid manifest location');
+    if (!managedDirectory(root, dir)) return null;
+    const file = join(dir, 'manifest.json'), fs = lstatSync(file);
+    if (!fs.isFile() || fs.isSymbolicLink() || fs.size > 2_000_000) return null;
     const m = JSON.parse(readFileSync(file, 'utf8')) as Manifest;
-    if (!m || m.format !== VIEW_FORMAT || m.mode !== 'managed' || m.agent !== agent || m.runtime !== runtime || !Array.isArray(m.skills) || m.skills.length > ACK_LIMITS.skillsPerView) throw new Error('invalid manifest identity');
+    if (!m || m.format !== VIEW_FORMAT || m.mode !== 'managed' || m.agent !== agent || m.runtime !== runtime || !Array.isArray(m.skills) || m.skills.length > ACK_LIMITS.skillsPerView) return null;
     const names = new Set<string>();
     for (const pkg of m.skills) {
-      if (!pkg || typeof pkg.name !== 'string' || typeof pkg.path !== 'string' || typeof pkg.digest !== 'string' || !NAME_RE.test(pkg.name) || pkg.path !== pkg.name || names.has(pkg.name) || !/^sha256:[0-9a-f]{64}$/.test(pkg.digest) || typeof pkg.id !== 'string') throw new Error('invalid manifest package');
+      if (!pkg || typeof pkg.name !== 'string' || typeof pkg.path !== 'string' || typeof pkg.digest !== 'string' || !NAME_RE.test(pkg.name) || pkg.path !== pkg.name || names.has(pkg.name) || !/^sha256:[0-9a-f]{64}$/.test(pkg.digest) || typeof pkg.id !== 'string') return null;
       names.add(pkg.name);
     }
-    if (m.viewDigest !== viewDigest(m.skills) || !Number.isFinite(Date.parse(m.generatedAt)) || new Date(m.generatedAt).toISOString() !== m.generatedAt || (m.policyDigest !== null && !/^sha256:[0-9a-f]{64}$/.test(m.policyDigest))) throw new Error('invalid manifest version');
-    return { manifest: m, dir, unmanaged: false };
-  } catch { return { manifest: null, dir, unmanaged: false }; }
+    if (m.viewDigest !== viewDigest(m.skills) || !Number.isFinite(Date.parse(m.generatedAt)) || new Date(m.generatedAt).toISOString() !== m.generatedAt || (m.policyDigest !== null && !/^sha256:[0-9a-f]{64}$/.test(m.policyDigest))) return null;
+    return { manifest: m, dir };
+  } catch { return null; }
+}
+function generationEntriesOwned(dir: string, manifest: Manifest): boolean {
+  const names = new Set(manifest.skills.map(s => s.name));
+  for (const entry of readdirSync(dir)) {
+    if (entry === 'manifest.json') continue;
+    const skill = manifest.skills.find(s => s.name === entry);
+    if (!skill || !names.has(entry)) return false;
+    const path = join(dir, entry);
+    if (!lstatSync(path).isSymbolicLink() || readlinkSync(path) !== `../../../store/${hex(skill.digest)}`) return false;
+  }
+  return manifest.skills.every(s => present(join(dir, s.name)));
+}
+function agentDirectory(root: string, agent: string, create = false): string | null {
+  const path = managedDirectory(root, join(root, 'views', agent), create);
+  if (!path) return null;
+  for (const name of readdirSync(path)) {
+    const entry = join(path, name);
+    if (ADAPTER_RUNTIMES.includes(name as SkillRuntime)) {
+      if (!lstatSync(entry).isSymbolicLink()) throw new ReconcileError(`views/${agent}/${name} is not a manager-made link; refusing an unmanaged directory`);
+      const target = readlinkSync(entry);
+      if (!generatedName(name, target)) throw new ReconcileError(`views/${agent}/${name} is not a manager-made generation link`);
+    } else {
+      const runtime = ADAPTER_RUNTIMES.find(r => generatedName(r, name));
+      if (!runtime || !readGeneration(root, agent, runtime, name)) throw new ReconcileError(`unmanaged generation or directory in views/${agent}: ${name}`);
+    }
+  }
+  return path;
+}
+export function readCurrent(root: string, agent: string, runtime: string): { manifest: Manifest | null; dir: string | null; unmanaged: boolean } {
+  try {
+    if (!NAME_RE.test(agent) || !ADAPTER_RUNTIMES.includes(runtime as SkillRuntime)) return { manifest: null, dir: null, unmanaged: true };
+    if (!managedRoot(root) || !managedDirectory(root, join(root, 'views', agent))) return { manifest: null, dir: null, unmanaged: false };
+    const link = join(root, 'views', agent, runtime);
+    if (!present(link)) return { manifest: null, dir: null, unmanaged: false };
+    if (!lstatSync(link).isSymbolicLink()) return { manifest: null, dir: null, unmanaged: true };
+    const target = readlinkSync(link);
+    const generation = readGeneration(root, agent, runtime, target);
+    return generation ? { ...generation, unmanaged: false } : { manifest: null, dir: null, unmanaged: !generatedName(runtime, target) };
+  } catch { return { manifest: null, dir: null, unmanaged: true }; }
 }
 
 /** Dirty names in an active view: a store package that no longer matches its digest, or a view entry that is not the manager's link. */
@@ -313,20 +402,44 @@ export function checkRequirements(skills: PlannedSkill[], env: NodeJS.ProcessEnv
   return out;
 }
 
+/** Dependencies are skills, not programs: unresolved direct or transitive dependencies block activation. */
+export function dependencyFailures(skills: { name: string; depends?: string[] }[]): { name: string; reason: string }[] {
+  const available = new Set(skills.map(s => s.name));
+  const failed = new Map<string, string>();
+  let changed: boolean;
+  do {
+    changed = false;
+    for (const skill of skills) {
+      if (!available.has(skill.name)) continue;
+      const absent = (skill.depends ?? []).filter(name => !available.has(name));
+      if (!absent.length) continue;
+      failed.set(skill.name, `unresolved skill dependencies: ${absent.join(', ')}`);
+      available.delete(skill.name); changed = true;
+    }
+  } while (changed);
+  return [...failed].map(([name, reason]) => ({ name, reason }));
+}
+
 export interface SyncReport { root: string; policyDigest: string | null; views: AckView[]; at: string }
 
 export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; hooks?: SyncHooks; env?: NodeJS.ProcessEnv } = {}): SyncReport {
   const hooks = opts.hooks ?? {};
-  mkdirSync(join(root, 'views'), { recursive: true });
-  mkdirSync(join(root, 'store'), { recursive: true });
+  for (const v of plan.views) if (!NAME_RE.test(v.agent) || !ADAPTER_RUNTIMES.includes(v.runtime)) throw new ReconcileError('invalid managed view identity');
+  managedRoot(root, true);
+  managedDirectory(root, join(root, 'views'), true);
+  managedDirectory(root, join(root, 'store'), true);
   const views: AckView[] = [];
   for (const v of plan.views) {
-    const base = { agent: v.agent, runtime: v.runtime, excluded: v.excluded ?? [] } as const;
-    const current = verifyView(root, v.agent, v.runtime);
-    const missing = checkRequirements(v.skills, opts.env);
+    const excluded = [...(v.excluded ?? [])];
+    const base = { agent: v.agent, runtime: v.runtime, excluded } as const;
+    let current: ReturnType<typeof verifyView> = { dirty: [], manifest: null, unmanaged: false };
+    let missing: Requirement[] = [];
     const repairs: StoreRepair[] = [];
     let activated = false;
     try {
+      agentDirectory(root, v.agent);
+      current = verifyView(root, v.agent, v.runtime);
+      missing = checkRequirements(v.skills, opts.env);
       if (v.skills.length > ACK_LIMITS.skillsPerView) throw new ReconcileError(`A managed view supports at most ${ACK_LIMITS.skillsPerView} skills; narrow this agent's assignments before synchronizing.`);
       if (v.excluded?.length) throw new ReconcileError(`Unresolved assignments: ${v.excluded.map(e => `${e.name}: ${e.reason}`).join('; ')}`);
       if (current.unmanaged) throw new ReconcileError(`views/${v.agent}/${v.runtime} is not a manager-made link; refusing to replace it`);
@@ -337,10 +450,19 @@ export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; ho
         continue;
       }
       for (const s of v.skills) stagePackage(root, s.digest, plan.packages.get(s.digest) ?? (() => { throw new ReconcileError(`no source for ${s.name}`); })(), hooks, opts.repair ? repairs : undefined);
+      const checked: PlannedSkill[] = [];
+      for (const skill of v.skills) {
+        const meta = readMeta(readFileSync(join(root, 'store', hex(skill.digest), 'SKILL.md'), 'utf8'), skill.name);
+        if (meta.errors.length) excluded.push({ name: skill.name, reason: `invalid package metadata: ${meta.errors.join('; ')}` });
+        else checked.push({ ...skill, depends: meta.depends, requires: meta.requires });
+      }
+      missing = checkRequirements(checked, opts.env);
+      excluded.push(...dependencyFailures(checked));
+      if (excluded.length) throw new ReconcileError(`Unresolved assignments: ${excluded.map(e => `${e.name}: ${e.reason}`).join('; ')}`);
       const generatedAt = new Date().toISOString();
       const gen = `${v.runtime}.${generatedAt.replace(/[-:.]/g, '').slice(0, 15)}-${randomBytes(3).toString('hex')}`;
       const agentDir = join(root, 'views', v.agent);
-      mkdirSync(agentDir, { recursive: true });
+      agentDirectory(root, v.agent, true);
       const genDir = join(agentDir, gen);
       mkdirSync(genDir);
       try {
@@ -357,14 +479,16 @@ export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; ho
           if (!scan.ok || scan.digest !== s.digest) throw new ReconcileError(`verification of ${s.name} in the new view failed`);
         }
         hooks.beforeActivate?.(v);
+        agentDirectory(root, v.agent);
+        managedDirectory(root, genDir);
         const tmp = join(agentDir, `.${v.runtime}.next-${randomBytes(3).toString('hex')}`);
         symlinkSync(gen, tmp);
         renameSync(tmp, join(agentDir, v.runtime)); activated = true; // atomic switch
       } catch (err) {
-        rmSync(genDir, { recursive: true, force: true });
+        try { removeManagedDirectory(root, genDir); } catch { /* Never clean through a replaced parent link. */ }
         throw err;
       }
-      try { pruneGenerations(agentDir, v.runtime); } catch { /* A verified active generation must survive deferred old-generation cleanup. */ }
+      try { pruneGenerations(root, v.agent, v.runtime); } catch { /* A verified active generation must survive deferred old-generation cleanup. */ }
       views.push({ ...base, viewDigest: viewDigest(v.skills), generatedAt, status: 'current', error: null, skills: v.skills.map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: [] });
     } catch (err) {
       if (!activated) for (const repair of repairs.reverse()) restoreRepair(repair);
@@ -373,36 +497,56 @@ export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; ho
         skills: (prev?.skills ?? []).map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: dirtyNames(current.dirty) });
     }
   }
-  rmSync(join(root, '.staging'), { recursive: true, force: true });
+  if (managedDirectory(root, join(root, '.staging'))) { try { rmdirSync(join(root, '.staging')); } catch { /* Leave any unowned/crashed staging members intact. */ } }
   gcStore(root);
   const report: SyncReport = { root, policyDigest: plan.policyDigest, views, at: new Date().toISOString() };
-  writeFileSync(join(root, 'state.json'), `${JSON.stringify(report, null, 2)}\n`);
+  managedRoot(root);
+  const staging = managedDirectory(root, join(root, '.staging'), true)!;
+  const state = join(staging, `.state-next-${randomBytes(6).toString('hex')}`);
+  try {
+    writeFileSync(state, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+    managedDirectory(root, staging); renameSync(state, join(root, 'state.json'));
+  } finally {
+    if (managedDirectory(root, staging)) { if (present(state)) rmSync(state, { force: true }); try { rmdirSync(staging); } catch { /* Preserve other staging members. */ } }
+  }
   return report;
 }
 
 /** Keep the active generation and the one before it (for a manual switch back); delete older ones. */
-function pruneGenerations(agentDir: string, runtime: string): void {
+function pruneGenerations(root: string, agent: string, runtime: string): void {
+  const agentDir = agentDirectory(root, agent);
+  if (!agentDir) return;
   const active = readlinkSync(join(agentDir, runtime));
-  const gens = readdirSync(agentDir).filter((n) => n.startsWith(`${runtime}.`) && n !== active).sort();
-  for (const g of gens.slice(0, Math.max(0, gens.length - 1))) rmSync(join(agentDir, g), { recursive: true, force: true });
+  const gens = readdirSync(agentDir).filter(n => n !== active && generatedName(runtime, n)).flatMap(name => {
+    const generation = readGeneration(root, agent, runtime, name);
+    return generation && generationEntriesOwned(generation.dir, generation.manifest) ? [{ name, ...generation }] : [];
+  }).sort((a, b) => a.manifest.generatedAt.localeCompare(b.manifest.generatedAt) || a.name.localeCompare(b.name));
+  for (const generation of gens.slice(0, Math.max(0, gens.length - 1))) removeManagedDirectory(root, generation.dir);
 }
 
-/** Delete store packages no remaining generation links to. Only the manager's own store is touched. */
+/** Only verified, unused manager packages can be collected. Unknown views or members defer collection. */
 export function gcStore(root: string): string[] {
+  if (!managedRoot(root)) return [];
   const used = new Set<string>();
-  const viewsDir = join(root, 'views');
-  if (existsSync(viewsDir)) for (const agent of readdirSync(viewsDir)) {
-    const ad = join(viewsDir, agent);
-    if (!lstatSync(ad).isDirectory()) continue;
-    for (const g of readdirSync(ad)) {
-      const gd = join(ad, g);
-      if (lstatSync(gd).isSymbolicLink() || !lstatSync(gd).isDirectory()) continue;
-      for (const e of readdirSync(gd)) { try { const t = readlinkSync(join(gd, e)); used.add(t.split('/').pop()!); } catch { /* manifest.json */ } }
+  const viewsDir = managedDirectory(root, join(root, 'views'));
+  if (viewsDir) for (const agent of readdirSync(viewsDir)) {
+    if (!NAME_RE.test(agent)) return [];
+    let ad: string | null;
+    try { ad = agentDirectory(root, agent); } catch { return []; }
+    if (!ad) continue;
+    for (const name of readdirSync(ad)) {
+      if (ADAPTER_RUNTIMES.includes(name as SkillRuntime)) continue;
+      const runtime = ADAPTER_RUNTIMES.find(r => generatedName(r, name));
+      const generation = runtime ? readGeneration(root, agent, runtime, name) : null;
+      if (!generation || !generationEntriesOwned(generation.dir, generation.manifest)) return [];
+      for (const s of generation.manifest.skills) used.add(hex(s.digest));
     }
   }
   const removed: string[] = [];
-  const store = join(root, 'store');
-  if (existsSync(store)) for (const h of readdirSync(store)) if (/^[0-9a-f]{64}$/.test(h) && !used.has(h)) { removeTree(join(store, h)); removed.push(h); }
+  const store = managedDirectory(root, join(root, 'store'));
+  if (store) for (const h of readdirSync(store)) if (/^[0-9a-f]{64}$/.test(h) && !used.has(h) && storeOk(root, `sha256:${h}`)) {
+    removeManagedDirectory(root, join(store, h)); removed.push(h);
+  }
   return removed;
 }
 
@@ -430,15 +574,17 @@ export function inspectRoot(root: string, env: NodeJS.ProcessEnv = process.env):
         try {
           const meta = readMeta(readFileSync(join(root, 'store', hex(s.digest), 'SKILL.md'), 'utf8'), s.name);
           if (meta.errors.length) { unknown.add(s.name); continue; }
-          checked.push({ ...s, requires: meta.requires });
+          checked.push({ ...s, depends: meta.depends, requires: meta.requires });
         } catch { unknown.add(s.name); }
       }
       const missing = [...checkRequirements(checked, env), ...(last?.missing ?? []).filter((r) => unknown.has(r.skill))];
+      const dependencies = dependencyFailures(checked);
+      const excluded = [...new Map([...(last?.excluded ?? []), ...dependencies].map(e => [e.name, e])).values()];
       const oldPolicy = previous !== null && previous.policyDigest !== v.manifest.policyDigest;
       const failed = last?.status === 'failed';
-      out.push({ agent, runtime, viewDigest: v.manifest.viewDigest, generatedAt: v.manifest.generatedAt, status: v.dirty.length ? 'dirty' : failed || oldPolicy ? 'failed' : 'current',
-        error: v.dirty.length ? `modified on this machine (${v.dirty.length} entries): ${v.dirty.join(', ')}`.slice(0, 500) : failed ? last.error ?? 'The last synchronization failed; sync again.' : oldPolicy ? 'Active view uses an older policy than the last requested sync; sync it again.' : null,
-        skills: v.manifest.skills.map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: dirtyNames(v.dirty), excluded: last?.excluded ?? [] });
+      out.push({ agent, runtime, viewDigest: v.manifest.viewDigest, generatedAt: v.manifest.generatedAt, status: v.dirty.length ? 'dirty' : failed || oldPolicy || excluded.length ? 'failed' : 'current',
+        error: v.dirty.length ? `modified on this machine (${v.dirty.length} entries): ${v.dirty.join(', ')}`.slice(0, 500) : failed ? last.error ?? 'The last synchronization failed; sync again.' : oldPolicy ? 'Active view uses an older policy than the last requested sync; sync it again.' : excluded.length ? `Unresolved assignments: ${excluded.map(e => `${e.name}: ${e.reason}`).join('; ')}`.slice(0, 500) : null,
+        skills: v.manifest.skills.map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: dirtyNames(v.dirty), excluded });
     }
   }
   for (const last of previous?.views ?? []) if (!out.some(v => v.agent === last.agent && v.runtime === last.runtime)) out.push({ ...last, status: 'failed', error: 'Previously deployed managed view is missing; synchronize again.', skills: [] });
