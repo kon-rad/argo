@@ -2,9 +2,9 @@ import { execFile } from 'node:child_process';
 import { query, withTransaction } from './db.js';
 
 /**
- * Ultrahuman ring data, as the cyberdeck Pi pushes it to the droplet's
+ * Ultrahuman ring data, as a Pi pushes it to the server's
  * ring-ingest service (reference client and server: the argo-exo repo, deck/ring/). The server's
- * tables are the source of truth; the Mac keeps a mirror via pullRing().
+ * tables are the source of truth; a client keeps a mirror via pullRing().
  */
 
 export const RING_TABLES = ['ring_raw', 'ring_daily', 'ring_samples', 'ring_sleep_stages'] as const;
@@ -58,12 +58,12 @@ export async function ringNight(day: string): Promise<{
 
 export type RingDump = Record<(typeof RING_TABLES)[number], unknown[]>;
 
-/** The SQL the droplet runs: every ring table as one JSON document on stdout. */
+/** The SQL the server runs: every ring table as one JSON document on stdout. */
 export const DUMP_SQL = `SELECT json_build_object(${RING_TABLES.map(
   (t) => `'${t}', (SELECT coalesce(json_agg(x), '[]'::json) FROM ${t} x)`,
 ).join(', ')});`;
 
-/** Reads the droplet's ring tables over ssh (psql reads the SQL from stdin, so nothing needs shell quoting). */
+/** Reads the server's ring tables over ssh (psql reads the SQL from stdin, so nothing needs shell quoting). */
 export function fetchRemoteDump(host: string, db: string, timeoutMs = 60_000): Promise<RingDump> {
   return new Promise((resolve, reject) => {
     const child = execFile(

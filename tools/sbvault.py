@@ -5,6 +5,9 @@
   rules [--check] [--force]
                       write AGENTS.md = the engine's AGENTS.base.md + the vault's AGENTS.local.md
   link-skills         symlink the engine's skills into <vault>/.agents/skills/
+  sync ...            keep this checkout in step with your other machines (tools/sbsync.py, docs/sync.md)
+  clis install|uninstall|status
+                      the agent CLIs (cli-board, cli-org, ...) on this machine's PATH (tools/sbclis.py)
 
 The vault is DIR for init; otherwise --vault, else the folder that holds this
 engine as .secondbrain/, else the current directory. Stdlib only: it runs on
@@ -122,7 +125,7 @@ def cmd_link_skills(vault: Path) -> int:
 
 # ---- init ----
 
-def cmd_init(vault: Path) -> int:
+def cmd_init(vault: Path, clis: bool = True) -> int:
     vault.mkdir(parents=True, exist_ok=True)
     extra = sorted(p.name for p in vault.iterdir() if p.name not in INIT_OK)
     if extra:
@@ -147,6 +150,13 @@ def cmd_init(vault: Path) -> int:
     if rc:
         return rc
     cmd_link_skills(vault)
+    if clis:
+        # The agent CLIs belong to setting up a vault on any machine; a failure here never fails init.
+        import sbclis
+        try:
+            sbclis.install(vault)
+        except Exception as err:  # noqa: BLE001 - report and carry on, the vault itself is ready
+            say(f"agent CLIs: not installed ({err}); run: secondbrain-vault clis install")
     say(f"vault ready at {vault}. Next: cp .env.example .env, then read AGENTS.md")
     return 0
 
@@ -157,15 +167,26 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     p_init = sub.add_parser("init", help="start a new vault")
     p_init.add_argument("dir", nargs="?", type=Path)
+    p_init.add_argument("--no-clis", action="store_true", help="do not put the agent CLIs on PATH (see clis)")
     p_rules = sub.add_parser("rules", help="compile AGENTS.md")
     p_rules.add_argument("--check", action="store_true", help="exit 1 if AGENTS.md is out of date")
     p_rules.add_argument("--force", action="store_true", help="overwrite a hand-edited AGENTS.md")
     sub.add_parser("link-skills", help="link the engine's skills into .agents/skills")
+    p_sync = sub.add_parser("sync", help="commit, pull and push this checkout on a timer (see docs/sync.md)")
+    p_sync.add_argument("rest", nargs=argparse.REMAINDER, help="run | status | install | uninstall | resolve")
+    p_clis = sub.add_parser("clis", help="the agent CLIs on this machine: install | uninstall | status")
+    p_clis.add_argument("rest", nargs=argparse.REMAINDER, help="install [--bin DIR] [--bundle FILE] | uninstall | status [--json]")
     args = ap.parse_args(argv)
 
     if args.cmd == "init":
-        return cmd_init((args.dir or args.vault or default_vault()).resolve())
+        return cmd_init((args.dir or args.vault or default_vault()).resolve(), clis=not args.no_clis)
     vault = (args.vault or default_vault()).resolve()
+    if args.cmd == "sync":
+        import sbsync
+        return sbsync.main(args.rest or ["--help"], vault=vault)
+    if args.cmd == "clis":
+        import sbclis
+        return sbclis.main(args.rest or ["--help"], vault=vault)
     if args.cmd == "rules":
         return cmd_rules(vault, args.check, args.force)
     return cmd_link_skills(vault)

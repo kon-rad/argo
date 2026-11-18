@@ -1,0 +1,68 @@
+{
+ "id": "research-no-edits",
+ "note": "Read-only research; findings become facts.",
+ "parts": [
+  {
+   "step": "prompt",
+   "text": "Compare SQLite and Postgres for the per-machine ledger. Which should we use and why? No code changes."
+  },
+  {
+   "step": "response",
+   "text": "I'll check what the ledger stores and how it syncs."
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"file_path\":\"/work/docs/ledger.md\"}",
+   "toolName": "Read"
+  },
+  {
+   "step": "tool_result",
+   "text": "The ledger is one file per machine, written offline, synced in batches.",
+   "isError": null
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"query\":\"sqlite WAL concurrent writers limits\"}",
+   "toolName": "WebSearch"
+  },
+  {
+   "step": "tool_result",
+   "text": "SQLite in WAL mode allows one writer at a time with many readers.",
+   "isError": null
+  },
+  {
+   "step": "response",
+   "text": "Use SQLite for the per-machine ledger. It needs no server, works offline, and one writer at a time is enough because a single collector process writes it. Postgres stays the central store. Open question: how large a ledger gets before pruning is needed."
+  }
+ ],
+ "expect": {
+  "outcome": "finished",
+  "mustMention": [
+   [
+    "sqlite"
+   ],
+   [
+    "offline",
+    "no server"
+   ]
+  ],
+  "mustNotMention": [
+   "migration"
+  ],
+  "filesEdited": [],
+  "cards": []
+ },
+ "reference": {
+  "request": "Compare SQLite and Postgres for the per-machine ledger and recommend one, without changing code.",
+  "done": "Read docs/ledger.md and searched SQLite write limits. Recommended SQLite for the per-machine ledger: no server, works offline, and one writer at a time is enough because a single collector writes it. Postgres remains the central store.",
+  "learned": "SQLite in WAL mode allows one writer and many readers, which fits a single-collector ledger.",
+  "open_items": "Decide how large a ledger may grow before pruning.",
+  "outcome": "finished",
+  "facts": [
+   {
+    "subject": "per-machine ledger",
+    "claim": "The per-machine ledger should be SQLite because it needs no server and works offline."
+   }
+  ]
+ }
+}

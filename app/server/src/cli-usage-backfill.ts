@@ -1,16 +1,23 @@
 // usage-backfill: two one-off jobs for the ledger.
-//   (default)   token calls for every Mac Claude Code session the archive already holds (older than Claude Code's
+//   (default)   token calls for every local Claude Code session the archive already holds (older than Claude Code's
 //               30-day transcript cleanup), as wire lines on stdout:
 //               secondbrain usage-backfill | ssh <server> '/usr/local/bin/secondbrain-usage-import mac'
 //   --actions   label existing calls with the tool they invoked and its action class, from the archive's raw
 //               records (only calls whose transcript text is in this database get a label), then attach every
-//               call to its run. Run on the droplet after migration 12900.
+//               call to its run. Run on the server after migration 12900.
+//   --bots      label sessions already imported with the roster bot a person chose (archive_sessions.bot: Claude
+//               Code's agent-setting, a Codex or Hermes chat opened with the persona, a zen-agent persona), and take
+//               the agent off zen-agent runs no dispatcher started. Run on the server after migration 18800.
+import { backfillBots } from './archive/bot.js';
 import { pool, query, withTransaction } from './db.js';
 import { classifyAction } from './usage/actions.js';
 import { callsFromRecords } from './usage/claudeCalls.js';
 import { attachCallsToRuns } from './usage/store.js';
 
-if (process.argv.includes('--actions')) {
+if (process.argv.includes('--bots')) {
+  const r = await backfillBots();
+  console.error(`usage-backfill: ${r.scanned} sessions read, ${r.labelled} labelled with a bot, ${r.zenRuns} zen-agent chats no longer counted as wakes`);
+} else if (process.argv.includes('--actions')) {
   let labelled = 0;
   for (;;) {
     const { rows } = await query<{ id: number; raws: unknown[] }>(

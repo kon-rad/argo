@@ -32,6 +32,7 @@ export const PostOptionsSchema = z
   .object({
     instagramType: z.enum(['post', 'reel', 'story']),
     shareToFeed: z.boolean(),
+    coverAt: z.number().min(0).max(900),
     firstComment: z.string().max(2200),
     title: z.string().max(200),
     categoryId: z.string().regex(/^\d+$/),

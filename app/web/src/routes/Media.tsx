@@ -63,7 +63,7 @@ export default function Media() {
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--rule)] px-4 py-2">
         <h1 className="mr-2 text-xl font-semibold">Media</h1>
-        <div className="flex gap-1" role="tablist">
+        <div className="flex max-w-full gap-1 overflow-x-auto whitespace-nowrap" role="tablist" aria-label="Media type">
           {TABS.map((t) => {
             const n = t.kind === 'all' ? all : counts[t.kind];
             const active = t.kind === kind;
@@ -233,6 +233,7 @@ function Lightbox({
   return (
     <div
       role="dialog"
+      aria-modal="true"
       aria-label={item.name}
       className="fixed inset-0 z-50 flex flex-col bg-black/90 text-white"
       onClick={(e) => {
@@ -275,7 +276,7 @@ function Lightbox({
           <video key={item.path} src={item.url} controls autoPlay playsInline className="max-h-full max-w-full" />
         )}
         {item.available && item.kind === 'audio' && (
-          <div className="flex w-full max-w-xl flex-col items-center gap-4">
+          <div className="flex w-full max-w-xl flex-col items-center gap-4 max-md:px-12">
             <div className="text-7xl text-white/50" aria-hidden>
               ♪
             </div>

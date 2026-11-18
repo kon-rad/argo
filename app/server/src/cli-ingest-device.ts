@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { pool } from './db.js';
 import { addDevice, listDevices, revokeDevice } from './ingest/devices.js';
 
@@ -33,4 +34,4 @@ try {
 } finally {
   await pool.end();
 }
-process.exit(code);
+await exitFlushed(code);

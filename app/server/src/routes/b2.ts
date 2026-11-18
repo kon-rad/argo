@@ -11,7 +11,7 @@ import { resolveIndexed } from './vaultPath.js';
 export interface B2Options {
   /**
    * `b2store serve 127.0.0.1:5124 vault` on the same box: a read-only HTTP view
-   * of the bucket's `vault/` prefix. Unset on the Mac, where the originals are
+   * of the bucket's `vault/` prefix. Unset on a local install, where the originals are
    * still on disk and the stub just points at its sibling.
    */
   serveUrl?: string;
@@ -46,7 +46,7 @@ export function b2Router(vaultRoot: string, opts: B2Options): Router {
       if (!target) throw new HttpError(404, `not a B2 stub: ${row.path}`);
       const download = req.query['download'] === '1';
 
-      // The Mac still has the original next to its stub: serve that, no B2 round trip.
+      // A local install still has the original next to its stub: serve that, no B2 round trip.
       if (row.path.endsWith(STUB_EXT)) {
         const sibling = row.path.slice(0, -STUB_EXT.length);
         const abs = safeVaultPath(vaultRoot, sibling);

@@ -1,0 +1,71 @@
+{
+ "id": "failed-in-errors",
+ "note": "Ends in repeated failures; must not say finished.",
+ "parts": [
+  {
+   "step": "prompt",
+   "text": "Run the database migration and tell me when it is done."
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"command\":\"npm run migrate\"}",
+   "toolName": "Bash"
+  },
+  {
+   "step": "tool_result",
+   "text": "error: relation \"widgets\" already exists",
+   "isError": true
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"command\":\"npm run migrate -- --fake\"}",
+   "toolName": "Bash"
+  },
+  {
+   "step": "tool_result",
+   "text": "error: unknown option --fake",
+   "isError": true
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"command\":\"psql -c '\\\\dt'\"}",
+   "toolName": "Bash"
+  },
+  {
+   "step": "tool_result",
+   "text": "psql: connection refused",
+   "isError": true
+  },
+  {
+   "step": "response",
+   "text": "The migration did not run. It fails with: relation widgets already exists, and I could not inspect the database because the connection was refused."
+  }
+ ],
+ "expect": {
+  "outcome": "failed",
+  "mustMention": [
+   [
+    "already exists",
+    "widgets"
+   ],
+   [
+    "connection refused",
+    "refused"
+   ]
+  ],
+  "mustNotMention": [
+   "migration completed",
+   "succeeded"
+  ],
+  "filesEdited": [],
+  "cards": []
+ },
+ "reference": {
+  "request": "Run the database migration and report when it is done.",
+  "done": "Ran npm run migrate, which failed because the widgets relation already exists. Tried --fake, which is not an option, and could not inspect the database because the connection was refused. The migration did not run.",
+  "learned": "",
+  "open_items": "Check why the widgets table already exists and restore the database connection before retrying.",
+  "outcome": "failed",
+  "facts": []
+ }
+}

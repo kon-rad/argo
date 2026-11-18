@@ -65,6 +65,25 @@ beforeEach(async () => {
 const count = async (t: string) => (await query<{ n: number }>(`SELECT count(*)::int n FROM ${t}`)).rows[0]!.n;
 
 describe('runArchive', () => {
+  it('labels Telegram chats in Hermes and Claude Code the same way agents-sync and usage-sync do', async () => {
+    const db = new DatabaseSync(join(deps.paths.hermesHome, 'state.db'));
+    db.exec(`INSERT INTO sessions VALUES ('h-tg','telegram','m',1790000600,NULL,1,'from the phone')`);
+    db.prepare(`INSERT INTO messages (session_id, role, content, timestamp) VALUES ('h-tg','user','hello bot',1790000601)`).run();
+    db.close();
+    writeFileSync(join(root, 'claude', PREFIX, 'S2.jsonl'), L({ type: 'user', uuid: 'u2', sessionId: 'S2', timestamp: '2026-09-28T02:00:00Z', entrypoint: 'cli',
+      message: { content: '<channel source="plugin:telegram:telegram" user="someone">\nfile a ticket\n</channel>' } }));
+    const s = (await runArchive(deps))!;
+    expect(s.errors).toEqual([]);
+    const { rows } = await query(`SELECT source, host, external_id, channel, meta ->> 'entrypoint' AS entrypoint FROM archive_sessions
+      WHERE external_id IN ('h-tg', 'h1', 'S2') ORDER BY host COLLATE "C", external_id COLLATE "C"`);
+    expect(rows).toEqual([
+      { source: 'hermes', host: 'droplet', external_id: 'h1', channel: null, entrypoint: null },
+      { source: 'claude-code', host: 'mac', external_id: 'S2', channel: 'telegram', entrypoint: 'cli' },
+      { source: 'hermes', host: 'mac', external_id: 'h-tg', channel: 'telegram', entrypoint: null },
+      { source: 'hermes', host: 'mac', external_id: 'h1', channel: null, entrypoint: null },
+    ]);
+  });
+
   it('archives a second Hermes home as hermes:user, skipping the sessions the main home already has', async () => {
     const uh = join(root, 'user-hermes');
     mkdirSync(uh, { recursive: true });

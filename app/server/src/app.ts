@@ -1,40 +1,44 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import express from 'express';
+import { addonRoutes } from './addons/index.js';
 import { createAuth, type AuthOptions } from './auth/router.js';
 import { config, type ModuleName } from './config.js';
+import { healthy, runChecks } from './doctor.js';
+import { currentTimezone } from './timezone.js';
 import { connectors as defaultConnectors, type ConnectorRegistry } from './connectors/index.js';
 import { defaultEmbeddingProvider } from './embeddings/factory.js';
-import { agentsRouter } from './routes/agents.js';
-import { tvRouter } from './routes/tv.js';
-import { usageRouter } from './routes/usage.js';
+import { featureRoutes, mountAt, navFor } from './features/index.js';
 import { b2Router, type B2Options } from './routes/b2.js';
-import { errorHandlerFor } from './routes/http.js';
+import type { BoardRouterOptions } from './routes/board.js';
+import type { ChatOptions } from './routes/chat.js';
 import { databaseRouter } from './routes/database.js';
 import { fileRouter } from './routes/file.js';
-import { ingestRouter } from './routes/ingest.js';
-import { hubRouter, type HubOptions } from './routes/hub.js';
-import { mapRouter } from './routes/map.js';
-import { mediaRouter } from './routes/media.js';
-import { orgRouter } from './routes/org.js';
 import { friendlyRouter, type FriendlyOptions } from './routes/friendly.js';
+import { errorHandlerFor } from './routes/http.js';
+import type { HubOptions } from './routes/hub.js';
+import { knowledgeTokenGate } from './auth/knowledgeToken.js';
 import { rawRouter } from './routes/raw.js';
-import { projectsFeedRouter, projectsRouter } from './routes/projects.js';
-import { ringRouter, type RingRouterOptions } from './routes/ring.js';
+import type { RingRouterOptions } from './routes/ring.js';
 import { runsRouter } from './routes/runs.js';
 import { searchRouter, type ProviderFactory } from './routes/search.js';
-import { socialCallbackRouter, socialRouter, type SocialOptions } from './routes/social.js';
+import type { InstagramUnifiedOptions } from './metrics/social/unified.js';
+import type { SocialOptions } from './routes/social.js';
 import { sourcesRouter } from './routes/sources.js';
 import { systemRouter } from './routes/system.js';
 import { treeRouter } from './routes/tree.js';
-import { voiceRouter, type VoiceOptions } from './routes/voice.js';
-import { bufferProvider } from './social/providers/buffer.js';
-import { linkedinProvider } from './social/providers/linkedin.js';
-import { BUFFER_PROVIDER_KEY } from './social/scheduler.js';
-import type { SocialProvider } from './social/providers/types.js';
+import type { UploadsRouterOptions } from './routes/uploads.js';
+import type { VoiceOptions } from './routes/voice.js';
+import type { ZenOptions } from './routes/zen.js';
+import type { FundDeps } from './fund.js';
 import { togetherSqlGenerator, type SqlGenerator } from './sqlgen.js';
+import { readBuildInfo, type BuildInfo } from './version.js';
 
 export interface AppOptions {
+  /** Desk bootstrap is constructed before listen, only for the enabled addon. */
+  desk?: import('./addons/desk/boot.js').DeskBoot;
+  /** Overridden in tests so the fund page reads a fake chain and a fake Safe service. */
+  fund?: Partial<FundDeps>;
   /** Overridden in tests so a run can be held open and inspected mid-flight. */
   connectors?: ConnectorRegistry;
   /** Overridden in tests so routes read a fixture tree, not the real vault. */
@@ -55,18 +59,32 @@ export interface AppOptions {
   b2?: B2Options;
   /** Overridden in tests so the ring pull never runs ssh. */
   ring?: Partial<RingRouterOptions>;
+  /** uploads module: a fake bucket and vault remote for tests. */
+  uploads?: Partial<UploadsRouterOptions>;
+  uploadsPullToken?: string;
   /** Overridden in tests so the Cron page never runs systemctl. */
   timers?: () => Promise<{ available: boolean; timers: unknown[] }>;
   /** Optional features to mount. Defaults to the MODULES env var. */
   modules?: ReadonlySet<ModuleName>;
+  /** Overridden in tests so /api/meta reports a fixed version and commit. */
+  buildInfo?: BuildInfo;
   /** Overridden in tests with a fake agent-hub. */
   hub?: HubOptions;
+  /** Overridden in tests with a fake `zen-agent serve`. */
+  zen?: ZenOptions;
+  /** Overridden in tests: a fixed owner, no live bus. */
+  board?: Partial<BoardRouterOptions>;
   /** Overridden in tests; otherwise PROJECTS_FEED_TOKEN. */
   projectsFeedToken?: string;
+  /** Test override for KNOWLEDGE_TOKEN. */
+  knowledgeToken?: string;
   /** Overridden in tests: temp settings and cache, and a fake speech server. */
   voice?: Partial<VoiceOptions>;
   /** Overridden in tests with fake providers and a fixed encryption key. */
   social?: Partial<SocialOptions>;
+  instagramUnified?: Partial<InstagramUnifiedOptions>;
+  /** Overridden in tests with a fake chat model and a fixed provider catalog. */
+  chat?: Partial<ChatOptions>;
 }
 
 function defaultSqlGenerator(): SqlGenerator {
@@ -74,15 +92,23 @@ function defaultSqlGenerator(): SqlGenerator {
   return togetherSqlGenerator({ apiKey: config.togetherApiKey, model: config.sqlModel });
 }
 
-/** Only LinkedIn is wired today; an unconfigured provider is simply absent, not an error. */
-function defaultSocialProviders(): Record<string, SocialProvider> {
-  const providers: Record<string, SocialProvider> = {};
-  if (config.linkedinClientId && config.linkedinClientSecret) {
-    providers.linkedin = linkedinProvider({ clientId: config.linkedinClientId, clientSecret: config.linkedinClientSecret });
-  }
-  if (config.bufferApiKey) providers[BUFFER_PROVIDER_KEY] = bufferProvider({ apiKey: config.bufferApiKey });
-  return providers;
+/** Scripts only from this origin; fetches only from this origin plus `connectOrigins` (the bucket, for direct uploads). */
+export function contentSecurityPolicy(connectOrigins: string[] = []): string {
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob:",
+    "frame-src 'self'",
+    ["connect-src 'self'", ...connectOrigins].join(' '),
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'self'",
+  ].join('; ');
 }
+
 
 export function createApp(opts: AppOptions = {}): express.Express {
   const vaultRoot = opts.vaultRoot ?? config.vaultRoot;
@@ -108,96 +134,85 @@ export function createApp(opts: AppOptions = {}): express.Express {
   // Saving a note carries the whole file; everything else stays at 1 MB. The
   // second parser skips a body the first has already read.
   app.use('/api/file/source', express.json({ limit: '6mb' }));
-  // Each machine's agent ledger syncs here with a device token, no session (usage module). Mounted
-  // ahead of the global parser: the router checks the token before it reads its large body.
-  if (modules.has('usage')) app.use('/api/ingest', ingestRouter());
-  // A queued social post carries its images as base64 (4 x 5 MB at most). Like the
-  // note saver above, it parses before the session check, which still refuses it.
-  app.use('/api/social/posts', express.json({ limit: '30mb' }));
+  // Features come from their manifests, core (features/<name>/) and addon (addons/<name>/) alike:
+  // three mount points, raw, public and session. The login is built first so a public route that
+  // gates some of its own paths (the board) can use it.
+  const auth = remote
+    ? createAuth(
+        opts.auth ?? {
+          passwordHash: config.authPasswordHash!,
+          totpSecret: config.authTotpSecret!,
+          publicOrigin: config.publicOrigin!,
+        },
+      )
+    : undefined;
+  const ctx = { vaultRoot, remote, sessionGate: auth?.requireSession, opts, app };
+  const features = [...featureRoutes(modules, ctx), ...addonRoutes(modules, ctx)];
+  // Raw: ahead of the global body parser (the usage ingest reads its own large body after checking
+  // its token; a queued social post carries its images as base64 and parses before the session check).
+  mountAt(app, features, 'raw');
   app.use(express.json({ limit: '1mb' }));
 
-  app.get('/api/health', (_req, res) => {
-    res.json({ ok: true });
+  // The same checks `secondbrain doctor` prints, so a monitor and a person see one
+  // answer. `?deep=1` adds the server-only checks (failed timers, last backup);
+  // the launcher polls this endpoint while it waits for a boot, so those stay opt-in.
+  app.get('/api/health', async (req, res) => {
+    const checks = await runChecks({ modules, deep: req.query.deep === '1' });
+    res.json({ ok: healthy(checks), checks });
   });
 
-  // A kiosk's read-only projects summary: a bearer token, no session.
-  if (modules.has('projects')) {
-    app.use('/api/feed', projectsFeedRouter(vaultRoot, opts.projectsFeedToken ?? config.projectsFeedToken));
-  }
+  // Public: a feature route with its own token check (the projects feed, the board, the social OAuth
+  // callback, the uploads pull) sits ahead of the login gates.
+  mountAt(app, features, 'public');
 
-  // The OAuth callback (the provider's redirect arrives without the session
-  // cookie) and the public media a relay fetches by token.
-  const socialOpts: SocialOptions | undefined = modules.has('social')
-    ? {
-        providers: defaultSocialProviders(),
-        tokenEncKey: config.socialTokenEncKey,
-        redirectBaseUrl: config.socialRedirectBaseUrl,
-        xMaxChars: config.socialXMaxChars,
-        ...opts.social,
-      }
-    : undefined;
-  if (socialOpts) app.use('/api/social', socialCallbackRouter(socialOpts));
-
-  if (remote) {
-    const auth = createAuth(
-      opts.auth ?? {
-        passwordHash: config.authPasswordHash!,
-        totpSecret: config.authTotpSecret!,
-        publicOrigin: config.publicOrigin!,
-      },
-    );
+  if (auth) {
+    // A read-only token for a local agent, for three GET paths (auth/knowledgeToken.ts). It only flags the request.
+    app.use('/api', knowledgeTokenGate(opts.knowledgeToken ?? config.knowledgeToken));
     app.use('/api', auth.checkOrigin);
     app.use('/api/auth', auth.router);
     // Everything below this line needs a session. Routes are only ever added
     // below it, so a new endpoint is protected by default.
-    app.use('/api', auth.requireSession);
+    app.use('/api', (req, res, next) => (res.locals.knowledgeToken ? next() : auth.requireSession(req, res, next)));
   } else {
     app.get('/api/auth/me', (_req, res) => {
       res.json({ required: false, authenticated: true });
     });
   }
   // What the web app shows: optional pages and the vault notes the nav links to.
+  // The version and commit are read once: they cannot change while this process runs.
+  const buildInfo = opts.buildInfo ?? readBuildInfo(config.appRoot);
   app.get('/api/meta', (_req, res) => {
     res.json({
       modules: [...modules],
+      // The header links of the features that are on, from their manifests.
+      nav: navFor(modules),
       owner: config.ownerName,
       devLogPath: config.devLogPath,
       docsPath: config.docsPath,
       robot: !remote && Boolean(config.robotLaunchScript),
+      // The vault's current time zone (secondbrain.json), read fresh so `secondbrain timezone set` needs no restart; null: unset.
+      timezone: currentTimezone(),
+      ...buildInfo,
     });
   });
   app.use('/api/tree', treeRouter(vaultRoot));
   app.use('/api/file', fileRouter(vaultRoot));
   app.use('/api/raw', rawRouter(vaultRoot));
   app.use('/api/b2', b2Router(vaultRoot, opts.b2 ?? { serveUrl: config.b2ServeUrl }));
-  app.use('/api/search', searchRouter(opts.embeddingProvider ?? defaultEmbeddingProvider));
+  app.use(
+    '/api/search',
+    searchRouter(opts.embeddingProvider ?? defaultEmbeddingProvider, [
+      'notes',
+      'records',
+      ...(modules.has('agents') || modules.has('usage') ? (['agents'] as const) : []),
+    ]),
+  );
   app.use('/api/sources', sourcesRouter(opts.connectors ?? defaultConnectors));
   app.use('/api/runs', runsRouter());
   app.use('/api/db', databaseRouter(opts.sqlGenerator ?? defaultSqlGenerator));
-  // Optional modules: off means not mounted at all, so their API 404s like any unknown path.
-  if (modules.has('ring')) {
-    const host = config.ringPullHost;
-    app.use(
-      '/api/ring',
-      ringRouter({
-        allowPull: !remote && config.indexer && Boolean(host),
-        host: host ?? '',
-        db: config.ringPullDb,
-        ...opts.ring,
-      }),
-    );
-  }
-  if (modules.has('agents')) {
-    app.use('/api/agents', agentsRouter(opts.timers));
-    app.use('/api/hub', hubRouter(opts.hub ?? { url: config.agentHubUrl, token: config.agentHubToken }));
-  }
-  if (modules.has('usage')) app.use('/api/usage', usageRouter());
-  if (modules.has('projects')) app.use('/api/projects', projectsRouter(vaultRoot));
-  if (modules.has('org')) app.use('/api/org', orgRouter(vaultRoot));
-  if (modules.has('map')) app.use('/api/map', mapRouter());
-  if (modules.has('tv')) app.use('/api/tv', tvRouter(vaultRoot));
-  if (modules.has('media')) app.use('/api/media', mediaRouter(vaultRoot));
-  if (socialOpts) app.use('/api/social', socialRouter(socialOpts));
+  // Session: the rest of the features' routes, behind the login like everything below. A module
+  // that is off is not mounted at all, so its API 404s like any unknown path.
+  mountAt(app, features, 'session');
   // Local-only: one spawns a shell script, the other stops the process. Neither
   // belongs on an internet-facing box, logged in or not.
   const robotScript = opts.friendly?.script ?? config.robotLaunchScript;
@@ -208,21 +223,6 @@ export function createApp(opts: AppOptions = {}): express.Express {
         script: robotScript,
         logFile: join(config.dataDir, 'friendly-launch.log'),
         ...opts.friendly,
-      }),
-    );
-  }
-  // Read-aloud through a local speech server (Kokoro). Its settings can also
-  // drive a Claude Code Stop hook on the same machine. Never on a server.
-  if (!remote && modules.has('voice')) {
-    app.use(
-      '/api/voice',
-      voiceRouter({
-        vaultRoot,
-        settingsFile: join(config.dataDir, 'voice-settings.json'),
-        cacheDir: join(config.dataDir, 'tts'),
-        ttsUrl: config.ttsUrl,
-        ttsModel: config.ttsModel,
-        ...opts.voice,
       }),
     );
   }
@@ -237,25 +237,12 @@ export function createApp(opts: AppOptions = {}): express.Express {
   const index = join(config.webDist, 'index.html');
   if (existsSync(index)) {
     app.use(express.static(config.webDist, { index: false }));
+    // The uploads page PUTs file parts straight to the bucket, so the browser must be allowed to reach its origin.
+    const csp = contentSecurityPolicy(config.b2S3Endpoint && modules.has('uploads') ? [new URL(config.b2S3Endpoint).origin] : []);
     app.get(/.*/, (_req, res) => {
       // Scripts only from this origin: markdown from the vault is rendered by
       // React (no raw HTML), and this is the backstop if that ever changes.
-      res.setHeader(
-        'Content-Security-Policy',
-        [
-          "default-src 'self'",
-          "script-src 'self'",
-          "style-src 'self' 'unsafe-inline'",
-          "img-src 'self' data: blob: https:",
-          "media-src 'self' blob:",
-          "frame-src 'self'",
-          "connect-src 'self'",
-          "object-src 'none'",
-          "base-uri 'none'",
-          "form-action 'self'",
-          "frame-ancestors 'self'",
-        ].join('; '),
-      );
+      res.setHeader('Content-Security-Policy', csp);
       res.sendFile(index);
     });
   }

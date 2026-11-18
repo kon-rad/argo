@@ -1,0 +1,14 @@
+# Reading (reading)
+Area, active
+
+Books and papers worth keeping
+
+One note per book.
+
+Paths: home note Areas/reading/README.md
+
+## Roadmap (0 open projects, by due date)
+- none
+
+## Recent (14 days, since 2026-11-06)
+Nothing changed.

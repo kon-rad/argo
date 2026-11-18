@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import Org, { channelLabel, teamColor } from '../src/routes/org/Org.js';
+import { browserTimezone } from '../src/lib/time.js';
 
 const agent = (name: string, team_slug: string | null, role: string, is_lead = false) => ({
   name, team_slug, team_name: team_slug === 'platform' ? 'Platform & Agents' : team_slug ? 'Media & Growth' : null, runtime: team_slug ? 'claude-code' : 'human',
@@ -22,7 +23,7 @@ const CHANNELS = {
   ],
 };
 const msg = (id: number, channel_slug: string, author: string, body: string, extra: Record<string, unknown> = {}) => ({
-  id, channel_slug, thread_id: null, author, kind: 'message', body, mentions: [], urgent: false, task_id: null, project_slug: null, feature_slug: null, run_id: null,
+  id, channel_slug, thread_id: null, author, kind: 'message', body, mentions: [], urgent: false, task_id: null, area_slug: null, project_slug: null, run_id: null,
   created_at: '2026-10-15T04:22:00Z', ...extra,
 });
 const MESSAGES: Record<string, unknown[]> = {
@@ -46,9 +47,19 @@ const AGENT_PAGE = {
   prompt: '# atlas\n\n**Personality.** Calm, exact.',
   memory: '- 2026-10-15: learned the board',
   memory_path: '.agents/org/memory/atlas.md',
+  episodes: [
+    { id: 5, run_id: 'org-atlas-1', task_id: 't_abc123', reason: 'task', outcome: 'request_changes', corrected: true, turn_count: 14, cost_usd: '0.4200', duration_s: 300, summary: 'Worked card t_abc123. Sent back with changes requested.', log_path: null, reflected_at: '2026-10-15T04:23:00Z', created_at: '2026-10-15T04:22:00Z' },
+  ],
 };
 
-function mount(path: string) {
+type MountOptions = {
+  agentPage?: unknown;
+  messages?: Record<string, unknown[]>;
+  meta?: () => unknown;
+  tokens?: unknown[];
+};
+
+function mount(path: string, over: MountOptions = {}, qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   const calls: { url: string; init?: RequestInit }[] = [];
   vi.stubGlobal(
     'fetch',
@@ -56,27 +67,31 @@ function mount(path: string) {
       const url = String(input);
       calls.push({ url, init });
       const u = new URL(url, 'http://x');
+      if (u.pathname === '/api/meta') return Response.json(over.meta?.() ?? { timezone: null });
       if (u.pathname === '/api/org/chart') return Response.json(CHART);
       if (u.pathname === '/api/org/channels') return Response.json(CHANNELS);
       if (u.pathname.endsWith('/members')) return Response.json({ members: [{ agent_name: 'owner', can_post: true, role: 'CEO', team_slug: null, runtime: 'human' }, { agent_name: 'atlas', can_post: true, role: 'Head of Platform', team_slug: 'platform', runtime: 'claude-code' }] });
       if (u.pathname.endsWith('/read')) return Response.json({ ok: true });
       if (u.pathname === '/api/org/messages') {
         const ch = u.searchParams.get('channel');
-        const messages = ch ? (MESSAGES[ch] ?? []) : Object.values(MESSAGES).flat();
+        const fixture = over.messages ?? MESSAGES;
+        const messages = ch ? (fixture[ch] ?? []) : Object.values(fixture).flat();
         return Response.json({ messages, cursor: 4 });
       }
+      if (u.pathname === '/api/org/approvals') return Response.json([]);
+      if (u.pathname === '/api/org/facts') return Response.json([]);
+      if (u.pathname === '/api/board/tokens') return Response.json({ tokens: over.tokens ?? [] });
       if (u.pathname === '/api/org/search') return Response.json({ messages: [msg(3, 'platform', 'rune', 'tests 29/29', { kind: 'status' })] });
       if (u.pathname === '/api/org/post') return Response.json(msg(5, 'all-hands', 'owner', 'posted'), { status: 201 });
       if (u.pathname === '/api/org/dm') return Response.json(msg(6, 'dm:atlas:owner', 'owner', 'hi'), { status: 201 });
-      if (u.pathname === '/api/org/agents/atlas') return Response.json(AGENT_PAGE);
-      if (u.pathname === '/api/hub/board') return Response.json({ error: { message: 'Agents run on the droplet' } }, { status: 503 });
-      if (u.pathname === '/api/org/tasks') return Response.json({ tasks: [{ task_id: 't_abc123', board: 'exo', title: 'Wire the tasks route', project_slug: 'secondbrain-app', feature_slug: 'org-page', assignee: 'atlas', created_by: 'owner', rounds: 0, created_at: '2026-10-15T05:00:00Z' }] });
-      if (u.pathname === '/api/projects/report') return Response.json({ projects: [{ slug: 'secondbrain-app', title: 'Second Brain app', team: 'platform', features: [{ slug: 'org-page', title: 'The /org page' }] }] });
-      if (u.pathname === '/api/hub/tasks') return Response.json({ id: 't_new000', title: 'Ship it', status: 'ready', assignee: 'atlas' }, { status: 200 });
+      if (u.pathname === '/api/org/agents/atlas') return Response.json(over.agentPage ?? AGENT_PAGE);
+      if (u.pathname === '/api/board/cards' && init?.method === 'POST') return Response.json({ card: { id: 't_new000', title: 'Ship it', status: 'ready', assignee: 'atlas' }, message: null }, { status: 201 });
+      if (u.pathname === '/api/board/cards') return Response.json({ cards: [{ id: 't_abc123', board_slug: 'exo', title: 'Wire the tasks route', status: 'ready', assignee: 'atlas', area_slug: 'secondbrain-app', project_slug: 'org-page', created_by: 'owner', kind: 'work', priority: 3, contract: {}, created_at: '2026-10-15T05:00:00Z' }] });
+      if (u.pathname === '/api/org/tasks') return Response.json({ tasks: [{ task_id: 't_abc123', board: 'exo', title: 'Wire the tasks route', area_slug: 'secondbrain-app', project_slug: 'org-page', assignee: 'atlas', created_by: 'owner', rounds: 0, created_at: '2026-10-15T05:00:00Z' }] });
+      if (u.pathname === '/api/areas/report') return Response.json({ areas: [{ slug: 'secondbrain-app', title: 'Second Brain app', team: 'platform', status: 'active', projects: [{ slug: 'org-page', title: 'The /org page' }] }] });
       return Response.json({ error: { message: `unexpected ${url}` } }, { status: 404 });
     }),
   );
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
@@ -87,6 +102,15 @@ function mount(path: string) {
     </QueryClientProvider>,
   );
   return calls;
+}
+
+function displayTime(iso: string, timeZone: string, seconds = false): string {
+  return new Intl.DateTimeFormat([], {
+    timeZone,
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: seconds ? '2-digit' : undefined,
+    hourCycle: 'h23', timeZoneName: 'short',
+  }).format(new Date(iso));
 }
 
 afterEach(() => {
@@ -105,6 +129,84 @@ describe('helpers', () => {
 });
 
 describe('Org page', () => {
+  it('updates root and reply tooltips in place when metadata changes and clears to the browser zone', async () => {
+    const rootAt = '2026-01-02T00:15:30Z';
+    const replyAt = '2026-01-02T00:16:31Z';
+    const messages = { platform: [
+      msg(30, 'platform', 'rune', 'midnight root', { created_at: rootAt }),
+      msg(31, 'platform', 'atlas', 'midnight reply', { kind: 'reply', thread_id: 30, created_at: replyAt }),
+    ] };
+    let timezone: string | null = 'America/Los_Angeles';
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const calls = mount('/org?channel=platform', { messages, meta: () => ({ timezone }) }, client);
+
+    const root = await screen.findByText('midnight root');
+    fireEvent.click(screen.getByRole('button', { name: 'show 1 reply' }));
+    const reply = await screen.findByText('midnight reply');
+    const rootTime = root.closest('[data-testid="org-message"]')!.querySelector<HTMLElement>('span[title]')!;
+    const replyTime = reply.closest('[data-testid="org-message"]')!.querySelector<HTMLElement>('span[title]')!;
+    const relative = [rootTime.textContent, replyTime.textContent];
+    expect(rootTime.title).toBe(displayTime(rootAt, timezone));
+    expect(replyTime.title).toBe(displayTime(replyAt, timezone));
+
+    let before = calls.length;
+    timezone = 'Asia/Tokyo';
+    await client.invalidateQueries({ queryKey: ['meta'] });
+    await waitFor(() => expect(rootTime.title).toBe(displayTime(rootAt, timezone!)));
+    expect(replyTime.title).toBe(displayTime(replyAt, timezone));
+    expect(calls.slice(before).map((call) => new URL(call.url, 'http://x').pathname)).toEqual(['/api/meta']);
+    expect(root.closest('[data-testid="org-message"]')!.querySelector('span[title]')).toBe(rootTime);
+    expect(reply.closest('[data-testid="org-message"]')!.querySelector('span[title]')).toBe(replyTime);
+
+    before = calls.length;
+    timezone = null;
+    await client.invalidateQueries({ queryKey: ['meta'] });
+    await waitFor(() => expect(rootTime.title).toBe(displayTime(rootAt, browserTimezone())));
+    expect(replyTime.title).toBe(displayTime(replyAt, browserTimezone()));
+    expect([rootTime.textContent, replyTime.textContent]).toEqual(relative);
+    expect(calls.slice(before).map((call) => new URL(call.url, 'http://x').pathname)).toEqual(['/api/meta']);
+    client.clear();
+  });
+
+  it('updates token Made and Last seen timestamps in place and keeps an absent Last seen as never', async () => {
+    const madeAt = '2026-01-02T00:15:30Z';
+    const seenAt = '2026-01-02T00:16:31Z';
+    let timezone: string | null = 'America/Los_Angeles';
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mount('/org/approvals', {
+      meta: () => ({ timezone }),
+      tokens: [
+        { id: 1, agent_name: 'rune', label: 'workstation', created_at: madeAt, last_seen_at: seenAt, revoked_at: null },
+        { id: 2, agent_name: 'atlas', label: 'backup', created_at: madeAt, last_seen_at: null, revoked_at: null },
+      ],
+    }, client);
+
+    const table = await screen.findByRole('table');
+    const rows = within(table).getAllByRole('row');
+    const first = within(rows[1]!).getAllByRole('cell');
+    const second = within(rows[2]!).getAllByRole('cell');
+    const lastSeen = first[2]!;
+    const made = first[3]!;
+    const never = second[2]!;
+    expect(lastSeen.textContent).toBe(displayTime(seenAt, timezone, true));
+    expect(made.textContent).toBe(displayTime(madeAt, timezone, true));
+    expect(never.textContent).toBe('never');
+
+    timezone = 'Asia/Tokyo';
+    await client.invalidateQueries({ queryKey: ['meta'] });
+    await waitFor(() => expect(lastSeen.textContent).toBe(displayTime(seenAt, timezone!, true)));
+    expect(made.textContent).toBe(displayTime(madeAt, timezone, true));
+    expect(never.textContent).toBe('never');
+    expect(within(rows[1]!).getAllByRole('cell')[2]).toBe(lastSeen);
+
+    timezone = null;
+    await client.invalidateQueries({ queryKey: ['meta'] });
+    await waitFor(() => expect(lastSeen.textContent).toBe(displayTime(seenAt, browserTimezone(), true)));
+    expect(made.textContent).toBe(displayTime(madeAt, browserTimezone(), true));
+    expect(never.textContent).toBe('never');
+    client.clear();
+  });
+
   it('opens all-hands by default, lists channels with unread badges, and posts as owner', async () => {
     const calls = mount('/org');
     await screen.findByText('Morning all');
@@ -141,7 +243,7 @@ describe('Org page', () => {
     const calls = mount('/org?channel=platform');
     await screen.findByText('shipped: the board');
     expect(screen.getByText('stand-up')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'task t_abc123' }).getAttribute('href')).toBe('/agents/board/t_abc123');
+    expect(screen.getByRole('link', { name: 'task t_abc123' }).getAttribute('href')).toBe('/board/t_abc123');
     expect(screen.queryByText('good')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'show 1 reply' }));
     expect(screen.getByText('good')).toBeTruthy();
@@ -172,8 +274,11 @@ describe('Org page', () => {
     expect(rows.some((t) => /routine daily-standup · done · org-atlas-1/.test(t))).toBe(true);
     expect(screen.getByText('posted the stand-up')).toBeTruthy();
     expect(screen.getByText('learned the board', { exact: false })).toBeTruthy();
-    // Cards come from the link rows even when the kanban (agent-hub) is unreachable, with their project and feature.
-    expect(screen.getByRole('link', { name: 'Wire the tasks route' }).getAttribute('href')).toBe('/agents/board/t_abc123');
+    // The finished wakes behind the memory file.
+    expect(screen.getByText('Episodes (1)')).toBeTruthy();
+    expect(rows.some((t) => /request changes · corrected · 14 turns · \$0\.4200/.test(t))).toBe(true);
+    // Cards come from the link rows even when the kanban (agent-hub) is unreachable, with their area and project.
+    expect(screen.getByRole('link', { name: 'Wire the tasks route' }).getAttribute('href')).toBe('/board/t_abc123');
     expect(screen.getByRole('link', { name: 'secondbrain-app/org-page' })).toBeTruthy();
     fireEvent.change(screen.getByLabelText('DM atlas'), { target: { value: 'hold the deploy' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -181,18 +286,27 @@ describe('Org page', () => {
     expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/org/dm'))!.init?.body))).toEqual({ to: 'atlas', body: 'hold the deploy' });
   });
 
-  it('gives a bot a card from its page: one card, one bot, one project', async () => {
+  it('says when there are no finished wakes yet', async () => {
+    const { episodes, ...older } = AGENT_PAGE;
+    void episodes;
+    mount('/org/agents/atlas', { agentPage: older });
+    await screen.findByText('Head of Platform');
+    expect(screen.getByText('Episodes (0)')).toBeTruthy();
+    expect(screen.getByText('No finished wakes recorded yet.')).toBeTruthy();
+  });
+
+  it('gives a bot a card from its page: one card, one bot, one area', async () => {
     const calls = mount('/org/agents/atlas');
     await screen.findByText('Head of Platform');
     const give = screen.getByRole('button', { name: 'Give card' }) as HTMLButtonElement;
     fireEvent.change(screen.getByLabelText('Card for atlas'), { target: { value: 'Ship it' } });
-    expect(give.disabled).toBe(true); // no project yet
+    expect(give.disabled).toBe(false); // an area is optional on the engine's board
     await waitFor(() => expect(screen.getByRole('option', { name: 'secondbrain-app' })).toBeTruthy());
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'secondbrain-app' } });
-    fireEvent.change(screen.getByLabelText('Feature'), { target: { value: 'org-page' } });
+    fireEvent.change(screen.getByLabelText('Area'), { target: { value: 'secondbrain-app' } });
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'org-page' } });
     fireEvent.click(give);
-    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/hub/tasks') && c.init?.method === 'POST')).toBe(true));
-    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/hub/tasks'))!.init?.body))).toEqual({ board: 'exo', title: 'Ship it', body: '', assignee: 'atlas', project: 'secondbrain-app', feature: 'org-page' });
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')).toBe(true));
+    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/api/board/cards') && c.init?.method === 'POST')!.init?.body))).toEqual({ title: 'Ship it', assignee: 'atlas', area: 'secondbrain-app', project: 'org-page' });
     expect(await screen.findByText('card t_new000 created')).toBeTruthy();
   });
 

@@ -1,38 +1,27 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   api, USAGE_DIMENSION_LABELS, USAGE_DIMENSIONS,
-  type CreditProvider, type PlanCurrent, type UsageCredits, type UsageDimension, type UsageFacets, type UsageFilters, type UsageRun, type UsageSeriesRow,
+  type CreditProvider, type UsageCredits, type UsageDimension, type UsageFacets, type UsageFilters, type UsageRun, type UsageSection, type UsageSeriesRow,
 } from '../../lib/api.js';
 import LineChart from '../../components/charts/LineChart.js';
+import { AgentAvatar } from '../../components/AgentAvatar.js';
+import DataTable from '../../components/DataTable.js';
 import StackedBars, { type BarSeries } from '../../components/charts/StackedBars.js';
-import { bucketEnd, formatTokens, money, planText, TYPE_SERIES } from './format.js';
+import { bucketEnd, formatTokens, money, TYPE_SERIES } from './format.js';
 import { zoned } from '../../lib/time.js';
+import { useAppTimezone } from '../../lib/useTimezone.js';
 import AgentSessions from './AgentSessions.js';
+import Summaries from './Summaries.js';
+import LiveAgents, { useLiveCount } from './LiveAgents.js';
+import Subscriptions from './Subscriptions.js';
+import AgentToggle from '../../components/AgentToggle.js';
 
 const RANGES = [{ label: '24 h', days: 1 }, { label: '7 d', days: 7 }, { label: '30 d', days: 30 }, { label: '90 d', days: 90 }];
 const GROUP_COLORS = ['var(--chart-bar)', 'var(--ink)', '#c2410c', '#15803d', '#7c3aed', '#0e7490', '#b45309', '#be123c', '#4d7c0f', '#6d28d9'];
-const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 type Group = 'type' | UsageDimension;
 const GROUPS: Group[] = ['type', ...USAGE_DIMENSIONS];
-
-function PlanCard({ title, plan }: { title: string; plan: PlanCurrent | null }) {
-  const t = planText(plan);
-  const used = plan?.used_pct ?? null;
-  return (
-    <div className="rounded border border-[var(--rule)] p-3">
-      <div className="text-xs text-[var(--ink-dim)]">{title}</div>
-      <div className="text-2xl font-semibold">{t.main}</div>
-      {used !== null && (
-        <div className="my-1 h-2 rounded bg-[var(--paper-sunk)]">
-          <div className="h-2 rounded bg-[var(--chart-bar)]" style={{ width: `${Math.min(100, used)}%` }} />
-        </div>
-      )}
-      <div className="text-xs text-[var(--ink-dim)]">{t.sub}</div>
-    </div>
-  );
-}
 
 const PROVIDER_NAMES: Record<CreditProvider, string> = { openrouter: 'OpenRouter', fal: 'fal.ai', gemini: 'Gemini API' };
 const CREDIT_HINTS: Record<CreditProvider, string> = {
@@ -41,7 +30,7 @@ const CREDIT_HINTS: Record<CreditProvider, string> = {
   gemini: 'Google has no balance API. Copy it from AI Studio, then: secondbrain credits set gemini <balance>',
 };
 
-function CreditCard({ entry, history }: { entry: UsageCredits['providers'][number]; history: UsageCredits['history'] }) {
+function CreditCard({ entry, history, tz }: { entry: UsageCredits['providers'][number]; history: UsageCredits['history']; tz: string }) {
   const ok = entry.last_ok;
   const failed = entry.latest && entry.latest.status !== 'ok' ? entry.latest : null;
   const mine = history.filter((h) => h.provider === entry.provider && h.currency === ok?.currency);
@@ -55,15 +44,33 @@ function CreditCard({ entry, history }: { entry: UsageCredits['providers'][numbe
         <div className="text-xs text-[var(--ink-dim)]">{money(ok.total_usage, ok.currency)} used of {money(ok.total_credits, ok.currency)} bought</div>
       )}
       {change !== null && (
-        <div className="text-xs text-[var(--ink-dim)]">{change <= 0 ? `${money(-change, ok!.currency)} spent` : `${money(change, ok!.currency)} added`} since {new Date(first!.observed_at).toLocaleDateString()}</div>
+        <div className="text-xs text-[var(--ink-dim)]">{change <= 0 ? `${money(-change, ok!.currency)} spent` : `${money(change, ok!.currency)} added`} since {new Date(first!.observed_at).toLocaleDateString([], { timeZone: tz })}</div>
       )}
       {ok && (
-        <div className="text-xs text-[var(--ink-dim)]">as of {new Date(ok.observed_at).toLocaleString()} ({ok.origin === 'manual' ? 'entered by hand' : 'API'}){ok.note ? `, ${ok.note}` : ''}</div>
+        <div className="text-xs text-[var(--ink-dim)]">as of {new Date(ok.observed_at).toLocaleString([], { timeZone: tz })} ({ok.origin === 'manual' ? 'entered by hand' : 'API'}){ok.note ? `, ${ok.note}` : ''}</div>
       )}
       {failed && <div className="text-xs text-red-600">Latest reading: {failed.status}, {failed.error}</div>}
       {(!ok || entry.provider === 'gemini') && <div className="mt-1 text-xs text-[var(--ink-faint)]">{CREDIT_HINTS[entry.provider]}</div>}
     </div>
   );
+}
+
+function Credits({ providers }: { providers: CreditProvider[] }) {
+  const { tz } = useAppTimezone();
+  const credits = useQuery({ queryKey: ['usage-credits'], queryFn: () => api.usageCredits(), enabled: providers.length > 0, refetchInterval: 300_000 });
+  if (providers.length === 0) return null;
+  const entries = new Map(credits.data?.providers.map((entry) => [entry.provider, entry]));
+  return <section className="px-4 pt-4" aria-label="API credits">
+    <h2 className="text-sm font-semibold">API credits</h2>
+    <div className="mt-1 grid gap-3 sm:grid-cols-3">
+      {providers.map((provider) => {
+        const entry = entries.get(provider);
+        return entry ? <CreditCard key={provider} entry={entry} history={credits.data!.history} tz={tz} />
+          : credits.isSuccess ? <div key={provider} className="rounded border border-[var(--rule)] p-3 text-sm">{PROVIDER_NAMES[provider]}: no reading returned.</div> : null;
+      })}
+      {credits.isError && <div className="text-sm text-red-600">Credits did not load.</div>}
+    </div>
+  </section>;
 }
 
 function toSeries(rows: UsageSeriesRow[], group: string): { buckets: string[]; series: BarSeries[] } {
@@ -125,7 +132,7 @@ function FilterBar({ filters, facets, onAdd, onRemove, onClear }: {
   const chips = USAGE_DIMENSIONS.flatMap((d) => (filters[d] ?? []).map((v) => ({ d, v })));
   const values = dim ? (facets?.facets?.[dim] ?? []).filter((x) => !(filters[dim] ?? []).includes(x.value)) : [];
   return (
-    <div className="flex flex-wrap items-center gap-2 text-sm" aria-label="Filters">
+    <div className="flex flex-wrap items-center gap-2 text-sm" role="group" aria-label="Filters">
       <span className="text-xs text-[var(--ink-dim)]">Filter</span>
       {chips.map(({ d, v }) => (
         <span key={`${d}=${v}`} className="inline-flex items-center gap-1 rounded-full border border-[var(--rule)] bg-[var(--paper-sunk)] px-2 py-0.5 text-xs">
@@ -155,8 +162,10 @@ function who(r: UsageRun): { dim: UsageDimension; value: string } | null {
   return null;
 }
 
-export default function Usage() {
+function UsageLedger({ claudeConfigured, onSelectBucketZone }: { claudeConfigured: boolean; onSelectBucketZone: (zone: string) => void }) {
   const [sp, setSp] = useSearchParams();
+  // One zone for the buckets, their labels and every time below: the vault's setting, else this browser's.
+  const { tz, source: tzSource } = useAppTimezone();
   const days = Number(sp.get('days')) || 1;
   const group: Group = isGroup(sp.get('group')) ? (sp.get('group') as Group) : 'type';
   const hourly = sp.get('bucket') !== 'day';
@@ -171,7 +180,23 @@ export default function Usage() {
   const update = (fn: (next: URLSearchParams) => void) => {
     const next = new URLSearchParams(sp);
     fn(next);
+    next.delete('sessionFrom');
+    next.delete('sessionTo');
     setSelected(null);
+    setSp(next, { replace: true });
+  };
+  const selectBucket = (index: number) => {
+    const next = new URLSearchParams(sp);
+    const chosen = selected === index ? null : buckets[index];
+    if (chosen) {
+      onSelectBucketZone(tz);
+      next.set('sessionFrom', chosen);
+      next.set('sessionTo', bucketEnd(chosen, bucket, tz));
+    } else {
+      next.delete('sessionFrom');
+      next.delete('sessionTo');
+    }
+    setSelected(chosen ? index : null);
     setSp(next, { replace: true });
   };
   const setDays = (d: number) => update((n) => { if (d === 1) n.delete('days'); else n.set('days', String(d)); });
@@ -189,9 +214,8 @@ export default function Usage() {
   const clearFilters = () => update((n) => { for (const d of USAGE_DIMENSIONS) n.delete(d); });
   const filterKey = JSON.stringify(filters);
 
-  const plan = useQuery({ queryKey: ['usage-plan', from, to], queryFn: () => api.usagePlan(from, to), refetchInterval: 60_000 });
-  const credits = useQuery({ queryKey: ['usage-credits'], queryFn: () => api.usageCredits(), refetchInterval: 300_000 });
-  const series = useQuery({ queryKey: ['usage-series', from, to, bucket, group, filterKey], queryFn: () => api.usageSeries({ from, to, bucket, tz, group }, filters) });
+  const plan = useQuery({ queryKey: ['usage-plan', from, to], queryFn: () => api.usagePlan(from, to), enabled: claudeConfigured, refetchInterval: 60_000 });
+  const series = useQuery({ queryKey: ['usage-series', from, to, bucket, tz, group, filterKey], queryFn: () => api.usageSeries({ from, to, bucket, tz, group }, filters) });
   const { buckets, series: bars } = useMemo(() => toSeries(series.data?.rows ?? [], group), [series.data, group]);
   const sel = selected !== null && buckets[selected] ? buckets[selected]! : null;
   const selFrom = sel ?? from;
@@ -200,7 +224,7 @@ export default function Usage() {
   const runs = useQuery({ queryKey: ['usage-runs', selFrom, selTo, filterKey], queryFn: () => api.usageRuns(selFrom, selTo, filters) });
   const orgWakes = useQuery({ queryKey: ['usage-org-wakes', selFrom, selTo], queryFn: () => api.usageOrgWakes(selFrom, selTo) });
   const fmtBucket = (b: string) => new Date(b).toLocaleString([], bucket === 'hour'
-    ? { month: 'short', day: 'numeric', hour: '2-digit' } : { month: 'short', day: 'numeric' });
+    ? { timeZone: tz, month: 'short', day: 'numeric', hour: '2-digit', hourCycle: 'h23' } : { timeZone: tz, month: 'short', day: 'numeric' });
   const history = plan.data?.history ?? [];
   const breakdown = group !== 'type' ? (facets.data?.facets?.[group] ?? []) : [];
   const total = facets.data?.total?.tokens ?? 0;
@@ -208,19 +232,6 @@ export default function Usage() {
 
   return (
     <div className="h-full overflow-auto p-4 space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <PlanCard title="Claude plan, 5-hour window" plan={plan.data?.current.five_hour ?? null} />
-        <PlanCard title="Claude plan, 7-day window" plan={plan.data?.current.seven_day ?? null} />
-      </div>
-
-      <section>
-        <h2 className="text-sm font-semibold">API credits</h2>
-        <div className="mt-1 grid gap-3 sm:grid-cols-3">
-          {(credits.data?.providers ?? []).map((c) => <CreditCard key={c.provider} entry={c} history={credits.data!.history} />)}
-          {credits.isError && <div className="text-sm text-red-600">Credits did not load.</div>}
-        </div>
-      </section>
-
       <div className="flex flex-wrap items-center gap-2 text-sm">
         {RANGES.map((r) => (
           <button key={r.label} type="button" onClick={() => setDays(r.days)}
@@ -233,13 +244,14 @@ export default function Usage() {
           <option value="type">by token type</option>
           {USAGE_DIMENSIONS.map((d) => <option key={d} value={d}>by {USAGE_DIMENSION_LABELS[d]}</option>)}
         </select>
-        <span className="ml-auto text-xs text-[var(--ink-dim)]">time zone {tz}</span>
+        <span className="ml-auto text-xs text-[var(--ink-dim)]" title={tzSource === 'setting' ? 'from secondbrain.json; change it with: secondbrain timezone set <Area/City>' : 'no time zone is set for the vault; using this browser\'s'}>
+          time zone {tz} ({tzSource === 'setting' ? 'vault setting' : 'this browser'})</span>
       </div>
 
       <FilterBar filters={filters} facets={facets.data} onAdd={addFilter} onRemove={removeFilter} onClear={clearFilters} />
 
       <section>
-        <StackedBars buckets={buckets} series={bars} selected={selected} onSelect={(i) => setSelected(selected === i ? null : i)}
+        <StackedBars buckets={buckets} series={bars} selected={selected} onSelect={selectBucket}
           formatBucket={fmtBucket} formatValue={formatTokens} />
         <div className="flex flex-wrap gap-3 text-xs text-[var(--ink-dim)]">
           {bars.map((s) => (
@@ -255,7 +267,7 @@ export default function Usage() {
         <section>
           <h2 className="text-sm font-semibold">Tokens by {USAGE_DIMENSION_LABELS[group]}</h2>
           <p className="text-xs text-[var(--ink-dim)]">{formatTokens(total)} tokens in {facets.data?.total?.calls ?? 0} calls{sel ? ` in ${fmtBucket(sel)}` : ''}. Click a row to filter on it.</p>
-          <div className="overflow-x-auto"><table className="w-full text-sm">
+          <DataTable label={`Tokens by ${USAGE_DIMENSION_LABELS[group]}`} phone="scroll" className="w-full text-sm">
             <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
               <th>{USAGE_DIMENSION_LABELS[group]}</th><th className="text-right">Calls</th><th className="text-right">Tokens</th><th className="text-right">Share</th>
               <th className="text-right">Output</th><th className="text-right">Per call</th>
@@ -273,25 +285,25 @@ export default function Usage() {
               ))}
               {breakdown.length === 0 && <tr><td colSpan={6} className="py-2 text-xs text-[var(--ink-faint)]">Nothing in this range.</td></tr>}
             </tbody>
-          </table></div>
+          </DataTable>
         </section>
       )}
 
-      <section>
+      {claudeConfigured && <section>
         <h2 className="text-sm font-semibold">Plan used over time (%)</h2>
         <LineChart label="Plan usage" yMax={100} xMin={Date.parse(from)} xMax={Date.parse(to)} lines={[
           { key: '5h', color: 'var(--chart-line)', points: history.filter((h) => h.window === 'five_hour').map((h) => ({ x: Date.parse(h.observed_at), y: h.used_pct })) },
           { key: '7d', color: 'var(--ink)', points: history.filter((h) => h.window === 'seven_day').map((h) => ({ x: Date.parse(h.observed_at), y: h.used_pct })) },
         ]} />
-      </section>
+      </section>}
 
       <section>
         <h2 className="text-sm font-semibold">Runs (bots and lanes)</h2>
-        <p className="text-xs text-[var(--ink-dim)]">One row per <code>claude -p</code> run. Click a bot, reason, project or work type to filter on it.</p>
-        <div className="overflow-x-auto"><table className="w-full text-sm">
+        <p className="text-xs text-[var(--ink-dim)]">One row per headless run (<code>claude -p</code> or zen-agent). Click a bot, reason, area or work type to filter on it. Cost is shown only where the runtime priced the run itself.</p>
+        <DataTable label="Runs" phone="cards" className="w-full text-sm">
           <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
             <th>When</th><th>Who</th><th>Woken by</th><th>Card</th><th>Project</th><th>Work</th>
-            <th className="text-right">Tokens</th><th className="text-right">Output</th><th className="text-right">Turns</th><th className="text-right">Min</th><th>Verify</th>
+            <th className="text-right">Tokens</th><th className="text-right">Output</th><th className="text-right">Cost</th><th className="text-right">Turns</th><th className="text-right">Min</th><th>Verify</th>
           </tr></thead>
           <tbody>
             {(runs.data?.runs ?? []).map((r) => {
@@ -299,31 +311,30 @@ export default function Usage() {
               const t = tokensOf(r);
               return (
                 <tr key={`${r.host}|${r.run_id ?? r.session_id}`} className="border-t border-[var(--rule)]">
-                  <td><Link className="underline" to={`/usage/session/${r.host}/${encodeURIComponent(r.session_id)}?source=claude-code`}>{r.started_at ? zoned(r.started_at, tz) : (r.run_id ?? r.session_id.slice(0, 8))}</Link></td>
-                  <td>{w ? <Pick dim={w.dim} value={w.value} onPick={addFilter}>{r.agent_name ? <Link className="underline" to={`/org/agents/${r.agent_name}`} onClick={(e) => e.stopPropagation()}>{r.agent_name}</Link> : r.lane}</Pick> : ''}{r.resumed ? <span className="text-xs text-[var(--ink-faint)]" title="resumed its session"> ↻</span> : null}</td>
+                  <td><Link className="underline" to={`/usage/session/${r.host}/${encodeURIComponent(r.session_id)}?source=${r.runtime ?? 'claude-code'}`}>{r.started_at ? zoned(r.started_at, tz) : (r.run_id ?? r.session_id.slice(0, 8))}</Link>{r.runtime && r.runtime !== 'claude-code' ? <span className="ml-1 text-xs text-[var(--ink-faint)]" title={r.tier ? `${r.runtime}, tier ${r.tier}` : r.runtime}>{r.runtime}</span> : null}</td>
+                  <td>{w ? <Pick dim={w.dim} value={w.value} onPick={addFilter}>{r.agent_name ? <Link className="inline-flex items-center gap-1 underline" to={`/org/agents/${r.agent_name}`} onClick={(e) => e.stopPropagation()}><AgentAvatar name={r.agent_name} size={16} />{r.agent_name}</Link> : r.lane}</Pick> : ''}{r.resumed ? <span className="text-xs text-[var(--ink-faint)]" title="resumed its session"> ↻</span> : null}</td>
                   <td><Pick dim="reason" value={r.reason} onPick={addFilter} /></td>
-                  <td>{r.task_id ? <Link className="underline" to={`/agents/board/${r.task_id}`} title={r.card_title ?? ''}>{r.task_id}</Link> : ''}</td>
-                  <td><Pick dim="project" value={r.project_slug} onPick={addFilter}>{r.project_slug}{r.feature_slug ? `/${r.feature_slug}` : ''}</Pick></td>
+                  <td>{r.task_id ? <Link className="underline" to={`/board/${r.task_id}`} title={r.card_title ?? ''}>{r.task_id}</Link> : ''}</td>
+                  <td><Pick dim="area" value={r.area_slug} onPick={addFilter}>{r.area_slug}{r.project_slug ? `/${r.project_slug}` : ''}</Pick></td>
                   <td><Pick dim="work_type" value={r.work_type} onPick={addFilter} /></td>
                   <td className="text-right">{t === null ? '' : formatTokens(t)}</td>
                   <td className="text-right">{r.output == null ? '' : formatTokens(Number(r.output))}</td>
+                  <td className="text-right" title={r.outcome ?? ''}>{r.cost_usd == null ? '' : `$${Number(r.cost_usd).toFixed(4)}`}</td>
                   <td className="text-right">{r.num_turns ?? ''}</td>
                   <td className="text-right">{r.duration_ms === null ? '' : (r.duration_ms / 60000).toFixed(1)}</td>
-                  <td title={r.verify_output ?? ''}>{r.verify_name === null ? '' : `${r.verify_passed ? 'passed' : 'failed'} ${r.verify_name}${r.verify_metric === null ? '' : ` (${r.verify_metric})`}`}</td>
+                  <td className="max-md:col-span-2" title={r.verify_output ?? ''}>{r.verify_name === null ? '' : `${r.verify_passed ? 'passed' : 'failed'} ${r.verify_name}${r.verify_metric === null ? '' : ` (${r.verify_metric})`}`}</td>
                 </tr>
               );
             })}
-            {runs.data?.runs?.length === 0 && <tr><td colSpan={11} className="py-2 text-xs text-[var(--ink-faint)]">No runs in this range.</td></tr>}
+            {runs.data?.runs?.length === 0 && <tr><td colSpan={12} className="py-2 text-xs text-[var(--ink-faint)]">No runs in this range.</td></tr>}
           </tbody>
-        </table></div>
+        </DataTable>
       </section>
-
-      <AgentSessions from={selFrom} to={selTo} tz={tz} />
 
       <section>
         <h2 className="text-sm font-semibold">Agent wakes (the company board)</h2>
         <p className="text-xs text-[var(--ink-dim)]">Each wake is one <code>claude -p</code> run against the shared daily cap. Open = waiting or running. Tokens are the bot's calls in this range.</p>
-        <div className="overflow-x-auto"><table className="w-full text-sm">
+        <DataTable label="Agent wakes" phone="scroll" className="w-full text-sm">
           <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
             <th>Agent</th><th>Team</th><th className="text-right">Wakes</th><th className="text-right">Done</th><th className="text-right">Open</th>
             <th className="text-right">Routine</th><th className="text-right">DM</th><th className="text-right">Mention</th><th className="text-right">Card</th>
@@ -332,7 +343,7 @@ export default function Usage() {
           <tbody>
             {(orgWakes.data?.agents ?? []).map((a) => (
               <tr key={a.agent_name} className="border-t border-[var(--rule)]">
-                <td><Link className="underline" to={`/org/agents/${a.agent_name}`}>{a.agent_name}</Link> <span className="text-xs text-[var(--ink-dim)]">{a.role}</span>
+                <td><Link className="inline-flex items-center gap-1 underline" to={`/org/agents/${a.agent_name}`}><AgentAvatar name={a.agent_name} team={a.team_slug} size={18} />{a.agent_name}</Link> <span className="text-xs text-[var(--ink-dim)]">{a.role}</span>
                   {' '}<button type="button" className="text-xs text-[var(--ink-dim)] hover:underline" onClick={() => addFilter('agent', a.agent_name)}>filter</button></td>
                 <td>{a.team_slug ?? ''}</td>
                 <td className="text-right">{a.wakes}</td><td className="text-right">{a.done}</td><td className="text-right">{a.open}</td>
@@ -346,8 +357,102 @@ export default function Usage() {
               <tr><td colSpan={12} className="py-2 text-xs text-[var(--ink-faint)]">No wakes in this range.</td></tr>
             )}
           </tbody>
-        </table></div>
+        </DataTable>
       </section>
+    </div>
+  );
+}
+
+function RunningLink() {
+  const liveCount = useLiveCount();
+  return <Link to="/usage/live" className="ml-auto mb-1 flex items-center gap-1.5 self-center rounded border border-[var(--rule)] px-2 py-0.5 text-sm hover:bg-[var(--paper-sunk)]">
+    <span className="inline-block h-2 w-2 rounded-full bg-[#1f9d63]" />Running now{liveCount !== null ? ` · ${liveCount}` : ''}
+  </Link>;
+}
+
+function UsageSessions({ ignoreBucketRange }: { ignoreBucketRange: boolean }) {
+  const [sp] = useSearchParams();
+  const { tz } = useAppTimezone();
+  const days = Number(sp.get('days')) || 1;
+  const [from, to] = useMemo(() => {
+    const end = new Date(Math.ceil(Date.now() / 3600_000) * 3600_000);
+    return [new Date(end.getTime() - days * 86400_000).toISOString(), end.toISOString()];
+  }, [days]);
+  return <div className="h-full overflow-auto p-4"><AgentSessions from={ignoreBucketRange ? from : sp.get('sessionFrom') ?? from} to={ignoreBucketRange ? to : sp.get('sessionTo') ?? to} tz={tz} /></div>;
+}
+
+/** The manifest controls providers and sections. A hidden section never mounts its polling queries. */
+export default function Usage() {
+  const config = useQuery({ queryKey: ['usage-config'], queryFn: api.usageConfig, staleTime: 60_000, retry: false });
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
+  const { tz } = useAppTimezone();
+  const [sp, setSp] = useSearchParams();
+  const observedZone = useRef<string | null>(null);
+  const clearingBucketRange = useRef(false);
+  const zoneChanged = observedZone.current !== null && observedZone.current !== tz;
+  useEffect(() => {
+    const hasRange = sp.has('sessionFrom') || sp.has('sessionTo');
+    if (!hasRange) clearingBucketRange.current = false;
+    if (meta.isPending) return;
+    const previous = observedZone.current;
+    observedZone.current = tz;
+    // Initial hydration/remount establishes the zone without discarding intentional bookmarks.
+    if (previous === null || previous === tz || !hasRange) return;
+    clearingBucketRange.current = true;
+    setSp((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('sessionFrom'); next.delete('sessionTo');
+      return next;
+    }, { replace: true });
+  }, [meta.isPending, sp, tz, setSp]);
+  if (config.isPending) return <div className="p-4 text-sm text-[var(--ink-dim)]">Loading Usage configuration…</div>;
+  if (config.isError) return <div className="p-4 text-sm text-red-600" role="alert">Usage configuration did not load. Account limits and sections are unavailable.</div>;
+  const sections = config.data.sections.filter((section) => section !== 'summaries' || (meta.data?.modules ?? []).includes('summaries'));
+  const requested = sp.get('view') === 'usage' ? 'ledger' : sp.get('view');
+  const view = requested === 'account' ? 'account' : sections.find((section) => section === requested) ?? sections[0] ?? 'account';
+  const pick = (v: UsageSection | 'account') => {
+    const next = new URLSearchParams(sp);
+    if (v === sections[0]) next.delete('view'); else next.set('view', v);
+    setSp(next, { replace: true });
+  };
+  const tab = (v: UsageSection | 'account', label: string) => (
+    <button type="button" role="tab" id={`usage-tab-${v}`} aria-controls={`usage-panel-${v}`} tabIndex={view === v ? 0 : -1} aria-selected={view === v} onClick={() => pick(v)}
+      onKeyDown={(e) => {
+        const tabs: (UsageSection | 'account')[] = [...sections, 'account'];
+        const i = tabs.indexOf(v);
+        const index = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1
+          : e.key === 'ArrowRight' ? (i + 1) % tabs.length : e.key === 'ArrowLeft' ? (i - 1 + tabs.length) % tabs.length : null;
+        if (index === null) return;
+        e.preventDefault();
+        pick(tabs[index]!);
+        document.getElementById(`usage-tab-${tabs[index]}`)?.focus();
+      }}
+      className={`px-3 py-1.5 text-sm ${view === v ? 'border-b-2 border-[var(--ink)] text-[var(--ink)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`}>{label}</button>
+  );
+  const labels: Record<UsageSection, string> = { running: 'Running now', ledger: 'Ledger', sessions: 'Sessions', summaries: 'Summaries' };
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex shrink-0 flex-wrap gap-1 border-b border-[var(--rule)] px-4 pt-2">
+        <div role="tablist" aria-label="Usage views" className="flex flex-wrap gap-1">
+          {sections.map((section) => tab(section, labels[section]))}
+          {tab('account', 'Account')}
+        </div>
+        {/* A link to another page, so it sits beside the tab list, not in it. */}
+        {sections.includes('running') && <RunningLink />}
+      </div>
+      {view && <div role="tabpanel" id={`usage-panel-${view}`} aria-labelledby={`usage-tab-${view}`} aria-label={view === 'account' ? 'Account' : labels[view]} className="min-h-0 flex-1">
+        {view === 'account' ? (
+      <div className="h-full overflow-auto pb-4">
+        {config.data.subscriptions.length === 0 && config.data.credits.length === 0 && <p className="px-4 pt-4 text-sm text-[var(--ink-dim)]">No account providers configured. Add subscriptions or credits to the Usage settings in secondbrain.json.</p>}
+        {(meta.data?.modules ?? []).includes('agents') && <section className="px-4 pt-4" aria-label="Agent controls"><AgentToggle /></section>}
+        <Subscriptions providers={config.data.subscriptions} />
+        <Credits providers={config.data.credits} />
+      </div>
+        ) : view === 'running' ? <LiveAgents embedded />
+          : view === 'summaries' ? <div className="h-full overflow-auto p-4"><Summaries /></div>
+            : view === 'sessions' ? <UsageSessions ignoreBucketRange={zoneChanged || clearingBucketRange.current} />
+              : view === 'ledger' ? <UsageLedger key={tz} claudeConfigured={config.data.subscriptions.includes('claude-code')} onSelectBucketZone={(zone) => { observedZone.current = zone; clearingBucketRange.current = false; }} /> : null}
+      </div>}
     </div>
   );
 }
