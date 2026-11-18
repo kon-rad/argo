@@ -113,6 +113,40 @@ export async function disconnectAccount(id: number): Promise<boolean> {
   return (res.rowCount ?? 0) > 0;
 }
 
+/**
+ * Buffer-relayed accounts whose channel is no longer connected in Buffer (swapped or removed there): marked
+ * disconnected, so `--account youtube` resolves to the one live channel again. Returns each with the count of
+ * drafts and queued posts still pointing at it, which `move` re-points. An empty list changes nothing: an
+ * empty answer is more likely a Buffer hiccup than every channel removed at once.
+ */
+export async function disconnectMissingBufferAccounts(liveChannelIds: string[]): Promise<{ id: number; provider: ProviderName; waiting: number }[]> {
+  if (liveChannelIds.length === 0) return [];
+  const { rows } = await query<{ id: number; provider: ProviderName; waiting: number }>(
+    `WITH gone AS (
+       UPDATE social_accounts SET disconnected_at = now()
+       WHERE transport = 'buffer' AND disconnected_at IS NULL AND NOT (provider_account_id = ANY($1::text[]))
+       RETURNING id, provider)
+     SELECT g.id, g.provider,
+            (SELECT count(*)::int FROM social_posts p WHERE p.account_id = g.id AND p.status IN ('draft', 'queued')) AS waiting
+     FROM gone g ORDER BY g.id`,
+    [liveChannelIds],
+  );
+  return rows;
+}
+
+/** Re-point a draft or queued post to another connected account on the same network. False if either doesn't fit. */
+export async function movePost(id: number, accountId: number): Promise<boolean> {
+  const res = await query(
+    `UPDATE social_posts p SET account_id = $2
+     FROM social_accounts old_a, social_accounts new_a
+     WHERE p.id = $1 AND p.status IN ('draft', 'queued')
+       AND old_a.id = p.account_id AND new_a.id = $2
+       AND new_a.disconnected_at IS NULL AND new_a.provider = old_a.provider`,
+    [id, accountId],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
 /** What a listing shows of an image: never the bytes. */
 export interface MediaSummary {
   position: number;
