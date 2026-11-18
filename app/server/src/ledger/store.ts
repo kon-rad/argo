@@ -17,7 +17,7 @@ import type { RecordKind, WireRow } from './types.js';
 const BROTLI = { params: { [Z.BROTLI_PARAM_QUALITY]: 5, [Z.BROTLI_PARAM_LGWIN]: 22, [Z.BROTLI_PARAM_MODE]: Z.BROTLI_MODE_TEXT } };
 const pack = (json: string): Uint8Array => brotliCompressSync(json, BROTLI);
 const unpack = (blob: Uint8Array): string => brotliDecompressSync(blob).toString('utf8');
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 1;
 const SCHEMA = `
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 CREATE TABLE records (
@@ -59,8 +59,9 @@ export class Ledger {
       this.db.exec(`BEGIN; ${SCHEMA}
         INSERT INTO meta (k, v) VALUES ('seq', '0'), ('acked_seq', '0'), ('fails', '0'), ('ledger_id', '${randomUUID()}');
         PRAGMA user_version=${SCHEMA_VERSION}; COMMIT;`);
-    } else if (version === 1 && !opts.readOnly) {
-      this.db.exec('BEGIN; ALTER TABLE records ADD COLUMN origin_path TEXT; PRAGMA user_version=2; COMMIT;');
+    } else if (version === 1 && !opts.readOnly && !(this.db.prepare('PRAGMA table_info(records)').all() as { name: string }[]).some(c => c.name === 'origin_path')) {
+      // Additive metadata stays schema-v1 compatible so an older bundle can roll back safely.
+      this.db.exec('BEGIN; ALTER TABLE records ADD COLUMN origin_path TEXT; COMMIT;');
     } else if (version > SCHEMA_VERSION) {
       throw new Error(`ledger.db is schema v${version}, this build knows v${SCHEMA_VERSION}: update the ledger bundle`);
     }
@@ -68,7 +69,7 @@ export class Ledger {
       sha: this.db.prepare('SELECT sha FROM records WHERE kind=? AND key=?'),
       get: this.db.prepare('SELECT data FROM records WHERE kind=? AND key=? AND pruned=0'),
       seq: this.db.prepare(`UPDATE meta SET v = CAST(v AS INTEGER) + 1 WHERE k='seq' RETURNING v`),
-      put: this.db.prepare(`INSERT INTO records (kind, key, source, session_key, ts, seq, sha, data, origin_path) VALUES (?,?,?,?,?,?,?,?,?)
+      put: this.db.prepare(opts.readOnly ? 'SELECT 1' : `INSERT INTO records (kind, key, source, session_key, ts, seq, sha, data, origin_path) VALUES (?,?,?,?,?,?,?,?,?)
         ON CONFLICT (kind, key) DO UPDATE SET source=excluded.source, session_key=excluded.session_key, ts=excluded.ts,
           seq=excluded.seq, sha=excluded.sha, data=excluded.data, pruned=0, origin_path=excluded.origin_path`),
       meta: this.db.prepare('SELECT v FROM meta WHERE k=?'),

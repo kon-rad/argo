@@ -256,3 +256,26 @@ it('reports queued and uncaptured Hermes source revisions, including no-change a
     expect(received.at(-1)).toMatchObject({ backlog: 1, oldestPendingAt: '2020-01-01T00:00:02.000Z', importedAt: '2020-01-01T00:00:01.000Z' });
   } finally { vi.unstubAllGlobals(); ledger.close(); }
 });
+
+it('status reads the original v1 schema without migration and writable provenance stays rollback compatible', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const path = join(mkdtempSync(join(tmpdir(), 'v1-compat-')), 'ledger.db');
+  const created = new Ledger(path);
+  created.put('message', 'original', { text: 'same' }, { source: 'claude-code' });
+  created.close();
+  const old = new DatabaseSync(path);
+  old.exec('ALTER TABLE records DROP COLUMN origin_path');
+  old.close();
+  const reader = new Ledger(path, { readOnly: true });
+  try {
+    expect(reader.headSeq).toBe(1);
+    expect(reader.stats().headSeq).toBe(1);
+    expect((reader.db.prepare('PRAGMA table_info(records)').all() as { name: string }[]).some(r => r.name === 'origin_path')).toBe(false);
+  } finally { reader.close(); }
+  const updated = new Ledger(path);
+  try {
+    expect(updated.put('message', 'original', { text: 'same' }, { source: 'claude-code', path: '/synthetic' })).toBe(false);
+    expect(updated.headSeq).toBe(1);
+    expect(updated.db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 1 });
+  } finally { updated.close(); }
+});

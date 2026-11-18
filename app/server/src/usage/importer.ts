@@ -1,4 +1,6 @@
 import { buildRedactor } from '../archive/redact.js';
+import { eventTime, latest } from './sourceHealth.js';
+import { splitJsonLines } from './lines.js';
 import { createHash } from 'node:crypto';
 import { query, withTransaction } from '../db.js';
 import { recordHealth } from './health.js';
@@ -14,6 +16,7 @@ export async function importLines(input: AsyncIterable<string> | Iterable<string
   if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(host)) throw new Error('invalid usage host');
   const c: ImportCounts = { lines: 0, calls: 0, sessions: 0, messages: 0, plan: 0, errors: [], accepted: [], rejected: [], quarantined: [] };
   const failedPaths = new Set<string>();
+  const acceptedEvents = new Map<string, string | null>();
   const redact = buildRedactor({ env: process.env });
   const reject = async (raw: string, reason: string, path: string | null = null) => {
     failedPaths.add(path ?? '');
@@ -44,8 +47,10 @@ export async function importLines(input: AsyncIterable<string> | Iterable<string
         const q = await query(`SELECT count(*) n FROM usage_import_quarantine WHERE host=$1
           AND (origin_path=$2 OR left(origin_path,length($2)+1)=$2||'/')`, [host, path]);
         const quarantined = Number(q.rows[0]!.n);
+        const imported = [...acceptedEvents].filter(([p]) => p === path || p.startsWith(path + '/'))
+          .reduce<string | null>((best, [, time]) => latest(best, time), null);
         await recordHealth(host, { ...w.health,
-          importedAt: affected || quarantined ? null : w.health.importedAt,
+          importedAt: affected || quarantined ? imported : w.health.importedAt,
           quarantined, rejected: Math.max(w.health.rejected ?? 0, quarantined),
           outcome: affected || quarantined ? 'retry' : w.health.outcome,
           reason: affected || quarantined ? 'rejected' : w.health.reason });
@@ -83,6 +88,10 @@ export async function importLines(input: AsyncIterable<string> | Iterable<string
         const p = (w as unknown as { path?: unknown })?.path;
         await reject(raw, 'invalid-wire', typeof p === 'string' ? p : null);
         continue;
+      }
+      if ('text' in w && typeof w.text === 'string' && 'path' in w && typeof w.path === 'string') {
+        const time = splitJsonLines(Buffer.from(w.text)).records.reduce<string | null>((best, r) => latest(best, eventTime(r)), null);
+        acceptedEvents.set(w.path, latest(acceptedEvents.get(w.path), time));
       }
       c.accepted.push(c.lines);
     } catch (err) {

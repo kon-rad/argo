@@ -119,9 +119,9 @@ CLI wall time is the selected worker budget plus up to 10 seconds of reporting a
 OS shutdown. If that report cannot reach storage, the previous retry/in-progress
 server report or last heartbeat ages offline; local deadline logs remain evidence.
 Server attempt sequences come from Postgres, independent of source event time.
-The ledger upgrades its local schema from v1 to v2 on a writable run to add record
-provenance; read-only status never performs that migration. Run the updated bundle
-once before using its status command against a v1 database.
+The ledger adds a nullable provenance column on a writable run, retaining local
+schema version 1 so older bundles remain usable for rollback. Read-only status
+opens both the original and extended v1 schema without performing a migration.
 
 ## Diagnose before restarting
 

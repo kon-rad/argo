@@ -131,3 +131,18 @@ it('imports and retries a supported prefix above 64MiB without changing IDs or t
     expect((await query('SELECT id,external_id,input_tokens,output_tokens FROM archive_sessions')).rows).toEqual(sessions);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }, 60_000);
+
+it('keeps measurable accepted event times beside a quarantined fragment on the same path', async () => {
+  const path = '/synthetic/session.jsonl';
+  const timestamp = '2020-01-01T00:00:00Z';
+  const text = JSON.stringify({ type: 'user', uuid: 'accepted-user', timestamp,
+    message: { role: 'user', content: 'synthetic message' } }) + '\n';
+  await importLines([
+    JSON.stringify({ t: 'quarantine', path, sourceLine: 1, text: 'bad' }),
+    JSON.stringify({ t: 'transcript', path, startLine: 0, text }),
+    JSON.stringify({ t: 'health', health: { ...health(), runtime: 'claude-code', path: '/synthetic', backlog: 0, backlogUnit: 'bytes' } }),
+  ], 'test-box', { quarantine: true });
+  const row = (await query('SELECT imported_at,quarantined,outcome FROM collection_streams')).rows[0]!;
+  expect(row.imported_at.toISOString()).toBe('2020-01-01T00:00:00.000Z');
+  expect(row).toMatchObject({ quarantined: 1, outcome: 'retry' });
+});
