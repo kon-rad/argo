@@ -110,7 +110,7 @@ it('requires a fresh preview after saving draft content, and binds export to the
   vi.spyOn(skillsApi,'draft').mockImplementation(async()=>({draft:draft()}));
   vi.spyOn(skillsApi,'draftFile').mockResolvedValue({name:'report',id:'draft:report',path:'SKILL.md',content:'Original content',kind:'text',truncated:false} as any);
   vi.spyOn(skillsApi,'writeDraftFile').mockImplementation(async()=>{digest=`sha256:${'b'.repeat(64)}`;return{draft:draft()};});
-  const preview=vi.spyOn(skillsApi,'preview').mockImplementation(async()=>({preview:{kind:'update',skill:'report',summary:'Update report',baseDigest:null,baseRevision:null,targetDigest:digest,validation:{valid:true,errors:[],warnings:[]},affectedAgents:[],affectedHosts:[],dependents:[],blocked:[],files:[],policyDiff:null,runningSessions:'After sync',rollbackTarget:null} as any}));
+  const preview=vi.spyOn(skillsApi,'preview').mockImplementation(async()=>({preview:{fingerprint:`sha256:${'c'.repeat(64)}`,kind:'update',skill:'report',summary:'Update report',baseDigest:null,baseRevision:null,targetDigest:digest,validation:{valid:true,errors:[],warnings:[]},affectedAgents:[],affectedHosts:[],dependents:[],blocked:[],files:[],policyDiff:null,runningSessions:'After sync',rollbackTarget:null} as any}));
   const propose=vi.spyOn(skillsApi,'propose').mockImplementation(async()=>({change:{id:'fixture-change'} as any}));
   const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
   render(<QueryClientProvider client={client}><DraftEditor name="report" /></QueryClientProvider>);
@@ -124,7 +124,7 @@ it('requires a fresh preview after saving draft content, and binds export to the
   fireEvent.click(screen.getByRole('button',{name:'Prepare update'}));
   fireEvent.click(screen.getByRole('button',{name:'Show what would change'}));
   fireEvent.click(await screen.findByRole('button',{name:'Export for review'}));
-  await waitFor(()=>expect(propose).toHaveBeenCalledWith(expect.objectContaining({expectedDraftDigest:digest})));
+  await waitFor(()=>expect(propose).toHaveBeenCalledWith(expect.objectContaining({expectedDraftDigest:digest,expectedPreviewDigest:`sha256:${'c'.repeat(64)}`})));
   expect(preview).toHaveBeenCalledTimes(2);
   expect(await screen.findByText(/Machines receive it only after they sync/)).toBeTruthy();
 });

@@ -10,7 +10,7 @@ export function ChangeFlow({ request, onDone }: { request: ChangeRequest; onDone
   const qc = useQueryClient();
   const preview = useMutation({ mutationFn: () => skillsApi.preview(request) });
   const propose = useMutation({
-    mutationFn: () => skillsApi.propose({ ...request, ...(request.draft && preview.data?.preview.targetDigest ? { expectedDraftDigest: preview.data.preview.targetDigest } : {}) }),
+    mutationFn: () => skillsApi.propose({ ...request, ...(preview.data?.preview.fingerprint ? { expectedPreviewDigest: preview.data.preview.fingerprint } : {}), ...(request.draft && preview.data?.preview.targetDigest ? { expectedDraftDigest: preview.data.preview.targetDigest } : {}) }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['skills'] }),
   });
   const p = preview.data?.preview;

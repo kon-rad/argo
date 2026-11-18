@@ -286,3 +286,5 @@ The acknowledgement protocol accepts at most 64 views per request. A root with m
 `skills_packages` in Zen session metadata records the resolved catalog, not use. Only successful `read_skill` tool results prove a read. Managed instruction reads verify the full package again before returning bytes.
 
 Removal previews and proposals require authoritative deployment observations; unavailable operational state fails explicitly. Policy-selected pinned packages contribute dependencies. A failed sync retains unresolved assigned-package names and reasons in its report and acknowledgement and preserves the previous generation. Intentional denials and lifecycle revocations are omitted deliberately. Standalone acknowledgements preserve the last failed attempt until a successful sync.
+
+The app also binds every lifecycle export to a fingerprint of the inspected preview, including its source, policy and affected machines. If those inputs change, the owner must preview again before exporting.

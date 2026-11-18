@@ -388,6 +388,7 @@ export async function previewChange(ctx: LifecycleContext, req: ChangeRequest): 
     kind, skill: name, summary, validation, files, policyDiff, targetDigest, baseDigest: current?.digest ?? null, baseRevision: current?.revision ?? null,
     affectedAgents: agents, affectedHosts: hosts, dependents: dependentsOf(ctx.catalog, name, ctx.policy.policy), blocked, runningSessions: RUNNING_SESSIONS, rollbackTarget,
   };
+  preview.fingerprint = `sha256:${createSha(Buffer.from(JSON.stringify({ preview, basePolicyDigest: ctx.policy.digest })))}`;
   return { preview, target, basePolicyDigest: ctx.policy.digest };
 }
 
@@ -411,6 +412,7 @@ function changeDir(ctx: LifecycleContext, id: string): string {
 
 export async function proposeChange(ctx: LifecycleContext, req: ChangeRequest): Promise<Change> {
   const { preview, target, basePolicyDigest } = await previewChange(ctx, req);
+  if (req.expectedPreviewDigest && req.expectedPreviewDigest !== preview.fingerprint) throw new LifecycleError(409, 'The source, policy or affected machines changed after preview; preview the change again before exporting.');
   if (req.expectedDraftDigest && req.expectedDraftDigest !== preview.targetDigest) throw new LifecycleError(409, 'The draft changed after preview; preview the new draft before exporting.');
   if (preview.blocked.length) throw new LifecycleError(409, `not exported: ${preview.blocked.join('; ')}`);
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);

@@ -144,3 +144,15 @@ it('fails acknowledgement explicitly when 65 deployed views exceed the protocol 
   expect(report.views).toHaveLength(65); expect(report.views.every(v=>v.status==='current')).toBe(true);
   expect(()=>ackPayload(report,null)).toThrow(/65 views.*64/);
 });
+
+it('refuses a policy action when its source policy changed after the inspected preview',async()=>{
+ const {f,service}=await fixture();
+ const request={kind:'disable' as const,skill:'report'};
+ const preview=await service.preview(request);expect(preview.fingerprint).toMatch(/^sha256:/);
+ write(join(f.vault,SETTINGS.policyFile),MANAGED_POLICY.replace('grant: [report]','grant: [report, ingest]'));
+ await expect(service.propose({...request,expectedPreviewDigest:preview.fingerprint})).rejects.toThrow(/changed after preview/);
+ expect(await service.changes()).toEqual([]);
+ const fresh=await service.preview(request);
+ const change=await service.propose({...request,expectedPreviewDigest:fresh.fingerprint});
+ expect(change.preview.fingerprint).toBe(fresh.fingerprint);
+});

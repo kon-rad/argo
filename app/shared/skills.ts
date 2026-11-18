@@ -152,6 +152,7 @@ export const ChangeKindSchema = z.enum(CHANGE_KINDS);
 export type ChangeKind = z.infer<typeof ChangeKindSchema>;
 
 export const ChangePreviewSchema = z.object({
+  fingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
   kind: ChangeKindSchema, skill: z.string(), summary: z.string(), validation: ValidationSchema,
   files: z.array(FileDiffSchema), policyDiff: z.string(), targetDigest: z.string().nullable(), baseDigest: z.string().nullable(),
   baseRevision: z.string().nullable(), affectedAgents: z.array(z.string()), affectedHosts: z.array(z.string()),
@@ -203,6 +204,7 @@ export type DraftFileWriteRequest = z.infer<typeof DraftFileWriteRequestSchema>;
 export const ChangeRequestSchema = z.object({
   kind: ChangeKindSchema, skill: SkillNameSchema, draft: SkillNameSchema.optional(), replacement: SkillNameSchema.optional(),
   note: z.string().max(500).optional(), revision: z.string().regex(/^[0-9a-f]{7,40}$/).optional(), resolve: z.boolean().optional(),
+  expectedPreviewDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
   expectedDraftDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
 }).strict();
 export type ChangeRequest = z.infer<typeof ChangeRequestSchema>;
