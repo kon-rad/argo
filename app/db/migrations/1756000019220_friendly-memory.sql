@@ -95,7 +95,9 @@ CREATE TABLE friendly_jobs (
   updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
--- forget(person) is a delete on friendly_people (the cascade does the rest).
+-- Deleting friendly_people cascades biometrics and personal facts, and clears
+-- speaker/request references. Episode, utterance and reflection text is retained;
+-- callers implementing complete erasure must handle that text separately.
 -- sb_app's default grant has no DELETE.
 GRANT DELETE ON friendly_people TO sb_app;
 
