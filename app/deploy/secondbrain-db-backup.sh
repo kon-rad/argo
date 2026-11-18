@@ -11,8 +11,8 @@
 #
 # Env:
 #   DB_BACKUP_URL     database URL (default: DATABASE_URL, from /etc/secondbrain/env
-#                     on the droplet via the unit's EnvironmentFile)
-#   DB_BACKUP_HOST    remote folder name: droplet | mac (default: droplet)
+#                     on the server via the unit's EnvironmentFile)
+#   DB_BACKUP_HOST    remote folder name: server | laptop (default: server)
 #   DB_BACKUP_PG_BIN  directory holding pg_dump/pg_restore matching the server's
 #                     major version (default: whatever is on PATH)
 #   DB_BACKUP_KEEP_DAILY / DB_BACKUP_KEEP_WEEKLY  (default 14 / 8)
@@ -25,7 +25,7 @@ set -euo pipefail
 umask 077
 
 URL=${DB_BACKUP_URL:-${DATABASE_URL:-}}
-HOST=${DB_BACKUP_HOST:-droplet}
+HOST=${DB_BACKUP_HOST:-server}
 KEEP_DAILY=${DB_BACKUP_KEEP_DAILY:-14}
 KEEP_WEEKLY=${DB_BACKUP_KEEP_WEEKLY:-8}
 B2STORE=${B2STORE:-$(command -v b2store || echo "$HOME/.local/bin/b2store")}

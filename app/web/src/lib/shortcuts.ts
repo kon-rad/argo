@@ -22,16 +22,66 @@ export const SHORTCUTS: Shortcut[] = [
   { code: 'KeyT', to: '/tv', label: 'TV', module: 'tv', kiosk: '/tv?kiosk=1' },
   { code: 'KeyA', to: '/agents', label: 'Agents', module: 'agents' },
   { code: 'KeyO', to: '/org', label: 'Org', module: 'org' },
+  { code: 'KeyN', to: '/board', label: 'Board', module: 'board' },
   { code: 'KeyL', to: '/org/live', label: 'Org live feed', module: 'org', kiosk: '/org/live?kiosk=1' },
   { code: 'KeyP', to: '/projects', label: 'Projects', module: 'projects' },
   { code: 'KeyM', to: '/map', label: 'Brain map', module: 'map', kiosk: '/map?kiosk=1' },
   { code: 'KeyU', to: '/usage', label: 'Usage', module: 'usage' },
+  { code: 'KeyG', to: '/media', label: 'Media', module: 'media' },
   { code: 'KeyC', to: '/cron', label: 'Cron', module: 'agents' },
   { code: 'KeyR', to: '/ring', label: 'Ring', module: 'ring' },
   { code: 'KeyV', to: '/vector-search', label: 'Vector search' },
   { code: 'KeyE', to: '/database', label: 'Database' },
   { code: 'KeyS', to: '/sources', label: 'Sources' },
 ];
+
+/**
+ * "Go to" sequences: press `g`, let go, then the letter, with no modifier held. They exist
+ * for the pages whose letter the chord already gave to another page (Ctrl+Cmd+A is Agents,
+ * so areas are `g a`). Ignored while typing in a field.
+ */
+export interface GoShortcut {
+  /** The letter typed after `g`. */
+  key: string;
+  to: string;
+  label: string;
+  module?: string;
+}
+
+export const GO_SHORTCUTS: GoShortcut[] = [
+  { key: 'a', to: '/areas', label: 'Areas', module: 'projects' },
+  { key: 'p', to: '/projects', label: 'Projects', module: 'projects' },
+];
+
+/** How long after `g` the second key still counts. */
+export const GO_WINDOW_MS = 1500;
+
+export function availableGo(modules: Set<string>): GoShortcut[] {
+  return GO_SHORTCUTS.filter((s) => !s.module || modules.has(s.module));
+}
+
+type Plain = Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey'> & { target?: EventTarget | null };
+
+/** A key typed into a field, a select or an editor is text, never a shortcut. */
+export function isTyping(target: EventTarget | null | undefined): boolean {
+  const el = target as (Partial<HTMLElement> & { tagName?: string }) | null | undefined;
+  if (!el || typeof el.tagName !== 'string') return false;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable === true || el.getAttribute?.('contenteditable') === 'true';
+}
+
+/**
+ * One step of a `g <letter>` sequence. `armedAt` is when `g` was last pressed (null when
+ * it was not). Returns the page to open, or whether this press arms the sequence.
+ */
+export function goStep(event: Plain, armedAt: number | null, now: number, shortcuts: GoShortcut[]): { to: string | null; armedAt: number | null } {
+  if (event.ctrlKey || event.metaKey || event.altKey || isTyping(event.target)) return { to: null, armedAt: null };
+  const key = (event.key ?? '').toLowerCase();
+  if (armedAt !== null && now - armedAt <= GO_WINDOW_MS) {
+    const s = shortcuts.find((x) => x.key === key);
+    if (s) return { to: s.to, armedAt: null };
+  }
+  return { to: null, armedAt: key === 'g' ? now : null };
+}
 
 /** Opens and closes the shortcuts list. */
 export const HELP_CODE = 'Slash';

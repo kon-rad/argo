@@ -66,7 +66,7 @@ function input(): GraphInput {
       { slug: 'capture', title: 'Capture', division_slug: 'hardware', stage: 'building', goals: [], paths: [], design_path: 'Areas/hardware/wearable/capture-design.md', devlog_path: null },
       { slug: 'software', title: 'Software', division_slug: 'hardware', stage: 'testing', goals: [], paths: [], design_path: 'Areas/hardware/wearable/software-design.md', devlog_path: null },
     ],
-    features: [{ id: 7, project_slug: 'demo', title: 'Feature', stage: 'live' }],
+    features: [{ id: 7, area_slug: 'demo', title: 'Feature', stage: 'live' }],
     goals: [
       { code: 'W1', horizon: 'This week', goal: 'Wearable', due: null, status: 'open' },
       { code: 'W2', horizon: 'This week', goal: 'Old', due: null, status: 'done' },
@@ -210,7 +210,7 @@ describe('map API', () => {
     mkdirSync(join(root, 'CURRENT'));
     writeFileSync(join(root, 'CURRENT', 'goals-master.md'), GOALS);
     await query(`INSERT INTO divisions (slug, name, sort) VALUES ('second-brain', 'Second Brain', 1)`);
-    await query(`INSERT INTO projects (slug, title, stage, division_slug, design_path) VALUES ('demo', 'Demo', 'building', 'second-brain', 'Projects/demo/demo-design.md')`);
+    await query(`INSERT INTO areas (slug, title, status, division_slug, design_path) VALUES ('demo', 'Demo', 'active', 'second-brain', 'Projects/demo/demo-design.md')`);
     for (const [path, title] of [['Projects/demo/demo-design.md', 'Demo design'], ['Projects/demo/idea.md', 'Idea'], ['Archives/old.md', 'Old']]) {
       await query(
         `INSERT INTO vault_files (path,parent_path,name,title,ext,is_markdown,size_bytes,mtime,content_hash,body)

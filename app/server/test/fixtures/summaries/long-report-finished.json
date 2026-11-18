@@ -1,0 +1,67 @@
+{
+ "id": "long-report-finished",
+ "note": "The final answer is long. A clip must not read as an agent that was cut off.",
+ "parts": [
+  {
+   "step": "prompt",
+   "text": "Read standup_context.py and report where tokens are wasted."
+  },
+  {
+   "step": "response",
+   "text": "I will read the file."
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"file_path\":\"/work/standup_context.py\"}",
+   "toolName": "Read"
+  },
+  {
+   "step": "tool_result",
+   "text": "def build(): ...",
+   "isError": null
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"file_path\":\"/work/standup-data-flow.md\"}",
+   "toolName": "Read"
+  },
+  {
+   "step": "tool_result",
+   "text": "The pack has nine sections.",
+   "isError": null
+  },
+  {
+   "step": "response",
+   "text": "Reading the data flow doc next."
+  },
+  {
+   "step": "response",
+   "text": "Here is the report. Finding 1: the steering files are read whole before any cap. Finding 2: the tracker section has no size limit. Finding 3: the cards list repeats each title twice. Finding 4: agent conversations are gathered per machine with no shared budget. Finding 5: research notes are summarized from git for the whole window. Finding 6: the resume blocks of every changed project are included. Finding 7: the company channels section repeats the leads' questions. Finding 8: prompts are quoted in full for each conversation. Finding 9: file lists are not grouped by folder. Finding 10: the pack never drops a section when it is over budget. Finding 11: dates are written in long form in every line. Finding 12: the same card id appears in three sections. Finding 13: tool names are listed for every step. Finding 14: the intro restates the priorities. Finding 15: the closing reminder repeats the opening one. Summary: the three largest leaks are the uncapped tracker section, the repeated prompts, and the cards list. That completes the report."
+  }
+ ],
+ "expect": {
+  "outcome": "finished",
+  "mustMention": [
+   [
+    "report",
+    "leak",
+    "token"
+   ]
+  ],
+  "mustNotMention": [
+   "cut off",
+   "incomplete",
+   "interrupted"
+  ],
+  "filesEdited": [],
+  "cards": []
+ },
+ "reference": {
+  "request": "Read standup_context.py and report where tokens are wasted.",
+  "done": "Read standup_context.py and the data-flow doc, then delivered a complete report. It names three leaks: the uncapped tracker section, repeated prompts and the cards list.",
+  "learned": "",
+  "open_items": "",
+  "outcome": "finished",
+  "facts": []
+ }
+}

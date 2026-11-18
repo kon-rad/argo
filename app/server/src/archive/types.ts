@@ -1,4 +1,4 @@
-/** A slug in usage_hosts: 'mac' (the M4 laptop), 'droplet', 'mac-m1', 'exo-pi', ... */
+/** A slug in usage_hosts (a vault registers its own hosts): 'laptop', 'server', 'pi', ... */
 export type Host = string;
 
 export interface ParsedMessage {
@@ -15,7 +15,7 @@ export interface ParsedMessage {
 }
 
 export interface SessionInput {
-  source: 'claude-code' | 'hermes' | `hermes:${string}`; // hermes:<profile> comes from agents-sync
+  source: 'claude-code' | 'hermes' | `hermes:${string}` | 'zen-agent' | 'codex'; // hermes:<profile> comes from agents-sync; zen-agent from its traces
   host: Host;
   externalId: string;
   parentExternalId: string | null;

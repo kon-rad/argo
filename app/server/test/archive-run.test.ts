@@ -65,6 +65,88 @@ beforeEach(async () => {
 const count = async (t: string) => (await query<{ n: number }>(`SELECT count(*)::int n FROM ${t}`)).rows[0]!.n;
 
 describe('runArchive', () => {
+  it('labels Telegram chats in Hermes and Claude Code the same way agents-sync and usage-sync do', async () => {
+    const db = new DatabaseSync(join(deps.paths.hermesHome, 'state.db'));
+    db.exec(`INSERT INTO sessions VALUES ('h-tg','telegram','m',1790000600,NULL,1,'from the phone')`);
+    db.prepare(`INSERT INTO messages (session_id, role, content, timestamp) VALUES ('h-tg','user','hello bot',1790000601)`).run();
+    db.close();
+    writeFileSync(join(root, 'claude', PREFIX, 'S2.jsonl'), L({ type: 'user', uuid: 'u2', sessionId: 'S2', timestamp: '2026-09-28T02:00:00Z', entrypoint: 'cli',
+      message: { content: '<channel source="plugin:telegram:telegram" user="someone">\nfile a ticket\n</channel>' } }));
+    const s = (await runArchive(deps))!;
+    expect(s.errors).toEqual([]);
+    const { rows } = await query(`SELECT source, host, external_id, channel, meta ->> 'entrypoint' AS entrypoint FROM archive_sessions
+      WHERE external_id IN ('h-tg', 'h1', 'S2') ORDER BY host COLLATE "C", external_id COLLATE "C"`);
+    expect(rows).toEqual([
+      { source: 'hermes', host: 'droplet', external_id: 'h1', channel: null, entrypoint: null },
+      { source: 'claude-code', host: 'mac', external_id: 'S2', channel: 'telegram', entrypoint: 'cli' },
+      { source: 'hermes', host: 'mac', external_id: 'h-tg', channel: 'telegram', entrypoint: null },
+      { source: 'hermes', host: 'mac', external_id: 'h1', channel: null, entrypoint: null },
+    ]);
+  });
+
+  it('archives a second Hermes home as hermes:user, skipping the sessions the main home already has', async () => {
+    const uh = join(root, 'user-hermes');
+    mkdirSync(uh, { recursive: true });
+    hermesDb(join(uh, 'state.db'), 2); // h1: the same session the main home holds
+    const db = new DatabaseSync(join(uh, 'state.db'));
+    db.exec(`INSERT INTO sessions VALUES ('h9','cli','m',1790000500,NULL,1,'only here')`);
+    db.prepare(`INSERT INTO messages (session_id, role, content, timestamp) VALUES ('h9','user','hello',1790000501)`).run();
+    db.close();
+    deps.paths.hermesUserHome = uh;
+    const s = (await runArchive(deps))!;
+    expect(s.errors).toEqual([]);
+    const { rows } = await query(`SELECT source, host, external_id, harness, profile FROM archive_sessions WHERE harness='hermes' ORDER BY source, host, external_id`);
+    expect(rows).toEqual([
+      { source: 'hermes', host: 'droplet', external_id: 'h1', harness: 'hermes', profile: 'main' },
+      { source: 'hermes', host: 'mac', external_id: 'h1', harness: 'hermes', profile: 'main' },
+      { source: 'hermes:user', host: 'mac', external_id: 'h9', harness: 'hermes', profile: 'user' },
+    ]);
+    expect(uploads[0]).toContain('archives/hermes/mac-user/state/2026-09-30.sqlite.gz');
+  });
+
+  it('reads the Hermes plugin\'s per-request calls from both Mac homes', async () => {
+    const uh = join(root, 'user-hermes');
+    mkdirSync(join(uh, 'usage'), { recursive: true });
+    hermesDb(join(uh, 'state.db'), 1);
+    mkdirSync(join(deps.paths.hermesHome, 'usage'), { recursive: true });
+    const line = (sid: string, req: string) => JSON.stringify({ v: 1, kind: 'main', ts: '2026-09-30T10:00:00+00:00', session_id: sid,
+      api_request_id: req, provider: 'openrouter', model: 'm', input: 5, output: 1, cache_read: 0, cache_write: 0, reasoning: 0 }) + '\n';
+    writeFileSync(join(deps.paths.hermesHome, 'usage', 'calls-2026-09-30.jsonl'), line('h1', 'r-vault'));
+    writeFileSync(join(uh, 'usage', 'calls-2026-09-30.jsonl'), line('h9', 'r-user'));
+    deps.paths.hermesUserHome = uh;
+    const s = (await runArchive(deps))!;
+    expect(s.hermesCalls).toBe(2);
+    const { rows } = await query(`SELECT source, host, call_id FROM usage_calls ORDER BY call_id`);
+    expect(rows).toEqual([{ source: 'hermes:user', host: 'mac', call_id: 'r-user' }, { source: 'hermes', host: 'mac', call_id: 'r-vault' }]);
+  });
+
+  it('ignores a user home that is the main home', async () => {
+    deps.paths.hermesUserHome = deps.paths.hermesHome;
+    const s = (await runArchive(deps))!;
+    expect(s.errors).toEqual([]);
+    expect((await query(`SELECT count(*)::int n FROM archive_sessions WHERE source='hermes:user'`)).rows[0]!.n).toBe(0);
+  });
+
+  it('redacts rows added since its last run with this machine\'s env values', async () => {
+    process.env.RUN_TEST_TOKEN = 'run-secret-value-424242';
+    const { resetRedactor } = await import('../src/archive/redact.js');
+    resetRedactor();
+    try {
+      expect((await runArchive(deps))!.redacted).toEqual({ messages: 0, sessions: 0 });
+      // A row that arrived from elsewhere (another machine's push), unredacted.
+      const sid = (await query<{ id: number }>(`SELECT id FROM archive_sessions LIMIT 1`)).rows[0]!.id;
+      await query(`INSERT INTO archive_messages (session_id, seq, external_id, role, kind, content_text, raw, raw_sha)
+        VALUES ($1, 99, 'pushed', 'user', 'user', 'token run-secret-value-424242', '{"t":"run-secret-value-424242"}', 'x')`, [sid]);
+      const s = (await runArchive(deps))!;
+      expect(s.redacted).toEqual({ messages: 1, sessions: 0 });
+      const { rows } = await query(`SELECT content_text, raw FROM archive_messages WHERE external_id='pushed'`);
+      expect(rows[0]).toEqual({ content_text: 'token [redacted:RUN_TEST_TOKEN]', raw: { t: '[redacted:RUN_TEST_TOKEN]' } });
+    } finally {
+      delete process.env.RUN_TEST_TOKEN;
+      resetRedactor();
+    }
+  });
+
   it('archives everything once, then nothing on a re-run', async () => {
     const s = (await runArchive(deps))!;
     expect(s.errors).toEqual([]);

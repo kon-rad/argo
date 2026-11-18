@@ -1,0 +1,30 @@
+{
+  "$comment": "zen-agent for this vault (docs/zen-runtime.md). Copy to zen.json; paths are relative to the vault; secrets come from .env only (OPENROUTER_API_KEY for the default model). The model is the cheap default for bot wakes; openrouter/deepseek/deepseek-v4-flash is the alternative, and a persona's model field in the roster overrides it per bot.",
+  "model": "openrouter/deepseek/deepseek-v4.1-flash",
+  "thinking": "off",
+  "vault": ".",
+  "sessionsDir": ".zen/sessions",
+  "rules": ["AGENTS.md"],
+  "skills": [".agents/skills", "~/.zen/skills"],
+  "persona": { "org": ".agents/org/org.json", "definitions": ".claude/agents", "memory": ".agents/org/memory" },
+  "tools": ["fs", "shell", "skills", "knowledge", "kanban", "org", "subagent"],
+  "budget": { "turns": 40, "tokens": 400000, "minutes": 30 },
+  "context": {
+    "cap": 0.6,
+    "keepTurns": 6,
+    "parts": { "rules": 4000, "persona": 1500, "playbook": 1500, "skills": 1500, "handoff": 500, "task": 4000 }
+  },
+  "guard": {
+    "local": ".agents/guard.local.json",
+    "log": "~/.cache/agent-guard.log",
+    "hooks": {
+      "preToolUse": [],
+      "stop": ["python3 .secondbrain/harness/hooks/devlog_gate.py"]
+    }
+  },
+  "shell": { "timeoutS": 120, "maxOutput": 12000 },
+  "knowledge": { "kind": "secondbrain", "url": "http://127.0.0.1:5123", "headersEnv": "ZEN_SB_HEADERS" },
+  "kanban": { "kind": "none" },
+  "org": { "command": "cli-org" },
+  "providers": {}
+}

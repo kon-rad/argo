@@ -37,8 +37,8 @@ const SNIPPET_CONTEXT = 80;
  * what stops a note that happens to contain a <script> tag from executing when
  * it turns up in search results. No text file carries U+0001 or U+0002.
  */
-const HL_START = "\u0001";
-const HL_STOP = "\u0002";
+export const HL_START = "\u0001";
+export const HL_STOP = "\u0002";
 
 /** Shared with the semantic branch, which renders chunk text into the same field. */
 export function escapeHtml(input: string): string {
@@ -50,14 +50,14 @@ export function escapeHtml(input: string): string {
     .replaceAll("'", "&#39;");
 }
 
-function toSafeSnippet(raw: string): string {
+export function toSafeSnippet(raw: string): string {
   return escapeHtml(raw)
     .replaceAll(HL_START, "<b>")
     .replaceAll(HL_STOP, "</b>");
 }
 
 /** `%`, `_` and `\` are ordinary characters in a search box, not wildcards. */
-function escapeLike(input: string): string {
+export function escapeLike(input: string): string {
   return input.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
@@ -104,7 +104,7 @@ function markSubstring(window: string, literal: string): string {
  * The query runs with `enable_seqscan` off for its own transaction. The
  * planner costs a scan of `vault_files` by its heap pages, which are few
  * because every note body lives in TOAST, and never counts detoasting 50 MB
- * of text to run ILIKE over it. Measured on the droplet on 2026-10-16: the
+ * of text to run ILIKE over it. Measured on a server on 2026-10-16: the
  * scan it picks takes 1.1 s, the bitmap path over the GIN indexes 17 ms.
  */
 export async function search(

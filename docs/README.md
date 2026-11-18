@@ -1,21 +1,59 @@
 # Documentation
 
-Start with [getting-started.md](getting-started.md) if you want it running. Read [architecture.md](architecture.md) if you want to know how it fits together before you change it.
+Status: **works** - the index for these docs; every page below is built and published at https://kon-rad.github.io/argo/ on every change to `main`.
+
+These pages are also published as a site at **https://kon-rad.github.io/argo/**, built from this folder on every change to `main`.
+
+New here? Start with the [onboarding path](onboarding/README.md): short pages from "I have notes somewhere" to a private knowledge base with agents working in it. Want it running right now? [Set up your vault](onboarding/02-set-up-your-vault.md). Want to know how it fits together before you change it? [architecture.md](architecture.md).
+
+## Onboarding
+
+| Page | Read it when |
+|---|---|
+| [What you get, and what to borrow](onboarding/01-what-you-get.md) | You are deciding whether it fits, or want the patterns for your own notes, app or company without installing anything |
+| [Set up your vault](onboarding/02-set-up-your-vault.md) | You want a vault and the app, step by step with a check after each step, or the [`setup-vault`](https://github.com/kon-rad/argo/blob/main/skills/setup-vault/SKILL.md) skill to run it for you |
+| [Connect Claude Code](onboarding/03-claude-code.md) | You want Claude Code working in the vault under the guard and the dev-log gate |
+| [Connect Hermes](onboarding/04-hermes.md) | You run Hermes and want it on the same rules |
+| [Connect another harness](onboarding/05-other-harnesses.md) | You use Codex, Cursor, OpenCode, a cron script or your own agent |
+| [Connect servers and computers](onboarding/06-connect-machines.md) | You want a server behind a login, a laptop that uses it, several agent machines, a screen on the wall |
+| [Privacy](onboarding/07-privacy.md) | You want to know what stays on your machine, what leaves it and when |
+| [Configuration and secrets](onboarding/08-config-and-secrets.md) | You want to know where every setting and key lives, on each machine |
+| [Orchestrate agents](onboarding/09-orchestrate-agents.md) | You want rules, skills, contracts, dev logs, a tracker and a board working together |
+| [Adapt it](onboarding/10-adapt-it.md) | You want a recipe for your notes, your codebase, your business or your startup |
+
+## Reference
 
 | Doc | Read it when |
 |---|---|
-| [getting-started.md](getting-started.md) | You want a vault and the app running on your laptop, from nothing |
 | [architecture.md](architecture.md) | You want the big picture: engine vs. vault, the app, the index, the harness, where data flows |
 | [vault.md](vault.md) | You want to understand the vault template, `secondbrain-vault`, `AGENTS.md`, skills, and how to update the engine |
-| [configuration.md](configuration.md) | You need a setting: every env variable and every `secondbrain.json` key |
-| [modules.md](modules.md) | You want an optional feature (tracker, agent board, map, TV, usage, voice, livestream, ring, agents) |
+| [configuration.md](configuration.md) | You need a setting: every env variable, every instance configuration (`secondbrain.json`) key, and how it differs from engine feature manifests |
+| [sync.md](sync.md) | You work in the vault from more than one computer, or a server runs agents in it, and want every checkout committed, pulled and pushed on a timer without losing a note or leaking a key |
+| [modules.md](modules.md) | You want an optional feature (tracker, org board, kanban board, map, TV, usage, voice, livestream, ring, agents, chat, uploads, garden) |
+| [Native Codex conversation setup](modules.md#native-codex-conversation-usage) | You want to import Desktop, CLI and exec history from each Mac, verify discovery, and distinguish conversations from account quotas |
+| [zen-session-metadata.md](zen-session-metadata.md) | You need recorded invocation type and context-capacity provenance for zen-agent sessions |
+| [garden.md](garden.md) | You want the vault to organise itself every night: shelves with a small header, a catalog, archiving of stale projects, a report you can act on |
+| [kanban-board.md](kanban-board.md) | You want to use the board: the nine statuses, the three doors, every `cli-board` and `cli-org task` command, per-machine tokens, and the `hermes kanban` trap |
+| [board-design.md](board-design.md) | You want the board's architecture before changing its code: the record and the lanes, the tables, the write path, the rollout |
+| [rag.md](rag.md) | You want to know how notes become searchable passages and how the chat answers from them: chunking, embedding, hybrid retrieval, reranking, providers |
+| [timezone.md](timezone.md) | You want Usage, session, Running/Live, Org and TV timestamps in a configured zone, with browser fallback and a CLI for travel |
+| [summaries.md](summaries.md) | You want every agent session summarized by a local model (with paid fallbacks), the facts it learned held for your approval, a digest for a stand-up, and quality checks you can run |
 | [agent-harness.md](agent-harness.md) | You run Claude Code or Hermes in the vault and want to know what the guard and the dev-log gate do |
+| [agent-company.md](agent-company.md) | You want a company of named agents on a message board that wake for cards, DMs and mentions and report to you |
+| `addons/hiring-desk/docs/ensv2-agent-registration.md` (hiring desk addon, in the repo) | You want to publish agent names through ENSv2 and link them to an ERC-8004 identity |
 | [deployment.md](deployment.md) | You want the app on a server behind a login |
 | [privacy.md](privacy.md) | You want to know how the engine stays free of personal data, and how to keep your fork that way |
+| [zen-agent.md](zen-agent.md) | You want to run a roster persona headlessly on any model with the board and the knowledge base as tools: what zen-agent is, how to use it, its architecture and design, and how it compares to Claude Code, Hermes and pi |
 
-Also:
+Also, in the repository:
 
-- [`../app/README.md`](../app/README.md): the app's tech stack, search design and invariants.
-- [`../addons/tv-kiosk/README.md`](../addons/tv-kiosk/README.md): a Raspberry Pi that shows the app on a TV.
-- [`../CONTRIBUTING.md`](../CONTRIBUTING.md): how to send a change.
-- [`../AGENTS.md`](../AGENTS.md): the rules AI coding agents follow when they change this repo.
+- [`app/README.md`](https://github.com/kon-rad/argo/blob/main/app/README.md): the app's tech stack, search design and invariants.
+- [`addons/tv-kiosk/README.md`](https://github.com/kon-rad/argo/blob/main/addons/tv-kiosk/README.md): a Raspberry Pi that shows the app on a TV.
+- [`addons/agent-dock/README.md`](https://github.com/kon-rad/argo/blob/main/addons/agent-dock/README.md): a macOS app and CLI that opens an org agent in a terminal and shows what is running on this machine.
+- [`zen-agent/README.md`](https://github.com/kon-rad/argo/blob/main/zen-agent/README.md): zen-agent, the minimal headless agent runtime (pi agent core) that runs a roster persona with skills, the board and the knowledge base as tools, under a budget, with a trace per run.
+- [`CONTRIBUTING.md`](https://github.com/kon-rad/argo/blob/main/CONTRIBUTING.md): how to send a change.
+- [`AGENTS.md`](https://github.com/kon-rad/argo/blob/main/AGENTS.md): the rules AI coding agents follow when they change this repo.
+
+## Working on the docs
+
+The site is MkDocs with the Material theme; `mkdocs.yml` at the repository root holds the navigation. Preview locally with `pip install mkdocs-material && mkdocs serve`, and run `mkdocs build --strict` before you push: the `docs` workflow runs the same command on every pull request that touches `docs/`, and a broken link fails it. Links to files outside `docs/` are written as full GitHub URLs so they work on the site as well as on GitHub.

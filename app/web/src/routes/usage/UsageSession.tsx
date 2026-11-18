@@ -1,72 +1,206 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api, type UsageMessage } from '../../lib/api.js';
-import { formatTokens } from './format.js';
+import { api, type AgentSessionRun, type AgentStep } from '../../lib/api.js';
+import { clock, span, startedStamp, zoned } from '../../lib/time.js';
+import { useAppTimezone } from '../../lib/useTimezone.js';
+import { AgentAvatar } from '../../components/AgentAvatar.js';
+import { SessionContent, SessionReferences } from './SessionContent.js';
+import { contextLabel, formatTokens, personaLabel } from './format.js';
+import { sessionName } from './AgentSessions.js';
+import { duration, groupTurns, toolSummary, type ToolPair } from './steps.js';
 
-function FullRecord({ id }: { id: number }) {
-  const [open, setOpen] = useState(false);
-  const full = useQuery({ queryKey: ['usage-message', id], queryFn: () => api.usageMessage(id), enabled: open });
-  if (!open) return <button type="button" className="text-xs underline" onClick={() => setOpen(true)}>Show full record</button>;
-  return <pre className="mt-1 max-h-[60vh] overflow-auto whitespace-pre-wrap text-xs">{full.data ? JSON.stringify(full.data.raw, null, 2) : 'Loading…'}</pre>;
+const SHOW_KEY = 'usage-session-show';
+type Show = { thinking: boolean; results: boolean; system: boolean };
+const DEFAULT_SHOW: Show = { thinking: false, results: false, system: false };
+
+// A per-viewer convenience: storage can be missing or blocked, and the page works without it.
+function loadShow(): Show {
+  try { return { ...DEFAULT_SHOW, ...JSON.parse(localStorage.getItem(SHOW_KEY) ?? '{}') }; } catch { return DEFAULT_SHOW; }
+}
+function saveShow(s: Show): void {
+  try { localStorage.setItem(SHOW_KEY, JSON.stringify(s)); } catch { /* not saved; fine */ }
 }
 
-function Message({ m }: { m: UsageMessage }) {
-  const folded = m.text.startsWith('[thinking]') || m.text.startsWith('[tool_use') || m.kind === 'tool_result';
-  const body = <pre className="whitespace-pre-wrap break-words text-sm">{m.text}</pre>;
+// Step times in the app's zone (lib/time.ts: the vault's setting, else the browser's).
+const time = (ts: string | null) => clock(ts);
+
+function CallChip({ call }: { call: AgentStep['call'] }) {
+  if (!call) return null;
   return (
-    <div className={`border-t border-[var(--rule)] py-2 ${m.is_sidechain ? 'ml-6' : ''}`}>
-      <div className="flex flex-wrap gap-2 text-xs text-[var(--ink-dim)]">
-        <span className="font-semibold text-[var(--ink)]">{m.role}</span>
-        {m.ts && <span>{new Date(m.ts).toLocaleString()}</span>}
-        {m.is_sidechain && <span>subagent</span>}
-        {m.call && (
-          <span className="rounded bg-[var(--paper-sunk)] px-1">
-            {m.call.model} · in {formatTokens(m.call.input)} · cache w {formatTokens(m.call.cache_write)} · cache r {formatTokens(m.call.cache_read)} · out {formatTokens(m.call.output)}{m.call.action ? ` · ${m.call.action}${m.call.tool ? ` (${m.call.tool})` : ''}` : ''}
-          </span>
-        )}
-      </div>
-      {folded ? <details><summary className="cursor-pointer text-xs">{m.text.slice(0, 80)}</summary>{body}</details> : body}
-      {m.truncated && <div className="text-xs text-[var(--ink-dim)]">Showing 20,000 of {m.length.toLocaleString()} characters. <FullRecord id={m.id} /></div>}
-    </div>
+    <span className="rounded bg-[var(--paper-sunk)] px-1">
+      {call.model} · in {formatTokens(call.input)} · cache w {formatTokens(call.cache_write)} · cache r {formatTokens(call.cache_read)} · out {formatTokens(call.output)}
+    </span>
   );
+}
+
+function FullText({ step }: { step: AgentStep }) {
+  const [open, setOpen] = useState(false);
+  const full = useQuery({ queryKey: ['usage-message-full', step.id, step.key], queryFn: () => api.usageMessage(step.id, true, step.key), enabled: open });
+  if (!step.truncated) return null;
+  if (!open) {
+    return <div className="text-xs text-[var(--ink-dim)]">Showing 20,000 of {step.length.toLocaleString()} characters.{' '}
+      <button type="button" className="underline" onClick={() => setOpen(true)}>Show full text</button></div>;
+  }
+  return <div className="mt-1 max-h-[60vh] overflow-auto">{full.isError ? 'Could not load full text.' : full.data ? <SessionContent text={full.data.text ?? ''} literal /> : 'Loading…'}</div>;
+}
+
+function Raw({ id }: { id: number }) {
+  const [open, setOpen] = useState(false);
+  const raw = useQuery({ queryKey: ['usage-message', id], queryFn: () => api.usageMessage(id), enabled: open });
+  return <details onToggle={(e) => setOpen(e.currentTarget.open)}><summary className="cursor-pointer text-xs">Raw data</summary>
+    <div className="mt-1 max-h-[60vh] overflow-auto">{raw.isError ? 'Could not load raw data.' : raw.data ? <SessionContent text={JSON.stringify(raw.data.raw, null, 2)} literal /> : 'Loading…'}</div></details>;
+}
+
+function Sub({ name }: { name: string | null }) {
+  return name ? <span className="rounded border border-[var(--rule)] px-1">subagent: <SessionReferences text={name} /></span> : null;
+}
+
+function StepView({ step, show }: { step: AgentStep; show: Show }) {
+  const { text: _text, ...metadata } = step;
+  const label = step.step === 'response' ? 'Assistant' : step.step === 'thinking' ? 'Thinking' : step.step === 'tool_result' ? 'Tool result'
+    : step.step === 'prompt' ? 'You' : step.step === 'meta' ? 'Metadata' : 'System';
+  const details = <details><summary className="cursor-pointer text-xs text-[var(--ink-dim)]">Message metadata</summary>
+    <SessionContent text={JSON.stringify(metadata, null, 2)} literal /><CallChip call={step.call} /><Raw id={step.id} /></details>;
+  if (['thinking', 'system', 'meta'].includes(step.step)) {
+    return <details className="my-2 rounded-lg border border-[var(--rule)] p-3" open={step.step === 'thinking' ? show.thinking : show.system}>
+      <summary className="cursor-pointer text-sm font-medium">{label} <span className="text-xs text-[var(--ink-dim)]">{time(step.ts)}</span> <Sub name={step.subagent} /></summary>
+      <div className="mt-2"><SessionContent text={step.text} literal /><FullText step={step} />{details}</div>
+    </details>;
+  }
+  return (
+    <article aria-label={step.step === 'prompt' ? 'User message' : step.step === 'response' ? 'Assistant message' : label}
+      className={`my-3 rounded-xl border border-[var(--rule)] p-4 ${step.step === 'prompt' ? 'ml-auto w-[92%] bg-[var(--paper-sunk)]' : 'mr-auto w-full'} ${step.subagent ? 'ml-6 border-l border-[var(--rule)] pl-2 max-md:w-[calc(100%-1.5rem)]' : ''}`}>
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-dim)]">
+        <span className="font-semibold text-[var(--ink)]">{label}</span><span>{time(step.ts)}</span><Sub name={step.subagent} />{details}
+      </div>
+      <SessionContent text={step.text} literal={step.step === 'tool_result'} /><FullText step={step} />
+    </article>
+  );
+}
+
+function ToolCard({ pair, show }: { pair: ToolPair; show: Show }) {
+  const { call, result } = pair;
+  const failed = result?.isError === true;
+  const { text: _text, ...metadata } = call;
+  return (
+    <details open={show.results} className={`my-2 rounded-lg border p-3 ${failed ? 'border-red-600' : 'border-[var(--rule)]'} ${call.subagent ? 'ml-6' : ''}`}>
+      <summary className="cursor-pointer space-x-2 text-xs text-[var(--ink-dim)]">
+        <span className="font-semibold text-[var(--ink)]">{call.toolName ?? 'tool'}</span>
+        <span>{time(call.ts)}</span>
+        {pair.durationMs !== null && <span>{duration(pair.durationMs)}</span>}
+        {failed && <span className="font-semibold text-red-600">✗ error</span>}
+        {!result && <span>no result on this page</span>}
+        <Sub name={call.subagent} />
+      </summary>
+      <details><summary>Tool metadata</summary><SessionContent text={JSON.stringify(metadata, null, 2)} literal /><CallChip call={call.call} /><Raw id={call.id} /></details>
+      <div className="font-mono text-sm break-words"><SessionReferences text={toolSummary(call.text)} /></div>
+      <details><summary className="cursor-pointer text-xs text-[var(--ink-dim)]">input ({call.length.toLocaleString()} chars)</summary>
+        <SessionContent text={call.text} literal /><FullText step={call} /></details>
+      {result && (
+        <details open={show.results && (failed || result.length < 2000)}>
+          <summary className="cursor-pointer text-xs text-[var(--ink-dim)]">result ({result.length.toLocaleString()} chars)</summary>
+          <div className="max-h-[50vh] overflow-auto"><SessionContent text={result.text} literal /></div>
+          <FullText step={result} /><Raw id={result.id} />
+        </details>
+      )}
+    </details>
+  );
+}
+
+function Runs({ runs, tz }: { runs: AgentSessionRun[]; tz: string }) {
+  return <>{runs.map((run) => (
+    <div key={run.run_id} className="mt-2 rounded border border-[var(--rule)] p-2 text-sm">
+      {run.agent_name
+        ? <><Link className="inline-flex items-center gap-1 underline" to={`/org/agents/${run.agent_name}`}><AgentAvatar name={run.agent_name} size={18} />{run.agent_name}</Link>{run.task_id ? <> on card <Link className="underline" to={`/board/${run.task_id}`}>{run.task_id}</Link></> : ''}</>
+        : <>Task {run.task_id ? <Link className="underline" to={`/board/${encodeURIComponent(run.task_id)}`}>{run.task_id}</Link> : '?'} on {run.lane ?? '?'}</>}
+      {' '}· {run.num_turns ?? '?'} turns · {run.subtype ?? ''}{run.started_at ? ` · ${zoned(run.started_at, tz)}` : ''}
+      {run.verify_name && (
+        <details><summary>Verify {run.verify_name}: {run.verify_passed ? 'passed' : 'failed'}{run.verify_metric != null ? ` (${run.verify_metric})` : ''}</summary>
+          <SessionContent text={run.verify_output ?? ''} literal /></details>
+      )}
+    </div>
+  ))}</>;
 }
 
 export default function UsageSession() {
   const { host = '', externalId = '' } = useParams();
   const [params] = useSearchParams();
-  const source = params.get('source') ?? 'claude-code';
-  const q = useQuery({ queryKey: ['usage-session', host, externalId, source], queryFn: () => api.usageSession(host, externalId, source) });
+  const source = params.get('source');
+  const [show, setShowState] = useState<Show>(loadShow);
+  const { tz } = useAppTimezone();
+  const setShow = (patch: Partial<Show>) => { const next = { ...show, ...patch }; setShowState(next); saveShow(next); };
+  const q = useInfiniteQuery({
+    queryKey: ['agent-session', host, externalId, source],
+    queryFn: ({ pageParam }) => api.agentSession(host, externalId, source, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (last) => last.next ?? undefined,
+  });
   if (q.isPending) return <div className="p-4 text-[var(--ink-dim)]">Loading…</div>;
   if (q.isError) return <div className="p-4">Could not load this session: {(q.error as Error).message}</div>;
-  const { session: s, run, messages } = q.data;
-  const runs = q.data.runs?.length ? q.data.runs : run ? [run] : [];
+  const first = q.data.pages[0]!;
+  const s = first.session;
+  const steps = q.data.pages.flatMap((p) => p.steps);
+  const turns = groupTurns(steps);
+  const dur = span(s.started_at, s.ended_at);
+  const persona = personaLabel(s);
+  const ctx = contextLabel(s);
   return (
     <div className="h-full overflow-auto break-words p-4">
-      <Link to="/usage" className="text-xs underline">Back to Usage</Link>
-      <h1 className="mt-1 text-lg font-semibold">{s.title ?? s.external_id}</h1>
+      <Link to="/usage?view=sessions" className="text-xs underline">Back to Usage</Link>
+      <h1 className="mt-1 text-lg font-semibold">{sessionName(s, tz) ?? s.external_id}</h1>
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs sm:grid-cols-[auto_1fr_auto_1fr]" aria-label="Session summary">
+        <dt className="text-[var(--ink-dim)]">Started</dt><dd className="tabular-nums">{s.started_at ? `${startedStamp(s.started_at, tz)} (${tz})` : 'unknown'}</dd>
+        <dt className="text-[var(--ink-dim)]">Duration</dt><dd title="elapsed from the first to the last recorded step">{dur ?? 'unknown'}</dd>
+        <dt className="text-[var(--ink-dim)]">Type</dt><dd>{s.session_type ?? 'unknown'}</dd>
+        <dt className="text-[var(--ink-dim)]">Bot persona</dt><dd>{persona.text}{s.channel_bot && s.channel_bot !== s.persona ? ` (bot ${s.channel_bot})` : ''}</dd>
+        <dt className="text-[var(--ink-dim)]">Machine</dt><dd>{s.host}</dd>
+        <dt className="text-[var(--ink-dim)]">Model</dt><dd>{s.models.join(', ') || 'unknown'}{s.provider ? ` via ${s.provider}` : ' (provider unknown)'}</dd>
+        <dt className="text-[var(--ink-dim)]">Tokens (all calls)</dt><dd>{s.calls} calls · in {formatTokens(s.input)} · cache r {formatTokens(s.cache_read)} · out {formatTokens(s.output)}</dd>
+        <dt className="text-[var(--ink-dim)]">Context</dt>
+        <dd title="the prompt size of the latest main call over the context window recorded with the session; not the token total">
+          {ctx ? `${ctx} at the latest call${s.context_at ? ` (${clock(s.context_at, tz)})` : ''}` : 'not recorded'}
+          {s.context_tokens != null && s.context_window == null ? ' · capacity unknown' : ''}</dd>
+      </dl>
+      <details className="my-3 rounded-lg border border-[var(--rule)] p-3"><summary className="cursor-pointer text-sm font-medium">Session metadata</summary>
+      <SessionContent text={JSON.stringify(s, null, 2)} literal />
       <div className="text-xs text-[var(--ink-dim)]">
-        {s.source} on {s.host} · {s.calls} calls · in {formatTokens(Number(s.input))} · cache w {formatTokens(Number(s.cache_write))} ·
-        cache r {formatTokens(Number(s.cache_read))} · out {formatTokens(Number(s.output))}
-        {s.source === 'hermes' && s.cost_usd !== null && s.cost_usd !== undefined && ` · ${Number(s.cost_usd).toFixed(2)} USD`}
+        {s.harness}{s.profile && s.profile !== 'main' ? ` (${s.profile})` : ''} on {s.host} · {s.models.join(', ') || 'model unknown'}{s.provider ? ` via ${s.provider}` : ''}
+        {s.started_at ? ` · ${zoned(s.started_at, tz)}` : ''}{dur ? ` · ${dur}` : ''}
       </div>
-      {runs.map((run) => (
-        <div key={run.run_id ?? run.session_id} className="mt-2 rounded border border-[var(--rule)] p-2 text-sm">
-          {run.agent_name
-            ? <><Link className="underline" to={`/org/agents/${run.agent_name}`}>{run.agent_name}</Link>{run.reason ? ` woken by ${run.reason}` : ''}{run.task_id ? <> on card <Link className="underline" to={`/agents/board/${run.task_id}`}>{run.task_id}</Link></> : ''}</>
-            : <>Task {run.task_id ?? '?'} on {run.lane ?? '?'}</>}
-          {run.project_slug ? ` · ${run.project_slug}${run.feature_slug ? `/${run.feature_slug}` : ''}` : ''}{run.work_type ? ` · ${run.work_type}` : ''}
-          {' '}· {run.num_turns ?? '?'} turns · {run.subtype ?? ''}
-          {run.started_at ? ` · ${new Date(run.started_at).toLocaleString()}` : ''}
-          {run.calls != null ? ` · ${run.calls} calls, out ${formatTokens(Number(run.output ?? 0))}` : ''}
-          {run.verify_name && (
-            <details><summary>Verify {run.verify_name}: {run.verify_passed ? 'passed' : 'failed'}{run.verify_metric != null ? ` (${run.verify_metric})` : ''}</summary>
-              <pre className="whitespace-pre-wrap text-xs">{run.verify_output}</pre></details>
-          )}
-        </div>
-      ))}
-      {messages.length === 0 && <p className="mt-3 text-sm text-[var(--ink-dim)]">Token counts only: this transcript's text is not on this server (sessions from before the push went live are in the Mac app and B2).</p>}
-      <div className="mt-3">{messages.map((m) => <Message key={m.id} m={m} />)}</div>
+      <div className="text-xs text-[var(--ink-dim)]">
+        {s.calls} calls · in {formatTokens(s.input)} · cache w {formatTokens(s.cache_write)} · cache r {formatTokens(s.cache_read)} · out {formatTokens(s.output)}
+        {s.reasoning ? ` · reasoning ${formatTokens(s.reasoning)}` : ''} · {s.tool_calls} tool calls{s.errors ? ` (${s.errors} failed)` : ''}
+        {s.subagents ? ` · ${s.subagents} subagents` : ''}
+        {s.harness !== 'claude-code' && s.cost_usd != null && ` · ${Number(s.cost_usd).toFixed(2)} USD`}
+      </div>
+      {s.harness === 'hermes' && s.parent_external_id && (
+        <div className="text-xs text-[var(--ink-dim)]">Continues <Link className="underline"
+          to={`/usage/session/${s.host}/${encodeURIComponent(s.parent_external_id)}?source=${encodeURIComponent(s.source)}`}>{s.parent_external_id}</Link></div>
+      )}
+      <Runs runs={first.runs} tz={tz} />
+      </details>
+      <div className="mt-2 flex flex-wrap gap-3 text-xs">
+        <label className="flex items-center gap-1"><input type="checkbox" checked={show.thinking} onChange={(e) => setShow({ thinking: e.target.checked })} />Expand thinking</label>
+        <label className="flex items-center gap-1"><input type="checkbox" checked={show.results} onChange={(e) => setShow({ results: e.target.checked })} />Expand tool results</label>
+        <label className="flex items-center gap-1"><input type="checkbox" checked={show.system} onChange={(e) => setShow({ system: e.target.checked })} />Expand system metadata</label>
+      </div>
+      {steps.length === 0 && <p className="mt-3 text-sm text-[var(--ink-dim)]">No transcript text is stored for this session, only its token counts.</p>}
+      <div className="mx-auto mt-4 max-w-5xl" aria-label="Session conversation">
+        {turns.map((t, i) => (
+          <div key={t.prompt?.key ?? `t${i}`} className="border-t border-[var(--rule)] py-2">
+            {t.prompt && <StepView step={t.prompt} show={show} />}
+            {t.items.map((it) => it.kind === 'tool'
+              ? <ToolCard key={it.pair.call.key} pair={it.pair} show={show} />
+              : <StepView key={it.step.key} step={it.step} show={show} />)}
+          </div>
+        ))}
+      </div>
+      {q.hasNextPage && (
+        <button type="button" className="mt-2 rounded border border-[var(--rule)] px-2 py-1 text-sm" disabled={q.isFetchingNextPage} onClick={() => q.fetchNextPage()}>
+          {q.isFetchingNextPage ? 'Loading…' : 'Load more'}
+        </button>
+      )}
     </div>
   );
 }

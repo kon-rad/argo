@@ -1,0 +1,32 @@
+[Unit]
+Description=Second Brain: zen-agent serve, the chat host behind /api/zen (agents module, docs/zen-agent.md 3.6)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Rendered by deploy.sh. zen-agent ships in the engine (sibling of app/), not under app/, so deploy.sh's own
+# rsync of app/ never carries it; it is built from the vault's pinned .secondbrain/zen-agent into @APP_HOME@/zen-agent.
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@VAULT_DIR@
+EnvironmentFile=/etc/secondbrain/env
+Environment=PATH=@APP_HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node --no-warnings @APP_HOME@/zen-agent/dist/src/cli.js serve --port 8791 --host 127.0.0.1
+Restart=on-failure
+RestartSec=5
+Nice=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@VAULT_DIR@ @APP_HOME@/zen-agent
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

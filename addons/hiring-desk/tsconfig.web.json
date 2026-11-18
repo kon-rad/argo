@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "target": "ES2023", "lib": ["ES2023", "DOM", "DOM.Iterable"], "module": "ESNext", "moduleResolution": "Bundler",
+    "jsx": "react-jsx", "strict": true, "noUncheckedIndexedAccess": true, "skipLibCheck": true,
+    "declaration": true, "emitDeclarationOnly": true, "outDir": "dist/web"
+  },
+  "include": ["web/src/**/*.ts", "web/src/**/*.tsx"]
+}

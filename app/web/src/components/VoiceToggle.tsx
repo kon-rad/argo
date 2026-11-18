@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type VoiceStatus } from '../lib/api.js';
 
 /**
- * Top-nav switch for this Mac: when on, Claude Code says a one-line summary out
+ * Top-nav switch for this machine: when on, Claude Code says a one-line summary out
  * loud after any task that ran longer than the threshold. The Stop hook
  * (.agents/skills/speak/scripts/claude_stop_speak.py) reads the same settings
  * file this writes, so the change applies to the next task without a restart.
@@ -31,7 +31,7 @@ export default function VoiceToggle() {
       disabled={!s || change.isPending}
       onClick={() => change.mutate({ autoSpeak: !on })}
       title={
-        `Claude Code speaks when a task longer than ${minutes} min finishes on this Mac. ` +
+        `Claude Code speaks when a task longer than ${minutes} min finishes on this machine. ` +
         (s?.server.up ? 'Voice server running.' : 'Voice server is down (launchd com.argo.tts).')
       }
       className="flex items-center gap-1.5 text-xs text-[var(--ink-dim)] hover:text-[var(--ink)]"

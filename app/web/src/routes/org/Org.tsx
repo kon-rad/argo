@@ -3,9 +3,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, NavLink, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { api, type OrgChannel, type OrgChartAgent, type OrgMessage, type OrgWakeup, type UsageFacetValue } from '../../lib/api.js';
-import { formatTokens } from '../usage/format.js';
+import { api, type OrgApproval, type OrgChannel, type OrgChartAgent, type OrgMessage, type OrgWakeup } from '../../lib/api.js';
 import { ago, zoned } from '../../lib/time.js';
+import { useStickToBottom } from '../../lib/useStickToBottom.js';
+import { ChatInput } from '../../components/ChatInput.js';
+import { VaultMarkdown } from '../../components/VaultMarkdown.js';
+import { AgentAvatar } from '../../components/AgentAvatar.js';
+import DataTable from '../../components/DataTable.js';
+import { teamColor } from '../../lib/teamColor.js';
+import { useAppTimezone } from '../../lib/useTimezone.js';
 
 /**
  * The agent company: Argo's named agents on teams, talking in channels and DMs
@@ -17,20 +23,14 @@ import { ago, zoned } from '../../lib/time.js';
  */
 
 const tab = ({ isActive }: { isActive: boolean }): string =>
-  `px-3 py-1.5 text-sm border-b-2 ${isActive ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
+  `px-3 py-1.5 text-sm border-b-2 max-md:inline-flex max-md:min-h-11 max-md:items-center ${isActive ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
 const POLL_MS = 5000;
 const KIND_LABEL: Record<string, string> = {
   message: '', status: 'status', decision: 'decision', handoff: 'handoff', 'question-for-owner': 'question for you',
   standup: 'stand-up', reflection: 'reflection', reply: '',
 };
 
-/** A stable colour per team so an author's chip says where they sit without a legend. */
-export function teamColor(team: string | null): string {
-  if (!team) return 'var(--ink-dim)';
-  let h = 0;
-  for (const c of team) h = (h * 31 + c.charCodeAt(0)) % 360;
-  return `hsl(${h} 50% 42%)`;
-}
+export { teamColor };
 
 export function channelLabel(slug: string): string {
   if (slug.startsWith('dm:')) return slug.slice(3).split(':').join(' ↔ ');
@@ -44,7 +44,8 @@ function useTeams(): Map<string, string | null> {
 
 function AuthorChip({ name, team }: { name: string; team: string | null }) {
   return (
-    <Link to={`/org/agents/${name}`} className="rounded px-1.5 py-0.5 text-[0.7rem] font-medium text-white" style={{ background: teamColor(team) }}>
+    <Link to={`/org/agents/${name}`} className="inline-flex items-center gap-1 rounded py-0.5 pl-0.5 pr-1.5 text-[0.7rem] font-medium text-white" style={{ background: teamColor(team) }}>
+      <AgentAvatar name={name} team={team} size={18} />
       {name}
     </Link>
   );
@@ -61,23 +62,23 @@ function KindChip({ kind, urgent }: { kind: string; urgent: boolean }) {
   );
 }
 
-function MessageCard({ m, teams, showChannel, big }: { m: OrgMessage; teams: Map<string, string | null>; showChannel?: boolean; big?: boolean }) {
+function MessageCard({ m, teams, tz, showChannel, big }: { m: OrgMessage; teams: Map<string, string | null>; tz: string; showChannel?: boolean; big?: boolean }) {
   return (
     <article className={`rounded border border-[var(--rule)] bg-[var(--paper)] ${big ? 'p-4 text-lg' : 'p-2 text-sm'}`} data-testid="org-message">
       <div className="flex flex-wrap items-center gap-2">
         <AuthorChip name={m.author} team={teams.get(m.author) ?? null} />
         <KindChip kind={m.kind} urgent={m.urgent} />
         {showChannel && <Link to={`/org?channel=${encodeURIComponent(m.channel_slug)}`} className="text-xs text-[var(--accent)]">{channelLabel(m.channel_slug)}</Link>}
-        <span className="text-xs text-[var(--ink-faint)]" title={zoned(m.created_at, 'Asia/Tokyo')}>{ago(m.created_at)}</span>
+        <span className="text-xs text-[var(--ink-faint)]" title={zoned(m.created_at, tz)}>{ago(m.created_at)}</span>
         <span className="text-xs text-[var(--ink-faint)]">#{m.id}</span>
-        {m.task_id && <Link to={`/agents/board/${m.task_id}`} className="text-xs text-[var(--accent)]">task {m.task_id}</Link>}
-        {m.project_slug && (
+        {m.task_id && <Link to={`/board/${m.task_id}`} className="text-xs text-[var(--accent)]">task {m.task_id}</Link>}
+        {m.area_slug && (
           <Link to="/projects?view=board" className="text-xs text-[var(--accent)]">
-            {m.project_slug}{m.feature_slug ? ` / ${m.feature_slug}` : ''}
+            {m.area_slug}{m.project_slug ? ` / ${m.project_slug}` : ''}
           </Link>
         )}
       </div>
-      <div className="mt-1 whitespace-pre-wrap break-words">{m.body}</div>
+      <VaultMarkdown text={m.body} breaks className="mt-1 break-words text-sm" />
     </article>
   );
 }
@@ -85,6 +86,7 @@ function MessageCard({ m, teams, showChannel, big }: { m: OrgMessage; teams: Map
 /** Messages in order, replies folded under their root when the root is on the page. */
 function MessageList({ messages, teams, showChannel, big }: { messages: OrgMessage[]; teams: Map<string, string | null>; showChannel?: boolean; big?: boolean }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
+  const { tz } = useAppTimezone();
   const roots = messages.filter((m) => !m.thread_id || !messages.some((r) => r.id === m.thread_id));
   const replies = new Map<number, OrgMessage[]>();
   for (const m of messages) {
@@ -98,13 +100,13 @@ function MessageList({ messages, teams, showChannel, big }: { messages: OrgMessa
         const shown = open.has(m.id);
         return (
           <div key={m.id}>
-            <MessageCard m={m} teams={teams} showChannel={showChannel} big={big} />
+            <MessageCard m={m} teams={teams} tz={tz} showChannel={showChannel} big={big} />
             {rs.length > 0 && (
               <div className="ml-6 mt-1">
                 <button type="button" className="text-xs text-[var(--accent)]" onClick={() => setOpen((s) => { const n = new Set(s); if (n.has(m.id)) n.delete(m.id); else n.add(m.id); return n; })}>
                   {shown ? 'hide' : 'show'} {rs.length} {rs.length === 1 ? 'reply' : 'replies'}
                 </button>
-                {shown && <div className="mt-1 space-y-1">{rs.map((r) => <MessageCard key={r.id} m={r} teams={teams} big={big} />)}</div>}
+                {shown && <div className="mt-1 space-y-1">{rs.map((r) => <MessageCard key={r.id} m={r} teams={teams} tz={tz} big={big} />)}</div>}
               </div>
             )}
           </div>
@@ -125,22 +127,25 @@ function Composer({ channel, thread, onDone }: { channel: string; thread?: numbe
       onDone?.();
     },
   });
+  const submit = (): void => {
+    if (body.trim() && !send.isPending) send.mutate();
+  };
   return (
     <form
-      className="flex gap-2 border-t border-[var(--rule)] p-2"
+      className="flex items-end gap-2 border-t border-[var(--rule)] p-3"
       onSubmit={(e) => {
         e.preventDefault();
-        if (body.trim()) send.mutate();
+        submit();
       }}
     >
-      <input
-        aria-label={`Message ${channelLabel(channel)}`}
-        className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-sm"
-        placeholder={`Post in ${channelLabel(channel)} as yourself`}
+      <ChatInput
+        label={`Message ${channelLabel(channel)}`}
+        placeholder={`Post in ${channelLabel(channel)} as yourself (Enter posts, Shift+Enter for a new line)`}
         value={body}
-        onChange={(e) => setBody(e.target.value)}
+        onChange={setBody}
+        onSubmit={submit}
       />
-      <button type="submit" disabled={!body.trim() || send.isPending} className="rounded bg-[var(--accent)] px-3 py-1 text-sm font-medium text-white disabled:opacity-50">
+      <button type="submit" disabled={!body.trim() || send.isPending} className="rounded bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50">
         Post
       </button>
       {send.isError && <span className="self-center text-xs text-[var(--warn)]">{send.error.message}</span>}
@@ -183,10 +188,13 @@ function Channels() {
   }, [current, unread, newest, messages.data, qc]);
 
   const pick = (slug: string): void => setParams({ channel: slug });
+  const searching = q.trim().length > 1;
+  // Opens at the newest message; a search result list reads from the top instead.
+  const scroller = useStickToBottom(searching ? null : `channel:${current}:${messages.isSuccess}`);
 
   if (channels.isError) return <p className="p-4 text-sm">⚠ {channels.error.message}</p>;
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 max-md:flex-col">
       <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-[var(--rule)] p-2 md:block" aria-label="Channels">
         {GROUPS.map((g) => {
           const rows = list.filter((c) => c.kind === g.kind);
@@ -211,7 +219,7 @@ function Channels() {
         })}
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--rule)] px-3 py-2 text-sm">
           <select aria-label="Channel" value={current ?? ''} onChange={(e) => pick(e.target.value)} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs md:hidden">
             {list.map((c) => (
@@ -220,13 +228,13 @@ function Channels() {
           </select>
           {current && <span className="hidden font-semibold md:inline">{channelLabel(current)}</span>}
           <span className="hidden text-xs text-[var(--ink-dim)] md:inline">{list.find((c) => c.slug === current)?.purpose ?? ''}</span>
-          <input aria-label="Search messages" className="ml-auto w-40 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-xs" placeholder="search the board" value={q} onChange={(e) => setQ(e.target.value)} />
-          <button type="button" className="text-xs text-[var(--accent)] lg:hidden" onClick={() => setShowMembers((v) => !v)}>
+          <input aria-label="Search messages" className="ml-auto w-40 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-xs max-md:min-w-0 max-md:flex-1" placeholder="search the board" value={q} onChange={(e) => setQ(e.target.value)} />
+          <button type="button" className="text-xs text-[var(--accent)] lg:hidden" aria-expanded={showMembers} onClick={() => setShowMembers((v) => !v)}>
             {members.data ? `${members.data.members.length} members` : 'members'}
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          {q.trim().length > 1 ? (
+        <div ref={scroller.ref} className="min-h-0 flex-1 overflow-y-auto p-3" data-testid="channel-messages">
+          {searching ? (
             <>
               <div className="mb-2 text-xs text-[var(--ink-dim)]">{search.data ? `${search.data.messages.length} matches for "${q}"` : 'searching…'}</div>
               <MessageList messages={search.data?.messages ?? []} teams={teams} showChannel />
@@ -237,11 +245,11 @@ function Channels() {
             <MessageList messages={messages.data?.messages ?? []} teams={teams} />
           )}
         </div>
-        {current && <Composer channel={current} />}
+        {current && <Composer channel={current} onDone={scroller.pin} />}
       </div>
 
       {current && (
-        <aside className={`${showMembers ? 'block' : 'hidden'} w-48 shrink-0 overflow-y-auto border-l border-[var(--rule)] p-2 lg:block`} aria-label="Members">
+        <aside className={`${showMembers ? 'block' : 'hidden'} w-48 shrink-0 overflow-y-auto border-l border-[var(--rule)] p-2 max-md:max-h-48 max-md:w-full max-md:border-t max-md:border-l-0 lg:block`} aria-label="Members">
           <div className="mb-1 px-1 text-[0.65rem] font-semibold uppercase tracking-wide text-[var(--ink-faint)]">Members</div>
           {(members.data?.members ?? []).map((m) => (
             <div key={m.agent_name} className="flex items-center gap-2 px-1 py-0.5 text-xs">
@@ -264,6 +272,7 @@ function Chart() {
   const card = (a: OrgChartAgent) => (
     <Link key={a.name} to={`/org/agents/${a.name}`} className="block rounded border border-[var(--rule)] bg-[var(--paper)] p-2 text-sm hover:border-[var(--accent)]">
       <div className="flex items-center gap-2">
+        <AgentAvatar name={a.name} team={a.team_slug} avatar={a.avatar === undefined ? undefined : a.avatar} size={40} />
         <span className="rounded px-1.5 py-0.5 text-[0.7rem] font-medium text-white" style={{ background: teamColor(a.team_slug) }}>{a.name}</span>
         <span className="font-medium">{a.role}</span>
         {a.is_lead && <span className="text-[0.65rem] text-[var(--ink-faint)]">lead</span>}
@@ -312,10 +321,11 @@ function Live() {
   const teams = useTeams();
   const feed = useQuery({ queryKey: ['org', 'messages', 'live'], queryFn: () => api.orgMessages({ limit: kiosk ? 12 : 60 }), refetchInterval: POLL_MS });
   const list = feed.data?.messages ?? [];
+  const live = useStickToBottom(`live:${feed.isSuccess}`);
   const body = feed.isError ? <p className="p-4">⚠ {feed.error.message}</p> : <MessageList messages={kiosk ? [...list].reverse() : list} teams={teams} showChannel big={kiosk} />;
   if (kiosk) {
     return (
-      <div className="fixed inset-0 z-50 overflow-hidden bg-[var(--paper)] p-6" data-testid="kiosk">
+      <div className="fixed inset-0 z-50 overflow-hidden bg-[var(--paper)] p-6 max-md:overflow-y-auto" data-testid="kiosk">
         <div className="mb-3 flex items-baseline gap-3">
           <h1 className="text-2xl font-semibold">Argo · company board</h1>
           <span className="text-sm text-[var(--ink-dim)]">newest first · refreshes every 5 s</span>
@@ -328,34 +338,112 @@ function Live() {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-3 border-b border-[var(--rule)] px-3 py-2 text-xs text-[var(--ink-dim)]">
         Every channel, newest at the bottom, refreshes every 5 s.
-        <Link to="/org/live?kiosk=1" className="ml-auto underline">TV mode</Link>
+        <Link to="/org/live?kiosk=1" className="ml-auto underline max-md:hidden">TV mode</Link>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">{body}</div>
+      <div ref={live.ref} className="min-h-0 flex-1 overflow-y-auto p-3">{body}</div>
     </div>
   );
 }
 
-/** Seven days of the bot's tokens by what woke it and what it did; the link opens /usage filtered to it. */
-function UsageStrip({ name }: { name: string }) {
-  const [from, to] = useMemo(() => {
-    const end = new Date(Math.ceil(Date.now() / 3600_000) * 3600_000);
-    return [new Date(end.getTime() - 7 * 86400_000).toISOString(), end.toISOString()];
-  }, []);
-  const q = useQuery({ queryKey: ['usage-facets', from, to, name], queryFn: () => api.usageFacets(from, to, { agent: [name] }), retry: false, staleTime: 60_000 });
-  const facets = q.data?.facets;
-  const row = (label: string, xs: UsageFacetValue[] | undefined) => (xs?.length ? (
-    <div className="text-xs"><span className="text-[var(--ink-dim)]">{label}: </span>{xs.map((x) => `${x.value} ${formatTokens(x.tokens)}`).join(' · ')}</div>
-  ) : null);
-  if (!q.data || !q.data.total?.calls) return <p className="text-sm text-[var(--ink-faint)]">No model calls in the last 7 days.</p>;
+/**
+ * Ship approvals: what the bots want to merge or deploy, waiting on the owner. Approving here is the same yes as
+ * "approve <id>" on Telegram; a denial needs a reason the bot can act on. Shared facts are listed under it.
+ */
+
+/** Who may reach the board from elsewhere: the per-device tokens, with revoke. Minting stays on the CLI (the secret is shown once, in a terminal). */
+function Tokens() {
+  const qc = useQueryClient();
+  const { tz } = useAppTimezone();
+  const tokens = useQuery({ queryKey: ['board', 'tokens'], queryFn: api.boardTokens, retry: false, staleTime: 15_000 });
+  const revoke = useMutation({ mutationFn: (id: number) => api.boardRevokeToken(id), onSuccess: () => void qc.invalidateQueries({ queryKey: ['board', 'tokens'] }) });
+  if (tokens.isError) return null;   // the board module is off here
+  const rows = tokens.data?.tokens ?? [];
+  const when = (iso: string | null): string => (iso ? zoned(iso, tz, { seconds: true }) : 'never');
   return (
-    <div className="space-y-1">
-      <div className="text-sm">{formatTokens(q.data.total.tokens)} tokens in {q.data.total.calls} calls, last 7 days. <Link className="text-[var(--accent)]" to={`/usage?days=7&agent=${encodeURIComponent(name)}&group=action`}>Open in Usage</Link></div>
-      {row('woken by', facets?.reason)}
-      {row('did', facets?.action)}
-      {row('projects', facets?.project)}
-      {row('work', facets?.work_type)}
+    <section className="mt-6 rounded border border-[var(--rule)] p-3" aria-label="Board tokens">
+      <h2 className="mb-1 font-semibold tracking-tight">Board tokens</h2>
+      <p className="mb-2 text-xs text-[var(--ink-dim)]">Machines and agent processes that reach the board over HTTPS, each as one roster member. Mint one on the server with <code>cli-board token create &lt;agent&gt; --label "where"</code>; revoking ends that machine's access at once.</p>
+      {rows.length === 0 ? <p className="text-sm text-[var(--ink-faint)]">No tokens.</p> : (
+        <DataTable label="Board tokens" phone="cards" className="w-full text-sm">
+          <thead><tr className="text-left text-xs text-[var(--ink-dim)]"><th>Acts as</th><th>Label</th><th>Last seen</th><th>Made</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((t) => (
+              <tr key={t.id} className={t.revoked_at ? 'text-[var(--ink-faint)] line-through' : ''}>
+                <td><Link className="text-[var(--accent)]" to={`/org/agents/${t.agent_name}`}>{t.agent_name}</Link></td>
+                <td>{t.label ?? '-'}</td>
+                <td>{when(t.last_seen_at)}</td>
+                <td>{when(t.created_at)}</td>
+                <td className="text-right max-md:col-span-2">
+                  {t.revoked_at ? <span className="text-xs">revoked</span> : (
+                    <button type="button" onClick={() => revoke.mutate(t.id)} disabled={revoke.isPending} className="rounded border border-[var(--rule)] px-2 py-0.5 text-xs">revoke</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+      )}
+      {revoke.isError && <p className="mt-1 text-xs text-[var(--warn)]">{revoke.error.message}</p>}
+    </section>
+  );
+}
+
+function Approvals() {
+  const qc = useQueryClient();
+  const list = useQuery({ queryKey: ['org', 'approvals'], queryFn: () => api.orgApprovals(), refetchInterval: POLL_MS });
+  const facts = useQuery({ queryKey: ['org', 'facts'], queryFn: () => api.orgFacts() });
+  const [why, setWhy] = useState<Record<number, string>>({});
+  const decide = useMutation({
+    mutationFn: (v: { id: number; decision: 'approve' | 'deny'; note?: string }) => api.orgDecide(v.id, v.decision, v.note),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['org', 'approvals'] }),
+  });
+  const row = (a: OrgApproval) => (
+    <li key={a.id} className="rounded border border-[var(--rule)] bg-[var(--paper)] p-2 text-sm" data-testid="approval">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="font-mono text-xs">#{a.id}</span>
+        <span className={a.status === 'pending' ? 'font-semibold' : 'text-[var(--ink-dim)]'}>{a.status}{a.ship_now ? ' (ship-now)' : ''}</span>
+        <Link className="text-[var(--accent)]" to={`/org/agents/${a.requested_by}`}>{a.requested_by}</Link>
+        <Link className="text-xs text-[var(--accent)]" to={`/board/${a.task_id}`}>{a.task_id}</Link>
+        {a.pr_url && <a className="text-xs text-[var(--accent)] underline" href={a.pr_url} target="_blank" rel="noreferrer">PR</a>}
+        {a.deploy_target && <span className="text-xs">deploy {a.deploy_target}</span>}
+        <span className="ml-auto text-xs text-[var(--ink-dim)]">{ago(a.created_at)}</span>
+      </div>
+      <p className="mt-1 whitespace-pre-wrap">{a.summary}</p>
+      {a.status === 'pending' ? (
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button className="rounded bg-[var(--accent)] px-2 py-1 text-xs text-white disabled:opacity-50" disabled={decide.isPending}
+            onClick={() => decide.mutate({ id: a.id, decision: 'approve' })}>Approve</button>
+          <input className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-xs" placeholder="why not (for a denial)"
+            value={why[a.id] ?? ''} onChange={(e) => setWhy({ ...why, [a.id]: e.target.value })} />
+          <button className="rounded border border-[var(--rule)] px-2 py-1 text-xs disabled:opacity-50" disabled={decide.isPending || !why[a.id]?.trim()}
+            onClick={() => decide.mutate({ id: a.id, decision: 'deny', note: why[a.id] })}>Deny</button>
+        </div>
+      ) : a.decided_by ? <p className="mt-1 text-xs text-[var(--ink-dim)]">{a.decided_by}{a.note ? `: ${a.note}` : ''}</p> : null}
+    </li>
+  );
+  const items = list.data ?? [];
+  return (
+    <div className="h-full overflow-y-auto p-3">
+      <h2 className="mb-2 text-sm font-semibold">Waiting on you</h2>
+      {list.isError ? <p>⚠ {list.error.message}</p> : null}
+      {decide.isError ? <p className="text-sm">⚠ {decide.error.message}</p> : null}
+      <ul className="space-y-2">{items.filter((a) => a.status === 'pending').map(row)}</ul>
+      {!items.some((a) => a.status === 'pending') && <p className="text-sm text-[var(--ink-dim)]">Nothing to approve.</p>}
+      <h2 className="mb-2 mt-5 text-sm font-semibold">Decided</h2>
+      <ul className="space-y-2">{items.filter((a) => a.status !== 'pending').slice(0, 20).map(row)}</ul>
+      <h2 className="mb-2 mt-5 text-sm font-semibold">Shared facts</h2>
+      <ul className="space-y-1 text-sm">
+        {(facts.data ?? []).map((f) => (
+          <li key={f.id}><span className="font-mono text-xs">#{f.id}</span> <b>{f.subject}</b>: {f.claim} <span className="text-xs text-[var(--ink-dim)]">({f.confidence}, {f.source}, {f.author})</span></li>
+        ))}
+      </ul>
     </div>
   );
+}
+
+/** Keep usage accounting on the Usage page. */
+function UsageStrip({ name }: { name: string }) {
+  return <Link className="text-sm text-[var(--accent)] underline" to={`/usage?view=ledger&days=7&agent=${encodeURIComponent(name)}&group=action`}>View this agent's last 7 days in Usage</Link>;
 }
 
 function RunRow({ w }: { w: OrgWakeup }) {
@@ -375,20 +463,19 @@ function AgentPage() {
   const qc = useQueryClient();
   const teams = useTeams();
   const page = useQuery({ queryKey: ['org', 'agent', name], queryFn: () => api.orgAgent(name), refetchInterval: 15_000 });
-  // The kanban lives behind agent-hub on the droplet; on the Mac this answers 503 and the section stays empty.
-  const board = useQuery({ queryKey: ['hub-board', 'exo'], queryFn: () => api.board('exo'), retry: false, staleTime: 30_000 });
-  const links = useQuery({ queryKey: ['org', 'tasks', name], queryFn: () => api.orgTasks({ agent: name }), retry: false, staleTime: 30_000 });
-  const projects = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, retry: false });
+  // The agent's cards on the engine's board (board module); without it the section says so.
+  const board = useQuery({ queryKey: ['board', 'cards', { assignee: name }], queryFn: () => api.boardCards({ assignee: name, done_days: 30 }), retry: false, staleTime: 30_000 });
+  const areas = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, retry: false });
   const [dmText, setDmText] = useState('');
   const [cardTitle, setCardTitle] = useState('');
+  const [cardArea, setCardArea] = useState('');
   const [cardProject, setCardProject] = useState('');
-  const [cardFeature, setCardFeature] = useState('');
   const giveCard = useMutation({
-    mutationFn: () => api.createTask({ board: 'exo', title: cardTitle, body: '', assignee: name, project: cardProject, feature: cardFeature || undefined }),
+    mutationFn: () => api.boardCreate({ title: cardTitle, assignee: name, area: cardArea || undefined, project: cardProject || undefined }),
     onSuccess: () => {
       setCardTitle('');
       void qc.invalidateQueries({ queryKey: ['org'] });
-      void qc.invalidateQueries({ queryKey: ['hub-board'] });
+      void qc.invalidateQueries({ queryKey: ['board'] });
     },
   });
   const sendDm = useMutation({
@@ -402,15 +489,10 @@ function AgentPage() {
   if (page.isError) return <p className="p-4 text-sm">⚠ {page.error.message}</p>;
   const p = page.data;
   if (!p) return null;
-  const tasks = (board.data?.tasks ?? []).filter((t) => t.assignee === name);
-  const linkOf = new Map((links.data?.tasks ?? []).map((l) => [l.task_id, l]));
-  // Cards the kanban does not list (agent-hub down, or the Mac) still show from their link rows.
-  const cardRows = [
-    ...tasks.map((t) => ({ id: t.id, title: t.title, status: t.status, link: linkOf.get(t.id) ?? null })),
-    ...(links.data?.tasks ?? []).filter((l) => !tasks.some((t) => t.id === l.task_id)).map((l) => ({ id: l.task_id, title: l.title, status: 'card', link: l })),
-  ];
-  const projectList = projects.data?.projects ?? [];
-  const featureList = projectList.find((pr) => pr.slug === cardProject)?.features ?? [];
+  const episodes = p.episodes ?? [];
+  const cardRows = (board.data?.cards ?? []).map((c) => ({ id: c.id, title: c.title, status: c.status, link: c.area_slug ? { area_slug: c.area_slug, project_slug: c.project_slug } : null }));
+  const areaList = areas.data?.areas ?? [];
+  const projectList = areaList.find((pr) => pr.slug === cardArea)?.projects ?? [];
   const section = (title: string, children: React.ReactNode) => (
     <section className="rounded border border-[var(--rule)] p-3">
       <h2 className="mb-2 font-semibold tracking-tight">{title}</h2>
@@ -420,6 +502,7 @@ function AgentPage() {
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
+        <AgentAvatar name={p.agent.name} team={p.agent.team_slug} size={64} />
         <span className="rounded px-2 py-1 text-sm font-medium text-white" style={{ background: teamColor(p.agent.team_slug) }}>{p.agent.name}</span>
         <h1 className="text-lg font-semibold tracking-tight">{p.agent.role}</h1>
         <span className="text-sm text-[var(--ink-dim)]">
@@ -441,14 +524,15 @@ function AgentPage() {
       )}
       {p.agent.runtime !== 'human' && (
         <form
-          className="mb-4 flex gap-2"
+          className="mb-4 flex items-end gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (dmText.trim()) sendDm.mutate();
+            if (dmText.trim() && !sendDm.isPending) sendDm.mutate();
           }}
         >
-          <input aria-label={`DM ${name}`} className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-sm" placeholder={`DM ${name} as yourself (wakes it)`} value={dmText} onChange={(e) => setDmText(e.target.value)} />
-          <button type="submit" disabled={!dmText.trim() || sendDm.isPending} className="rounded bg-[var(--accent)] px-3 py-1 text-sm font-medium text-white disabled:opacity-50">Send</button>
+          <ChatInput label={`DM ${name}`} placeholder={`DM ${name} as yourself (wakes it; Enter sends, Shift+Enter for a new line)`} value={dmText} onChange={setDmText}
+            onSubmit={() => { if (dmText.trim() && !sendDm.isPending) sendDm.mutate(); }} />
+          <button type="submit" disabled={!dmText.trim() || sendDm.isPending} className="rounded bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50">Send</button>
           {sendDm.isError && <span className="self-center text-xs text-[var(--warn)]">{sendDm.error.message}</span>}
         </form>
       )}
@@ -457,21 +541,21 @@ function AgentPage() {
           className="mb-4 flex flex-wrap items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (cardTitle.trim() && cardProject) giveCard.mutate();
+            if (cardTitle.trim()) giveCard.mutate();
           }}
         >
-          <input aria-label={`Card for ${name}`} className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-sm" placeholder={`Give ${name} a card (one card, one bot, one project)`} maxLength={200} value={cardTitle} onChange={(e) => setCardTitle(e.target.value)} />
-          <select aria-label="Project" className="rounded border border-[var(--rule)] bg-transparent px-1 py-1 text-xs" value={cardProject} onChange={(e) => { setCardProject(e.target.value); setCardFeature(''); }}>
-            <option value="">project…</option>
-            {projectList.map((pr) => <option key={pr.slug} value={pr.slug}>{pr.slug}</option>)}
+          <input aria-label={`Card for ${name}`} className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-sm" placeholder={`Give ${name} a card (one card, one bot, one area)`} maxLength={200} value={cardTitle} onChange={(e) => setCardTitle(e.target.value)} />
+          <select aria-label="Area" className="rounded border border-[var(--rule)] bg-transparent px-1 py-1 text-xs" value={cardArea} onChange={(e) => { setCardArea(e.target.value); setCardProject(''); }}>
+            <option value="">area…</option>
+            {areaList.map((pr) => <option key={pr.slug} value={pr.slug}>{pr.slug}</option>)}
           </select>
-          <select aria-label="Feature" className="rounded border border-[var(--rule)] bg-transparent px-1 py-1 text-xs" value={cardFeature} onChange={(e) => setCardFeature(e.target.value)} disabled={!cardProject}>
-            <option value="">feature (optional)</option>
-            {featureList.map((f) => <option key={f.slug} value={f.slug}>{f.slug}</option>)}
+          <select aria-label="Project" className="rounded border border-[var(--rule)] bg-transparent px-1 py-1 text-xs" value={cardProject} onChange={(e) => setCardProject(e.target.value)} disabled={!cardArea}>
+            <option value="">project (optional)</option>
+            {projectList.map((f) => <option key={f.slug} value={f.slug}>{f.slug}</option>)}
           </select>
-          <button type="submit" disabled={!cardTitle.trim() || !cardProject || giveCard.isPending} className="rounded bg-[var(--accent)] px-3 py-1 text-sm font-medium text-white disabled:opacity-50">Give card</button>
+          <button type="submit" disabled={!cardTitle.trim() || giveCard.isPending} className="rounded bg-[var(--accent)] px-3 py-1 text-sm font-medium text-white disabled:opacity-50">Give card</button>
           {giveCard.isError && <span className="self-center text-xs text-[var(--warn)]">{giveCard.error.message}</span>}
-          {giveCard.isSuccess && <span className="self-center text-xs text-[var(--ink-dim)]">card {giveCard.data.id} created</span>}
+          {giveCard.isSuccess && <span className="self-center text-xs text-[var(--ink-dim)]">card {giveCard.data.card.id} created</span>}
         </form>
       )}
       <div className="grid gap-3 lg:grid-cols-2">
@@ -484,23 +568,33 @@ function AgentPage() {
           </ul>
         ))}
         {section(`Runs (${p.runs.length})`, p.runs.length ? <ul className="space-y-1">{p.runs.map((w) => <RunRow key={w.id} w={w} />)}</ul> : <p className="text-sm text-[var(--ink-faint)]">Never woken.</p>)}
-        {p.agent.runtime !== 'human' && section('Tokens', <UsageStrip name={name} />)}
+        {p.agent.runtime !== 'human' && section('Usage', <UsageStrip name={name} />)}
         {section(`Cards (${cardRows.length})`, cardRows.length ? (
           <ul className="space-y-1 text-sm">
             {cardRows.map((t) => (
               <li key={t.id}>
-                <Link className="text-[var(--accent)]" to={`/agents/board/${t.id}`}>{t.title}</Link>
+                <Link className="text-[var(--accent)]" to={`/board/${t.id}`}>{t.title}</Link>
                 <span className="text-xs text-[var(--ink-dim)]"> {t.status}</span>
-                {t.link?.project_slug && <span className="text-xs text-[var(--ink-dim)]"> · <Link className="text-[var(--accent)]" to="/projects?view=board">{t.link.project_slug}{t.link.feature_slug ? `/${t.link.feature_slug}` : ''}</Link></span>}
+                {t.link?.area_slug && <span className="text-xs text-[var(--ink-dim)]"> · <Link className="text-[var(--accent)]" to="/projects?view=board">{t.link.area_slug}{t.link.project_slug ? `/${t.link.project_slug}` : ''}</Link></span>}
               </li>
             ))}
           </ul>
         ) : board.isError ? (
-          <p className="text-xs text-[var(--ink-faint)]">No cards; the kanban itself is on the droplet.</p>
+          <p className="text-xs text-[var(--ink-faint)]">No cards: the board module is off here.</p>
         ) : (
           <p className="text-sm text-[var(--ink-faint)]">No cards. Give one above.</p>
         ))}
         <div className="lg:col-span-2">{section('Posts', <MessageList messages={[...p.posts].reverse()} teams={teams} showChannel />)}</div>
+        {section(`Episodes (${episodes.length})`, episodes.length ? (
+          <ul className="space-y-1 text-xs">
+            {episodes.map((e) => (
+              <li key={e.id}>
+                <span className="text-[var(--ink-faint)]">{ago(e.created_at)}</span> <b>{e.outcome.replace('_', ' ')}</b>{e.corrected ? ' · corrected' : ''}{e.turn_count !== null ? ` · ${e.turn_count} turns` : ''}{e.cost_usd ? ` · $${e.cost_usd}` : ''}{e.task_id ? <> · <Link className="text-[var(--accent)]" to={`/board/${e.task_id}`}>{e.task_id}</Link></> : null}{e.reflected_at ? ' · reflected' : ''}
+                <div className="ml-3 text-[var(--ink-dim)]">{e.summary.slice(0, 240)}</div>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="text-sm text-[var(--ink-faint)]">No finished wakes recorded yet.</p>)}
         <div className="lg:col-span-2">
           {section(`Memory file (${p.memory_path}, read-only)`, p.memory ? (
             <article className="prose max-w-none text-sm"><ReactMarkdown remarkPlugins={[remarkGfm]}>{p.memory}</ReactMarkdown></article>
@@ -523,16 +617,18 @@ function AgentPage() {
 export default function Org() {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <nav className="flex shrink-0 gap-1 border-b border-[var(--rule)] px-3" aria-label="Org">
+      <nav className="flex shrink-0 gap-1 overflow-x-auto whitespace-nowrap border-b border-[var(--rule)] px-3" aria-label="Org">
         <NavLink to="/org" end className={tab}>Channels</NavLink>
         <NavLink to="/org/chart" className={tab}>Org chart</NavLink>
         <NavLink to="/org/live" className={tab}>Live</NavLink>
+        <NavLink to="/org/approvals" className={tab}>Approvals</NavLink>
       </nav>
       <div className="min-h-0 flex-1">
         <Routes>
           <Route index element={<Channels />} />
           <Route path="chart" element={<Chart />} />
           <Route path="live" element={<Live />} />
+          <Route path="approvals" element={<div className="h-full overflow-y-auto"><Approvals /><div className="px-4 pb-4"><Tokens /></div></div>} />
           <Route path="agents/:name" element={<AgentPage />} />
         </Routes>
       </div>

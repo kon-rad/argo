@@ -1,4 +1,5 @@
 import { createApp } from './app.js';
+import { bootAddons, closeAddons } from './addons/index.js';
 import { config } from './config.js';
 import { connectors } from './connectors/index.js';
 import { pool } from './db.js';
@@ -7,7 +8,10 @@ import { log } from './logger.js';
 import * as queue from './queue.js';
 import { startAutoSync } from './schedule.js';
 
+const addonOptions = await bootAddons(config.modules, config);
+
 const app = createApp({
+  ...addonOptions,
   // POST /api/shutdown is how the menu-bar launcher stops the server; without
   // this the endpoint exists but can only answer 501.
   onShutdown: () => {
@@ -15,7 +19,7 @@ const app = createApp({
   },
 });
 
-// 127.0.0.1 only, in both deployments. On the Mac localhost IS the security
+// 127.0.0.1 only, in both deployments. On a local install localhost IS the security
 // boundary. On the server Caddy terminates TLS on the same box and proxies in,
 // so the app itself is never reachable from the network without passing
 // through HTTPS and the login.
@@ -27,6 +31,7 @@ const server = app.listen(config.port, '127.0.0.1', () => {
   void loadEmbeddingConfig().catch((err) => log.warn('embedding config unavailable:', err));
   log.info(`deployment: ${config.deployment}${config.deployment === 'server' ? ` (login required, origin ${config.publicOrigin})` : ''}`);
   if (config.scanIntervalMinutes > 0) startAutoSync(connectors, config.scanIntervalMinutes);
+  (app.locals['uploadsWorker'] as { start(): void } | null | undefined)?.start();
 });
 
 let shuttingDown = false;
@@ -38,6 +43,7 @@ export async function shutdown(reason: string): Promise<void> {
 
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await queue.drain().catch((err) => log.warn('queue drain failed:', err));
+  await closeAddons(config.modules).catch((err) => log.warn('addon shutdown failed:', err));
   await pool.end().catch(() => {});
   log.info('goodbye');
 }

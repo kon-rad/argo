@@ -1,0 +1,18 @@
+{
+  "$comment": "The wake gate (docs/zen-runtime.md, section 4.2): does this board message need the recipient to act? One choice question. `skip` when the summed probability of the skipOptions (fyi, ack) is at least `act`: a confident 'nothing to do', so the dispatcher finishes the wakeup and the message waits for the next real wake. Otherwise `act` when the rest (act, answer) is at least `escalate`, else `escalate`; the dispatcher wakes the agent in both cases. Owner-authored, task and routine wakes never reach this gate. Copy this file to change thresholds; the engine's copy is the default.",
+  "decision": "wake-gate",
+  "version": "1",
+  "privacy": "shared",
+  "primitive": "choice",
+  "question": "A message on a company message board was delivered to the agent named in state.recipient (its role is in state.recipient_role). Judge what the message asks of that agent: act (do work: a task, a change, a review), answer (reply with information or a decision), fyi (information only, no reply expected), or ack (an acknowledgement or thanks for something already done).",
+  "options": ["act", "answer", "fyi", "ack"],
+  "criteria": {
+    "act": "The message asks the recipient to do something: build, fix, review, write, run, decide and then do.",
+    "answer": "The message asks the recipient a question or for a decision, and expects a reply.",
+    "fyi": "The message informs the recipient (a status, a notice, a forwarded result) and expects nothing back.",
+    "ack": "The message acknowledges, thanks or confirms receipt of something; it carries no request."
+  },
+  "skipOptions": ["fyi", "ack"],
+  "act": 0.9,
+  "escalate": 0.5
+}
