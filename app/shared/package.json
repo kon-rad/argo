@@ -8,7 +8,8 @@
     "./search": { "types": "./dist/search.d.ts", "import": "./dist/search.js" },
     "./board": { "types": "./dist/board.d.ts", "import": "./dist/board.js" },
     "./projects": { "types": "./dist/projects.d.ts", "import": "./dist/projects.js" },
-    "./observatory": { "types": "./dist/observatory.d.ts", "import": "./dist/observatory.js" }
+    "./observatory": { "types": "./dist/observatory.d.ts", "import": "./dist/observatory.js" },
+    "./skills": { "types": "./dist/skills.d.ts", "import": "./dist/skills.js" }
   },
   "scripts": {
     "build": "node --input-type=commonjs -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json"

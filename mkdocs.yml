@@ -74,6 +74,7 @@ nav:
       - Configuration: configuration.md
       - Vault sync: sync.md
       - Modules: modules.md
+      - Skills: skills.md
       - Social metrics: social-metrics.md
       - Addons: addons.md
       - Warehouse guide: warehouse-guide.md

@@ -31,6 +31,11 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 | [`chat`](#chat) | (a button in the header) | Ask your notes: conversations with an assistant that answers from retrieved passages, with citations, on the provider and model you pick |
 | [`desk`](#desk) | `/desk` | Hiring desk operator console under Work; requires production service wiring for operations |
 | [`observatory`](#observatory) | API only | Authorized evidence windows, coverage and deterministic replay |
+| [`skills`](#skills) | `/skills` | Skill library, agent assignments, machine deployments and reviewed changes |
+
+## skills
+
+Off by default. Enable `skills` through the vault addons list or `MODULES` for the **Skills** page under Work, `/api/skills`, the device-token acknowledgement route and `secondbrain skills` (`cli-skills`). With no policy file every runtime keeps its own skill folders, as before; the page is read-only inventory until the Git-tracked policy says `mode: managed`. No timers. Tables: `skill_view_acks`, `skill_ack_log` (machine acknowledgements only). See [Skills](skills.md).
 
 ## observatory
 
