@@ -12,7 +12,7 @@ import { runHooks, writeClaudeTranscript } from './hooks.js';
 import { buildModels, pickModel, recordedContextWindow } from './models.js';
 import { loadPersona, type Persona } from './persona.js';
 import { newSessionId, Session, TRACE_VERSION, ZERO_USAGE, type SessionLine, type UsageTotals } from './session.js';
-import { discoverSkills, type Skill } from './skills.js';
+import { resolveSkills, type ResolvedSkills, type Skill } from './skills.js';
 import { vaultLayout } from './tools/fs.js';
 import { buildTools, type ToolContext } from './tools/index.js';
 
@@ -132,6 +132,8 @@ export class ZenAgent {
   readonly models: Models;
   readonly model: Model<any>;
   readonly skills: Skill[];
+  /** How the catalog was resolved: legacy folders, or a managed view pinned into a per-run snapshot. */
+  readonly skillResolution: ResolvedSkills;
   readonly session: Session;
   readonly budget: Budget;
   readonly prompt: Assembled;
@@ -156,10 +158,11 @@ export class ZenAgent {
     this.models = opts.models ?? buildModels(cfg);
     this.model = pickModel(this.models, opts.model ?? this.persona?.model ?? cfg.model);
     this.budget = { ...cfg.budget, ...stripUndefined(opts.budget ?? {}) };
-    this.skills = discoverSkills(cfg.skills);
     this.rules = loadLocalRules(findLocalRules(cfg.workdir, cfg.guard.local, this.env));
 
     const id = opts.sessionId ?? opts.resume ?? newSessionId(this.persona?.name ?? null);
+    this.skillResolution = resolveSkills(cfg, this.persona?.name ?? null, id);
+    this.skills = this.skillResolution.skills;
     this.session = new Session(cfg.sessionsDir, id);
 
     this.prompt = buildSystemPrompt({
@@ -267,6 +270,11 @@ export class ZenAgent {
       budget: this.budget,
       tools: this.tools.map((t) => t.name),
       skills: this.skills.map((s) => s.name),
+      skills_mode: this.skillResolution.mode,
+      skills_packages: this.skillResolution.packages,
+      skills_rejected: this.skillResolution.rejected,
+      skills_snapshot: this.skillResolution.snapshot,
+      ...(this.skillResolution.support ? { skills_support: this.skillResolution.support } : {}),
       resumed: opts.resume ?? null,
       workdir: cfg.workdir,
       dispatch: opts.dispatch ?? {},

@@ -69,6 +69,13 @@ export interface ZenConfig {
   rules: string[];
   /** Skill folders (Agent Skills layout: `<dir>/<name>/SKILL.md`); earlier dirs win on a name clash. */
   skills: string[];
+  /**
+   * Managed skills (the engine's skills manager): the root its reconcile step writes generated views into.
+   * When set, a persona's view `<root>/views/<persona>/zen-agent/` is the whole catalog, pinned per run into a
+   * read-only snapshot under `snapshots` (default: the sessions folder). `enforce`: a run without a view gets no
+   * skills instead of the legacy folders. Null (the default): `skills` folders exactly as before.
+   */
+  managedSkills: { root: string; enforce: boolean; snapshots: string | null } | null;
   persona: { org: string; definitions: string; memory: string };
   /** Tool sets to load: fs, shell, skills, knowledge, kanban, org, subagent. */
   tools: string[];
@@ -115,6 +122,7 @@ export const DEFAULTS: ZenConfig = {
   sessionsDir: '.zen/sessions',
   rules: ['AGENTS.md'],
   skills: ['.agents/skills', '~/.zen/skills'],
+  managedSkills: null,
   persona: { org: '.agents/org/org.json', definitions: '.claude/agents', memory: '.agents/org/memory' },
   tools: ['fs', 'shell', 'skills', 'knowledge', 'kanban', 'org', 'subagent'],
   budget: { turns: 40, tokens: 400_000, minutes: 30 },
@@ -200,6 +208,13 @@ export function loadConfig(opts: LoadOptions = {}): ZenConfig {
     sessionsDir: under(vault, cfg.sessionsDir),
     rules: cfg.rules.map((p) => under(vault, p)),
     skills: cfg.skills.map((p) => under(vault, p)),
+    managedSkills: cfg.managedSkills && typeof cfg.managedSkills.root === 'string'
+      ? {
+          root: under(vault, cfg.managedSkills.root),
+          enforce: cfg.managedSkills.enforce === true,
+          snapshots: cfg.managedSkills.snapshots ? under(vault, cfg.managedSkills.snapshots) : null,
+        }
+      : null,
     persona: {
       org: under(vault, cfg.persona.org),
       definitions: under(vault, cfg.persona.definitions),
