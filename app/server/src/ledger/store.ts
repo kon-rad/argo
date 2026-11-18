@@ -43,13 +43,18 @@ export class Ledger {
   private inTx = false;
 
   /** `busyTimeoutMs`: how long a write waits for the other process's transaction (the proxy keeps it short). */
-  constructor(path: string, opts: { busyTimeoutMs?: number } = {}) {
-    mkdirSync(dirname(path), { recursive: true });
-    this.db = new DatabaseSync(path);
+  constructor(path: string, opts: { busyTimeoutMs?: number; readOnly?: boolean } = {}) {
+    if (!opts.readOnly) mkdirSync(dirname(path), { recursive: true });
+    this.db = new DatabaseSync(path, { readOnly: opts.readOnly ?? false });
+    this.db.exec(`PRAGMA busy_timeout=${Math.max(0, Math.min(10000, opts.busyTimeoutMs ?? 1000))};`);
     // auto_vacuum only takes effect on an empty file: set before the first table. Incremental, so prune
     // frees pages in place instead of VACUUM's full temporary copy (laptops prune because disk is short).
-    this.db.exec(`PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=${opts.busyTimeoutMs ?? 10000};`);
+    if (!opts.readOnly) this.db.exec(`PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`);
     const version = Number((this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version);
+    if (opts.readOnly && version !== SCHEMA_VERSION) {
+      this.db.close();
+      throw new Error(`status requires initialized schema v${SCHEMA_VERSION}; run an updated collector`);
+    }
     if (version === 0) {
       this.db.exec(`BEGIN; ${SCHEMA}
         INSERT INTO meta (k, v) VALUES ('seq', '0'), ('acked_seq', '0'), ('fails', '0'), ('ledger_id', '${randomUUID()}');

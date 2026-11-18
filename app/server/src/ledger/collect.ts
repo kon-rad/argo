@@ -36,7 +36,7 @@ function readSlice(path: string, offset: number, max: number): Buffer {
   try {
     const buf = Buffer.alloc(max);
     readSync(fd, buf, 0, max, offset);
-    return buf.includes(0x0a) ? buf : readFrom(path, offset);
+    return buf.includes(0x0a) ? buf : readFrom(path, offset, 64 * 1024 * 1024);
   } finally {
     closeSync(fd);
   }
@@ -51,7 +51,13 @@ function readSlice(path: string, offset: number, max: number): Buffer {
 export function collectClaude(ledger: Ledger, dir: string, provider: string, maxBytesPerFile = 8 * 1024 * 1024): CollectCounts {
   const c = emptyCounts();
   if (!existsSync(dir)) return c;
-  for (const path of walkFiles(dir).filter((p) => p.endsWith('.jsonl')).sort()) {
+  const started = Date.now();
+  let consumed = 0;
+  const files = walkFiles(dir).filter(p => p.endsWith('.jsonl')).sort();
+  const last = ledger.meta('claude_last_path');
+  const ordered = [...files.filter(p => !last || p > last), ...files.filter(p => last && p <= last)];
+  for (const path of ordered) {
+    if (Date.now() - started >= 30_000 || consumed >= 20_000_000) break;
     try {
       const size = statSync(path).size;
       if (!size) continue;
@@ -65,6 +71,7 @@ export function collectClaude(ledger: Ledger, dir: string, provider: string, max
       const buf = readSlice(path, offset, maxBytesPerFile);
       const { records, consumedBytes, lines } = splitJsonLines(buf);
       if (!consumedBytes) continue; // only a partial line so far
+      consumed += consumedBytes;
       const ids = transcriptIds(path);
       const sid = ids.sessionExternalId;
       const chunk = parseClaudeJsonl(buf.subarray(0, consumedBytes), startLine);
@@ -93,6 +100,7 @@ export function collectClaude(ledger: Ledger, dir: string, provider: string, max
         }
         ledger.setCursor(name, { fingerprint, offset: offset + consumedBytes, lines: startLine + lines } satisfies ClaudeCursor);
       });
+      ledger.setMeta('claude_last_path', path);
       c.files++;
     } catch (err) {
       c.errors.push(`claude ${path}: ${(err as Error).message}`);

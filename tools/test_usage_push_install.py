@@ -15,7 +15,7 @@ def test_usage_install_lifecycle(tmp_path):
     shutil.copy(SCRIPT, app / 'bin/install.sh')
     (app / 'bin/statusline-usage.mjs').write_text('// synthetic\n')
     dist = app / 'server/dist'
-    for group, names in {'usage': 'push readFrom walkFiles lines statusline types wire', 'archive': 'stage clean redact'}.items():
+    for group, names in {'usage': 'push readFrom walkFiles lines statusline types wire upload', 'archive': 'stage clean redact'}.items():
         (dist / group).mkdir(parents=True)
         for name in names.split():
             (dist / group / (name + '.js')).write_text('// synthetic\n')

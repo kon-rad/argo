@@ -94,7 +94,7 @@ export function startProxy(opts: ProxyOpts): Promise<http.Server> {
                 contentType: String(ur.headers['content-type'] ?? ''), requestBody: body, responseBody: Buffer.concat(tee), truncated,
               });
             } catch (err) {
-              opts.log?.(`capture failed (request still served): ${(err as Error).message}`);
+              opts.log?.(`stage=capture-end reason=${String((err as { code?: string }).code).includes('BUSY') ? 'sqlite-busy' : 'capture'} forwarded=true`);
             }
           });
         });
@@ -104,9 +104,10 @@ export function startProxy(opts: ProxyOpts): Promise<http.Server> {
       res.on('close', () => { if (!res.writableFinished) upstream.destroy(); });
       upstream.on('error', (err) => {
         if (res.destroyed) return;
-        opts.log?.(`upstream error: ${err.message}`);
+        const reason = ['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET'].includes((err as NodeJS.ErrnoException).code ?? '') ? (err as NodeJS.ErrnoException).code : 'network';
+        opts.log?.(`stage=forward-end reason=${reason}`);
         if (!res.headersSent) res.writeHead(502, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: `ledger proxy: upstream unreachable: ${err.message}` } }));
+        res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: `ledger proxy: upstream unreachable (${reason})` } }));
       });
       upstream.end(body);
     });
@@ -280,8 +281,8 @@ export function captureQueue(record: (c: Captured) => void, log?: (msg: string) 
         queue.shift();
       } catch (err) {
         const msg = (err as Error).message;
-        if (/locked|busy/i.test(msg)) { timer = setTimeout(drain, 250); return; }
-        log?.(`capture dropped (request was served): ${msg}`);
+        if (/locked|busy/i.test(msg)) { log?.('stage=capture-retry reason=sqlite-busy forwarded=true'); timer = setTimeout(drain, 250); return; }
+        log?.('stage=capture-end reason=capture forwarded=true dropped=true');
         queue.shift();
       }
     }

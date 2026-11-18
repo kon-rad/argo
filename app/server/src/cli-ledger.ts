@@ -26,6 +26,7 @@ import {
 import { buildRedactor, type Redactor } from './archive/redact.js';
 import { captureQueue, HEALTH_PATH, recordExchange, redactCaptures, startProxy } from './ledger/proxy.js';
 import { Ledger } from './ledger/store.js';
+import { reportLedgerHealth } from './ledger/health.js';
 import { syncOnce } from './ledger/sync.js';
 import type { LedgerConfig } from './ledger/types.js';
 
@@ -235,16 +236,19 @@ try {
     const route = cmd === 'proxy-on' ? routeThroughProxy(cfg.proxy.port) : routeDirect(cfg.proxy.port);
     console.log(`Claude Code route for new sessions: ${route}`);
   }
-  else if (['run', 'collect', 'sync', 'status', 'requeue', 'redact-captures'].includes(cmd)) {
+  else if (['run', 'collect', 'sync', 'status', 'doctor', 'requeue', 'redact-captures'].includes(cmd)) {
     const cfg = loadConfig(dir);
-    const release = cmd === 'status' ? () => {} : acquireLock();
+    const release = ['status', 'doctor'].includes(cmd) ? () => {} : acquireLock();
     if (!release) { log('another run is active; exiting'); process.exit(0); }
-    const ledger = new Ledger(join(dir, 'ledger.db'));
+    const ledger = new Ledger(join(dir, 'ledger.db'), { readOnly: ['status', 'doctor'].includes(cmd), busyTimeoutMs: 1000 });
     try {
+      const startedAt = new Date().toISOString();
       const out: Record<string, unknown> = { at: new Date().toISOString(), bundle: BUNDLE };
       if (cmd === 'run' || cmd === 'collect') {
+        log('stage=collect-start');
         const c = await collect(ledger, cfg);
         out.collect = c;
+        log('stage=collect-end');
         if (c.claude.errors.length || c.hermes.errors.length) code = 2;
       }
       if (cmd === 'requeue') out.requeued = ledger.requeue();
@@ -254,7 +258,11 @@ try {
       }
       if (cmd === 'run') out.requeued = ledger.requeue({ olderThanMs: 86_400_000, maxAttempts: 7 });
       if (cmd === 'run' || cmd === 'sync' || cmd === 'requeue') {
+        log('stage=sync-start');
         out.sync = await syncOnce(ledger, cfg, { fetch, now: () => new Date(), bundle: BUNDLE, log }, { force: flag('force') || cmd === 'sync' || cmd === 'requeue' });
+        const synced = out.sync as { status: string };
+        if (synced.status !== 'ok') code = 2;
+        log(`stage=sync-end reason=${synced.status}`);
         if (cfg.retainDays) out.pruned = ledger.prune(cfg.retainDays);
         if (cfg.proxy.enabled) {
           const w = await watchProxy(cfg.proxy.port, Number(ledger.meta('proxy_failures') ?? 0));
@@ -263,7 +271,8 @@ try {
           out.proxy = w;
         }
       }
-      if (cmd === 'status') out.status = { dir, server: cfg.server, host: cfg.host, hermesHomes: cfg.hermesHomes, redactEnvFiles: cfg.redactEnvFiles ?? [], ...ledger.stats() };
+      if (['run', 'collect', 'sync'].includes(cmd)) await reportLedgerHealth(ledger, cfg, BUNDLE, startedAt, code !== 0, log);
+      if (['status', 'doctor'].includes(cmd)) out.status = { dir, server: cfg.server, host: cfg.host, hermesHomes: cfg.hermesHomes, redactEnvFiles: cfg.redactEnvFiles ?? [], ...ledger.stats() };
       console.log(JSON.stringify(out, null, cmd === 'status' ? 2 : 0));
     } finally {
       ledger.close();

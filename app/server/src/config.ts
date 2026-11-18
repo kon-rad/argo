@@ -63,6 +63,9 @@ const Schema = z.object({
   USAGE_SYNC_TOKEN: z.string().optional(),
   USAGE_PUSH_HOST: z.string().optional(),
   USAGE_PUSH_STATE: z.string().optional(),
+  USAGE_PUSH_TICK_MS: z.coerce.number().int().positive().max(120000).default(30000),
+  USAGE_PUSH_DEADLINE_MS: z.coerce.number().int().positive().max(600000).default(180000),
+  USAGE_PUSH_BACKFILL_MS: z.coerce.number().int().positive().max(1800000).default(600000),
   USAGE_PUSH_MAX_BYTES: z.coerce.number().int().positive().default(20_000_000),
   // Standalone ledger location and an optional token override.
   SB_LEDGER_DIR: z.string().optional(),
