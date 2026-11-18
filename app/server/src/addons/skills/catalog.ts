@@ -2,7 +2,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSyn
 import { join, relative, sep } from 'node:path';
 import type { RootInfo, SkillCandidate, SkillSource } from '@secondbrain/contracts/skills';
 import { lastRevision, pathState, rootGit, toPosix, type RootGit } from './git.js';
-import { NAME_RE, readMeta, scanPackage, type PackageFile } from './package.js';
+import { isIgnoredName, NAME_RE, readMeta, scanPackage, type PackageFile } from './package.js';
 
 /**
  * The catalog: every package in the configured roots, read from the filesystem (no index). Roots are
@@ -20,7 +20,7 @@ export interface RootSpec {
   /** Shown to the owner instead of an absolute path. */
   label: string;
   path: string;
-  /** `categorized`: `<root>/<category>/<name>/SKILL.md` (plus flat entries). */
+  /** `categorized`: nested category folders, up to six levels (plus flat entries). */
   layout: 'flat' | 'categorized';
 }
 
@@ -52,30 +52,35 @@ interface Found { folder: string; category: string | null; entry: string }
 
 function listPackages(spec: RootSpec): { found: Found[]; error: string | null } {
   const found: Found[] = [];
-  let names: string[];
-  try { names = readdirSync(spec.path).sort(); } catch (err) { return { found, error: `unreadable: ${(err as NodeJS.ErrnoException).code ?? 'error'}` }; }
-  for (const name of names) {
-    if (name.startsWith('.')) continue;
-    const entry = join(spec.path, name);
-    let isDir = false;
-    try { isDir = statSync(entry).isDirectory(); } catch { isDir = lstatSync(entry).isSymbolicLink(); /* dangling link: report it */ }
-    if (!isDir) continue;
-    if (existsSync(join(entry, 'SKILL.md')) || spec.layout === 'flat') {
-      if (spec.layout === 'flat' && !existsSync(join(entry, 'SKILL.md')) && !lstatSync(entry).isSymbolicLink()) continue;
-      found.push({ folder: name, category: null, entry });
-    } else {
-      let inner: string[] = [];
-      try { inner = readdirSync(entry).sort(); } catch { continue; }
-      for (const sub of inner) {
-        if (sub.startsWith('.')) continue;
-        const p = join(entry, sub);
-        try { if (!statSync(p).isDirectory() || !existsSync(join(p, 'SKILL.md'))) continue; } catch { continue; }
-        found.push({ folder: sub, category: name, entry: p });
+  let error: string | null = null;
+  let directories = 0;
+  const walk = (dir: string, category: string | null, depth: number): void => {
+    if (++directories > 2000) { error ??= 'more than 2000 category folders; the rest are not listed'; return; }
+    let names: string[];
+    try { names = readdirSync(dir).sort(); }
+    catch (err) { error ??= `unreadable: ${(err as NodeJS.ErrnoException).code ?? 'error'}`; return; }
+    for (const name of names) {
+      if (name.startsWith('.') || isIgnoredName(name)) continue;
+      const entry = join(dir, name);
+      let linked = false;
+      let isDir = false;
+      try {
+        linked = lstatSync(entry).isSymbolicLink();
+        try { isDir = statSync(entry).isDirectory(); } catch { isDir = linked; }
+      } catch { continue; }
+      if (!isDir) continue;
+      if (existsSync(join(entry, 'SKILL.md')) || (spec.layout === 'flat' && linked)) {
+        if (found.length >= MAX_PACKAGES_PER_ROOT) { error ??= `more than ${MAX_PACKAGES_PER_ROOT} packages; the rest are not listed`; return; }
+        found.push({ folder: name, category, entry });
+      } else if (spec.layout !== 'flat' && !linked) {
+        // A category link must never become an unbounded crawl outside the configured roots.
+        if (depth >= 6) { error ??= 'category nesting exceeds six levels; the rest are not listed'; continue; }
+        walk(entry, category ? `${category}/${name}` : name, depth + 1);
       }
     }
-    if (found.length > MAX_PACKAGES_PER_ROOT) return { found: found.slice(0, MAX_PACKAGES_PER_ROOT), error: `more than ${MAX_PACKAGES_PER_ROOT} packages; the rest are not listed` };
-  }
-  return { found, error: null };
+  };
+  walk(spec.path, null, 0);
+  return { found, error };
 }
 
 function candidateId(spec: RootSpec, f: Found): string {
