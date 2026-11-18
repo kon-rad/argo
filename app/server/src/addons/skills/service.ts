@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
   AgentInfo, AgentSkillsResponse, AssignmentCell, Change, ChangePreview, ChangeRequest, Draft, FileResponse, LibraryResponse, MachinesResponse,
@@ -220,7 +220,11 @@ export class SkillsService {
     // Only paths the bounded, link-checked scan listed are served; anything else is a 404.
     const f = c?.packageFiles.find((x) => x.path === path);
     if (!c || !f) return null;
-    const buf = readFileSync(f.abs);
+    // Re-check at read time: a file swapped for a link since the scan must still resolve inside the package.
+    let real: string;
+    try { real = realpathSync(f.abs); } catch { this.invalidate(); return null; }
+    if (!real.startsWith(c.dir.endsWith(sep) ? c.dir : c.dir + sep)) { this.invalidate(); return null; }
+    const buf = readFileSync(real);
     if (createHash('sha256').update(buf).digest('hex') !== f.sha256) this.invalidate(); // changed on disk since the scan; serve what is there now
     const text = isText(buf);
     return { id: c.id, path, size: buf.length, kind: text ? 'text' : 'binary', content: text ? buf.subarray(0, MAX_FILE_BYTES).toString('utf8') : null, truncated: text && buf.length > MAX_FILE_BYTES };

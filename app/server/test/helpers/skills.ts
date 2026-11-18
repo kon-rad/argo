@@ -7,9 +7,9 @@ import { dirname, join } from 'node:path';
 
 // Git identity for commits made by the fixture and by `skills apply`.
 process.env.GIT_AUTHOR_NAME = 'Fixture';
-process.env.GIT_AUTHOR_EMAIL = 'fixture@example.com';
+process.env.GIT_AUTHOR_EMAIL = 'fixture@example.com'; // public-ok: RFC 2606 fixture identity
 process.env.GIT_COMMITTER_NAME = 'Fixture';
-process.env.GIT_COMMITTER_EMAIL = 'fixture@example.com';
+process.env.GIT_COMMITTER_EMAIL = 'fixture@example.com'; // public-ok: RFC 2606 fixture identity
 
 export function write(path: string, text: string, mode = 0o644): void {
   mkdirSync(dirname(path), { recursive: true });

@@ -74,6 +74,13 @@ describe('skills catalog', () => {
     expect(text!.content).toMatch(/Private report skill/);
     expect((await s.file('report', 'private:report', 'assets/logo.bin'))!.kind).toBe('binary');
     expect((await s.file('report', 'engine:report', 'SKILL.md'))!.content).toMatch(/Engine report skill/);
+    // A file swapped for an escaping link after the scan is refused at read time.
+    await s.library();
+    const md = join(f.vault, '.agents', 'skills', 'report', 'assets', 'logo.bin');
+    rmSync(md);
+    symlinkSync(join(f.outside, 'secret.txt'), md);
+    expect(await s.file('report', 'private:report', 'assets/logo.bin')).toBeNull();
+    rmSync(md);
     const d = await s.detail('report');
     expect(d!.instructions).toMatch(/Do the thing/);
     expect(d!.history[0]!.subject).toBe('fixture');
