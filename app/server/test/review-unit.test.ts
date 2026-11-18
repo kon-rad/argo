@@ -100,6 +100,12 @@ it.each([
   expect(f.counts()).toEqual({ reviews: 0, merges: 0, deploys: 0, completions: 0 });
 });
 
+it('preserves an explicit empty prior-findings source and its original identity', () => {
+  const ref = 'board:t_123abc:earlier_findings';
+  expect(boardSources(ref, [])).toEqual([source(ref, [])]);
+  expect(boardSources(ref, [])[0]).toMatchObject({ ref, text: '[]', missing: false, truncated: false });
+});
+
 it('dispatches complete prior findings above the former database limit', async () => {
   const f = fixture(), s = snapshot();
   const raw = [{ verdict: JSON.stringify({ findings: [{ fix: 'x'.repeat(12_000) }] }), truncated: false }];
