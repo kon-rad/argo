@@ -3,6 +3,7 @@
   "usage": {
     "subscriptions": [],
     "credits": [],
+    "expectedStreams": [],
     "sections": ["running", "ledger", "sessions", "summaries"]
   },
   "goalsFile": "Areas/goals.md",

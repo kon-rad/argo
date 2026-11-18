@@ -1,3 +1,4 @@
+import { collectionHealth } from '../usage/health.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { creditHistory, latestCredits } from '../credits.js';
@@ -199,6 +200,7 @@ function runsFilterSql(f: Filters, params: unknown[]): string {
 
 export function usageRouter(): Router {
   const router = Router();
+  router.get('/health', wrap(async (_req, res) => { res.json(await collectionHealth(settings().usage.expectedStreams)); }));
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
   router.get('/config', wrap(async (_req, res) => {

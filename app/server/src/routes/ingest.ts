@@ -1,3 +1,5 @@
+import { healthSchema } from '../usage/health-wire.js';
+import { recordHealth } from '../usage/health.js';
 import express, { Router, type Request } from 'express';
 import { BatchError, batchSchema, ingestBatch } from '../ingest/batch.js';
 import { findDevice } from '../ingest/devices.js';
@@ -39,5 +41,17 @@ export function ingestRouter(): Router {
       }
     }),
   );
+  router.post('/health', wrap(async (req, res) => {
+    const m = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '');
+    const device = m ? await findDevice(m[1]!) : null;
+    if (!device) throw new HttpError(401, 'bad, revoked or missing device token');
+    res.locals.device = device;
+  }, true), express.json({ limit: '16kb' }), wrap(async (req, res) => {
+    const parsed = healthSchema.safeParse(req.body);
+    if (!parsed.success) throw new HttpError(422, 'invalid collection health');
+    try { await recordHealth(res.locals.device.host, parsed.data); }
+    catch (err) { if ((err as Error).message === 'health clock ahead') throw new HttpError(422, 'health clock ahead'); throw err; }
+    res.json({ ok: true });
+  }));
   return router;
 }
