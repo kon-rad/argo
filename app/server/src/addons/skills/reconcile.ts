@@ -69,7 +69,7 @@ function managedRoot(root: string, create = false): boolean {
         if (!report || typeof report.root !== 'string' || resolve(report.root) !== resolve(root) || !Array.isArray(report.views)
           || !Number.isFinite(Date.parse(report.at)) || (report.policyDigest !== null && !/^sha256:[0-9a-f]{64}$/.test(report.policyDigest))) throw new Error('unrecognized manager report');
         for (const view of report.views) if (!view || !NAME_RE.test(view.agent) || !ADAPTER_RUNTIMES.includes(view.runtime)
-          || !['current', 'dirty', 'failed'].includes(view.status) || !Array.isArray(view.skills) || !Array.isArray(view.missing) || !Array.isArray(view.dirty)) throw new Error('invalid manager view state');
+          || !['current', 'not-ready', 'dirty', 'failed'].includes(view.status) || !Array.isArray(view.skills) || !Array.isArray(view.missing) || !Array.isArray(view.dirty)) throw new Error('invalid manager view state');
       } catch { throw new ReconcileError('unmanaged state.json: not a recognized report for this managed root; refusing to replace it'); }
     } else throw new ReconcileError(`unmanaged entry in the skills root: ${name}`);
   }
@@ -446,93 +446,8 @@ export function dependencyFailures(skills: { name: string; depends?: string[] }[
 
 export interface SyncReport { root: string; policyDigest: string | null; views: AckView[]; at: string }
 
-export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; hooks?: SyncHooks; env?: NodeJS.ProcessEnv } = {}): SyncReport {
-  const hooks = opts.hooks ?? {};
-  planCapacity(plan);
-  const installed = new Map(inspectRoot(root, opts.env).map(view => [`${view.agent}/${view.runtime}`, view]));
-  const projected = new Map(installed);
-  for (const view of plan.views) projected.set(`${view.agent}/${view.runtime}`, plannedAck(view));
-  acknowledgementCapacity([...projected.values()], plan.policyDigest);
-  for (const v of plan.views) if (!NAME_RE.test(v.agent) || !ADAPTER_RUNTIMES.includes(v.runtime)) throw new ReconcileError('invalid managed view identity');
-  managedRoot(root, true);
-  managedDirectory(root, join(root, 'views'), true);
-  managedDirectory(root, join(root, 'store'), true);
-  const views: AckView[] = [];
-  for (const v of plan.views) {
-    const excluded = [...(v.excluded ?? [])];
-    const base = { agent: v.agent, runtime: v.runtime, excluded } as const;
-    let current: ReturnType<typeof verifyView> = { dirty: [], manifest: null, unmanaged: false };
-    let missing: Requirement[] = [];
-    const repairs: StoreRepair[] = [];
-    let activated = false;
-    try {
-      agentDirectory(root, v.agent);
-      current = verifyView(root, v.agent, v.runtime);
-      missing = checkRequirements(v.skills, opts.env);
-      if (v.skills.length > ACK_LIMITS.skillsPerView) throw new ReconcileError(`A managed view supports at most ${ACK_LIMITS.skillsPerView} skills; narrow this agent's assignments before synchronizing.`);
-      if (v.excluded?.length) throw new ReconcileError(`Unresolved assignments: ${v.excluded.map(e => `${e.name}: ${e.reason}`).join('; ')}`);
-      if (current.unmanaged) throw new ReconcileError(`views/${v.agent}/${v.runtime} is not a manager-made link; refusing to replace it`);
-      if (current.dirty.length && !opts.repair) {
-        views.push({ ...base, viewDigest: current.manifest?.viewDigest ?? null, generatedAt: current.manifest?.generatedAt ?? null, status: 'dirty',
-          error: `deployed view was modified on this machine (${current.dirty.length} entries: ${current.dirty.join(', ')}); left as is. Rerun with --repair to redeploy.`.slice(0, 500),
-          skills: (current.manifest?.skills ?? []).map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: dirtyNames(current.dirty) });
-        continue;
-      }
-      for (const s of v.skills) stagePackage(root, s.digest, plan.packages.get(s.digest) ?? (() => { throw new ReconcileError(`no source for ${s.name}`); })(), hooks, opts.repair ? repairs : undefined);
-      const checked: PlannedSkill[] = [];
-      for (const skill of v.skills) {
-        const meta = readMeta(readFileSync(join(root, 'store', hex(skill.digest), 'SKILL.md'), 'utf8'), skill.name);
-        if (meta.errors.length) excluded.push({ name: skill.name, reason: `invalid package metadata: ${meta.errors.join('; ')}` });
-        else checked.push({ ...skill, depends: meta.depends, requires: meta.requires });
-      }
-      missing = checkRequirements(checked, opts.env);
-      excluded.push(...dependencyFailures(checked));
-      if (excluded.length) throw new ReconcileError(`Unresolved assignments: ${excluded.map(e => `${e.name}: ${e.reason}`).join('; ')}`);
-      const generatedAt = new Date().toISOString();
-      const gen = `${v.runtime}.${generatedAt.replace(/[-:.]/g, '').slice(0, 15)}-${randomBytes(3).toString('hex')}`;
-      const agentDir = join(root, 'views', v.agent);
-      agentDirectory(root, v.agent, true);
-      const candidate: AckView = { ...plannedAck(v), generatedAt, missing };
-      const checkedProjection = new Map(installed); checkedProjection.set(`${v.agent}/${v.runtime}`, candidate);
-      acknowledgementCapacity([...checkedProjection.values()], plan.policyDigest);
-      const genDir = join(agentDir, gen);
-      mkdirSync(genDir);
-      try {
-        for (const s of v.skills) symlinkSync(`../../../store/${hex(s.digest)}`, join(genDir, s.name));
-        const manifest: Manifest = {
-          format: VIEW_FORMAT, agent: v.agent, runtime: v.runtime, generatedAt, policyDigest: plan.policyDigest, mode: 'managed',
-          support: supportFor(v.runtime).level, viewDigest: viewDigest(v.skills),
-          skills: v.skills.map((s) => ({ name: s.name, id: s.id, digest: s.digest, revision: s.revision, dirty: s.dirty, description: s.description, path: s.name })),
-        };
-        writeFileSync(join(genDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-        // Full verification of the new generation through its own links before it can become active.
-        for (const s of v.skills) {
-          const scan = scanPackage(join(genDir, s.name));
-          if (!scan.ok || scan.digest !== s.digest) throw new ReconcileError(`verification of ${s.name} in the new view failed`);
-        }
-        hooks.beforeActivate?.(v);
-        agentDirectory(root, v.agent);
-        managedDirectory(root, genDir);
-        const tmp = join(agentDir, `.${v.runtime}.next-${randomBytes(3).toString('hex')}`);
-        symlinkSync(gen, tmp);
-        renameSync(tmp, join(agentDir, v.runtime)); activated = true; // atomic switch
-        installed.set(`${v.agent}/${v.runtime}`, candidate);
-      } catch (err) {
-        try { removeManagedDirectory(root, genDir); } catch { /* Never clean through a replaced parent link. */ }
-        throw err;
-      }
-      try { pruneGenerations(root, v.agent, v.runtime); } catch { /* A verified active generation must survive deferred old-generation cleanup. */ }
-      views.push({ ...base, viewDigest: viewDigest(v.skills), generatedAt, status: 'current', error: null, skills: v.skills.map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: [] });
-    } catch (err) {
-      if (!activated) for (const repair of repairs.reverse()) restoreRepair(repair);
-      const prev = readCurrent(root, v.agent, v.runtime).manifest;
-      views.push({ ...base, viewDigest: prev?.viewDigest ?? null, generatedAt: prev?.generatedAt ?? null, status: 'failed', error: (err as Error).message.slice(0, 500),
-        skills: (prev?.skills ?? []).map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: dirtyNames(current.dirty) });
-    }
-  }
-  if (managedDirectory(root, join(root, '.staging'))) { try { rmdirSync(join(root, '.staging')); } catch { /* Leave any unowned/crashed staging members intact. */ } }
-  gcStore(root);
-  const report: SyncReport = { root, policyDigest: plan.policyDigest, views, at: new Date().toISOString() };
+/** Persist only an outcome, never an intermediate per-view activation. */
+function saveReport(root: string, report: SyncReport): void {
   managedRoot(root);
   const staging = managedDirectory(root, join(root, '.staging'), true)!;
   const state = join(staging, `.state-next-${randomBytes(6).toString('hex')}`);
@@ -540,8 +455,119 @@ export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; ho
     writeFileSync(state, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
     managedDirectory(root, staging); renameSync(state, join(root, 'state.json'));
   } finally {
-    if (managedDirectory(root, staging)) { if (present(state)) rmSync(state, { force: true }); try { rmdirSync(staging); } catch { /* Preserve other staging members. */ } }
+    // The rename is the commit point. Cleanup must not turn a committed result into a failed call.
+    try { if (managedDirectory(root, staging)) { if (present(state)) rmSync(state, { force: true }); rmdirSync(staging); } } catch { /* Preserve other staging members or replaced paths. */ }
   }
+}
+
+export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; hooks?: SyncHooks; env?: NodeJS.ProcessEnv } = {}): SyncReport {
+  const hooks = opts.hooks ?? {};
+  planCapacity(plan);
+  const installed = new Map(inspectRoot(root, opts.env).map(view => [`${view.agent}/${view.runtime}`, view]));
+  const projected = new Map(installed);
+  for (const view of plan.views) projected.set(`${view.agent}/${view.runtime}`, plannedAck(view));
+  acknowledgementCapacity([...projected.values()], plan.policyDigest);
+  const identities = new Set<string>();
+  for (const v of plan.views) {
+    const key = `${v.agent}/${v.runtime}`;
+    if (!NAME_RE.test(v.agent) || !ADAPTER_RUNTIMES.includes(v.runtime) || identities.has(key)) throw new ReconcileError('invalid or duplicate managed view identity');
+    identities.add(key);
+  }
+  managedRoot(root, true);
+  managedDirectory(root, join(root, 'views'), true);
+  managedDirectory(root, join(root, 'store'), true);
+  const repairs: StoreRepair[] = [];
+  const staged: { view: ViewPlan; gen: string; dir: string; previous: string | null; ack: AckView }[] = [];
+  const switched: typeof staged = [];
+  const observations = new Map<string, { current: ReturnType<typeof verifyView>; missing: Requirement[]; excluded: { name: string; reason: string }[] }>();
+  let failing: ViewPlan | null = null;
+  let report: SyncReport;
+  try {
+    // Prepare every selected generation before changing any active link.
+    for (const v of plan.views) {
+      failing = v;
+      agentDirectory(root, v.agent);
+      const current = verifyView(root, v.agent, v.runtime), missing = checkRequirements(v.skills, opts.env), excluded = [...(v.excluded ?? [])];
+      const observation = { current, missing, excluded }; observations.set(`${v.agent}/${v.runtime}`, observation);
+      if (excluded.length) throw new ReconcileError(`Unresolved assignments: ${excluded.map(e => `${e.name}: ${e.reason}`).join('; ')}`);
+      if (current.unmanaged) throw new ReconcileError(`views/${v.agent}/${v.runtime} is not a manager-made link; refusing to replace it`);
+      if (current.dirty.length && !opts.repair) throw new ReconcileError(`deployed view was modified on this machine (${current.dirty.length} entries: ${current.dirty.join(', ')}); left as is. Rerun with --repair to redeploy.`);
+      for (const s of v.skills) stagePackage(root, s.digest, plan.packages.get(s.digest) ?? (() => { throw new ReconcileError(`no source for ${s.name}`); })(), hooks, opts.repair ? repairs : undefined);
+      const checked: PlannedSkill[] = [];
+      for (const skill of v.skills) {
+        const meta = readMeta(readFileSync(join(root, 'store', hex(skill.digest), 'SKILL.md'), 'utf8'), skill.name);
+        if (meta.errors.length) excluded.push({ name: skill.name, reason: `invalid package metadata: ${meta.errors.join('; ')}` });
+        else checked.push({ ...skill, depends: meta.depends, requires: meta.requires });
+      }
+      observation.missing = checkRequirements(checked, opts.env);
+      excluded.push(...dependencyFailures(checked));
+      if (excluded.length) throw new ReconcileError(`Unresolved assignments: ${excluded.map(e => `${e.name}: ${e.reason}`).join('; ')}`);
+      const generatedAt = new Date().toISOString();
+      const gen = `${v.runtime}.${generatedAt.replace(/[-:.]/g, '').slice(0, 15)}-${randomBytes(3).toString('hex')}`;
+      const agentDir = agentDirectory(root, v.agent, true)!;
+      const candidate: AckView = { ...plannedAck(v), generatedAt, missing: observation.missing, status: observation.missing.length ? 'not-ready' : 'current' };
+      projected.set(`${v.agent}/${v.runtime}`, candidate);
+      acknowledgementCapacity([...projected.values()], plan.policyDigest);
+      const genDir = join(agentDir, gen);
+      const active = join(agentDir, v.runtime);
+      const entry = { view: v, gen, dir: genDir, previous: present(active) ? readlinkSync(active) : null, ack: candidate };
+      mkdirSync(genDir); staged.push(entry);
+      for (const s of v.skills) symlinkSync(`../../../store/${hex(s.digest)}`, join(genDir, s.name));
+      const manifest: Manifest = {
+        format: VIEW_FORMAT, agent: v.agent, runtime: v.runtime, generatedAt, policyDigest: plan.policyDigest, mode: 'managed',
+        support: supportFor(v.runtime).level, viewDigest: viewDigest(v.skills),
+        skills: v.skills.map((s) => ({ name: s.name, id: s.id, digest: s.digest, revision: s.revision, dirty: s.dirty, description: s.description, path: s.name })),
+      };
+      writeFileSync(join(genDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+      for (const s of v.skills) {
+        const scan = scanPackage(join(genDir, s.name));
+        if (!scan.ok || scan.digest !== s.digest) throw new ReconcileError(`verification of ${s.name} in the new view failed`);
+      }
+    }
+    for (const entry of staged) {
+      failing = entry.view;
+      hooks.beforeActivate?.(entry.view);
+      const agentDir = agentDirectory(root, entry.view.agent)!;
+      managedDirectory(root, entry.dir);
+      const active = join(agentDir, entry.view.runtime);
+      if ((present(active) ? readlinkSync(active) : null) !== entry.previous) throw new ReconcileError('active view changed during synchronization; refusing to overwrite it');
+      const tmp = join(agentDir, `.${entry.view.runtime}.next-${randomBytes(3).toString('hex')}`);
+      try { symlinkSync(entry.gen, tmp); renameSync(tmp, active); switched.push(entry); }
+      finally { if (present(tmp)) rmSync(tmp); }
+    }
+    report = { root, policyDigest: plan.policyDigest, views: staged.map(entry => entry.ack), at: new Date().toISOString() };
+    saveReport(root, report);
+  } catch (err) {
+    const rollbackErrors: string[] = [];
+    for (const entry of [...switched].reverse()) {
+      try {
+        const agentDir = managedDirectory(root, join(root, 'views', entry.view.agent))!;
+        const active = join(agentDir, entry.view.runtime);
+        if (!lstatSync(active).isSymbolicLink() || readlinkSync(active) !== entry.gen) throw new ReconcileError('active view changed before rollback');
+        if (entry.previous === null) rmSync(active);
+        else {
+          const tmp = join(agentDir, `.${entry.view.runtime}.rollback-${randomBytes(3).toString('hex')}`);
+          try { symlinkSync(entry.previous, tmp); renameSync(tmp, active); } finally { if (present(tmp)) rmSync(tmp); }
+        }
+      } catch (rollback) { rollbackErrors.push((rollback as Error).message); }
+    }
+    for (const repair of [...repairs].reverse()) { try { restoreRepair(repair); } catch (rollback) { rollbackErrors.push((rollback as Error).message); } }
+    if (rollbackErrors.length) throw new ReconcileError(`Synchronization failed: ${(err as Error).message}; rollback failed: ${rollbackErrors.join('; ')}`);
+    for (const entry of staged) { try { removeManagedDirectory(root, entry.dir); } catch { /* Never clean through a replaced parent link. */ } }
+    report = { root, policyDigest: plan.policyDigest, at: new Date().toISOString(), views: plan.views.map(v => {
+      const seen = observations.get(`${v.agent}/${v.runtime}`), prev = readCurrent(root, v.agent, v.runtime).manifest;
+      const dirty = dirtyNames(seen?.current.dirty ?? []);
+      return { agent: v.agent, runtime: v.runtime, viewDigest: prev?.viewDigest ?? null, generatedAt: prev?.generatedAt ?? null,
+        status: dirty.length && !opts.repair ? 'dirty' as const : 'failed' as const,
+        error: `Synchronization transaction failed at ${failing?.agent}/${failing?.runtime}: ${(err as Error).message}`.slice(0, 500),
+        skills: (prev?.skills ?? []).map(s => ({ name: s.name, id: s.id, digest: s.digest })), missing: seen?.missing ?? [], dirty, excluded: seen?.excluded ?? v.excluded };
+    }) };
+    saveReport(root, report);
+    return report;
+  }
+  // Once the outcome is committed, cleanup is best effort and cannot invalidate it.
+  for (const v of plan.views) { try { pruneGenerations(root, v.agent, v.runtime); } catch { /* Preserve uncertain generations. */ } }
+  try { gcStore(root); } catch { /* Defer collection if the root changed. */ }
   return report;
 }
 
@@ -615,7 +641,7 @@ export function inspectRoot(root: string, env: NodeJS.ProcessEnv = process.env):
       const excluded = [...new Map([...(last?.excluded ?? []), ...dependencies].map(e => [e.name, e])).values()];
       const oldPolicy = previous !== null && previous.policyDigest !== v.manifest.policyDigest;
       const failed = last?.status === 'failed';
-      out.push({ agent, runtime, viewDigest: v.manifest.viewDigest, generatedAt: v.manifest.generatedAt, status: v.dirty.length ? 'dirty' : failed || oldPolicy || excluded.length ? 'failed' : 'current',
+      out.push({ agent, runtime, viewDigest: v.manifest.viewDigest, generatedAt: v.manifest.generatedAt, status: v.dirty.length ? 'dirty' : failed || oldPolicy || excluded.length ? 'failed' : missing.length ? 'not-ready' : 'current',
         error: v.dirty.length ? `modified on this machine (${v.dirty.length} entries): ${v.dirty.join(', ')}`.slice(0, 500) : failed ? last.error ?? 'The last synchronization failed; sync again.' : oldPolicy ? 'Active view uses an older policy than the last requested sync; sync it again.' : excluded.length ? `Unresolved assignments: ${excluded.map(e => `${e.name}: ${e.reason}`).join('; ')}`.slice(0, 500) : null,
         skills: v.manifest.skills.map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: dirtyNames(v.dirty), excluded });
     }

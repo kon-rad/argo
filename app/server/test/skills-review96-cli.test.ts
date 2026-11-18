@@ -48,7 +48,9 @@ it.each(['regular', 'symlink', 'dangling symlink'])('refuses an existing %s bund
 it.each(['dirty', 'failed'])('returns failure for a %s view in both plain and JSON status output', async corruption => {
   const { f, service, io, lines } = fixture(), root = join(f.base, 'managed');
   const state = await service.current();
-  expect(syncViews(root, planViews(state.catalog, state.policy, state.roster, { agents: ['alpha'] })).views[0]!.status).toBe('current');
+  const deployed = syncViews(root, planViews(state.catalog, state.policy, state.roster, { agents: ['alpha'] }));
+  expect(deployed.views[0]!.status).toBe('not-ready');
+  expect(deployed.views[0]!.missing.some(item => item.skill === 'clip')).toBe(true);
   if (corruption === 'failed') rmSync(join(root, 'views', 'alpha', 'zen-agent'));
   else {
     const dir = readCurrent(root, 'alpha', 'zen-agent').dir;

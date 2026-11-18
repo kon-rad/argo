@@ -24,6 +24,9 @@ export class LifecycleError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
+export interface ReviewReceipt { repo: string; head: string; merged: string; branch: string }
+export type ReviewReceiptProvider = (repo: string) => Promise<ReviewReceipt[]>;
+
 export interface LifecycleContext {
   vaultRoot: string;
   policyFile: string;
@@ -37,6 +40,8 @@ export interface LifecycleContext {
   /** Hosts' acknowledged views, for "affected hosts". */
   observed: { host: string; agent: string; runtime: string; skills: string[] }[];
   observationsAvailable?: boolean;
+  /** Trusted server-side accepted review receipts, never proposal/client input. Missing evidence stays pending. */
+  reviewReceipts?: ReviewReceiptProvider;
 }
 
 export const RUNNING_SESSIONS = 'Changes apply to new runs after the change is merged and machines are synced. Sessions already running keep what they loaded: zen-agent runs keep their pinned snapshot until they end, and other runtimes keep instructions already in context. Stop or restart a session to drop a revoked skill; a machine that is offline keeps its last deployment until it syncs.';
@@ -330,6 +335,20 @@ function affectedAgents(ctx: LifecycleContext, name: string, policyAfter: Policy
   return [...out].sort();
 }
 
+async function createDestination(ctx: LifecycleContext, name: string): Promise<string> {
+  const target = resolve(ctx.privateRoot, name);
+  const rel = relative(ctx.vaultRoot, target);
+  if (isAbsolute(rel) || rel.split(sep).some(part => part === '..' || part === '.git')) throw new LifecycleError(422, 'privateRoot must be inside the vault Git tree; relocate the private root before creating a skill');
+  try { assertRegularPolicyPath(ctx.vaultRoot, join(target, 'SKILL.md')); }
+  catch { throw new LifecycleError(422, 'privateRoot must have regular, unlinked directory ancestors inside the vault Git tree'); }
+  const top = await gitTop(ctx.vaultRoot);
+  let ancestor = dirname(target);
+  while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
+  const destinationTop = await gitTop(ancestor);
+  if (!top || !destinationTop || realpathSync(top) !== realpathSync(destinationTop)) throw new LifecycleError(422, 'privateRoot must belong to the vault Git tree; external repositories need a source-specific review workflow');
+  return toPosix(rel);
+}
+
 export async function previewChange(ctx: LifecycleContext, req: ChangeRequest): Promise<{ preview: ChangePreview; target: Target; basePolicyDigest: string | null }> {
   const name = checkName(req.skill);
   const blocked: string[] = [];
@@ -360,7 +379,7 @@ export async function previewChange(ctx: LifecycleContext, req: ChangeRequest): 
       const others = ctx.catalog.byName.get(name) ?? [];
       if (others.length) warnings.push(`a private ${name} will override ${others.map((c) => c.id).join(', ')}`);
       files = fileDiffs(new Map(), after);
-      target = { files: after, policy: null, targetPath: toPosix(relative(ctx.vaultRoot, join(ctx.privateRoot, name))) };
+      target = { files: after, policy: null, targetPath: await createDestination(ctx, name) };
       summary = `Create the private skill ${name} from the draft (${after.size} files).`;
       rollbackTarget = null;
     } else {
@@ -445,7 +464,7 @@ export async function previewChange(ctx: LifecycleContext, req: ChangeRequest): 
   const hosts = [...new Set(ctx.observed.filter((o) => o.skills.includes(name) || agents.includes(o.agent)).map((o) => o.host))].sort();
   validation = { ...validation, warnings: [...validation.warnings, ...warnings] };
   const preview: ChangePreview = {
-    kind, skill: name, summary, validation, files, policyDiff, targetDigest, baseDigest: current?.digest ?? null, baseRevision: current?.revision ?? null,
+    kind, skill: name, summary, validation, files, policyDiff, targetDigest, targetPolicyDigest: target.policy ? parsePolicy(dumpPolicy(target.policy, ctx.policy.text)).digest : null, baseDigest: current?.digest ?? null, baseRevision: current?.revision ?? null,
     affectedAgents: agents, affectedHosts: hosts, dependents: dependentsOf(ctx.catalog, name, ctx.policy.policy), blocked, runningSessions: RUNNING_SESSIONS, rollbackTarget,
   };
   preview.fingerprint = `sha256:${createSha(Buffer.from(JSON.stringify({ preview, basePolicyDigest: ctx.policy.digest })))}`;
@@ -515,15 +534,15 @@ function readStored(ctx: LifecycleContext, id: string): StoredChange {
   try { return JSON.parse(readFileSync(join(dir, 'change.json'), 'utf8')) as StoredChange; } catch { throw new LifecycleError(404, `no change ${id}`); }
 }
 
-function toChange(ctx: LifecycleContext, s: StoredChange): Change {
+async function toChange(ctx: LifecycleContext, s: StoredChange): Promise<Change> {
   const current = selectedCandidate(ctx.policy.policy, ctx.catalog, s.skill).candidate;
   let status: Change['status'] = s.branch ? 'branch' : 'proposed';
   const packageLive = !s.hasPackage || (current?.digest === s.preview.targetDigest);
   const policyLive = !s.hasPolicy || (() => {
     try { return parsePolicy(readFileSync(join(changeDir(ctx, s.id), 'policy.yaml'), 'utf8')).digest === ctx.policy.digest; } catch { return false; }
   })();
-  if (!s.branch && s.kind === 'create' && s.targetPath && occupied(join(ctx.vaultRoot, s.targetPath))) status = 'stale';
-  else if (packageLive && policyLive) status = 'live';
+  if (packageLive && policyLive) status = await mergedProvenance(ctx, s) ? 'live' : 'pending';
+  else if (!s.branch && s.kind === 'create' && s.targetPath && occupied(join(ctx.vaultRoot, s.targetPath))) status = 'stale';
   else if (!s.branch && ((s.hasPackage && s.kind !== 'create' && current?.digest !== s.preview.baseDigest) || (s.hasPolicy && ctx.policy.digest !== s.basePolicyDigest))) status = 'stale';
   return { id: s.id, kind: s.kind, skill: s.skill, createdAt: s.createdAt, status, branch: s.branch, commit: s.commit, preview: s.preview };
 }
@@ -536,11 +555,78 @@ function occupied(path: string): boolean {
   }
 }
 
-export function listChanges(ctx: LifecycleContext): Change[] {
+/** Check the actual accepted aggregate, since ancestry alone also includes commits later reverted. */
+async function reviewedTargetsMatch(top: string, revision: string, stored: StoredChange, packagePath: string | null, policyPath: string | null): Promise<boolean> {
+  if (stored.hasPackage) {
+    if (!packagePath || !stored.preview.targetDigest) return false;
+    const tree = await treeAt(top, revision, packagePath);
+    if (!tree || tree.length > LIMITS.files) return false;
+    const files: { path: string; size: number; exec: boolean; sha256: string }[] = [];
+    let bytes = 0;
+    for (const file of tree) {
+      if (file.path.split('/').some(isSecretLike)) return false;
+      if (file.path.split('/').some(isIgnoredName)) continue;
+      const data = await blob(top, file.blob);
+      if (!data || data.length > LIMITS.fileBytes || (bytes += data.length) > LIMITS.totalBytes) return false;
+      files.push({ path: file.path, size: data.length, exec: file.exec, sha256: createSha(data) });
+    }
+    if (digestOf(files) !== stored.preview.targetDigest) return false;
+  }
+  if (stored.hasPolicy) {
+    if (!policyPath || !stored.preview.targetPolicyDigest) return false;
+    const entry = await git(top, ['ls-tree', '-z', revision, '--', policyPath]);
+    const regular = entry && /^100(?:644|755) blob ([0-9a-f]+)\t[^\0]+\0$/.exec(entry);
+    const data = regular ? await blob(top, regular[1]!) : null;
+    if (!data) return false;
+    const policy = parsePolicy(data.toString('utf8'));
+    if (!policy.valid || policy.digest !== stored.preview.targetPolicyDigest) return false;
+  }
+  return true;
+}
+
+/** A local content match never proves that the recorded apply commit reached the default branch. */
+async function mergedProvenance(ctx: LifecycleContext, stored: StoredChange): Promise<boolean> {
+  if (!stored.commit || !/^[0-9a-f]{40,64}$/.test(stored.commit)) return false;
+  const top = await gitTop(ctx.vaultRoot);
+  if (!top) return false;
+  const defaultRef = (await git(top, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']))?.trim();
+  if (!defaultRef?.startsWith('refs/remotes/origin/')) return false;
+  const tip = (await git(top, ['rev-parse', '--verify', `${defaultRef}^{commit}`]))?.trim();
+  const head = (await git(top, ['rev-parse', '--verify', 'HEAD^{commit}']))?.trim();
+  if (!tip || head !== tip || (await git(top, ['merge-base', '--is-ancestor', stored.commit, tip])) === null) return false;
+  const remote = (await git(top, ['remote', 'get-url', 'origin']))?.trim() ?? '';
+  const match = /^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(remote);
+  if (!match || !ctx.reviewReceipts) return false;
+  const repo = match[1]!.toLowerCase();
+  let receipts: ReviewReceipt[];
+  try { receipts = await ctx.reviewReceipts(repo); } catch { return false; }
+  const packagePath = stored.hasPackage && stored.targetPath
+    ? stored.kind === 'create' ? toPosix(relative(realpathSync(top), realpathSync(join(ctx.vaultRoot, stored.targetPath)))) : stored.targetPath
+    : null;
+  const policyPath = stored.hasPolicy ? toPosix(relative(realpathSync(top), realpathSync(ctx.policyFile))) : null;
+  if ((stored.hasPackage && !packagePath) || (stored.hasPolicy && !policyPath)) return false;
+  let approved = false;
+  for (const receipt of receipts) {
+    if (receipt.repo.toLowerCase() !== repo || receipt.branch !== defaultRef.slice('refs/remotes/origin/'.length) || ![receipt.head, receipt.merged].every(sha => /^[0-9a-f]{40,64}$/.test(sha))) continue;
+    if ((await git(top, ['merge-base', '--is-ancestor', stored.commit, receipt.head])) === null ||
+        (await git(top, ['merge-base', '--is-ancestor', receipt.head, receipt.merged])) === null ||
+        (await git(top, ['merge-base', '--is-ancestor', receipt.merged, tip])) === null) continue;
+    if (!await reviewedTargetsMatch(top, receipt.head, stored, packagePath, policyPath) ||
+        (receipt.merged !== receipt.head && !await reviewedTargetsMatch(top, receipt.merged, stored, packagePath, policyPath))) continue;
+    approved = true; break;
+  }
+  if (!approved) return false;
+  const paths = [packagePath, policyPath].filter((path): path is string => path !== null);
+  const dirty = await git(top, ['status', '--porcelain=v1', '--untracked-files=all', '--', ...paths]);
+  return dirty === '';
+}
+
+export async function listChanges(ctx: LifecycleContext): Promise<Change[]> {
   if (!existsSync(ctx.changesDir)) return [];
-  return readdirSync(ctx.changesDir).filter((n) => CHANGE_ID.test(n)).sort().reverse().map((id) => {
-    try { return toChange(ctx, readStored(ctx, id)); } catch { return null; }
-  }).filter((c): c is Change => c !== null);
+  const changes = await Promise.all(readdirSync(ctx.changesDir).filter((n) => CHANGE_ID.test(n)).sort().reverse().map(async (id) => {
+    try { return await toChange(ctx, readStored(ctx, id)); } catch { return null; }
+  }));
+  return changes.filter((c): c is Change => c !== null);
 }
 
 /**
@@ -550,7 +636,16 @@ export function listChanges(ctx: LifecycleContext): Change[] {
  */
 export async function applyChange(ctx: LifecycleContext, id: string, opts: { message?: string } = {}): Promise<{ branch: string; commit: string; worktreeFiles: string[] }> {
   const stored = readStored(ctx, id);
-  if (stored.hasPolicy) policySource(ctx);
+  let policyText: string | null = null;
+  if (stored.hasPolicy) {
+    policySource(ctx);
+    policyText = readFileSync(join(changeDir(ctx, id), 'policy.yaml'), 'utf8');
+    const parsed = parsePolicy(policyText);
+    if (!parsed.valid) throw new LifecycleError(422, `stored policy does not validate: ${parsed.errors.join('; ')}`);
+    if (!stored.preview.targetPolicyDigest || parsed.digest !== stored.preview.targetPolicyDigest) throw new LifecycleError(409, 'stored policy does not match its previewed digest; export the change again');
+    if (ctx.policy.digest !== stored.basePolicyDigest) throw new LifecycleError(409, 'the change is stale: its source policy moved since export; preview and export again');
+    if (unifiedDiff(ctx.policyRel, ctx.policy.text, policyText) !== stored.preview.policyDiff) throw new LifecycleError(409, 'stored policy does not match its previewed change; preview and export again');
+  }
   if (stored.kind === 'remove') {
     const current = await previewChange(ctx, stored.request);
     if (current.preview.blocked.length) throw new LifecycleError(409, `not applied: ${current.preview.blocked.join('; ')}`);
@@ -560,7 +655,7 @@ export async function applyChange(ctx: LifecycleContext, id: string, opts: { mes
     if (!check.validation.valid) throw new LifecycleError(422, `stored package: ${check.validation.errors.join('; ')}`);
     if (check.digest !== stored.preview.targetDigest) throw new LifecycleError(409, 'the stored package does not match its previewed digest; it was edited after export');
   }
-  const change = toChange(ctx, stored);
+  const change = await toChange(ctx, stored);
   if (stored.branch) throw new LifecycleError(409, `already on branch ${stored.branch} (${stored.commit})`);
   if (change.status === 'stale') throw new LifecycleError(409, 'the change is stale: its base package or policy moved since it was proposed; propose it again');
   if (change.status === 'live') throw new LifecycleError(409, 'the vault already matches this change');
@@ -605,7 +700,7 @@ export async function applyChange(ctx: LifecycleContext, id: string, opts: { mes
     if (stored.hasPolicy) {
       const dest = policyDest!;
       assertRegularPolicyPath(wt, dest);
-      atomicWrite(dest, readFileSync(join(dir, 'policy.yaml')));
+      atomicWrite(dest, policyText!);
       touched.push(toPosix(relative(wt, dest)));
     }
     if ((await git(wt, ['add', '-A', '--', ...touched])) === null) throw new LifecycleError(500, 'git add failed');

@@ -216,10 +216,12 @@ describe('skills lifecycle', () => {
     expect(sh(f.vault, 'worktree', 'list').split('\n')).toHaveLength(1);
     expect((await s.changes()).find((x) => x.id === c.id)!.status).toBe('branch');
     await expect(s.apply(c.id)).rejects.toThrow(/already on branch/);
-    // Merging makes it live; the catalog then matches the change's target digest.
+    // A merge without an authoritative review receipt remains pending.
     sh(f.vault, 'merge', '-q', '--ff-only', r.branch);
+    sh(f.vault, 'update-ref', 'refs/remotes/origin/main', r.commit);
+    sh(f.vault, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
     s.invalidate();
-    expect((await s.changes()).find((x) => x.id === c.id)!.status).toBe('live');
+    expect((await s.changes()).find((x) => x.id === c.id)!.status).toBe('pending');
     expect((await s.library(true)).skills.find((x) => x.name === 'clip')!.effective!.digest).toBe(p.targetDigest);
     // Disable then restore through the same flow.
     policy(f.vault, `${MANAGED_POLICY}lifecycle:\n  clip: { status: disabled }\n`);
@@ -259,14 +261,17 @@ describe('skills reconciliation', () => {
   it('deploys per-agent views with verified full packages and gives two personas different catalogs', async () => {
     const { s, root } = await managed();
     const st = await s.current();
-    const report = syncViews(root, planViews(st.catalog, st.policy, st.roster), { env: { PATH: '' } });
+    const rejected = syncViews(root, planViews(st.catalog, st.policy, st.roster), { env: { PATH: '' } });
+    expect(rejected.views.every(v => v.status === 'failed')).toBe(true);
+    expect(rejected.views.every(v => v.skills.length === 0)).toBe(true);
+    expect(rejected.views.find(v => v.agent === 'gamma')!.excluded).toEqual([expect.objectContaining({name:'broken',reason:expect.stringContaining('invalid')})]);
+    expect(existsSync(join(root, 'views', 'alpha', 'zen-agent'))).toBe(false);
+    const report = syncViews(root, planViews(st.catalog, st.policy, st.roster, { agents: ['alpha', 'beta'] }), { env: { PATH: '' } });
     const byAgent = Object.fromEntries(report.views.map((v) => [v.agent, v]));
     expect(byAgent['alpha']!.skills.map((x) => x.name)).toEqual(['clip', 'report']);
     expect(byAgent['beta']!.skills.map((x) => x.name)).toEqual(['ingest', 'report']);
-    expect(byAgent['gamma']!.skills).toEqual([]);
-    expect(byAgent['gamma']!.status).toBe('failed');
-    expect(byAgent['gamma']!.excluded).toEqual([expect.objectContaining({name:'broken',reason:expect.stringContaining('invalid')})]);
-    expect([byAgent['alpha'], byAgent['beta']].every(v=>v!.status==='current')).toBe(true);
+    expect(byAgent['alpha']!.status).toBe('not-ready');
+    expect(byAgent['beta']!.status).toBe('current');
     // Missing requirements are reported by name; values are never read.
     expect(byAgent['alpha']!.missing).toEqual([{ skill: 'clip', bins: ['definitely-not-a-real-program-xyz'], env: ['FIXTURE_CLIP_KEY'] }]);
     const link = join(root, 'views', 'alpha', 'zen-agent');
@@ -304,7 +309,7 @@ describe('skills reconciliation', () => {
     expect(r.views[0]!.status).toBe('dirty');
     expect(readFileSync(target, 'utf8')).toMatch(/tampered/); // never silently overwritten
     const repaired = syncViews(root, plan, { repair: true, env: { PATH: '' } });
-    expect(repaired.views[0]!.status).toBe('current');
+    expect(repaired.views[0]!.status).toBe('not-ready');
     expect(verifyView(root, 'alpha', 'zen-agent').dirty).toEqual([]);
     expect(readFileSync(join(root, 'views', 'alpha', 'zen-agent', 'clip', 'scripts', 'cut.sh'), 'utf8')).toMatch(/echo cut/);
   });
@@ -353,16 +358,16 @@ describe('skills reconciliation', () => {
     const { f, s, root } = await managed();
     const out: string[] = [];
     const io = { out: (x: string) => out.push(x), err: (x: string) => out.push(`ERR ${x}`), env: { PATH: '' } as NodeJS.ProcessEnv };
-    expect(await runSkillsCli(['sync', '--agents', 'alpha,beta', '--root', root], s, io)).toBe(0);
+    expect(await runSkillsCli(['sync', '--agents', 'alpha,beta', '--root', root], s, io)).toBe(2);
     const bundleFile = join(f.base, 'bundle.json');
     expect(await runSkillsCli(['pack', '--out', bundleFile, '--agents', 'alpha,beta'], s, io)).toBe(0);
     const host2 = join(f.base, 'host2');
     const empty = svc(join(f.base, 'no-vault'), null);
-    expect(await runSkillsCli(['sync', '--bundle', bundleFile, '--root', host2], empty, io)).toBe(0);
+    expect(await runSkillsCli(['sync', '--bundle', bundleFile, '--root', host2], empty, io)).toBe(2);
     const m1 = JSON.parse(readFileSync(join(root, 'views', 'beta', 'claude-code', 'manifest.json'), 'utf8'));
     const m2 = JSON.parse(readFileSync(join(host2, 'views', 'beta', 'claude-code', 'manifest.json'), 'utf8'));
     expect(m2.viewDigest).toBe(m1.viewDigest);
-    expect(await runSkillsCli(['status', '--root', host2], empty, io)).toBe(0);
+    expect(await runSkillsCli(['status', '--root', host2], empty, io)).toBe(2);
     expect(await runSkillsCli(['preview', 'disable', 'video'], s, io)).toBe(0);
     expect(out.join('\n')).toMatch(/This was a preview\. Nothing was saved\./);
     expect(await runSkillsCli(['propose', 'disable', 'video'], s, io)).toBe(0);

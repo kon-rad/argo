@@ -7,7 +7,7 @@ CREATE TABLE skill_view_acks (
   host          text NOT NULL REFERENCES usage_hosts (slug) ON DELETE CASCADE,
   agent         text NOT NULL CHECK (agent ~ '^[a-z0-9][a-z0-9-]{0,31}$'),
   runtime       text NOT NULL CHECK (runtime IN ('zen-agent', 'claude-code', 'hermes', 'codex')),
-  status        text NOT NULL CHECK (status IN ('current', 'dirty', 'failed')),
+  status        text NOT NULL CHECK (status IN ('current', 'not-ready', 'dirty', 'failed')),
   error         text,
   view_digest   text CHECK (view_digest ~ '^sha256:[0-9a-f]{64}$'),
   policy_digest text CHECK (policy_digest ~ '^sha256:[0-9a-f]{64}$'),

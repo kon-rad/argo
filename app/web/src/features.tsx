@@ -10,10 +10,11 @@ import Projects from './routes/Projects.js';
 import LiveAgents from './routes/usage/LiveAgents.js';
 import Usage from './routes/usage/Usage.js';
 import UsageSession from './routes/usage/UsageSession.js';
+import { Loading as SkillsLoading } from './routes/skills/ui.js';
 
 const Desk = lazy(() => import('./routes/Desk.js'));
 const Skills = lazy(() => import('./routes/skills/Skills.js'));
-const skills = (view: 'library' | 'matrix' | 'machines' | 'changes' | 'detail' | 'agent') => <Suspense fallback={null}><Skills view={view} /></Suspense>;
+const skills = (view: 'library' | 'matrix' | 'machines' | 'changes' | 'detail' | 'agent') => <Suspense fallback={<SkillsLoading what="skills" />}><Skills view={view} /></Suspense>;
 
 /**
  * The page routes of each core feature, by module name. The server's manifest

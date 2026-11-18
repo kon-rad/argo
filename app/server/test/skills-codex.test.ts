@@ -21,7 +21,8 @@ it('resolves, transports and verifies Codex catalogs without claiming native iso
   expect((await service.agent('delta'))!.agent.support).toBe('catalog-only');
   const root = join(f.base, 'codex-deployment');
   const report = syncViews(root, planFromBundle(packBundle(plan)));
-  expect(report.views[0]!.status).toBe('current');
+  expect(report.views[0]!.status).toBe('not-ready');
+  expect(report.views[0]!.missing.some(item => item.skill === 'clip' && item.bins.includes('definitely-not-a-real-program-xyz'))).toBe(true);
   const current = readCurrent(root, 'delta', 'codex');
   expect(current.manifest).toMatchObject({ runtime: 'codex', support: 'catalog-only' });
   expect(verifyView(root, 'delta', 'codex').dirty).toEqual([]);

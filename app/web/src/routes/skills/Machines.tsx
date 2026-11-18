@@ -5,10 +5,10 @@ import { skillsApi, type HostState } from './api.js';
 import { Chip, Digest, Empty, ErrorState, Loading } from './ui.js';
 
 const HOST_TONE: Record<HostState['status'], 'ok' | 'warn' | 'bad' | 'dim'> = {
-  current: 'ok', drift: 'warn', dirty: 'warn', stale: 'warn', never: 'dim', failed: 'bad',
+  current: 'ok', 'not-ready': 'warn', drift: 'warn', dirty: 'warn', stale: 'warn', never: 'dim', failed: 'bad',
 };
 const HOST_LABEL: Record<HostState['status'], string> = {
-  current: 'up to date', drift: 'differs from policy', dirty: 'locally modified', stale: 'not heard from recently', never: 'never acknowledged', failed: 'last sync failed',
+  current: 'up to date', 'not-ready': 'missing prerequisites', drift: 'differs from policy', dirty: 'locally modified', stale: 'not heard from recently', never: 'never acknowledged', failed: 'last sync failed',
 };
 
 /** Desired versus acknowledged skill packages per machine. Only what machines reported; nothing assumed from a push. */

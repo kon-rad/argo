@@ -9,7 +9,7 @@ import { query, withTransaction } from '../../db.js';
  */
 
 export interface AckRow {
-  host: string; agent: string; runtime: string; status: 'current' | 'dirty' | 'failed'; error: string | null; view_digest: string | null;
+  host: string; agent: string; runtime: string; status: 'current' | 'not-ready' | 'dirty' | 'failed'; error: string | null; view_digest: string | null;
   policy_digest: string | null; generated_at: Date | null; received_at: Date; skills: { name: string; id: string; digest: string }[];
   missing: { skill: string; bins: string[]; env: string[] }[]; dirty: string[]; excluded?: { name: string; reason: string }[];
 }
@@ -73,12 +73,12 @@ export function machineStates(
       const stale = now.getTime() - new Date(r.received_at).getTime() > staleMs;
       const policyDrift = want !== null && expectedPolicyDigest !== undefined && r.policy_digest !== expectedPolicyDigest;
       const drift = policyDrift || skills.some((s) => s.state === 'drift' || s.state === 'missing' || s.state === 'extra');
-      const status: ViewState['status'] = excluded.length || r.status === 'failed' ? 'failed' : r.status === 'dirty' ? 'dirty' : stale ? 'stale' : drift ? 'drift' : 'current';
+      const status: ViewState['status'] = excluded.length || r.status === 'failed' ? 'failed' : r.status === 'dirty' ? 'dirty' : stale ? 'stale' : drift ? 'drift' : r.status === 'not-ready' || r.missing.some(requirement => requirement.bins.length || requirement.env.length) ? 'not-ready' : 'current';
       return { agent: r.agent, runtime: r.runtime, viewDigest: r.view_digest, generatedAt: r.generated_at ? new Date(r.generated_at).toISOString() : null,
         receivedAt: new Date(r.received_at).toISOString(), status, error: excluded.length ? `Unresolved assignments: ${excluded.map(e => `${e.name}: ${e.reason}`).join('; ')}` : r.error ?? (policyDrift ? 'Acknowledged policy differs from the current policy; synchronize this view again.' : null), skills, missing: r.missing, dirty: r.dirty, excluded };
     });
     const last = data.lastSeen.get(h.slug) ?? rows.map((r) => new Date(r.received_at)).sort((a, b) => b.getTime() - a.getTime())[0]!;
-    const rank = ['failed', 'dirty', 'stale', 'drift', 'current'] as const;
+    const rank = ['failed', 'dirty', 'stale', 'drift', 'not-ready', 'current'] as const;
     const worst = rank.find((s) => views.some((v) => v.status === s)) ?? 'current';
     out.push({ host: h.slug, display: h.display, status: worst, lastAck: new Date(last).toISOString(), views });
   }

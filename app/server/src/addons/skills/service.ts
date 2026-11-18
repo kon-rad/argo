@@ -10,6 +10,7 @@ import type {
 import { buildCatalog, distinctPackages, publicCandidate, rootSpecs, type Candidate, type Catalog } from './catalog.js';
 import { git, gitTop, history, lastRevision, toPosix } from './git.js';
 import * as life from './lifecycle.js';
+import { query } from '../../db.js';
 import { loadedEvidence, machineStates, readAcks } from './machines.js';
 import { isText, LIMITS, packageFileAllowed, splitFrontmatter } from './package.js';
 import { dependentsOf, lifecycleOf, loadPolicyFile, policyWarnings, resolveAgent, selectedCandidate, supportFor, unresolvedAssignments, type LoadedPolicy } from './policy.js';
@@ -43,12 +44,22 @@ type AckData = Awaited<ReturnType<typeof readAcks>>;
 const TTL_MS = 30_000;
 const MAX_FILE_BYTES = 512 * 1024;
 
+/** Only accepted, merged jobs with verdicts bound to the exact repository and reviewed head qualify. */
+async function acceptedReviewReceipts(repo: string): Promise<life.ReviewReceipt[]> {
+  const result = await query<life.ReviewReceipt>(`SELECT snapshot->>'repo' AS repo, verdict->>'head' AS head, merged, snapshot->>'branch' AS branch
+    FROM review_jobs WHERE lower(snapshot->>'repo')=$1 AND verdict->>'repo'=snapshot->>'repo'
+      AND verdict->>'decision'='accept' AND verdict->>'head'=snapshot->>'head' AND verdict->>'base'=snapshot->>'base'
+      AND verdict->>'reviewer'=reviewer AND reviewer<>builder AND merged IS NOT NULL
+      AND state IN ('merged','deploying','deployed','done')`, [repo]);
+  return result.rows;
+}
+
 export class SkillsService {
   private state: State | null = null;
   private loading: Promise<State> | null = null;
   readonly policyPath: string;
 
-  constructor(readonly vaultRoot: string, readonly settings: SkillsSettings, private readonly opts: { engineSkills?: string | null; git?: boolean; db?: boolean; observations?: typeof readAcks } = {}) {
+  constructor(readonly vaultRoot: string, readonly settings: SkillsSettings, private readonly opts: { engineSkills?: string | null; git?: boolean; db?: boolean; observations?: typeof readAcks; reviewReceipts?: life.ReviewReceiptProvider } = {}) {
     this.policyPath = expandPath(vaultRoot, settings.policyFile);
   }
 
@@ -208,7 +219,7 @@ export class SkillsService {
     }
     const ctx = await this.lifecycleContext();
     const drafts = life.listDrafts(ctx).filter((d) => d.name === name || (d.base && list.some((c) => c.id === d.base!.id)));
-    const changes = life.listChanges(ctx).filter((c) => c.skill === name);
+    const changes = (await life.listChanges(ctx)).filter((c) => c.skill === name);
     return {
       name, row: this.row(s, name, list, cells), selected: sel ? publicCandidate(sel) : null, instructions, files, history: hist, agents,
       dependents: dependentsOf(s.catalog, name, s.policy.policy), hosts, drafts, changes, mode: s.policy.mode,
@@ -295,6 +306,7 @@ export class SkillsService {
     return {
       vaultRoot: this.vaultRoot, policyFile: this.policyPath, policyRel: toPosix(relative(this.vaultRoot, this.policyPath)),
       draftsDir: expandPath(this.vaultRoot, this.settings.draftsDir), changesDir: expandPath(this.vaultRoot, this.settings.changesDir),
+      reviewReceipts: this.opts.reviewReceipts ?? (this.opts.db === false ? undefined : acceptedReviewReceipts),
       privateRoot: expandPath(this.vaultRoot, this.settings.privateRoot), catalog: s.catalog, policy: s.policy, roster: s.roster, observed, observationsAvailable: data !== null,
     };
   }
@@ -311,7 +323,7 @@ export class SkillsService {
   async changes(): Promise<Change[]> { return life.listChanges(await this.lifecycleContext()); }
   async apply(id: string) {
     let ctx = await this.lifecycleContext(true);
-    if (life.listChanges(ctx).find(c => c.id === id)?.kind === 'remove') ctx = await this.lifecycleContext(false, true);
+    if ((await life.listChanges(ctx)).find(c => c.id === id)?.kind === 'remove') ctx = await this.lifecycleContext(false, true);
     const r = await life.applyChange(ctx, id); this.invalidate(); return r;
   }
 }

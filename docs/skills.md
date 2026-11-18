@@ -269,7 +269,7 @@ VAULT_ROOT=/tmp/skills-demo/empty MODULES=skills npm run dev         # empty sta
 VAULT_ROOT=/tmp/skills-demo/broken/vault MODULES=skills npm run dev  # an unparseable managed policy
 ```
 
-The `full` vault has a private override with engine and legacy duplicates, a link-skills link, invalid packages (missing description, bad YAML, an escaping symlink, a `.env` file, a package link outside the roots), a deprecated skill, three agents on three runtimes, a draft and a proposed change. With `--db`, the Machines page shows one current host, one drifted host and one registered host that never acknowledged.
+The `full` vault has a private override with engine and legacy duplicates, a link-skills link, invalid packages (missing description, bad YAML, an escaping symlink, a `.env` file, a package link outside the roots), a deprecated skill, three agents on three runtimes, a draft and a proposed change. With `--db`, the Machines page shows one current host, one drifted host, one Needs setup host and one registered host that never acknowledged.
 
 ## Limits of this release
 
@@ -303,3 +303,9 @@ Managed reconciliation refuses an invalid compiled roster, symlinked structural 
 Rollback previews validate reconstructed historical package metadata with the same rules as drafts. Apply validates the actual exported package again, including its full digest, before committing it to a review branch.
 
 Flat source folders remain visible as invalid packages when SKILL.md is missing. Failed Git queries leave provenance unknown, including in bundles and generated manifests. Malformed or unreadable existing roster YAML blocks managed planning even when a compiled roster is available. Policy changes require a regular destination inside the Git worktree without linked ancestors. Draft file removal requires the loaded version and uses the same conflict checks as saving.
+
+Sync prepares every selected view before switching any active link. A preparation or switch failure rolls back all selected links and repaired stores; pruning and collection follow a successful transaction. Verified installations with missing declared binaries or environment variables report not-ready (Needs setup), not current. Missing names stay visible, and a later inspection can establish readiness without reinstalling files. No prerequisites are installed automatically.
+
+Matching source bytes alone leave a proposal pending. Live requires a recorded apply commit, a clean default tracking tip, and a trusted accepted review receipt whose accepted and merged trees contain the exact previewed package and policy digests. Generic or offline installations without that evidence may remain pending after a merge. This source status does not claim machine adoption. Exported policy bytes are digest-checked, parsed and compared with the preview before apply; unsupported private roots fail create preview immediately.
+
+Skills routes show a loading message while their code is fetched. Draft conflicts retain both local text and executable mode. If another client removed the file, explicit recreate uses the absent-file version token; discard is also explicit.

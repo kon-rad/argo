@@ -124,14 +124,14 @@ export type Requirement = z.infer<typeof RequirementSchema>;
 export const ExclusionSchema = z.object({ name: SkillNameSchema, reason: z.string().max(1000) });
 export const ViewStateSchema = z.object({
   agent: z.string(), runtime: z.string(), viewDigest: z.string().nullable(), generatedAt: z.string().nullable(), receivedAt: z.string(),
-  status: z.enum(['current', 'drift', 'dirty', 'stale', 'failed']), error: z.string().nullable(),
+  status: z.enum(['current', 'not-ready', 'drift', 'dirty', 'stale', 'failed']), error: z.string().nullable(),
   excluded: z.array(ExclusionSchema).max(500).optional(),
   skills: z.array(HostSkillSchema), missing: z.array(RequirementSchema), dirty: z.array(z.string()),
 });
 export type ViewState = z.infer<typeof ViewStateSchema>;
 
 export const HostStateSchema = z.object({
-  host: z.string(), display: z.string(), status: z.enum(['current', 'drift', 'dirty', 'stale', 'never', 'failed']),
+  host: z.string(), display: z.string(), status: z.enum(['current', 'not-ready', 'drift', 'dirty', 'stale', 'never', 'failed']),
   lastAck: z.string().nullable(), views: z.array(ViewStateSchema),
 });
 export type HostState = z.infer<typeof HostStateSchema>;
@@ -154,7 +154,7 @@ export type ChangeKind = z.infer<typeof ChangeKindSchema>;
 export const ChangePreviewSchema = z.object({
   fingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
   kind: ChangeKindSchema, skill: z.string(), summary: z.string(), validation: ValidationSchema,
-  files: z.array(FileDiffSchema), policyDiff: z.string(), targetDigest: z.string().nullable(), baseDigest: z.string().nullable(),
+  files: z.array(FileDiffSchema), policyDiff: z.string(), targetPolicyDigest: z.string().nullable().optional(), targetDigest: z.string().nullable(), baseDigest: z.string().nullable(),
   baseRevision: z.string().nullable(), affectedAgents: z.array(z.string()), affectedHosts: z.array(z.string()),
   dependents: z.array(z.string()), blocked: z.array(z.string()), runningSessions: z.string(), rollbackTarget: z.string().nullable(),
 });
@@ -162,10 +162,11 @@ export type ChangePreview = z.infer<typeof ChangePreviewSchema>;
 
 /**
  * `proposed`: exported for review, nothing applied. `branch`: committed on a review branch by `skills apply`.
- * `live`: the catalog now matches the change. `stale`: its base moved; make a new one.
+ * `pending`: local bytes match but review/default-branch provenance is unverified.
+ * `live`: matching clean bytes, trusted accepted review receipt and recorded apply commit on the default tracking branch. `stale`: its base moved; make a new one.
  */
 export const ChangeSchema = z.object({
-  id: z.string(), kind: ChangeKindSchema, skill: z.string(), createdAt: z.string(), status: z.enum(['proposed', 'branch', 'live', 'stale']),
+  id: z.string(), kind: ChangeKindSchema, skill: z.string(), createdAt: z.string(), status: z.enum(['proposed', 'branch', 'pending', 'live', 'stale']),
   branch: z.string().nullable(), commit: z.string().nullable(), preview: ChangePreviewSchema,
 });
 export type Change = z.infer<typeof ChangeSchema>;
@@ -216,7 +217,7 @@ export type ChangeRequest = z.infer<typeof ChangeRequestSchema>;
 export const ACK_LIMITS = { bytes: 256 * 1024, views: 64, skillsPerView: 500 } as const;
 export const AckViewSchema = z.object({
   agent: AgentNameSchema, runtime: RuntimeSchema, viewDigest: DigestSchema.nullable(), generatedAt: z.string().datetime({ offset: true }).nullable(),
-  status: z.enum(['current', 'dirty', 'failed']), error: z.string().max(500).nullable(),
+  status: z.enum(['current', 'not-ready', 'dirty', 'failed']), error: z.string().max(500).nullable(),
   excluded: z.array(ExclusionSchema).max(500).optional(),
   skills: z.array(z.object({ name: SkillNameSchema, id: SkillIdSchema, digest: DigestSchema })).max(ACK_LIMITS.skillsPerView),
   missing: z.array(z.object({ skill: SkillNameSchema, bins: z.array(z.string().max(64)).max(20), env: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]{0,63}$/)).max(20) })).max(ACK_LIMITS.skillsPerView),

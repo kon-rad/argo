@@ -9,7 +9,8 @@ import { Chip, Empty, ErrorState, input, Loading, primary } from './ui.js';
 const STATUS_TEXT: Record<Change['status'], string> = {
   proposed: 'exported, waiting to be applied',
   branch: 'committed on a review branch',
-  live: 'catalog matches; check machine sync',
+  live: 'reviewed default-branch commit verified; check machine sync',
+  pending: 'catalog matches; review or merge provenance unverified',
   stale: 'out of date: the skill changed since; make a new one',
 };
 

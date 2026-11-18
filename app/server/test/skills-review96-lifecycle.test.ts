@@ -82,7 +82,7 @@ it('can match a proposal through an uncommitted local edit without establishing 
   await service.writeDraftFile('report','SKILL.md',next,undefined,(await service.readDraftFile('report','SKILL.md')).version);
   const proposed=await service.propose({kind:'update',skill:'report',draft:'report'});
   write(join(f.vault,'.agents','skills','report','SKILL.md'),next);service.invalidate();
-  expect((await service.changes()).find(x=>x.id===proposed.id)!.status).toBe('live');
+  expect((await service.changes()).find(x=>x.id===proposed.id)!.status).toBe('pending');
   expect(sh(f.vault,'status','--porcelain','--','.agents/skills/report')).toContain('SKILL.md');
   expect(proposed.commit).toBeNull();
 });

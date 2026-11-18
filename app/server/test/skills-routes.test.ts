@@ -116,7 +116,7 @@ describe('skills acknowledgement protocol and machines', () => {
     // The fixture's engine root (createApp's service reads the repo's real engine skills instead).
     const m = MachinesResponseSchema.parse((await request(api(f.vault, f.engine)).get('/api/skills/machines')).body);
     const a = m.hosts.find((h) => h.host === 'skills-host-a')!;
-    expect(a.status).toBe('current');
+    expect(a.status).toBe('not-ready');
     expect(a.views.find((v) => v.agent === 'alpha')!.skills.every((s) => s.state === 'match')).toBe(true);
     expect(a.views.find((v) => v.agent === 'alpha')!.missing[0]!.env).toEqual(['FIXTURE_CLIP_KEY']);
     expect(m.hosts.find((h) => h.host === 'skills-host-b')!.status).toBe('never'); // registered, never acknowledged: unknown

@@ -6,7 +6,7 @@
  * Writes three fake vaults under <dir>: `full/vault` (managed policy, an override, duplicates, invalid
  * packages, a draft and a proposed change), `empty` (no skills, no roster) and `broken/vault` (an
  * unparseable policy). With --db (DATABASE_URL set, migrations applied) it also deploys `full` into
- * <dir>/managed and records acknowledgements for three fake hosts: one current, one drifted and one
+ * <dir>/managed and records acknowledgements for four fake hosts: current, drifted, missing prerequisites and
  * registered but never seen. All data is fake; nothing outside <dir> or the given database is touched.
  */
 import { mkdirSync } from 'node:fs';
@@ -52,11 +52,11 @@ if (withDb) {
   if (!/^[a-z_][a-z0-9_]*_test$/.test(new URL(config.databaseUrl).pathname.slice(1))) throw new Error('The demo --db option requires a scratch database ending in _test.');
   try {
   const st = await service.current(true);
-  const report = syncViews(join(dir, 'managed'), planViews(st.catalog, st.policy, st.roster, { agents: ['alpha', 'beta'] }), { env: { PATH: '' } });
+  const report = syncViews(join(dir, 'managed'), planViews(st.catalog, st.policy, st.roster, { agents: ['beta'] }), { env: { PATH: '' } });
   if (report.views.some(v => v.status !== 'current')) throw new Error('Demo views did not reconcile completely');
-  await query(`DELETE FROM skill_view_acks WHERE host = ANY($1)`, [['demo-current','demo-drift','demo-never']]);
-  await query(`DELETE FROM skill_ack_log WHERE host = ANY($1)`, [['demo-current','demo-drift','demo-never']]);
-  for (const h of ['demo-current', 'demo-drift', 'demo-never']) {
+  await query(`DELETE FROM skill_view_acks WHERE host = ANY($1)`, [['demo-current','demo-drift','demo-never','demo-not-ready']]);
+  await query(`DELETE FROM skill_ack_log WHERE host = ANY($1)`, [['demo-current','demo-drift','demo-never','demo-not-ready']]);
+  for (const h of ['demo-current', 'demo-drift', 'demo-never', 'demo-not-ready']) {
     await query(`INSERT INTO usage_hosts (slug, display, kind) VALUES ($1, $1, 'server') ON CONFLICT DO NOTHING`, [h]);
   }
   // Written directly (the HTTP door needs a device token); same rows POST /api/skills/ack writes.
@@ -68,14 +68,17 @@ if (withDb) {
     }
     await query(`INSERT INTO skill_ack_log (host, views, failed, dirty, policy_digest) VALUES ($1,$2,0,0,$3)`, [host, views.length, report.policyDigest]);
   };
+  const needsSetup = syncViews(join(dir, 'managed-not-ready'), planViews(st.catalog, st.policy, st.roster, { agents: ['alpha'] }), { env: { PATH: '' } });
+  if (needsSetup.views.some(view => view.status !== 'not-ready')) throw new Error('Demo missing-prerequisite view was incorrectly ready');
+  await ack('demo-not-ready', needsSetup.views);
   await ack('demo-current', report.views);
   await ack('demo-drift', report.views.map((v) => ({ ...v, skills: v.skills.map((s) => ({ ...s, digest: `sha256:${'0'.repeat(64)}` })) })));
   const live = new SkillsService(full.vault, { ...SETTINGS, externalRoots: [{ id: 'demo-engine', path: full.engine }] });
   const states = Object.fromEntries((await live.machines()).hosts.map(h => [h.host, h.status]));
-  for (const [host, expected] of Object.entries({ 'demo-current': 'current', 'demo-drift': 'drift', 'demo-never': 'never' })) {
+  for (const [host, expected] of Object.entries({ 'demo-current': 'current', 'demo-drift': 'drift', 'demo-never': 'never', 'demo-not-ready': 'not-ready' })) {
     if (states[host] !== expected) throw new Error(`Demo host ${host}: expected ${expected}, got ${states[host]}`);
   }
-  console.log('demo hosts: demo-current=current, demo-drift=drift, demo-never=never');
+  console.log('demo hosts: demo-current=current, demo-drift=drift, demo-never=never, demo-not-ready=not-ready');
   } finally { await pool.end(); }
 }
 

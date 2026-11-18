@@ -130,9 +130,9 @@ it('requires a fresh preview after saving draft content, and binds export to the
   expect(await screen.findByText(/Machines receive it only after they sync/)).toBeTruthy();
 });
 it('labels a catalog-matching change without claiming merge provenance or machine use', async () => {
-  stub(url=>url.includes('/drafts')?json({drafts:[]}):json({changes:[{id:'fixture',kind:'update',skill:'report',status:'live',createdAt:'2026-01-01T00:00:00Z',preview:{summary:'Update report'}}]}));
+  stub(url=>url.includes('/drafts')?json({drafts:[]}):json({changes:[{id:'fixture',kind:'update',skill:'report',status:'pending',createdAt:'2026-01-01T00:00:00Z',preview:{summary:'Update report'}}]}));
   renderAt('changes','/skills/changes');
-  expect(await screen.findByText('catalog matches; check machine sync')).toBeTruthy();
+  expect(await screen.findByText('catalog matches; review or merge provenance unverified')).toBeTruthy();
   expect(screen.queryByText(/merged/)).toBeNull();
 });
 
@@ -176,8 +176,8 @@ it('refreshes a409 draft conflict while retaining unsaved text and requires an e
   writes.mockImplementation(async(_name,body)=>{
     expect(body.expectedVersion).toBe('b'.repeat(64));serverContent=body.content;hash='c'.repeat(64);return{draft:draft()};
   });
-  await waitFor(()=>expect((screen.getByRole('button',{name:'Restore my text to merge'}) as HTMLButtonElement).disabled).toBe(false));
-  fireEvent.click(screen.getByRole('button',{name:'Restore my text to merge'}));
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Restore my text and mode to merge'}) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole('button',{name:'Restore my text and mode to merge'}));
   expect((editor as HTMLTextAreaElement).value).toBe('Second owner unsaved edit');
   fireEvent.change(editor,{target:{value:'Explicit merge of first and second edits'}});
   fireEvent.click(screen.getByRole('button',{name:'Save draft file'}));
@@ -231,4 +231,104 @@ it('refreshes stale removal and requires an explicit reviewed retry preserving u
  await waitFor(()=>expect((screen.getByRole('button',{name:'Use current file'}) as HTMLButtonElement).disabled).toBe(false));fireEvent.click(screen.getByRole('button',{name:'Use current file'}));
  deletes.mockImplementation(async(_name,_path,token)=>{expect(token).toBe('b'.repeat(64));removed=true;return{draft:draft()};});
  fireEvent.click(screen.getByRole('button',{name:'Remove file'}));await waitFor(()=>expect(deletes).toHaveBeenCalledTimes(2));expect(removed).toBe(true);
+});
+
+for (const operation of ['save','remove'] as const) for (const recovery of ['recreate','discard'] as const) it(`recovers from stale ${operation} followed by a missing file with explicit ${recovery}`, async () => {
+  const path='references/note.md';
+  let missing=false, content='Original note', version='a'.repeat(64), serverExec=false;
+  const rootVersion='d'.repeat(64);
+  const draft=()=>({name:'report',base:{id:'private:report',digest:null},files:[{path:'SKILL.md',size:4,exec:false,sha256:rootVersion,kind:'text' as const},...(missing?[]:[{path,size:content.length,exec:serverExec,sha256:version,kind:'text' as const}])],updatedAt:'2026-01-01T00:00:00Z',validation:{valid:true,errors:[],warnings:[]},digest:`sha256:${version}`});
+  const listing=vi.spyOn(skillsApi,'draft').mockImplementation(async()=>({draft:draft()}));
+  vi.spyOn(skillsApi,'draftFile').mockImplementation(async(_name,p)=>{
+    if(p===path&&missing)throw new ApiError(404,'No draft file');
+    return{id:'draft:report',path:p,size:p===path?content.length:4,content:p===path?content:'Root',kind:'text',truncated:false,sha256:p===path?version:rootVersion,version:p===path?version:rootVersion,exec:p===path?serverExec:false};
+  });
+  const writes=vi.spyOn(skillsApi,'writeDraftFile').mockImplementation(async(_name,body)=>{
+    if(body.expectedVersion!==null){missing=true;throw new ApiError(409,'Changed before save');}
+    expect(body).toMatchObject({path,content:'Retained local note',exec:true,expectedVersion:null});
+    missing=false;content=body.content;serverExec=body.exec??false;version='b'.repeat(64);return{draft:draft()};
+  });
+  const deletes=vi.spyOn(skillsApi,'deleteDraftFile').mockImplementation(async()=>{missing=true;throw new ApiError(409,'Changed before removal');});
+  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+  render(<QueryClientProvider client={client}><DraftEditor name="report" /></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole('button',{name:/references\/note.md/}));
+  const editor=await screen.findByRole('textbox',{name:path});
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Save draft file'}) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.change(editor,{target:{value:'Retained local note'}});
+  fireEvent.click(screen.getByRole('checkbox',{name:'executable'}));
+  fireEvent.click(screen.getByRole('button',{name:operation==='save'?'Save draft file':'Remove file'}));
+  await screen.findByText(/Another client removed this file/);
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Recreate file with my changes'}) as HTMLButtonElement).disabled).toBe(false));
+  expect(listing.mock.calls.length).toBeGreaterThan(1);
+  expect(screen.queryByRole('button',{name:/references\/note.md/})).toBeNull();
+  expect((screen.getByRole('textbox',{name:'Your unsaved draft changes'}) as HTMLTextAreaElement).value).toBe('Retained local note');
+  expect((screen.getByRole('checkbox',{name:'Your unsaved executable choice'}) as HTMLInputElement).checked).toBe(true);
+  expect(writes).toHaveBeenCalledTimes(operation==='save'?1:0);
+  if(recovery==='recreate') {
+    fireEvent.click(screen.getByRole('button',{name:'Recreate file with my changes'}));
+    await screen.findByText('Draft file saved. The draft is not active.');
+    expect(missing).toBe(false);expect(content).toBe('Retained local note');expect(serverExec).toBe(true);
+    expect(writes).toHaveBeenLastCalledWith('report',expect.objectContaining({expectedVersion:null,exec:true}));
+  } else {
+    fireEvent.click(screen.getByRole('button',{name:'Discard my local changes'}));
+    await waitFor(()=>expect(screen.queryByRole('region',{name:'Draft file conflict'})).toBeNull());
+    expect((await screen.findByRole('textbox',{name:'SKILL.md'}) as HTMLTextAreaElement).value).toBe('Root');
+    expect(missing).toBe(true);expect(writes).toHaveBeenCalledTimes(operation==='save'?1:0);
+  }
+  expect(deletes).toHaveBeenCalledTimes(operation==='remove'?1:0);
+});
+
+it('retains and explicitly restores an unsaved executable choice alongside local text after conflict', async () => {
+  let content='Original',version='a'.repeat(64),serverExec=false;
+  const draft=()=>({name:'report',base:{id:'private:report',digest:null},files:[{path:'SKILL.md',size:content.length,exec:serverExec,sha256:version,kind:'text' as const}],updatedAt:'2026-01-01T00:00:00Z',validation:{valid:true,errors:[],warnings:[]},digest:`sha256:${version}`});
+  vi.spyOn(skillsApi,'draft').mockImplementation(async()=>({draft:draft()}));
+  vi.spyOn(skillsApi,'draftFile').mockImplementation(async()=>({id:'draft:report',path:'SKILL.md',size:content.length,content,kind:'text',truncated:false,sha256:version,version,exec:serverExec}));
+  const writes=vi.spyOn(skillsApi,'writeDraftFile').mockImplementation(async(_name,body)=>{
+    if(body.expectedVersion==='a'.repeat(64)){content='Winning server text';version='b'.repeat(64);throw new ApiError(409,'Concurrent edit');}
+    expect(body).toMatchObject({content:'My local text',exec:true,expectedVersion:'b'.repeat(64)});
+    content=body.content;serverExec=body.exec??false;version='c'.repeat(64);return{draft:draft()};
+  });
+  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});render(<QueryClientProvider client={client}><DraftEditor name="report" /></QueryClientProvider>);
+  const editor=await screen.findByRole('textbox',{name:'SKILL.md'});
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Save draft file'}) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.change(editor,{target:{value:'My local text'}});fireEvent.click(screen.getByRole('checkbox',{name:'executable'}));
+  fireEvent.click(screen.getByRole('button',{name:'Save draft file'}));
+  await screen.findByRole('region',{name:'Draft file conflict'});
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Restore my text and mode to merge'}) as HTMLButtonElement).disabled).toBe(false));
+  expect((screen.getByRole('checkbox',{name:'executable'}) as HTMLInputElement).checked).toBe(false);
+  expect((screen.getByRole('checkbox',{name:'Your unsaved executable choice'}) as HTMLInputElement).checked).toBe(true);
+  expect(screen.getByText('Your unsaved executable mode: executable')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button',{name:'Restore my text and mode to merge'}));
+  expect((editor as HTMLTextAreaElement).value).toBe('My local text');
+  expect((screen.getByRole('checkbox',{name:'executable'}) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole('button',{name:'Save draft file'}));
+  await screen.findByText('Draft file saved. The draft is not active.');expect(serverExec).toBe(true);expect(writes).toHaveBeenCalledTimes(2);
+});
+
+for (const recovery of ['recreate','discard'] as const) it(`keeps a deleted default SKILL.md conflict available for explicit ${recovery}`, async () => {
+  let missing=false,content='Original instructions',version='a'.repeat(64);
+  const draft=()=>({name:'report',base:{id:'private:report',digest:null},files:missing?[]:[{path:'SKILL.md',size:content.length,exec:false,sha256:version,kind:'text' as const}],updatedAt:'2026-01-01T00:00:00Z',validation:{valid:!missing,errors:missing?['SKILL.md is missing']:[],warnings:[]},digest:missing?null:`sha256:${version}`});
+  vi.spyOn(skillsApi,'draft').mockImplementation(async()=>({draft:draft()}));
+  vi.spyOn(skillsApi,'draftFile').mockImplementation(async()=>{
+    if(missing)throw new ApiError(404,'No draft file');
+    return{id:'draft:report',path:'SKILL.md',size:content.length,content,kind:'text',truncated:false,sha256:version,version,exec:false};
+  });
+  const writes=vi.spyOn(skillsApi,'writeDraftFile').mockImplementation(async(_name,body)=>{
+    if(body.expectedVersion!==null){missing=true;throw new ApiError(409,'The file was removed');}
+    expect(body.expectedVersion).toBeNull();content=body.content;missing=false;version='b'.repeat(64);return{draft:draft()};
+  });
+  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});render(<QueryClientProvider client={client}><DraftEditor name="report" /></QueryClientProvider>);
+  const editor=await screen.findByRole('textbox',{name:'SKILL.md'});
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Save draft file'}) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.change(editor,{target:{value:'Retained root instructions'}});fireEvent.click(screen.getByRole('button',{name:'Save draft file'}));
+  await screen.findByText(/Another client removed this file/);
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Recreate file with my changes'}) as HTMLButtonElement).disabled).toBe(false));
+  expect((screen.getByRole('textbox',{name:'Your unsaved draft changes'}) as HTMLTextAreaElement).value).toBe('Retained root instructions');
+  if(recovery==='recreate') {
+    fireEvent.click(screen.getByRole('button',{name:'Recreate file with my changes'}));
+    await screen.findByText('Draft file saved. The draft is not active.');expect(missing).toBe(false);expect(content).toBe('Retained root instructions');
+  } else {
+    fireEvent.click(screen.getByRole('button',{name:'Discard my local changes'}));
+    await screen.findByText('No files yet. Add SKILL.md first.');expect(missing).toBe(true);expect(writes).toHaveBeenCalledTimes(1);
+  }
 });
