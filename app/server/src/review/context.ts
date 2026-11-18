@@ -20,6 +20,7 @@ export function boardSource(ref: string, raw: unknown): Source {
 export function boardSources(ref: string, raw: unknown): Source[] {
   if (!ref.endsWith(':earlier_findings') || !Array.isArray(raw) || raw.length > 100) return [boardSource(ref, raw)];
   const full = source(ref, raw, true, Number.MAX_SAFE_INTEGER);
+  if (raw.length === 0) return [full]; // Attest a collected empty history with its original identity.
   const incomplete = raw.some(row => row && typeof row === 'object' && row.truncated === true);
   const chunks: string[] = [];
   for (let start = 0; start < full.text.length;) {
@@ -31,7 +32,7 @@ export function boardSources(ref: string, raw: unknown): Source[] {
   const count = chunks.length;
   return chunks.map((text, part) => {
     return { ...full, ref: count === 1 ? ref : `${ref}:part-${part + 1}-of-${count}`, text,
-      revision: digest(`${full.revision}\0${part}\0${text}`), truncated: incomplete };
+      revision: full.revision, truncated: incomplete };
   });
 }
 export function excluded(path: string, exclusions: string[]): boolean {

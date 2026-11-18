@@ -100,6 +100,21 @@ it.each([
   expect(f.counts()).toEqual({ reviews: 0, merges: 0, deploys: 0, completions: 0 });
 });
 
+it('preserves an explicit empty prior-findings source and its original identity', () => {
+  const ref = 'board:t_123abc:earlier_findings';
+  expect(boardSources(ref, [])).toEqual([source(ref, [])]);
+  expect(boardSources(ref, [])[0]).toMatchObject({ ref, text: '[]', missing: false, truncated: false });
+});
+
+it.each([20, POLICY.sourceChars * 3])('retains original revision for a complete %i-character prior collection', size => {
+  const ref = 'board:t_123abc:earlier_findings', raw = [{ verdict: '界'.repeat(size), truncated: false }];
+  const original = source(ref, raw, true, Number.MAX_SAFE_INTEGER), parts = boardSources(ref, raw);
+  expect(parts.map(part => part.text).join('')).toBe(original.text);
+  expect(parts.every(part => part.revision === source(ref, raw).revision && !part.missing && !part.truncated)).toBe(true);
+  if (parts.length === 1) expect(parts[0]!.ref).toBe(ref);
+  else expect(parts.map(part => part.ref)).toEqual(parts.map((_, index) => `${ref}:part-${index + 1}-of-${parts.length}`));
+});
+
 it('dispatches complete prior findings above the former database limit', async () => {
   const f = fixture(), s = snapshot();
   const raw = [{ verdict: JSON.stringify({ findings: [{ fix: 'x'.repeat(12_000) }] }), truncated: false }];
