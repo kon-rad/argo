@@ -20,6 +20,7 @@ const budget = (key: string, fallback: number, ceiling: number) => {
 const home = homedir();
 const stateDir = env.USAGE_PUSH_STATE ?? join(home, '.local', 'share', 'secondbrain');
 const cursorFile = join(stateDir, 'usage-push-cursor.json');
+const zenSessionsDir = env.ZEN_SESSIONS_DIR ?? (env.VAULT_ROOT ? join(env.VAULT_ROOT, '.zen', 'sessions') : null);
 if (process.argv.includes('--doctor')) {
   const dir = join(env.CODEX_HOME ?? join(home, '.codex'), 'sessions');
   try {
@@ -75,7 +76,7 @@ try {
     claudeProjectsDir: env.CLAUDE_PROJECTS_DIR ?? join(home, '.claude', 'projects'),
     codexSessionsDir: join(env.CODEX_HOME ?? join(home, '.codex'), 'sessions'),
     // zen-agent chats on this machine: the vault's .zen/sessions is gitignored, so they reach the server only from here.
-    zenSessionsDir: env.ZEN_SESSIONS_DIR ?? join(env.VAULT_ROOT ?? '.', '.zen', 'sessions'),
+    zenSessionsDir,
     planLog: join(stateDir, 'plan-usage.ndjson'),
     maxBytes: budget('USAGE_PUSH_MAX_BYTES', 20_000_000, 64 * 1024 * 1024),
     maxMs: budget('USAGE_PUSH_TICK_MS', 30_000, 120_000),
@@ -86,7 +87,7 @@ try {
   const roots = [
     ['claude-code', env.CLAUDE_PROJECTS_DIR ?? join(home, '.claude', 'projects')],
     ['codex', join(env.CODEX_HOME ?? join(home, '.codex'), 'sessions')],
-    ['zen', env.ZEN_SESSIONS_DIR ?? join(env.VAULT_ROOT ?? '.', '.zen', 'sessions')],
+    ...(zenSessionsDir ? [['zen', zenSessionsDir]] : []),
   ];
   for (const [runtime, path] of roots) {
     const health: CollectionHealth = {
