@@ -26,7 +26,7 @@ function fakeProvider(overrides: Partial<SocialProvider> = {}): SocialProvider {
 async function connectAccount(expiresAt = new Date(T0.getTime() + 3600_000)) {
   return saveConnectedAccount(
     'linkedin',
-    { providerAccountId: 'urn:li:person:abc', displayName: 'Konrad', tokens: { accessToken: 'tok', accessTokenExpiresAt: expiresAt, refreshToken: null, refreshTokenExpiresAt: null } },
+    { providerAccountId: 'urn:li:person:abc', displayName: 'Jane', tokens: { accessToken: 'tok', accessTokenExpiresAt: expiresAt, refreshToken: null, refreshTokenExpiresAt: null } },
     KEY,
   );
 }

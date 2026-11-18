@@ -1,0 +1,77 @@
+{
+ "id": "count-and-names-exact",
+ "note": "Only what is visible may be counted or named; a typo in a name is not a typo in a filename.",
+ "parts": [
+  {
+   "step": "prompt",
+   "text": "Read org.yaml and write routines.json with the agents that have routines."
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"file_path\":\"/work/org.yaml\"}",
+   "toolName": "Read"
+  },
+  {
+   "step": "tool_result",
+   "text": "sol: routines at 05:30; atlas: routines at 08:00; juno: routines sun 20:00; lena: no routines",
+   "isError": null
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"file_path\":\"/work/routines.json\",\"content\":\"{\\\"sol\\\":[\\\"05:30\\\"],\\\"atlas\\\":[\\\"08:00\\\"],\\\"juno\\\":[\\\"sun 20:00\\\"],\\\"lena\\\":[\\\"09:00\\\"]}\"}",
+   "toolName": "Write"
+  },
+  {
+   "step": "tool_result",
+   "text": "ok",
+   "isError": null
+  },
+  {
+   "step": "response",
+   "text": "Wrote the file. Wait, lena has no routines in org.yaml, so I must remove her."
+  },
+  {
+   "step": "tool_call",
+   "text": "{\"file_path\":\"/work/routines.json\",\"old_string\":\",\\\"lena\\\":[\\\"09:00\\\"]\",\"new_string\":\"\"}",
+   "toolName": "Edit"
+  },
+  {
+   "step": "tool_result",
+   "text": "ok",
+   "isError": null
+  },
+  {
+   "step": "response",
+   "text": "Fixed. routines.json now holds three agents: sol, atlas and juno."
+  }
+ ],
+ "expect": {
+  "outcome": "finished",
+  "mustMention": [
+   [
+    "three",
+    "3"
+   ],
+   [
+    "lena"
+   ]
+  ],
+  "mustNotMention": [
+   "nine",
+   "typo",
+   "echo"
+  ],
+  "filesEdited": [
+   "/work/routines.json"
+  ],
+  "cards": []
+ },
+ "reference": {
+  "request": "Read org.yaml and write routines.json with the agents that have routines.",
+  "done": "Wrote /work/routines.json, first including lena by mistake, then removed her because org.yaml gives her no routines. The file now holds three agents: sol, atlas and juno.",
+  "learned": "Only sol, atlas and juno have routines in org.yaml.",
+  "open_items": "",
+  "outcome": "finished",
+  "facts": []
+ }
+}

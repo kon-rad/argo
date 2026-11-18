@@ -1,7 +1,8 @@
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
-import { bufferMetadata, bufferProvider } from '../src/social/providers/buffer.js';
+import { PostOptionsSchema } from '../src/routes/social.js';
+import { asset, bufferMetadata, bufferProvider } from '../src/social/providers/buffer.js';
 import type { PostMedia, SocialProvider, StoredAccount } from '../src/social/providers/types.js';
 import { checkPost, imageSize, instagramLength, xWeightedLength } from '../src/social/rules.js';
 import { pollHandedOff, publicMediaUrl, runDuePosts } from '../src/social/scheduler.js';
@@ -139,6 +140,30 @@ describe('bufferMetadata', () => {
     expect(bufferMetadata('x', { body: 'one', media: [], options: { thread: ['two'] } })).toEqual({
       twitter: { thread: [{ text: 'one', assets: [] }, { text: 'two', assets: [] }] },
     });
+  });
+});
+
+describe('reel cover (coverAt)', () => {
+  it('sends an Instagram reel cover as thumbnailOffset in ms, and no cover elsewhere', () => {
+    const v = { ...video(), publicUrl: `${BASE}/api/social/media/tok/reel.mp4` };
+    expect(asset(v, 'instagram', { coverAt: 4.25 })).toEqual({ video: { url: v.publicUrl, metadata: { thumbnailOffset: 4250 } } });
+    expect(asset(v, 'instagram', {})).toEqual({ video: { url: v.publicUrl } });
+    expect(asset(v, 'youtube', { title: 'T' })).toEqual({ video: { url: v.publicUrl, metadata: { title: 'T' } } });
+  });
+
+  it('checks coverAt: a video on Instagram, inside its length, and nowhere else', () => {
+    const reel = [{ width: 1080, height: 1920, seconds: 45 }];
+    expect(() => checkPost('instagram', 'c', [video()], { coverAt: 4 }, LIMITS, reel)).not.toThrow();
+    expect(() => checkPost('instagram', 'c', [video()], { coverAt: 50 }, LIMITS, reel)).toThrow(/video is 45\.0 s/);
+    expect(() => checkPost('instagram', 'c', [image()], { coverAt: 1 }, LIMITS)).toThrow(/has none/);
+    expect(() => checkPost('youtube', 'd', [video()], { title: 'T', coverAt: 1 }, LIMITS, reel)).toThrow(/Instagram only/);
+    expect(() => checkPost('x', 'post', [], { coverAt: 1 }, LIMITS)).toThrow(/Instagram only/);
+  });
+
+  it('accepts coverAt as a number in the options schema', () => {
+    expect(PostOptionsSchema.safeParse({ coverAt: 3.5 }).success).toBe(true);
+    expect(PostOptionsSchema.safeParse({ coverAt: -1 }).success).toBe(false);
+    expect(PostOptionsSchema.safeParse({ coverAt: '3' }).success).toBe(false);
   });
 });
 

@@ -59,7 +59,8 @@ export async function upsertSession(tx: TxClient, s: SessionInput): Promise<{ id
   const params = [s.source, s.host, s.externalId, s.parentExternalId, s.project, s.title === null ? null : r.text(clean(s.title)), s.model,
     s.startedAt, s.endedAt, s.messageCount ?? 0, s.inputTokens, s.outputTokens, s.costUsd,
     JSON.stringify(r.deep(clean(s.meta))), s.b2Path, s.messageCount === null];
-  // $16 = stats come from archive_messages (Claude): keep the computed columns.
+  // $16 = stats come from archive_messages (Claude): keep the computed columns, and merge meta, since each
+  // append-only chunk only knows what its own lines said (the channel tag is in the first prompt).
   const { rows } = await tx.query<{ id: number }>(
     `INSERT INTO archive_sessions AS a (source, host, external_id, parent_external_id, project, title, model,
        started_at, ended_at, message_count, input_tokens, output_tokens, cost_usd, meta, b2_path)
@@ -72,11 +73,12 @@ export async function upsertSession(tx: TxClient, s: SessionInput): Promise<{ id
        ended_at=CASE WHEN $16 THEN a.ended_at ELSE EXCLUDED.ended_at END,
        message_count=CASE WHEN $16 THEN a.message_count ELSE EXCLUDED.message_count END,
        input_tokens=EXCLUDED.input_tokens, output_tokens=EXCLUDED.output_tokens, cost_usd=EXCLUDED.cost_usd,
-       meta=EXCLUDED.meta, b2_path=COALESCE(EXCLUDED.b2_path, a.b2_path), updated_at=now()
+       meta=CASE WHEN $16 THEN a.meta || EXCLUDED.meta ELSE EXCLUDED.meta END,
+       b2_path=COALESCE(EXCLUDED.b2_path, a.b2_path), updated_at=now()
      WHERE (a.parent_external_id, a.project, a.title, a.model, a.input_tokens, a.output_tokens, a.cost_usd, a.meta, a.b2_path)
        IS DISTINCT FROM (COALESCE(EXCLUDED.parent_external_id, a.parent_external_id), COALESCE(EXCLUDED.project, a.project),
          COALESCE(EXCLUDED.title, a.title), COALESCE(EXCLUDED.model, a.model), EXCLUDED.input_tokens, EXCLUDED.output_tokens,
-         EXCLUDED.cost_usd, EXCLUDED.meta, COALESCE(EXCLUDED.b2_path, a.b2_path))
+         EXCLUDED.cost_usd, CASE WHEN $16 THEN a.meta || EXCLUDED.meta ELSE EXCLUDED.meta END, COALESCE(EXCLUDED.b2_path, a.b2_path))
        OR (NOT $16 AND (a.started_at, a.ended_at, a.message_count)
          IS DISTINCT FROM (EXCLUDED.started_at, EXCLUDED.ended_at, EXCLUDED.message_count))
      RETURNING id`, params);

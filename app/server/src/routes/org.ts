@@ -18,12 +18,17 @@ import {
   pageMessages,
   post,
   searchMessages,
+  trackerRef,
   whoami,
   type Agent,
   type Kind,
 } from '../org.js';
 import { listApprovals, listFacts, shipDecide } from '../org-powers.js';
+import { listEpisodes } from '../org-memory.js';
 import { config } from '../config.js';
+import { query } from '../db.js';
+import { log } from '../logger.js';
+import { mimeOf, resolveVaultFile } from '../org-avatars.js';
 import { HttpError, intParam, parseOr400, wrap } from './http.js';
 
 /**
@@ -50,7 +55,7 @@ const PostBody = z.object({
 const DmBody = z.object({ to: Name, body: z.string().trim().min(1).max(8000) });
 const DecideBody = z.object({ note: z.string().trim().max(2000).optional() });
 const Slug = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
-const TaskQuery = z.object({ project: Slug.optional(), feature: Slug.optional(), agent: Name.optional(), limit: z.coerce.number().int().min(1).max(1000).optional() });
+const TaskQuery = z.object({ area: Slug.optional(), project: Slug.optional(), feature: Slug.optional(), agent: Name.optional(), limit: z.coerce.number().int().min(1).max(1000).optional() });
 
 interface AgentCaps {
   wakes_per_day: number;
@@ -125,6 +130,24 @@ export function orgRouter(vaultRoot: string): Router {
     }),
   );
 
+  // An agent's portrait, the vault file its org entry names (docs/org-yaml.md "Avatars"). 404 when it has none or the
+  // file is missing, so the pages fall back to the name chip. Cached for an hour: a redraw changes the file, not the URL.
+  router.get(
+    '/avatar/:name',
+    wrap(async (req, res) => {
+      const name = parseOr400(Name, req.params['name']);
+      const { rows } = await query<{ avatar: string | null }>(`SELECT avatar FROM org_agents WHERE name = $1 AND retired_at IS NULL`, [name]);
+      const abs = resolveVaultFile(vaultRoot, rows[0]?.avatar);
+      const mime = abs ? mimeOf(abs) : null;
+      if (!abs || !mime) throw new HttpError(404, `no avatar for ${name}`);
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.type(mime);
+      res.sendFile(abs, { dotfiles: 'allow' }, (err) => {
+        if (err && !res.headersSent) res.status(404).json({ error: `no avatar file for ${name}` });
+      });
+    }),
+  );
+
   router.get(
     '/channels',
     wrap(async (_req, res) => {
@@ -180,13 +203,14 @@ export function orgRouter(vaultRoot: string): Router {
     wrap(async (req, res) => {
       const name = parseOr400(Name, req.params['name']);
       const agent = await orgErrors(() => getAgent(name));
-      const [who, runs, posts, limits, prompt, memory] = await Promise.all([
+      const [who, runs, posts, limits, prompt, memory, episodes] = await Promise.all([
         whoami(agent),
         agentRuns(name),
         messagesBy(owner(res), name),
         caps(),
         readText(join(vaultRoot, '.claude', 'agents', `${name}.md`)),
         readText(join(vaultRoot, '.agents', 'org', 'memory', `${name}.md`)),
+        listEpisodes(name, 20),
       ]);
       res.json({
         agent: who.agent,
@@ -200,19 +224,24 @@ export function orgRouter(vaultRoot: string): Router {
         caps: limits[name] ?? null,
         // The compiled definition minus its frontmatter: the identity, personality and rules the agent runs with.
         prompt: prompt ? prompt.replace(/^---\n[\s\S]*?\n---\n/, '').trim() : null,
+        // The hand-written memory file and the finished wakes behind it. The bot's durable claims are memory_facts
+        // tagged with its name now (engine core v2 phase 6): read them with `secondbrain memory list --agent <name>`.
         memory,
         memory_path: `.agents/org/memory/${name}.md`,
+        episodes,
       });
     }),
   );
 
-  // The work graph: cards for bots with their project and feature (task_links). Status lives on the kanban (agent-hub).
+  // The work graph: cards for bots with their area and project (task_links). Status lives on the kanban (agent-hub).
   router.get(
     '/tasks',
     wrap(async (req, res) => {
-      const q = parseOr400(TaskQuery, req.query);
+      const { area, project, feature, ...q } = parseOr400(TaskQuery, req.query);
+      // An older page may still ask with ?project=<area>&feature=<project>: read it, and say so in the log.
+      const ref = await orgErrors(() => trackerRef({ area, project, feature }, (line) => log.warn(`org API: ${line}`)));
       res.setHeader('Cache-Control', 'no-store');
-      res.json({ tasks: await listTasks(q) });
+      res.json({ tasks: await listTasks({ ...q, ...ref }) });
     }),
   );
 

@@ -73,6 +73,7 @@ export function fileRouter(vaultRoot: string): Router {
   // Names to notes, for text that isn't a vault file: kanban cards, comments,
   // bot results. `?ref=Research/ai/x.md&ref=x` answers each with the indexed
   // path the scanner would link it to, or null. Same rules as the link graph.
+  // A folder ref ending in `/` answers with the folder path and its slash.
   router.get(
     '/resolve',
     wrap(async (req, res) => {
@@ -91,6 +92,11 @@ export function fileRouter(vaultRoot: string): Router {
         for (const ref of refs) {
           const id = resolve(ref);
           resolved[ref] = id === null ? null : (pathById.get(id) ?? null);
+          // A folder ("Areas/x/kit/"): resolves to itself, with the slash, when the index has a file below it.
+          if (resolved[ref] === null && ref.endsWith('/')) {
+            const dir = ref.replace(/^\.\//, '').replace(/\/+$/, '');
+            if (dir && files.some((f) => f.path.startsWith(`${dir}/`))) resolved[ref] = `${dir}/`;
+          }
         }
       }
       res.json({ resolved });
@@ -122,7 +128,7 @@ export function fileRouter(vaultRoot: string): Router {
       const next = Buffer.from(body.content, 'utf8');
       if (next.length > MAX_EDIT_BYTES) throw new HttpError(413, 'too large to save from the browser');
 
-      // Optimistic lock. The vault has other writers — Obsidian on the Mac, the
+      // Optimistic lock. The vault has other writers - Obsidian on a laptop, the
       // Hermes agent and the git auto-sync on the server — and silently
       // overwriting one of their changes is the worst thing an editor can do.
       const current = await readFile(abs).catch(() => null);

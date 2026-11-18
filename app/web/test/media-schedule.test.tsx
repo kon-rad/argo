@@ -44,6 +44,7 @@ function mount(path: string, brands: MediaBrandResult[] = [BRAND, BROKEN]) {
     const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
     if (u.includes('/api/media/brands/argo/calendar')) return reply(CAL);
     if (u.includes('/api/media/brands')) return reply({ brands });
+    if (u.includes('/api/board/cards')) return reply({ cards: [{ id: 't_0944bc6c', title: 'Publish the reel', status: 'review' }] });
     if (u.includes('/approve')) return reply({ post: post({ status: 'queued' }) });
     return reply({ error: { message: 'not available' } }, 503);
   }));
@@ -103,7 +104,9 @@ describe('MediaSchedule', () => {
     mount('/media-schedule?brand=argo&view=list&date=2026-10-21&post=2');
     expect(await screen.findByRole('complementary', { name: 'Post detail' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'media/social-posts/one.md' }).getAttribute('href')).toBe('/file/media/social-posts/one.md');
-    expect(screen.getByRole('link', { name: 't_0944bc6c' }).getAttribute('href')).toBe('/agents/board/t_0944bc6c');
+    expect(screen.getByRole('link', { name: 't_0944bc6c' }).getAttribute('href')).toBe('/board/t_0944bc6c');
+    expect(await screen.findByText(/Publish the reel \(review\)/)).toBeTruthy();
+    expect(calls.some((c) => c.url.includes('/api/board/cards?board=exo'))).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url.endsWith('/api/social/posts/2/approve'))).toBe(true));
   });

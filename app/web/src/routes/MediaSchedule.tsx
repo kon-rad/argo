@@ -238,8 +238,8 @@ function ChannelsPanel({ brand, channels, color }: { brand: Extract<MediaBrandRe
 /** The brand's tracker projects and the open cards behind them (cards need the org module and the hub; both optional). */
 function LinksStrip({ brand }: { brand: Extract<MediaBrandResult, { ok: true }> }) {
   const links = useQuery({ queryKey: ['org', 'tasks'], queryFn: () => api.orgTasks(), staleTime: 30_000, retry: false });
-  const board = useQuery({ queryKey: ['hub-board', 'exo'], queryFn: () => api.board('exo'), staleTime: 30_000, retry: false });
-  const status = new Map((board.data?.tasks ?? []).map((t) => [t.id, t.status]));
+  const board = useQuery({ queryKey: ['hub-board', 'exo'], queryFn: () => api.boardCards({ board: 'exo' }), staleTime: 30_000, retry: false });
+  const status = new Map((board.data?.cards ?? []).map((t) => [t.id, t.status]));
   const mine = (links.data?.tasks ?? []).filter((t) => t.project_slug && brand.trackerProjects.includes(t.project_slug) && status.has(t.task_id) && !['done', 'archived'].includes(status.get(t.task_id)!));
   if (!brand.trackerProjects.length) return null;
   return (
@@ -249,7 +249,7 @@ function LinksStrip({ brand }: { brand: Extract<MediaBrandResult, { ok: true }> 
       {mine.length > 0 && (
         <div className="mt-1 text-xs">
           <span className="font-semibold">Open cards: </span>
-          {mine.slice(0, 12).map((t) => <Link key={t.task_id} className="mr-2 underline" to={`/agents/board/${t.task_id}`} title={t.title}>{t.task_id}</Link>)}
+          {mine.slice(0, 12).map((t) => <Link key={t.task_id} className="mr-2 underline" to={`/board/${t.task_id}`} title={t.title}>{t.task_id}</Link>)}
           {mine.length > 12 && `and ${mine.length - 12} more`}
         </div>
       )}
@@ -326,8 +326,8 @@ function ListView({ entries, color, onSelect }: { entries: Entry[]; color: (id: 
 /** One post: full text, options, links to the live post, draft file, card and style guide, and the owner's approve and cancel. */
 function Detail({ post, channel, onClose }: { post: MediaPost; channel: MediaChannel | undefined; onClose: () => void }) {
   const qc = useQueryClient();
-  const board = useQuery({ queryKey: ['hub-board', 'exo'], queryFn: () => api.board('exo'), staleTime: 30_000, retry: false, enabled: Boolean(post.card_id) });
-  const card = board.data?.tasks.find((t) => t.id === post.card_id);
+  const board = useQuery({ queryKey: ['hub-board', 'exo'], queryFn: () => api.boardCards({ board: 'exo' }), staleTime: 30_000, retry: false, enabled: Boolean(post.card_id) });
+  const card = board.data?.cards.find((t) => t.id === post.card_id);
   const refresh = (): void => void qc.invalidateQueries({ queryKey: ['media-calendar'] });
   const approve = useMutation({ mutationFn: () => api.approvePost(post.id), onSuccess: refresh });
   const cancel = useMutation({ mutationFn: () => api.cancelPost(post.id), onSuccess: refresh });
@@ -351,7 +351,7 @@ function Detail({ post, channel, onClose }: { post: MediaPost; channel: MediaCha
       <dl className="mt-2 space-y-1 text-xs">
         {post.remote_url && <div><dt className="inline text-[var(--ink-dim)]">Live: </dt><dd className="inline"><a className="underline" href={post.remote_url} target="_blank" rel="noreferrer">{post.remote_url}</a></dd></div>}
         {post.source_path && <div><dt className="inline text-[var(--ink-dim)]">Draft file: </dt><dd className="inline"><Link className="underline" to={`/file/${post.source_path}`}>{post.source_path}</Link></dd></div>}
-        {post.card_id && <div><dt className="inline text-[var(--ink-dim)]">Card: </dt><dd className="inline"><Link className="underline" to={`/agents/board/${post.card_id}`}>{post.card_id}</Link>{card ? ` ${card.title} (${card.status})` : ''}</dd></div>}
+        {post.card_id && <div><dt className="inline text-[var(--ink-dim)]">Card: </dt><dd className="inline"><Link className="underline" to={`/board/${post.card_id}`}>{post.card_id}</Link>{card ? ` ${card.title} (${card.status})` : ''}</dd></div>}
         {channel?.style_guide && !channel.styleGuideMissing && <div><dt className="inline text-[var(--ink-dim)]">Style guide: </dt><dd className="inline"><Link className="underline" to={`/file/${channel.style_guide}`}>{channel.style_guide.split('/').pop()}</Link></dd></div>}
       </dl>
       <div className="mt-3 flex items-center gap-2">

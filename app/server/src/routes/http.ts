@@ -43,7 +43,7 @@ export function intParam(raw: string | string[] | undefined, what: string): numb
 }
 
 /**
- * `expose` is true on the Mac, where the raw message is the fastest way to
+ * `expose` is true on a local install, where the raw message is the fastest way to
  * debug. On the server an unexpected error's text (SQL, file paths) is
  * reconnaissance for anyone who can trigger it, so it stays in the log.
  */

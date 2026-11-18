@@ -52,8 +52,10 @@ Rules the server enforces when it loads a file (a brand that breaks one becomes 
 
 ## Data
 
-Migration `1756000014600` adds `social_posts.card_id` and `social_posts.source_path` (both nullable) and an index on `(account_id, scheduled_for)`. `cli-social queue` takes `--card <id>` and `--source <vault path>`.
+Migration `1756000019210` adds `social_posts.card_id` and `social_posts.source_path` (both nullable) and an index on `(account_id, scheduled_for)`. `cli-social queue` takes `--card <id>` and `--source <vault path>`.
 
 ## Not in v1
 
 Editing copy, drag to reschedule, connecting channels, analytics, putting manual channels on the calendar, recurring cron entries. The card chips show an id without a title when the agent hub does not answer.
+
+The social add-on manifest registers the API and navigation. The calendar uses the current board cards API and `/board/<id>` links.

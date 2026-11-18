@@ -104,6 +104,7 @@ export function checkPost(
       return;
 
     case 'x': {
+      if (options.coverAt !== undefined) bad('x', 'coverAt works on Instagram only');
       const parts = [body, ...(options.thread ?? [])];
       parts.forEach((text, i) => {
         const len = xWeightedLength(text);
@@ -119,6 +120,10 @@ export function checkPost(
       if (len > INSTAGRAM_CAPTION_MAX) bad('instagram', `the caption counts ${len} (line breaks count 2); ${INSTAGRAM_CAPTION_MAX} at most`);
       if (!media.length) bad('instagram', 'a post needs an image or a video');
       if (type === 'reel' && !videos.length) bad('instagram', 'a reel needs a video');
+      if (options.coverAt !== undefined && !videos.length) bad('instagram', 'coverAt picks a frame of a video; this post has none');
+      if (options.coverAt !== undefined && probe && options.coverAt > probe.seconds) {
+        bad('instagram', `coverAt is ${options.coverAt} s but the video is ${probe.seconds.toFixed(1)} s`);
+      }
       if (probe && type === 'reel' && (probe.seconds < REEL_MIN_SECONDS || probe.seconds > REEL_MAX_SECONDS)) {
         bad('instagram', `the reel is ${probe.seconds.toFixed(1)} s; Instagram auto-publishes ${REEL_MIN_SECONDS} s to ${REEL_MAX_SECONDS / 60} min`);
       }
@@ -136,6 +141,7 @@ export function checkPost(
 
     case 'youtube': {
       if (videos.length !== 1 || images.length) bad('youtube', 'a Short is exactly one video');
+      if (options.coverAt !== undefined) bad('youtube', 'coverAt works on Instagram only; Buffer cannot set a Short\'s cover');
       const title = options.title?.trim();
       if (!title) bad('youtube', 'a title is required (--option title=...)');
       if (title.length > YOUTUBE_TITLE_MAX) bad('youtube', `the title is ${title.length} characters; ${YOUTUBE_TITLE_MAX} at most`);

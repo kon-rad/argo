@@ -7,9 +7,11 @@ import EventFeed from '../../components/EventFeed.js';
 import { ChatInput } from '../../components/ChatInput.js';
 import { useStickToBottom } from '../../lib/useStickToBottom.js';
 import HubError from './HubError.js';
+import HarnessSwitch from './HarnessSwitch.js';
+import PresetLauncher from './PresetLauncher.js';
 
 /**
- * Chat with Claude Code on the droplet, in the vault, on the subscription: a terminal-style conversation that shows
+ * Chat with Claude Code on the server, in the vault, on the subscription: a terminal-style conversation that shows
  * each tool call as it happens. agent-hub keeps one `claude -p` per open chat and resumes it after it idles out,
  * so a chat started on the laptop continues on the Pi. Actions are reviewed by auto mode; anything that would need
  * a person to approve is denied (there's no approval UI yet).
@@ -34,7 +36,9 @@ export default function Chat() {
   return (
     <div className="flex h-full min-h-0">
       <aside className={`flex w-72 shrink-0 flex-col border-r border-[var(--rule)] ${chatId ? 'max-md:hidden' : 'max-md:w-full'}`}>
-        <div className="flex items-center gap-2 border-b border-[var(--rule)] p-3">
+        <PresetLauncher />
+        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--rule)] p-3">
+          <HarnessSwitch />
           <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model"
             className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
             <option value="opus">Opus</option>
@@ -66,7 +70,7 @@ export default function Chat() {
       </aside>
       <section className={`flex min-w-0 flex-1 flex-col ${chatId ? '' : 'max-md:hidden'}`}>
         {chatId ? <Conversation id={chatId} onBack={() => navigate('/agents/chat')} />
-          : <p className="p-6 text-sm text-[var(--ink-dim)]">Start a new chat or pick one on the left. Claude works in the vault on the droplet.</p>}
+          : <p className="p-6 text-sm text-[var(--ink-dim)]">Start a new chat or pick one on the left. Claude works in the vault on the server.</p>}
       </section>
     </div>
   );
