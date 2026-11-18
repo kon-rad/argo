@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { findHomes, outputRunAt, syncAgents } from '../src/agents/sync.js';
 import { createApp } from '../src/app.js';
 import { query } from '../src/db.js';
@@ -211,4 +211,9 @@ it('Hermes no-change health uses source message times and counter revisions, ind
   expect(counts.messages).toBe(1);
   const attempts = (await query(`SELECT backlog FROM collection_attempts WHERE host='test-box' AND path=$1 ORDER BY attempt_seq DESC LIMIT 2`, [root])).rows;
   expect(attempts.map(r => r.backlog)).toEqual([0, 1]);
+});
+
+afterAll(async () => {
+  await truncateAll();
+  await query("DELETE FROM usage_hosts WHERE slug IN ('test-box', 'other-box')");
 });

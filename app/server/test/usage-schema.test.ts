@@ -10,7 +10,7 @@ describe('usage schema', () => {
       `SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE ANY($1)
        ORDER BY 1`, [['usage_%', 'plan_usage_%', 'hermes_usage_%']]);
     expect(rows.map((r) => r.table_name)).toEqual(
-      ['hermes_usage_snapshots', 'plan_usage_snapshots', 'usage_calls', 'usage_facts', 'usage_files', 'usage_hosts', 'usage_runs']);
+      ['hermes_usage_snapshots', 'plan_usage_snapshots', 'usage_calls', 'usage_facts', 'usage_files', 'usage_hosts', 'usage_import_quarantine', 'usage_runs']);
   });
 
   it('counts one call once per source, host and call id', async () => {

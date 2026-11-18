@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { query } from '../src/db.js';
 import { syncUsage } from '../src/usage/sync.js';
 import { truncateAll } from './helpers.js';
@@ -85,4 +85,9 @@ it('reports source-time health on no-change ticks and durably retains source poi
   expect(quarantine).toHaveLength(1);
   expect(quarantine[0]!.origin_path).toBe(path);
   expect(quarantine[0]!.wire).not.toContain('synthetic-poison-long-enough');
+});
+
+afterAll(async () => {
+  await truncateAll();
+  await query("DELETE FROM usage_hosts WHERE slug IN ('test-box', 'other-box')");
 });

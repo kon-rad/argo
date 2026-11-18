@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { beforeEach, expect, it } from 'vitest';
+import { afterAll, beforeEach, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { query } from '../src/db.js';
 import { addDevice } from '../src/ingest/devices.js';
@@ -145,4 +145,9 @@ it('keeps measurable accepted event times beside a quarantined fragment on the s
   const row = (await query('SELECT imported_at,quarantined,outcome FROM collection_streams')).rows[0]!;
   expect(row.imported_at.toISOString()).toBe('2020-01-01T00:00:00.000Z');
   expect(row).toMatchObject({ quarantined: 1, outcome: 'retry' });
+});
+
+afterAll(async () => {
+  await truncateAll();
+  await query("DELETE FROM usage_hosts WHERE slug IN ('test-box', 'other-box')");
 });
