@@ -10,6 +10,12 @@ export function source(ref: string, raw: unknown, essential = true, limit: numbe
   return { ref, revision: digest(text), text: redacted.slice(0, limit), essential,
     missing: !text.trim(), truncated: text.length > limit, redacted:redacted !== text };
 }
+/** Keep both transport and database completeness signals when collecting board context. */
+export function boardSource(ref: string, raw: unknown): Source {
+  const collected = source(ref, raw);
+  const incomplete = Array.isArray(raw) && (raw.length > 100 || raw.some(row => row && typeof row === 'object' && row.truncated === true));
+  return { ...collected, truncated: collected.truncated || incomplete };
+}
 export function excluded(path: string, exclusions: string[]): boolean {
   const parts = path.split(/[\\/]/);
   return parts.some(p => p.startsWith('.') || /^(?:credentials?|secrets?|CURRENT)$/i.test(p) || /\.(?:pem|key)$/i.test(p)) ||

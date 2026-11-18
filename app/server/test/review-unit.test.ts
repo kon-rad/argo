@@ -83,7 +83,34 @@ import { mkdtemp, writeFile, readFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { vi } from 'vitest';
-import { source, note } from '../src/review/context.js';
+import { source, note, boardSource } from '../src/review/context.js';
+import { POLICY } from '../src/review/policy.js';
+
+it.each([
+  ['source budget', [{ verdict: 'x'.repeat(POLICY.sourceChars), truncated: false }]],
+  ['database truncation', [{ verdict: 'partial', truncated: true }]],
+  ['history overflow', Array.from({ length: 101 }, () => ({ verdict: null, truncated: null }))],
+] as const)('blocks incomplete prior findings before model dispatch: %s', async (_, raw) => {
+  const f = fixture(), s = snapshot();
+  const collected = boardSource('board:t_123abc:earlier_findings', raw);
+  expect(collected.truncated).toBe(true);
+  s.sources.push(collected); f.setCurrent(s);
+  await runReview(f.job, ['test'], f.io);
+  expect(f.job.state).toBe('blocked');
+  expect(f.counts()).toEqual({ reviews: 0, merges: 0, deploys: 0, completions: 0 });
+});
+
+it('dispatches complete prior findings above the former database limit', async () => {
+  const f = fixture(), s = snapshot();
+  const raw = [{ verdict: JSON.stringify({ findings: [{ fix: 'x'.repeat(12_000) }] }), truncated: false }];
+  const collected = boardSource('board:t_123abc:earlier_findings', raw);
+  expect(collected.truncated).toBe(false);
+  expect(JSON.parse(collected.text)).toEqual(raw);
+  s.sources.push(collected); f.setCurrent(s);
+  await runReview(f.job, ['test'], f.io);
+  expect(f.counts().reviews).toBe(1);
+  expect(f.job.state).toBe('done');
+});
 import { childEnv, command, correctionLookupDisposition, SafeProcessError } from '../src/review/process.js';
 import { targetMain } from '../src/review/target.js';
 import { GitHub, type HostConfig } from '../src/review/adapters.js';
