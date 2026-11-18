@@ -31,7 +31,7 @@ export interface LedgerConfig {
 
 /** `exchange` and `blob` come from the capture proxy: one exact API request/response, and the
  * content-addressed system prompts, tool lists and messages it points at. */
-export type RecordKind = 'session' | 'message' | 'call' | 'counter' | 'exchange' | 'blob';
+export type RecordKind = 'launch' | 'session' | 'message' | 'call' | 'counter' | 'exchange' | 'blob';
 
 /** One ledger row as it travels to the server. `data` never carries a host: the token decides it. */
 export interface WireRow { seq: number; kind: RecordKind; key: string; data: Record<string, unknown> }

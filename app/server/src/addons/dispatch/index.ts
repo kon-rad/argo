@@ -1,3 +1,5 @@
+import { withTransaction } from '../../db.js';
+import { ingestLaunch, type LaunchEnvelope } from '../../usage/provenance.js';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -21,7 +23,7 @@ import type { MessageRow, Routine, ZenAgentRow } from './store.js';
  * runner, classifier and clock, so the tests never spawn a process or call a provider.
  */
 export interface RunnerResult { code: number; stdout: string; stderr: string; timedOut?: boolean; cancelled?: boolean }
-export type Runner = (cmd: string, args: string[], env: NodeJS.ProcessEnv, cwd: string, timeoutMs: number) => Promise<RunnerResult>;
+export type Runner = (cmd: string, args: string[], env: NodeJS.ProcessEnv, cwd: string, timeoutMs: number, onLine?: (line: string) => Promise<void>) => Promise<RunnerResult>;
 export type Classifier = (input: ClassifyInput) => Promise<ClassifyResult>;
 
 export interface DispatchConfig {
@@ -32,6 +34,8 @@ export interface DispatchConfig {
   orgZenCommand: string;
   orgCodexCommand?: string;
   orgCodexHost?: string | null;
+  /** Same native host identity as the Zen trace collector. */
+  usageSyncHost?: string;
   vaultRoot: string;
   /** ORG_TASK_WAKE_RETRIES: re-wakes a ready card gets before it waits for a person (default 2). */
   orgTaskWakeRetries?: number;
@@ -325,6 +329,8 @@ export class Dispatcher {
       }
       throw new Error(problem);
     }
+    // Invalid accounting configuration must leave cards and wakes available for a corrected launch.
+    const host = await withTransaction(tx => store.codexUsageHost(tx, this.deps.config.orgCodexHost));
     const startedAt = this.now();
     const runId = runIdFor(agent.name, startedAt);
     const wakeups = await claimWakeups(agent.name, runId);
@@ -379,13 +385,28 @@ export class Dispatcher {
       // A fresh session learns who it is and whether it can write; a resumed one already holds that.
       if (!resume) prompt = codexPreamble(codexPersona(this.deps.config.vaultRoot, agent.name), Boolean(card)) + prompt;
       const args = codexCommand(model, this.deps.config.vaultRoot, prompt, resume, Boolean(card));
-      const result = parseCodexResult(await this.deps.runner(command, args, { ...env, ORG_RUN: runId, CC_CARD: card ?? '' },
-        this.deps.config.vaultRoot, (budget.minutes + 2) * 60_000));
+      const reason = primaryReason(selected);
+      const launch: LaunchEnvelope = { v: 1, runId, source: 'codex', runtime: 'codex', sessionId: resume,
+        entrypoint: 'exec', trigger: reason === 'routine' ? 'cron' : reason === 'task' ? 'board' : reason,
+        channel: null, persona: agent.name, personaOrigin: 'dispatcher', taskIds: card ? [card] : [] };
+      await withTransaction(tx => ingestLaunch(tx, host, launch));
+      const bind = async (sessionId: string) => {
+        await withTransaction(tx => ingestLaunch(tx, host, { ...launch, sessionId }));
+      };
+      const result = parseCodexResult(await this.deps.runner(command, args,
+        { ...env, ORG_RUN: runId, CC_CARD: card ?? '', SB_LAUNCH_V1: JSON.stringify(launch) },
+        this.deps.config.vaultRoot, (budget.minutes + 2) * 60_000, async line => {
+          let event: Record<string, unknown>;
+          try { event = JSON.parse(line); } catch { return; }
+          if (event.type === 'thread.started' && typeof event.thread_id === 'string') await bind(event.thread_id);
+        }));
+      // Injected runners may only return the complete stdout; the real runner binds on the first native event.
+      if (result.sessionId) await bind(result.sessionId);
       out.ran = true;
       const summary = result.text || `Codex ${result.state} (exit ${result.code})`;
       await store.recordCodexRun({ runId, sessionId: result.sessionId ?? resume, agent: agent.name, model, card,
         startedAt, endedAt: this.now(), state: result.state, text: summary, inputTokens: result.inputTokens,
-        outputTokens: result.outputTokens, wakeupIds: selected.map((w) => w.id), codexHost: this.deps.config.orgCodexHost });
+        outputTokens: result.outputTokens, wakeupIds: selected.map((w) => w.id), codexHost: host });
       if (card && !(await store.cardHasLiveRun(card))) {
         // The bot closed its own card during the run (cli-board finish): no live run, the card in done, review or
         // blocked. A heartbeat would throw "no live run" and the cleanup would turn a done card into a blocked one
@@ -593,6 +614,12 @@ export class Dispatcher {
         if (tier) meta['tier'] = tier;
         if (agent.team_slug) meta['team'] = agent.team_slug;
         if (fellBack) meta['fallback'] = fellBack;
+        const host = this.deps.config.usageSyncHost ?? 'droplet';
+        const envelope: LaunchEnvelope = { v: 1, runId: id, source: 'zen-agent', runtime: 'zen-agent', sessionId: null,
+          entrypoint: card ? 'wake' : 'run', trigger: reason === 'routine' ? 'cron' : reason === 'task' ? 'board' : reason,
+          channel: null, persona: agent.name, personaOrigin: 'dispatcher', taskIds: card ? [card] : [] };
+        await withTransaction(tx => ingestLaunch(tx, host, envelope));
+        meta['launch_v1'] = JSON.stringify(envelope);
         const metaFlags = Object.entries(meta).flatMap(([k, v]) => ['--meta', `${k}=${v}`]);
         const common = ['--json', '--tools', tools.join(','), '--max-turns', String(budgetNow.turns), '--max-tokens', String(budgetNow.tokens),
           '--max-minutes', String(budgetNow.minutes), ...(handoffFile ? ['--handoff-file', handoffFile] : []), ...flags, ...metaFlags];
@@ -601,7 +628,10 @@ export class Dispatcher {
           : ['run', '--file', taskFile, '--persona', agent.name, ...common];
         const env = { ...this.env, ORG_AGENT: agent.name, ORG_RUN: id };
         this.log(`${agent.name}: ${this.deps.config.orgZenCommand} ${args.join(' ')}`);
-        return this.deps.runner(this.deps.config.orgZenCommand, args, env, this.deps.config.vaultRoot, (budget.minutes + 2) * 60_000);
+        const result = await this.deps.runner(this.deps.config.orgZenCommand, args, env, this.deps.config.vaultRoot, (budget.minutes + 2) * 60_000);
+        const native = parseRunResult(result.stdout)?.sessionId;
+        if (native) await withTransaction(tx => ingestLaunch(tx, host, { ...envelope, sessionId: native }));
+        return result;
       };
       const lastWords = (res: RunnerResult): string => {
         const p = parseRunResult(res.stdout);

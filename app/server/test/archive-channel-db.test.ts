@@ -78,7 +78,7 @@ describe('channel label from the collectors', () => {
     // The page: the /clear record is not the title, the chip says telegram, the facet counts it.
     const list = await request(app).get('/api/usage/agent-sessions?from=2026-10-30T00:00:00Z&to=2026-10-31T00:00:00Z').expect(200);
     expect(list.body.sessions[0]).toMatchObject({ channel: 'telegram', channel_bot: 'claude', first_prompt: 'file a ticket please',
-      session_type: 'telegram', persona: 'claude', display_title: 'file a ticket please', title_source: 'prompt', context_tokens: 5 });
+      session_type: 'telegram', persona: null, display_title: 'file a ticket please', title_source: 'prompt', context_tokens: 5 });
     const facets = await request(app).get('/api/usage/agent-sessions/facets?from=2026-10-30T00:00:00Z&to=2026-10-31T00:00:00Z').expect(200);
     expect(facets.body.facets.channel).toEqual([{ value: 'telegram', n: 1 }]);
     const none = await request(app).get('/api/usage/agent-sessions?from=2026-10-30T00:00:00Z&to=2026-10-31T00:00:00Z&channel=none').expect(200);

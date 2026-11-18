@@ -168,15 +168,7 @@ export async function recordCodexRun(r: { runId: string; sessionId: string | nul
   codexHost?: string | null }): Promise<void> {
   const session = r.sessionId ?? `dispatch:${r.runId}`;
   await withTransaction(async (tx) => {
-    const selected = await tx.query<{ slug: string }>(
-      `SELECT slug FROM usage_hosts
-        WHERE slug = COALESCE($1, (SELECT slug FROM usage_hosts WHERE kind = 'server' ORDER BY slug LIMIT 1))`,
-      [r.codexHost ?? null]);
-    const host = selected.rows[0]?.slug;
-    if (!host) {
-      if (r.codexHost) throw new Error(`ORG_CODEX_HOST "${r.codexHost}" is not registered in usage_hosts`);
-      throw new Error('Codex usage host unavailable: usage_hosts has no server row');
-    }
+    const host = await codexUsageHost(tx, r.codexHost);
     await tx.query(`INSERT INTO usage_runs
       (host, run_id, session_id, log_path, task_id, agent_name, model, started_at, ended_at, duration_ms, runtime, outcome, subtype, is_error, wakeup_ids, usage)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'codex',$11,$12,$13,$14,$15::jsonb)
@@ -261,4 +253,18 @@ export async function cardFailures(card: string): Promise<('turn_cap_no_commit' 
     `SELECT o.result FROM route_decisions d JOIN route_outcomes o ON o.decision_id = d.id
       WHERE d.card_id = $1 AND d.action = 'run' AND o.result IN ('failed', 'blocked') ORDER BY d.id`, [card]);
   return rows.map((r) => (r.result === 'blocked' ? 'blocked' : 'turn_cap_no_commit'));
+}
+
+/** Shared strict host selection for both prelaunch and final accounting. */
+export async function codexUsageHost(tx: import('../../db.js').TxClient, codexHost?: string | null): Promise<string> {
+  const selected = await tx.query<{ slug: string }>(
+    `SELECT slug FROM usage_hosts
+    WHERE slug = COALESCE($1, (SELECT slug FROM usage_hosts WHERE kind = 'server' ORDER BY slug LIMIT 1))`,
+    [codexHost ?? null]);
+  const host = selected.rows[0]?.slug;
+  if (!host) {
+    if (codexHost) throw new Error(`ORG_CODEX_HOST "${codexHost}" is not registered in usage_hosts`);
+    throw new Error('Codex usage host unavailable: usage_hosts has no server row');
+  }
+  return host;
 }

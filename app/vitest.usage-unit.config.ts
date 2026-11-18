@@ -6,6 +6,8 @@ export default defineConfig({
   test: {
     include: [
       'server/test/codex-parser.test.ts',
+      'server/test/launch-contract.test.ts',
+      'server/test/dispatch-stream.test.ts',
       'server/test/archive-redact.test.ts',
       'server/test/usage-claude.test.ts',
       'server/test/usage-parsers.test.ts',

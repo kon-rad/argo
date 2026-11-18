@@ -155,3 +155,15 @@ The optional social addon mounts an app-owned Unified Login connect page and a c
 ## Observatory evidence and replay
 
 The optional `observatory` addon reads existing source tables through the owner-session boundary and effective database role. Bounded repeatable-read exports feed the pure versioned reducer in `app/shared/observatory.ts`. Archive steps supply tool evidence; usage rows remain usage measurements. Recorded execution intervals govern visibility, while missing lifecycle and sender provenance remain unknown. Five-minute per-session exports pin pagination and revalidate visibility. See [API and replay contract](observatory.md) and [coordinator audit queries](audits/observatory.sql). No new collectors or LLM processing are involved.
+
+### Launch provenance boundary
+
+`usage_launches` is a durable, versioned producer envelope keyed by host, native
+source, runtime and run ID, with a single nullable-to-native session binding.
+It exists independently of wake accounting and token identity. `usage_session_tasks`
+unites strict existing run evidence, validated launch task snapshots and the additive
+`archive_session_tasks` historical associations. Session list/detail and persona
+facets use the same attribution functions as `usage_facts`; unknown launch/native
+persona evidence is retained without later roster reassignment. The dispatcher writes
+before spawning and captures native identity before finalisation. Transport contracts,
+replay and rollback are in [Usage provenance](usage-provenance.md).

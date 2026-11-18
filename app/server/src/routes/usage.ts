@@ -107,9 +107,9 @@ function eventsSql(filters: Filters, params: unknown[]): string {
     WHERE f.ts >= $1 AND f.ts < $2${where}),
   hermes_bots AS (
     -- One row per Hermes session that has a bot (few; archive_sessions_bot_idx), so a join keeps one row per event.
-    SELECT s.host, s.external_id, min(s.bot) AS bot, min(o.team_slug) AS team_slug
-      FROM archive_sessions s JOIN org_agents o ON o.name = s.bot
-     WHERE s.bot IS NOT NULL AND s.harness = 'hermes' GROUP BY 1, 2),
+    SELECT s.host, s.external_id, min(usage_session_persona(s.id)) AS bot, min(o.team_slug) AS team_slug
+      FROM archive_sessions s JOIN org_agents o ON o.name = usage_session_persona(s.id)
+     WHERE usage_session_persona(s.id) IS NOT NULL AND s.harness = 'hermes' GROUP BY 1, 2),
   hermes_calls AS (
     SELECT c.ts, c.model, nullif(c.provider, '') AS provider, c.host, c.session_external_id AS sid, 'hermes' AS source,
       CASE WHEN hb.bot IS NOT NULL THEN 'owner-chat' ELSE 'hermes' END AS surface, true AS headless,

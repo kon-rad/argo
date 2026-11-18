@@ -46,11 +46,15 @@ const RUNS_OF = (a: string) => `FROM usage_runs r WHERE r.host = ${a}.host AND r
  * meta or, for rows stored before meta carried it, from its calls; zen-agent's trace `entrypoint`; Codex's call
  * entrypoint. zen-agent's calls all say `zen-agent` and Hermes's say the platform, so neither is read here.
  */
-const ENTRY = (a: string) => `CASE WHEN ${a}.harness = 'codex' AND ${a}.meta ->> 'native_source' IS NOT NULL THEN
+const NATIVE_ENTRY = (a: string) => `CASE WHEN ${a}.harness = 'codex' AND ${a}.meta ->> 'native_source' IS NOT NULL THEN
   CASE ${a}.meta ->> 'native_source' WHEN 'cli' THEN 'cli' WHEN 'vscode' THEN 'cli' WHEN 'desktop' THEN 'cli' WHEN 'exec' THEN 'exec' WHEN 'subagent' THEN 'subagent' END
   ELSE coalesce(nullif(${a}.meta ->> 'entrypoint', ''), (SELECT u.entrypoint FROM usage_calls u
   WHERE u.host = ${a}.host AND u.source = ${a}.source AND u.session_external_id = ${a}.external_id AND ${a}.harness IN ('claude-code', 'codex')
     AND u.entrypoint IS NOT NULL ORDER BY u.ts LIMIT 1)) END`;
+
+const ENTRY = (a: string) => `coalesce((SELECT l.envelope->>'entrypoint' FROM usage_launches l
+  WHERE l.host=${a}.host AND l.source=${a}.source AND l.runtime=${a}.harness AND l.session_id=${a}.external_id
+  ORDER BY l.created_at DESC,l.run_id DESC LIMIT 1), ${NATIVE_ENTRY(a)})`;
 
 /**
  * The session's type: `telegram`, `cli` (a person at a terminal) or `headless` (`claude -p`, a card wake, a cron job),
@@ -70,12 +74,10 @@ export const TYPE_SQL = (a: string) => `CASE
   END`;
 
 /** The persona that ran the session: the run's agent, the roster bot a person chose (archive_sessions.bot), the zen-agent persona, the Telegram bot's configured persona, else the bot itself. Null: none recorded. */
-export const PERSONA_SQL = (a: string) => `coalesce(
-  (SELECT r.agent_name ${RUNS_OF(a)} AND r.agent_name IS NOT NULL ORDER BY r.started_at DESC NULLS LAST LIMIT 1),
-  ${a}.bot, nullif(${a}.meta ->> 'persona', ''), nullif(${a}.meta ->> 'channel_persona', ''), nullif(${a}.meta ->> 'channel_bot', ''))`;
+export const PERSONA_SQL = (a: string) => `usage_session_persona(${a}.id)`;
 
 /** The persona facet value: a person at a terminal has none; anything else without a record is unknown, said so. */
-const PERSONA_FACET = (a: string) => `coalesce(${PERSONA_SQL(a)}, CASE WHEN (${TYPE_SQL(a)}) = 'cli' THEN 'none' ELSE 'unknown' END)`;
+const PERSONA_FACET = (a: string) => `coalesce(${PERSONA_SQL(a)}, CASE WHEN usage_session_persona_status(${a}.id)='unknown' THEN 'unknown' WHEN (${TYPE_SQL(a)})='cli' THEN 'none' ELSE 'unknown' END)`;
 
 /** A context window recorded with the session (zen-agent writes `context_window`); never inferred from the model name. */
 const CAPACITY = (a: string) => `(SELECT CASE WHEN v ~ '^[0-9]{3,9}$' THEN v::bigint END FROM (SELECT coalesce(
@@ -141,13 +143,19 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
        WHERE u.source = 'claude-code' AND NOT coalesce(u.is_sidechain, false) AND coalesce(u.entrypoint, '') NOT LIKE 'aux:%'
        ORDER BY p.id, u.ts DESC, u.id DESC)
      SELECT p.id, p.source, p.harness, p.profile, p.provider, p.host, p.external_id, p.parent_external_id, p.project, p.title,
-            coalesce((SELECT array_agg(DISTINCT r.task_id ORDER BY r.task_id) FROM usage_runs r
-              WHERE r.host = p.host AND r.session_id = p.external_id AND r.task_id IS NOT NULL
-                AND coalesce(r.runtime, 'claude-code') = p.harness AND p.source = p.harness), '{}'::text[]) AS task_ids,
+            coalesce((SELECT array_agg(DISTINCT t.task_id ORDER BY t.task_id) FROM usage_session_tasks t WHERE t.session_id=p.id), '{}'::text[]) AS task_ids,
+            coalesce((SELECT jsonb_agg(to_jsonb(t) - 'session_id' ORDER BY t.task_id,t.evidence_id) FROM usage_session_tasks t WHERE t.session_id=p.id), '[]'::jsonb) AS task_associations,
+            coalesce((SELECT jsonb_agg(l.envelope || jsonb_build_object('sessionId',l.session_id,'personaStatus',l.persona_status) ORDER BY l.created_at,l.run_id)
+              FROM usage_launches l WHERE l.host=p.host AND l.source=p.source AND l.runtime=p.harness AND l.session_id=p.external_id), '[]'::jsonb) AS launches,
+            (SELECT l.envelope->>'trigger' FROM usage_launches l WHERE l.host=p.host AND l.source=p.source AND l.runtime=p.harness AND l.session_id=p.external_id ORDER BY l.created_at DESC,l.run_id DESC LIMIT 1) AS outer_trigger,
+            ${ENTRY('p')} AS runtime_entrypoint,
+            usage_session_persona_status(p.id) AS persona_status,
+            CASE WHEN EXISTS (SELECT 1 FROM usage_session_tasks t WHERE t.session_id=p.id) THEN NULL
+              ELSE 'producer gap: no trusted launch task or validated board envelope' END AS task_unresolved_reason,
+            p.persona_evidence,
             p.channel, p.meta ->> 'channel_bot' AS channel_bot,
             ${TYPE_SQL('p')} AS session_type, ${PERSONA_SQL('p')} AS persona,
-            (SELECT tl.title FROM task_links tl WHERE tl.task_id = (SELECT r.task_id ${RUNS_OF('p')} AND r.task_id IS NOT NULL
-               ORDER BY r.started_at NULLS LAST LIMIT 1)) AS task_title,
+            (SELECT c.title FROM cards c JOIN usage_session_tasks t ON t.task_id=c.id WHERE t.session_id=p.id ORDER BY c.id LIMIT 1) AS task_title,
             (SELECT left(m.content_text, 160) FROM archive_messages m WHERE m.session_id = p.id AND m.step = 'prompt'
                AND m.content_text <> '' ORDER BY m.seq LIMIT 1) AS first_prompt,
             -- The first few things a person (or a harness on their behalf) sent: the title skips the boilerplate among them.

@@ -77,6 +77,10 @@ describe('agent sessions api', () => {
     expect((await request(app).get('/api/usage/agent-sessions/mac/s1/portable').query({ source: 'hermes' })).status).toBe(404);
   });
   it('returns distinct tickets for the matching host and runtime, with empty tickets for unrelated sessions', async () => {
+    await query(`INSERT INTO org_agents (name,runtime,role,org_version) VALUES ('guide','claude-code','Engineer','v')`);
+    await query(`INSERT INTO boards (slug,name) VALUES ('example','Example')`);
+    await query(`INSERT INTO cards (id,board_slug,title,created_by) VALUES
+      ('t_1234abcd','example','First','guide'), ('t_abcdef12','example','Second','guide')`);
     await query(`INSERT INTO usage_runs (host, run_id, session_id, task_id, log_path, runtime) VALUES
       ('mac', 'run-a', 's1', 't_1234abcd', '/tmp/a.jsonl', 'claude-code'),
       ('mac', 'run-b', 's1', 't_1234abcd', '/tmp/b.jsonl', 'claude-code'),

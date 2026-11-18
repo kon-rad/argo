@@ -1,13 +1,14 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClassifyInput, ClassifyResult } from '../src/addons/classify/types.js';
 import { query } from '../src/db.js';
 import { claimCard, createCard, finishCard, getCard, moveCard, setOverride } from '../src/board.js';
 import { Dispatcher, inQuietHours, isProviderError, localTime, machineOf, parseRunResult, primaryReason, providerOf, routineDue, type Deps, type RunnerResult } from '../src/addons/dispatch/index.js';
 import { addWakeup, claimWakeups, dm, getAgent, importOrg, openWakeups, post, unreadCounts } from '../src/org.js';
 import { parseSettings } from '../src/settings.js';
+import * as dispatchStore from '../src/addons/dispatch/store.js';
 import { truncateAll } from './helpers.js';
 
 // The engine's dispatcher (docs/zen-runtime.md, section 8) against a fake zen-agent and a fake classifier.
@@ -827,23 +828,42 @@ describe('finished cards stay finished, skipped bots say why, closed cards relea
     expect(await wakes(card.id)).toEqual([{ open: false, claimed: true, result: 'card done' }]);
   });
 
-  it('the error handler never moves a done or an archived card', async () => {
+  it('rejects an unregistered launch host before claiming a card or its wake', async () => {
     await importOrg(codexOrg());
-    // done: the bot finished, then recording the run fails (an unregistered ORG_CODEX_HOST) and the catch runs.
-    const done = await createCard('owner', { title: 'Weekly report', assignee: 'codebot' });
+    const card = await createCard('owner', { title: 'Validate launch first', assignee: 'codebot' });
     const h = harness({ orgCodexHost: 'nowhere' });
-    h.setResult(duringRun(() => finishCard('codebot', done.id, { outcome: 'done', result: 'reported' })));
+    h.setResult(codexFake());
     const r = await h.d.tick();
     expect(r.errors).toEqual([expect.stringMatching(/ORG_CODEX_HOST "nowhere" is not registered/)]);
+    expect((await getCard(card.id)).card).toMatchObject({ status: 'ready', block_kind: null });
+    expect(await wakes(card.id)).toEqual([{ open: true, claimed: false, result: null }]);
+    expect(h.calls.some(c => c.args[0] === 'exec' && !c.args.includes('--ephemeral'))).toBe(false);
+    expect((await query('SELECT count(*)::int n FROM usage_launches')).rows[0].n).toBe(0);
+  });
+
+  it('the error handler never moves a done or an archived card', async () => {
+    await importOrg(codexOrg());
+    // Fail accounting after execution, so terminal-state cleanup is exercised independently of prelaunch validation.
+    const done = await createCard('owner', { title: 'Weekly report', assignee: 'codebot' });
+    const h = harness();
+    const recording = vi.spyOn(dispatchStore, 'recordCodexRun').mockRejectedValueOnce(new Error('accounting failed'));
+    h.setResult(duringRun(() => finishCard('codebot', done.id, { outcome: 'done', result: 'reported' })));
+    const r = await h.d.tick();
+    expect(r.errors).toEqual(['codebot: accounting failed']);
+    recording.mockRestore();
     expect((await getCard(done.id)).card).toMatchObject({ status: 'done', block_kind: null });
     expect(await movedAfterClaim(done.id)).toEqual([]);
     expect((await wakes(done.id)).map((w) => w.open)).toEqual([false]);
 
     // archived: a person drops the card while the bot works, and the run then fails.
     const dropped = await createCard('owner', { title: 'Old idea', assignee: 'codebot' });
-    const h2 = harness({ orgCodexHost: 'nowhere' });
+    const h2 = harness();
+    h2.now.setTime(h2.now.getTime() + 1000); // A separate execution has its own immutable launch identity.
+    const secondRecording = vi.spyOn(dispatchStore, 'recordCodexRun').mockRejectedValueOnce(new Error('accounting failed'));
     h2.setResult(duringRun(() => moveCard('owner', dropped.id, 'archived', 'dropped'), 'error'));
-    await h2.d.tick();
+    const r2 = await h2.d.tick();
+    secondRecording.mockRestore();
+    expect(r2.errors).toEqual(['codebot: accounting failed']);
     expect((await getCard(dropped.id)).card.status).toBe('archived');
     expect((await movedAfterClaim(dropped.id)).map((m) => m.to)).toEqual(['archived']);
   });

@@ -53,14 +53,16 @@ function Row({ s, tz }: { s: AgentSessionRow; tz: string }) {
       <td className="whitespace-nowrap tabular-nums" title={s.started_at ? `${s.started_at} (${tz})` : 'start not recorded'}>{s.started_at ? startedStamp(s.started_at, tz) : <span className={dim}>unknown</span>}</td>
       <td className="whitespace-nowrap tabular-nums" title="elapsed from the first to the last recorded step, not time spent working">{dur ?? <span className={dim}>-</span>}</td>
       <td>{s.host}</td>
-      <td>{s.session_type && s.session_type !== 'unknown' ? s.session_type : <span className={dim} title="nothing recorded how this session was started">unknown</span>}</td>
+      <td>{s.session_type && s.session_type !== 'unknown' ? s.session_type : <span className={dim} title="nothing recorded how this session was started">unknown</span>}
+        {s.runtime_entrypoint ? <div className="text-xs text-[var(--ink-dim)]">runtime: {s.runtime_entrypoint}</div> : null}
+        {s.outer_trigger ? <div className="text-xs text-[var(--ink-dim)]">trigger: {s.outer_trigger}</div> : null}</td>
       <td>{persona.known ? persona.text : <span className={dim}>{persona.text}</span>}
         {s.channel_bot && s.channel_bot !== s.persona ? <div className="text-xs text-[var(--ink-dim)]">bot {s.channel_bot}</div> : null}</td>
       <td>{s.harness}{s.profile && s.profile !== 'main' ? <span className="text-xs text-[var(--ink-dim)]"> · {s.profile}</span> : null}
         {s.channel ? <span className="ml-1 rounded border border-[var(--rule)] px-1 text-xs text-[var(--ink-dim)]" title={s.channel === 'telegram' ? 'a Telegram chat' : `via ${s.channel}`}>{s.channel}{s.channel_bot ? ` · ${s.channel_bot}` : ''}</span> : null}</td>
       <td className="max-w-[28rem] truncate max-md:order-first max-md:col-span-2" title={name ?? undefined}><Link className="underline" to={sessionLink(s)}>{name ?? <span className={dim} title="no usable title recorded">{s.external_id.slice(0, 12)}</span>}</Link>
         {s.parent_external_id ? <span className="text-xs text-[var(--ink-dim)]"> ({s.harness === 'claude-code' ? 'subagent' : 'continued'})</span> : null}</td>
-      <td>{s.task_ids?.length ? s.task_ids.map((id) => <Link key={id} to={`/board/${encodeURIComponent(id)}`} className="block whitespace-nowrap text-xs underline">{id}</Link>) : <span className="text-[var(--ink-faint)]">-</span>}</td>
+      <td>{s.task_ids?.length ? s.task_ids.map((id) => <Link key={id} to={`/board/${encodeURIComponent(id)}`} className="block whitespace-nowrap text-xs underline">{id}</Link>) : <span className="text-[var(--ink-faint)]" title={s.task_unresolved_reason ?? undefined}>-</span>}</td>
       <td className="text-xs">{s.models.join(', ')}{s.provider ? <div className="text-[var(--ink-dim)]">{s.provider}</div> : null}</td>
       <td className="text-right">{s.steps}</td>
       <td className="text-right">{s.tool_calls}{s.errors ? <span className="text-red-600" title="tool calls that failed"> ✗{s.errors}</span> : null}</td>

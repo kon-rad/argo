@@ -1,3 +1,4 @@
+import { ingestLaunch, launchSchema } from './provenance.js';
 import { sha256 } from '../archive/clean.js';
 import { parseCodex } from './codex.js';
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -85,6 +86,15 @@ export async function ingestZenTrace(tx: TxClient, host: Host, path: string, buf
   if (keepRun) runs = await store.upsertRuns(tx, [t.run!]);
   const calls = await store.upsertCalls(tx, t.calls);
   if (t.session) {
+    // The trace meta is durable before the child can exit, unlike its final stdout.
+    const dispatch = t.session.input.meta.dispatch as Record<string, unknown> | undefined;
+    let evidence = dispatch?.launch_v1;
+    if (typeof evidence === 'string') { try { evidence = JSON.parse(evidence); } catch { evidence = null; } }
+    const launch = launchSchema.safeParse(evidence);
+    if (launch.success && launch.data.source === 'zen-agent' && launch.data.runtime === 'zen-agent'
+      && launch.data.runId === dispatch?.run_id) {
+      await ingestLaunch(tx, host, { ...launch.data, sessionId: t.session.input.externalId });
+    }
     const s = await archive.upsertSession(tx, t.session.input);
     if (s.changed) sessions++;
     messages = await archive.upsertMessages(tx, s.id, t.session.messages);

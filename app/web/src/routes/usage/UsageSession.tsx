@@ -184,6 +184,9 @@ export default function UsageSession() {
         <dt className="text-[var(--ink-dim)]">Started</dt><dd className="tabular-nums">{s.started_at ? `${startedStamp(s.started_at, tz)} (${tz})` : 'unknown'}</dd>
         <dt className="text-[var(--ink-dim)]">Duration</dt><dd title="elapsed from the first to the last recorded step">{dur ?? 'unknown'}</dd>
         <dt className="text-[var(--ink-dim)]">Type</dt><dd>{s.session_type ?? 'unknown'}</dd>
+        <dt className="text-[var(--ink-dim)]">Runtime entrypoint</dt><dd>{s.runtime_entrypoint ?? 'unknown'}</dd>
+        <dt className="text-[var(--ink-dim)]">Outer trigger</dt><dd>{s.outer_trigger ?? 'unknown'}</dd>
+        <dt className="text-[var(--ink-dim)]">Tickets</dt><dd>{s.task_ids?.length ? s.task_ids.map(id => <Link key={id} to={`/board/${encodeURIComponent(id)}`} className="block underline">{id}</Link>) : (s.task_unresolved_reason ?? 'none verified')}</dd>
         <dt className="text-[var(--ink-dim)]">Bot persona</dt><dd>{persona.text}{s.channel_bot && s.channel_bot !== s.persona ? ` (bot ${s.channel_bot})` : ''}</dd>
         <dt className="text-[var(--ink-dim)]">Machine</dt><dd>{s.host}</dd>
         <dt className="text-[var(--ink-dim)]">Model</dt><dd>{s.models.join(', ') || 'unknown'}{s.provider ? ` via ${s.provider}` : ' (provider unknown)'}</dd>
@@ -194,6 +197,9 @@ export default function UsageSession() {
           {s.context_tokens != null && s.context_window == null ? ' · capacity unknown' : ''}</dd>
       </dl>
       <RestartSession session={s} />
+      {s.launches?.length ? <details><summary>Launch evidence ({s.launches.length})</summary>
+        {s.launches.map(l => <p key={l.runId} className="text-xs">{l.runId}: runtime {l.entrypoint ?? 'unknown'}, trigger {l.trigger ?? 'unknown'}, channel {l.channel ?? 'unknown'}, persona origin {l.personaOrigin ?? 'unknown'}</p>)}
+      </details> : null}
       <details className="my-3 rounded-lg border border-[var(--rule)] p-3"><summary className="cursor-pointer text-sm font-medium">Session metadata</summary>
       <SessionContent text={JSON.stringify(s, null, 2)} literal />
       <div className="text-xs text-[var(--ink-dim)]">
