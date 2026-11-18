@@ -296,7 +296,7 @@ function NewCard({ board, chart, onCreated }: { board: string | undefined; chart
 }
 
 function Contract({ c }: { c: BoardCard['contract'] }) {
-  const entries = Object.entries(c ?? {}).filter(([key, v]) => key !== 'cybazaarJobId' && v !== undefined && v !== null && !(Array.isArray(v) && !v.length));
+  const entries = Object.entries(c ?? {}).filter(([key, v]) => !['cybazaarJobId', 'deskJobRef'].includes(key) && v !== undefined && v !== null && !(Array.isArray(v) && !v.length));
   if (!entries.length) return null;
   return (
     <section className="rounded border border-[var(--rule)] p-2 text-sm" aria-label="Contract">
@@ -363,7 +363,7 @@ function CardPanel({ id, chart, onClose }: { id: string; chart: OrgChart | null;
         {c && (
           <>
             <h2 className="text-base font-semibold">{c.ship_now && <span title="ship-now">🚀 </span>}{c.title}</h2>
-            {cybazaarJob(c) && <div className="flex flex-wrap items-center gap-2 text-xs"><span className="rounded border border-[#68DFFF] px-1.5 py-0.5 font-medium">Cybazaar</span><Link className="text-[var(--accent)] underline" to={`/desk?job=${encodeURIComponent(cybazaarJob(c)!)}`}>Open Desk job</Link></div>}
+            {cybazaarJob(c) && <div className="flex flex-wrap items-center gap-2 text-xs"><span className="rounded border border-[#68DFFF] px-1.5 py-0.5 font-medium">Cybazaar</span>{c.contract.deskJobRef && <Link className="text-[var(--accent)] underline" to={`/desk?job=${encodeURIComponent(c.contract.deskJobRef)}`}>Open Desk job</Link>}</div>}
             <p className="text-xs text-[var(--ink-dim)]">
               {c.board_slug} · {c.kind}{c.work_type ? ` · ${c.work_type}` : ''}{c.needs ? ` · needs ${c.needs}` : ''} · p{c.priority} · by {c.created_by} {age(c.created_at)} ago
               {c.area_slug && <> · <Link className="text-[var(--accent)]" to={`/projects?view=board`}>{c.area_slug}{c.project_slug ? `/${c.project_slug}` : ''}</Link></>}

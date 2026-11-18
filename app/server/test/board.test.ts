@@ -243,10 +243,12 @@ describe('ticket numbers and project tags', () => {
   const ids = (cs: { id: string }[]): string[] => cs.map((c) => c.id);
 
   it('keeps the optional Cybazaar job source through the create and read API', async () => {
-    const made = await request(app()).post('/api/board/cards').send({ title: 'Client reel', contract: { objective: 'Make reel', cybazaarJobId: 'job-42' } }).expect(201);
-    expect(made.body.card.contract.cybazaarJobId).toBe('job-42');
+    const made = await request(app()).post('/api/board/cards').send({ title: 'Client reel', contract: { objective: 'Make reel', cybazaarJobId: 'market-job-42', deskJobRef: 'arkiv:test/job-42' } }).expect(201);
+    expect(made.body.card.contract.cybazaarJobId).toBe('market-job-42');
+    expect(made.body.card.contract.deskJobRef).toBe('arkiv:test/job-42');
     const detail = await request(app()).get(`/api/board/cards/${made.body.card.id}`).expect(200);
-    expect(detail.body.card.contract.cybazaarJobId).toBe('job-42');
+    expect(detail.body.card.contract.cybazaarJobId).toBe('market-job-42');
+    expect(detail.body.card.contract.deskJobRef).toBe('arkiv:test/job-42');
     const plain = await request(app()).post('/api/board/cards').send({ title: 'Internal card', contract: { objective: 'Work' } }).expect(201);
     expect(plain.body.card.contract.cybazaarJobId).toBeUndefined();
   });

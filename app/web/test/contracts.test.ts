@@ -19,7 +19,7 @@ describe('shared browser contracts', () => {
   });
 
   it('retains a Cybazaar source job in the board contract without adding one to plain cards', () => {
-    expect(BoardContractSchema.parse({ objective: 'Create reel', cybazaarJobId: 'job-42' })).toEqual({ objective: 'Create reel', cybazaarJobId: 'job-42' });
+    expect(BoardContractSchema.parse({ objective: 'Create reel', cybazaarJobId: 'market-job-42', deskJobRef: 'arkiv:test/job-42' })).toEqual({ objective: 'Create reel', cybazaarJobId: 'market-job-42', deskJobRef: 'arkiv:test/job-42' });
     expect(BoardContractSchema.parse({ objective: 'Internal work' })).toEqual({ objective: 'Internal work' });
   });
 

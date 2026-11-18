@@ -44,6 +44,7 @@ const Contract = z.object({
   scope: z.array(z.string().max(500)).max(50).optional(),
   verification: z.string().max(2000).optional(),
   cybazaarJobId: z.string().min(1).max(200).optional(),
+  deskJobRef: z.string().min(1).max(500).optional(),
 });
 const ListQuery = z.object({
   board: BoardSlug.optional(), status: z.string().regex(/^[a-z,]+$/).optional(), assignee: z.union([Name, z.literal('none')]).optional(), area: Slug.optional(), project: Slug.optional(), feature: Slug.optional(),

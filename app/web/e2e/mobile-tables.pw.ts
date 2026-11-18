@@ -255,7 +255,7 @@ for (const size of PHONES) {
     test('board: only a sourced card has the Cybazaar rail and Desk link', async ({ page }) => {
       await mockApi(page);
       const sourced = boardCards.cards.map((card) => card.id === 't_0a11'
-        ? { ...card, contract: { ...card.contract, cybazaarJobId: 'job-42' } } : card);
+        ? { ...card, contract: { ...card.contract, cybazaarJobId: 'market-job-42', deskJobRef: 'arkiv:test/job-42' } } : card);
       await page.route('**/api/board/cards**', async (route) => {
         const path = new URL(route.request().url()).pathname;
         const id = path.split('/').at(-1);
@@ -273,7 +273,7 @@ for (const size of PHONES) {
       await expect(plain.getByText('Cybazaar')).toHaveCount(0);
       await page.screenshot({ path: join(SHOTS, `board-cybazaar-list-${size.width}.png`) });
       await marked.getByRole('button').click();
-      await expect(page.getByRole('link', { name: 'Open Desk job' })).toHaveAttribute('href', '/desk?job=job-42');
+      await expect(page.getByRole('link', { name: 'Open Desk job' })).toHaveAttribute('href', '/desk?job=arkiv%3Atest%2Fjob-42');
       await page.screenshot({ path: join(SHOTS, `board-cybazaar-${size.width}.png`) });
     });
 

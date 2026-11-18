@@ -28,7 +28,7 @@ The engine host supplies database query and transaction adapters through the lif
 
 ## Private operator views
 
-The `/desk` page keeps the legacy Overview, Inbox, Jobs and Agents views. Active and Review filter the existing job list by execution status; they do not create another job state or change approval and release. A board card with `contract.cybazaarJobId` gets a Cybazaar source label and a link to `/desk?job=<id>`. The link opens that ID through the existing operator job API, so the marker must contain an operator job ID that API can resolve. Cards without the marker keep their standard appearance. The legacy release action still publishes its public destination; it is not a pay-to-unlock release.
+The `/desk` page keeps the legacy Overview, Inbox, Jobs and Agents views. Active and Review filter the existing job list by execution status; they do not create another job state or change approval and release. A board card with `contract.cybazaarJobId` gets a Cybazaar source label. A separate `contract.deskJobRef` adds a link to `/desk?job=<ref>` when a bridge knows the operator assignment ID, which is the Arkiv job reference. The marketplace ID alone does not imply that mapping. Cards without the Cybazaar marker keep their standard appearance. The legacy release action still publishes its public destination; it is not a pay-to-unlock release.
 
 ## Cybazaar backend publication
 
