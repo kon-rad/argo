@@ -41,11 +41,19 @@ export async function runUpload(command: string, args: string[], lines: string[]
     child.stdin.on('error', () => { reason = 'stdin'; kill(); });
     child.on('close', finish);
     // write callbacks provide backpressure without retaining another copy of the batch.
-    let index = 0;
+    let index = 0, offset = 0;
     const write = () => {
       if (settled || reason) return;
       if (index === lines.length) { child.stdin.end(); return; }
-      child.stdin.write(lines[index++]! + '\n', err => { if (!err) write(); });
+      const line = lines[index]!;
+      let end = Math.min(line.length, offset + 64 * 1024);
+      // Avoid splitting a surrogate pair between UTF-8 writes.
+      if (end < line.length && /[\uD800-\uDBFF]/.test(line[end - 1]!)) end--;
+      const chunk = line.slice(offset, end);
+      offset = end;
+      const complete = offset === line.length;
+      if (complete) { index++; offset = 0; }
+      child.stdin.write(chunk + (complete ? '\n' : ''), err => { if (!err) write(); });
     };
     write();
   });

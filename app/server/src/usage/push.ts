@@ -24,11 +24,12 @@ export function buildPush(input: PushInput, cursor: PushCursor): { lines: string
   const redact = buildRedactor({ env: process.env }); // Never open credential or env files on a collector.
   const safeText = (text: string, path: string, startLine: number): string => text.split('\n').map((line, index) => {
     if (!line) return '';
-    try { JSON.parse(line); return redact.jsonText(line); }
+    try { JSON.parse(line); }
     catch {
       lines.push(JSON.stringify({ t: 'quarantine', reason: 'invalid-source-json', path, sourceLine: startLine + index, text: redact.text(line) }));
       return ''; // Preserve line positions; v2 import durably quarantines the redacted fragment.
     }
+    return redact.jsonText(line);
   }).join('\n');
   const started = Date.now();
   const files: { path: string; type: 'transcript' | 'codex' | 'zen' | 'plan' }[] = [];
@@ -49,17 +50,16 @@ export function buildPush(input: PushInput, cursor: PushCursor): { lines: string
     const keep = !whole && prev && prev.fingerprint === fingerprint && st.size >= prev.offset ? prev : null;
     const offset = keep?.offset ?? 0;
     if (offset >= st.size) continue;
-    // Read at most one 64 MiB complete record/prefix. Larger sources remain on disk,
-    // with their cursor unchanged, while other files still progress.
-    const ceiling = 64 * 1024 * 1024;
-    let buf = readFrom(path, offset, whole ? ceiling : Math.min(ceiling, Math.max(1, input.maxBytes - bytes)));
-    if (!whole && !buf.includes(10) && st.size - offset > buf.length) buf = readFrom(path, offset, ceiling);
+    // Whole-prefix reconciliation and an oversized first complete record retain the
+    // pre-existing protocol. maxBytes is a soft batch budget, not a source-size limit.
+    let buf = readFrom(path, offset, whole ? Number.MAX_SAFE_INTEGER : Math.max(1, input.maxBytes - bytes));
+    if (!whole && !buf.includes(10) && st.size - offset > buf.length) buf = readFrom(path, offset);
     let cut = buf.lastIndexOf(10);
     if (!whole && buf.length > input.maxBytes - bytes) {
       const fitting = buf.lastIndexOf(10, Math.max(0, input.maxBytes - bytes - 1));
       cut = fitting >= 0 ? fitting : buf.indexOf(10);
     }
-    if (cut < 0 || (whole && st.size > ceiling)) continue;
+    if (cut < 0) continue;
     buf = buf.subarray(0, cut + 1);
     const parsed = splitJsonLines(buf);
     const hash = whole ? sha256(buf) : fingerprint;
@@ -73,7 +73,7 @@ export function buildPush(input: PushInput, cursor: PushCursor): { lines: string
         ...snap, resetsAt: snap.resetsAt?.toISOString() ?? null, observedAt: snap.observedAt.toISOString(),
       } } satisfies WireLine));
     } else if (type === 'transcript') lines.push(JSON.stringify({ t: type, path, startLine: keep?.lines ?? 0, text } satisfies WireLine));
-    else if (type === 'codex') lines.push(JSON.stringify({ t: type, text } satisfies WireLine));
+    else if (type === 'codex') lines.push(JSON.stringify({ t: type, path, text } satisfies WireLine));
     else lines.push(JSON.stringify({ t: type, path, mtimeMs: st.mtimeMs, text } satisfies WireLine));
     bytes += buf.length;
     next.files[path] = { fingerprint: hash, offset: offset + buf.length, lines: (keep?.lines ?? 0) + parsed.lines,
