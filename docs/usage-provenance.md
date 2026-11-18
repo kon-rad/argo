@@ -1,6 +1,6 @@
 # Usage launch provenance
 
-Apply migration `1756000019200_usage-launch-provenance.sql` before updating producers.
+Apply migrations through `1756000019300_preserve-recorded-usage-attribution.sql` before updating producers.
 Old transcripts and clients remain readable. The additions preserve raw evidence and
 have no destructive down migration. Rollback the producer/reader code while retaining
 the schema and original metadata.
@@ -73,3 +73,15 @@ returns every verified task for a resumed session, the ordered launch history, a
 separate runtime and trigger fields. List and detail use the same query. Persona
 filters/facets and by-bot token aggregates share `usage_session_persona`; owner bot
 chats do not acquire wakes or enter wake budgets through this attribution.
+
+Recorded dispatcher run identities take precedence over additive launch attribution,
+even when the bot is absent from the current roster. Run calls retain their `bot`
+accounting surface. Validated native bots also survive an unknown launch candidate.
+Configured `channel_persona` remains visible separately from the transport bot and
+the roster-validated archive `bot` foreign key; an unrostered recorded persona has
+status `unknown`. A launch candidate alone still requires its ingestion-time roster
+snapshot. Missing or unknown launch metadata never invents a wake.
+
+Codex host validation happens before card or wake claims. An invalid
+`ORG_CODEX_HOST` leaves work ready for a corrected launch, with no child spawned.
+After execution, accounting failures leave completed and archived cards terminal.

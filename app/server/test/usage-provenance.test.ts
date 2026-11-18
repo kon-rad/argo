@@ -101,3 +101,65 @@ it('does not bind another host or runtime with the same native session ID', asyn
   await push(launch('other-runtime','same-id',{source:'claude-code',runtime:'claude-code',taskIds:['t_abcdef12']}));
   expect((await rows()).find((s:any)=>s.host===host).task_ids).toEqual([task]);
 });
+
+it('keeps recorded run identity and surface when newer launch evidence names an unknown persona', async () => {
+  const native = session('recorded', 'You are **ada**, Engineer.');
+  native.text += L({ type: 'event_msg', timestamp: at, payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 100, output_tokens: 10 } } } }) + '\n';
+  await push(native, launch('new-launch', 'recorded', { persona: 'stranger', taskIds: [] }));
+  // Historical runs retain their recorded identity even when that identity is absent from today's roster.
+  await query(`INSERT INTO usage_runs (host,run_id,session_id,log_path,runtime,agent_name)
+    VALUES ($1,'recorded-run','recorded','dispatch:recorded-run','codex','legacy-bot')`, [host]);
+  await query(`UPDATE usage_calls SET run_id='recorded-run' WHERE host=$1 AND session_external_id='recorded'`, [host]);
+  const before = (await query('SELECT * FROM usage_calls ORDER BY id')).rows;
+  const messages = (await query('SELECT * FROM archive_messages ORDER BY id')).rows;
+  expect((await rows())[0]).toMatchObject({ persona: 'legacy-bot', persona_status: 'unknown' });
+  expect((await query('SELECT agent_name,input,output,surface FROM usage_facts')).rows)
+    .toEqual([{ agent_name: 'legacy-bot', input: 100, output: 10, surface: 'bot' }]);
+  await push(launch('new-launch', 'recorded', { persona: 'stranger', taskIds: [] }));
+  expect((await query('SELECT * FROM usage_calls ORDER BY id')).rows).toEqual(before);
+  expect((await query('SELECT * FROM archive_messages ORDER BY id')).rows).toEqual(messages);
+  expect((await query('SELECT count(*)::int n FROM org_wakeups')).rows[0].n).toBe(0);
+  expect((await request(app).get('/api/usage/agent-sessions?persona=legacy-bot').expect(200)).body.sessions).toHaveLength(1);
+});
+
+it('does not mask a validated native persona with an unknown launch candidate', async () => {
+  await push(session('known-native', 'You are **ada**, Engineer.'),
+    launch('unknown-overlay', 'known-native', { persona: 'stranger', taskIds: [] }));
+  expect((await rows())[0]).toMatchObject({ persona: 'ada', persona_status: 'known' });
+  expect((await query('SELECT resolved_persona,persona_status FROM usage_launches')).rows)
+    .toEqual([{ resolved_persona: null, persona_status: 'unknown' }]);
+});
+
+it('keeps a configured channel persona independently of roster bot validation in every reader', async () => {
+  const owner = session('channel-owner');
+  owner.text += L({ type: 'event_msg', timestamp: at, payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 100, output_tokens: 10 } } } }) + '\n';
+  await push(owner);
+  await query(`UPDATE archive_sessions SET meta=meta || '{"channel":"telegram","channel_bot":"transport","channel_persona":"configured-persona"}'::jsonb WHERE external_id='channel-owner'`);
+  const [s] = await rows();
+  expect(s).toMatchObject({ persona: 'configured-persona', persona_status: 'unknown', channel_bot: 'transport' });
+  const detail = (await request(app).get(`/api/usage/agent-sessions/${host}/channel-owner?source=codex`).expect(200)).body.session;
+  expect(detail.persona).toBe('configured-persona');
+  expect((await query("SELECT bot FROM archive_sessions WHERE external_id='channel-owner'")).rows).toEqual([{ bot: null }]);
+  expect((await request(app).get('/api/usage/agent-sessions?persona=configured-persona').expect(200)).body.sessions).toHaveLength(1);
+  expect((await request(app).get('/api/usage/agent-sessions/facets').expect(200)).body.facets.persona)
+    .toContainEqual({ value: 'configured-persona', n: 1 });
+  expect((await query('SELECT agent_name,surface FROM usage_facts')).rows)
+    .toEqual([{ agent_name: 'configured-persona', surface: 'owner-chat' }]);
+  expect((await query('SELECT count(*)::int n FROM org_wakeups')).rows[0].n).toBe(0);
+});
+
+it('enforces launch and task evidence identity with foreign keys and a writable evidence table', async () => {
+  await push(session('relations'), launch('relations-run', 'relations'));
+  const [s] = await rows();
+  const insert = `INSERT INTO archive_session_tasks (session_id,task_id,evidence_id,provenance,confidence,reason)
+    VALUES ($1,$2,'manual-evidence','board-envelope-v1','validated-envelope','synthetic test')`;
+  await query(insert, [s.id, task]);
+  await expect(query(insert, [s.id, task])).rejects.toThrow(/duplicate key|unique/);
+  await expect(query(insert, [s.id, 't_00000000'])).rejects.toThrow(/foreign key/);
+  await expect(query(insert, [-1, task])).rejects.toThrow(/foreign key/);
+  const links = (await query('SELECT provenance FROM usage_session_tasks WHERE session_id=$1 ORDER BY provenance', [s.id])).rows;
+  expect(links).toEqual([{ provenance: 'board-envelope-v1' }, { provenance: 'launch-v1' }]);
+  await expect(query(`INSERT INTO usage_launches SELECT * FROM usage_launches`)).rejects.toThrow(/duplicate key|unique/);
+  await query('DELETE FROM archive_sessions WHERE id=$1', [s.id]);
+  expect((await query('SELECT count(*)::int n FROM archive_session_tasks')).rows[0].n).toBe(0);
+});
