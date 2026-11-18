@@ -28,14 +28,16 @@ export default function Library() {
   const [status, setStatus] = useState('');
   const [flag, setFlag] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<Error | null>(null);
   const rows = useMemo(() => (lib.data?.skills ?? []).filter((r) => matches(r, q, source, status, flag)), [lib.data, q, source, status, flag]);
 
   async function refresh(): Promise<void> {
     setRefreshing(true);
     try {
       qc.setQueryData(['skills', 'library'], await skillsApi.library(true));
-    } catch {
-      void lib.refetch();
+      setRefreshError(null);
+    } catch (err) {
+      setRefreshError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       setRefreshing(false);
     }
@@ -48,6 +50,7 @@ export default function Library() {
   return (
     <div className="space-y-3 p-3 md:p-4">
       <ModeBanner data={data} />
+      {refreshError && <div><p className="text-sm text-[var(--warn)]">Showing the previous catalog. The requested rescan failed.</p><ErrorState error={refreshError} retry={() => void refresh()} /></div>}
       <div className="flex flex-wrap items-center gap-2">
         <input aria-label="Search skills" type="search" className={`${input} min-w-0 flex-1 basis-48`} placeholder="Search name, description, source, category" value={q} onChange={(e) => setQ(e.target.value)} />
         <select aria-label="Source" className={input} value={source} onChange={(e) => setSource(e.target.value)}>

@@ -17,6 +17,7 @@ const ALLOWED: [string, RegExp][] = [
   ['GET', /^\/chats$/],
   ['POST', /^\/chats$/],
   ['GET', new RegExp(`^/chats/${CHAT}$`)],
+  ['GET', new RegExp(`^/chats/${CHAT}/skills$`)],
   ['GET', new RegExp(`^/chats/${CHAT}/events$`)],
   ['POST', new RegExp(`^/chats/${CHAT}/messages$`)],
   ['POST', new RegExp(`^/chats/${CHAT}/steer$`)],

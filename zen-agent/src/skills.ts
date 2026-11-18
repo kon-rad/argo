@@ -108,12 +108,18 @@ interface ManifestEntry {
 }
 
 /** The view manifest, validated; throws with the reason when it is malformed. */
-export function readViewManifest(file: string): { agent: string; runtime: string; skills: ManifestEntry[] } {
+export function readViewManifest(file: string, expectedAgent?: string): { agent: string; runtime: string; skills: ManifestEntry[] } {
   const doc = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
   if (!doc || doc['format'] !== VIEW_FORMAT) throw new Error(`not a ${VIEW_FORMAT} manifest`);
-  if (!Array.isArray(doc['skills'])) throw new Error('manifest has no skills list');
+  if (typeof doc['agent'] !== 'string' || !NAME.test(doc['agent']) || (expectedAgent && doc['agent'] !== expectedAgent)) throw new Error('manifest agent does not match the requested persona');
+  if (doc['runtime'] !== 'zen-agent') throw new Error('manifest runtime must be zen-agent');
+  return { agent: doc['agent'], runtime: doc['runtime'], skills: manifestEntries(doc['skills']) };
+}
+
+function manifestEntries(raw: unknown): ManifestEntry[] {
+  if (!Array.isArray(raw) || raw.length > 500) throw new Error('manifest needs at most 500 skills');
   const seen = new Set<string>();
-  const skills = (doc['skills'] as Record<string, unknown>[]).map((e, i) => {
+  return (raw as Record<string, unknown>[]).map((e, i) => {
     const name = e?.['name'];
     const path = e?.['path'];
     const digest = e?.['digest'];
@@ -129,7 +135,6 @@ export function readViewManifest(file: string): { agent: string; runtime: string
       description: typeof e['description'] === 'string' ? (e['description'] as string) : '',
     };
   });
-  return { agent: String(doc['agent'] ?? ''), runtime: String(doc['runtime'] ?? ''), skills };
 }
 
 /** Copy a package tree (regular files and in-package file symlinks as files), keeping the exec bit. */
@@ -189,36 +194,46 @@ export function resolveSkills(cfg: Pick<ZenConfig, 'skills' | 'sessionsDir'> & {
   const m = cfg.managedSkills ?? null;
   const legacy = (): ResolvedSkills => ({ skills: discoverSkills(cfg.skills), mode: 'legacy', packages: [], rejected: [], snapshot: null, support: null });
   const missing = (reason: string): ResolvedSkills => ({ skills: [], mode: 'managed-missing', packages: [], rejected: reason ? [{ name: '*', reason }] : [], snapshot: null, support: 'catalog-filtered' });
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(sessionId)) return m ? missing('invalid session identity') : legacy();
+  const snapDir = join(m?.snapshots ?? cfg.sessionsDir, `${sessionId}.skills`);
+  // Resumed: the snapshot the session started with, unchanged by later syncs.
+  let hasSnapshot = false;
+  try {
+    const st = lstatSync(snapDir);
+    if (!st.isDirectory() || st.isSymbolicLink()) return missing('managed snapshot is not a regular directory');
+    hasSnapshot = true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return missing('managed snapshot cannot be inspected');
+  }
+  if (hasSnapshot) {
+    try {
+      const recordStat = lstatSync(snapshotRecord(snapDir));
+      if (!recordStat.isFile() || recordStat.isSymbolicLink() || recordStat.size > 1_000_000) throw new Error('snapshot record is not a bounded regular file');
+      const rec = JSON.parse(readFileSync(snapshotRecord(snapDir), 'utf8')) as Record<string, unknown>;
+      if (rec['format'] !== 'zen-skills-snapshot/1' || rec['persona'] !== persona || rec['sessionId'] !== sessionId) throw new Error('snapshot identity does not match this session and persona');
+      const entries = manifestEntries(rec['packages']);
+      if (!Array.isArray(rec['rejected']) || rec['rejected'].some((r) => !r || typeof r.name !== 'string' || typeof r.reason !== 'string')) throw new Error('invalid snapshot rejection record');
+      const skills: Skill[] = [];
+      for (const p of entries) {
+        const dir = join(snapDir, p.name);
+        const d = packageDigest(dir);
+        if (!d.ok || d.digest !== p.digest) throw new Error(`snapshot package ${p.name} failed validation`);
+        skills.push(frontmatterOf(dir, p));
+      }
+      return { skills, mode: 'managed', rejected: rec['rejected'] as { name: string; reason: string }[], snapshot: snapDir, support: 'catalog-filtered',
+        packages: skills.map((s) => ({ name: s.name, id: s.id!, digest: s.digest!, revision: s.revision ?? null })) };
+    } catch (err) { return missing(`managed snapshot is invalid: ${(err as Error).message}`); }
+  }
+
   if (!m) return legacy();
   if (!persona) return m.enforce ? missing('no persona: a managed run needs one') : legacy();
   const view = join(m.root, 'views', persona, 'zen-agent');
   const manifestFile = join(view, 'manifest.json');
   if (!existsSync(manifestFile)) return m.enforce ? missing(`no managed view for ${persona}`) : legacy();
 
-  const snapDir = join(m.snapshots ?? cfg.sessionsDir, `${sessionId}.skills`);
-  // Resumed: the snapshot the session started with, unchanged by later syncs.
-  if (existsSync(snapshotRecord(snapDir))) {
-    const rec = JSON.parse(readFileSync(snapshotRecord(snapDir), 'utf8')) as { packages: ManifestEntry[]; rejected: { name: string; reason: string }[] };
-    const skills: Skill[] = [];
-    const rejected = [...rec.rejected];
-    for (const p of rec.packages) {
-      const dir = join(snapDir, p.name);
-      const d = packageDigest(dir);
-      if (!d.ok || d.digest !== p.digest) {
-        rejected.push({ name: p.name, reason: d.ok ? `snapshot digest ${d.digest} does not match ${p.digest}` : d.error });
-        continue;
-      }
-      skills.push(frontmatterOf(dir, p));
-    }
-    return {
-      skills, mode: 'managed', rejected, snapshot: snapDir, support: 'catalog-filtered',
-      packages: skills.map((s) => ({ name: s.name, id: s.id!, digest: s.digest!, revision: s.revision ?? null })),
-    };
-  }
-
   let entries: ManifestEntry[];
   try {
-    entries = readViewManifest(manifestFile).skills;
+    entries = readViewManifest(manifestFile, persona).skills;
   } catch (err) {
     return missing(`managed view for ${persona} is invalid: ${(err as Error).message}`);
   }
@@ -250,8 +265,16 @@ export function resolveSkills(cfg: Pick<ZenConfig, 'skills' | 'sessionsDir'> & {
   chmodSync(snapshotRecord(staging), 0o444);
   chmodSync(staging, 0o555);
   mkdirSync(dirname(snapDir), { recursive: true });
-  if (existsSync(snapDir)) { thaw(snapDir); rmSync(snapDir, { recursive: true, force: true }); } // an unfinished earlier attempt
-  renameSync(staging, snapDir);
+  if (existsSync(snapDir)) {
+    // Another launcher may have completed this session while we copied. Never replace its identity.
+    thaw(staging); rmSync(staging, { recursive: true, force: true });
+    return resolveSkills(cfg, persona, sessionId);
+  }
+  try { renameSync(staging, snapDir); }
+  catch (err) {
+    thaw(staging); rmSync(staging, { recursive: true, force: true });
+    return missing(`cannot activate the session snapshot: ${(err as Error).message}`);
+  }
   const skills = kept.map((e) => frontmatterOf(join(snapDir, e.name), e));
   return {
     skills, mode: 'managed', rejected, snapshot: snapDir, support: 'catalog-filtered',

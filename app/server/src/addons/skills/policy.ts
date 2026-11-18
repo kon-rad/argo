@@ -223,9 +223,9 @@ export function dependentsOf(catalog: Catalog, name: string): string[] {
 /** Every policy line that grants a name: org, team or agent, for the removal check. */
 export function grantsOf(p: Policy, name: string): string[] {
   const out: string[] = [];
-  if (p.org.grant.includes(name)) out.push('org.grant');
-  for (const [t, s] of Object.entries(p.teams)) if (s.grant.includes(name)) out.push(`teams.${t}.grant`);
-  for (const [a, s] of Object.entries(p.agents)) if (s.grant.includes(name)) out.push(`agents.${a}.grant`);
+  if (p.org.grant.includes(name) || p.org.grant.includes('*')) out.push('org.grant');
+  for (const [t, s] of Object.entries(p.teams)) if (s.grant.includes(name) || s.grant.includes('*')) out.push(`teams.${t}.grant`);
+  for (const [a, s] of Object.entries(p.agents)) if (s.grant.includes(name) || s.grant.includes('*')) out.push(`agents.${a}.grant`);
   if (p.pins[name]) out.push(`pins.${name}`);
   return out;
 }

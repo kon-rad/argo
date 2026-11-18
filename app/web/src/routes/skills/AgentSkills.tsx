@@ -1,12 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { zoned } from '../../lib/time.js';
+import { api } from '../../lib/api.js';
 import { skillsApi } from './api.js';
 import { Chip, Empty, ErrorState, Loading, Reasons, StateChip } from './ui.js';
 
 /** One agent's skills: what the policy gives it and why, its runtime's limits, and what was seen loaded. */
 export default function AgentSkills() {
   const { agent = '' } = useParams();
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
   const page = useQuery({ queryKey: ['skills', 'agent', agent], queryFn: () => skillsApi.agent(agent) });
   if (page.isPending) return <Loading what={`${agent}'s skills`} />;
   if (page.isError) return <ErrorState error={page.error} retry={() => void page.refetch()} />;
@@ -19,7 +21,7 @@ export default function AgentSkills() {
         <span className="text-sm text-[var(--ink-dim)]">{a.team ?? 'no team'} · {a.runtime}</span>
         <Chip tone={a.support === 'catalog-filtered' ? 'ok' : 'warn'} title={a.supportNote}>{a.support}</Chip>
         <Link className="text-sm text-[var(--accent)]" to={`/skills/matrix?agent=${encodeURIComponent(a.name)}`}>In the matrix</Link>
-        <Link className="text-sm text-[var(--accent)]" to={`/org/agents/${encodeURIComponent(a.name)}`}>Profile</Link>
+        {meta.data?.modules.includes('org') && <Link className="text-sm text-[var(--accent)]" to={`/org/agents/${encodeURIComponent(a.name)}`}>Profile</Link>}
       </header>
       <p className="text-sm text-[var(--ink-dim)]">{a.supportNote}</p>
       {mode === 'legacy' && <p className="text-sm"><Chip tone="accent">No managed policy</Chip> This agent sees every skill its runtime finds, as before.</p>}

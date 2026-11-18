@@ -255,7 +255,7 @@ export class SkillsService {
       }
       return desiredCache.get(agent)!;
     };
-    return { staleAfterHours: this.settings.staleAfterHours, hosts: machineStates(data, desired, this.settings.staleAfterHours), mode: s.policy.mode, notes };
+    return { staleAfterHours: this.settings.staleAfterHours, hosts: machineStates(data, desired, this.settings.staleAfterHours, new Date(), s.policy.digest), mode: s.policy.mode, notes };
   }
 
   // ---- lifecycle ----

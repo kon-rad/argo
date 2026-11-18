@@ -361,9 +361,11 @@ export async function previewChange(ctx: LifecycleContext, req: ChangeRequest): 
       if (deps.length) blocked.push(`skills that depend on ${name}: ${deps.join(', ')}; change them first`);
       if (grants.length && !req.resolve) blocked.push(`still granted or pinned by ${grants.join(', ')}; revoke those grants first or confirm revoking them with this change`);
       if (grants.length && req.resolve) {
-        next.org.grant = next.org.grant.filter((n) => n !== name);
-        for (const s of Object.values(next.teams)) s.grant = s.grant.filter((n) => n !== name);
-        for (const s of Object.values(next.agents)) s.grant = s.grant.filter((n) => n !== name);
+        for (const scope of [next.org, ...Object.values(next.teams), ...Object.values(next.agents)]) {
+          // Resolve just this skill without removing a wildcard's grants to every other skill.
+          if (scope.grant.includes('*') && !scope.deny.includes(name)) scope.deny.push(name);
+          scope.grant = scope.grant.filter((n) => n !== name);
+        }
         delete next.pins[name];
       }
       next.lifecycle[name] = { status: 'removed', ...(req.note ? { note: req.note } : {}), since: today() };
@@ -439,9 +441,18 @@ function toChange(ctx: LifecycleContext, s: StoredChange): Change {
   const policyLive = !s.hasPolicy || (() => {
     try { return parsePolicy(readFileSync(join(changeDir(ctx, s.id), 'policy.yaml'), 'utf8')).digest === ctx.policy.digest; } catch { return false; }
   })();
-  if (packageLive && policyLive) status = 'live';
+  if (!s.branch && s.kind === 'create' && s.targetPath && occupied(join(ctx.vaultRoot, s.targetPath))) status = 'stale';
+  else if (packageLive && policyLive) status = 'live';
   else if (!s.branch && ((s.hasPackage && s.kind !== 'create' && current?.digest !== s.preview.baseDigest) || (s.hasPolicy && ctx.policy.digest !== s.basePolicyDigest))) status = 'stale';
   return { id: s.id, kind: s.kind, skill: s.skill, createdAt: s.createdAt, status, branch: s.branch, commit: s.commit, preview: s.preview };
+}
+
+function occupied(path: string): boolean {
+  try { lstatSync(path); return true; }
+  catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
 }
 
 export function listChanges(ctx: LifecycleContext): Change[] {
@@ -479,7 +490,16 @@ export async function applyChange(ctx: LifecycleContext, id: string, opts: { mes
       // targetPath is repo-relative for update/rollback (gitRel) and vault-relative for create.
       const dest = stored.kind === 'create' ? inTree(stored.targetPath) : join(wt, ...stored.targetPath.split('/'));
       if (!within(wt, dest)) throw new LifecycleError(400, 'target leaves the repository');
-      rmSync(dest, { recursive: true, force: true });
+      if (stored.kind === 'create') {
+        // Check both the live source and new Git worktree, then claim the destination exclusively.
+        if (occupied(join(ctx.vaultRoot, stored.targetPath)) || occupied(dest)) throw new LifecycleError(409, 'create destination is occupied; propose the change again');
+        mkdirSync(dirname(dest), { recursive: true });
+        try { mkdirSync(dest); }
+        catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw new LifecycleError(409, 'create destination already exists');
+          throw err;
+        }
+      } else rmSync(dest, { recursive: true, force: true });
       const src = join(dir, 'package');
       const scan = scanPackage(src);
       if (!scan.ok) throw new LifecycleError(422, `stored package: ${scan.error}`);

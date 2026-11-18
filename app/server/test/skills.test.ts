@@ -341,9 +341,7 @@ describe('skills reconciliation', () => {
     const digest = Object.keys(bundle.packages)[0]!;
     bundle.packages[digest]!.files.push({ path: '../../escape.sh', exec: true, data: Buffer.from('x').toString('base64') });
     const other = join(mkdtempSync(join(tmpdir(), 'sb-host2-')), 'managed');
-    const r2 = syncViews(other, planFromBundle(JSON.parse(JSON.stringify(bundle))), { env: { PATH: '' } });
-    expect(r2.views[0]!.status).toBe('failed');
-    expect(r2.views[0]!.error).toMatch(/unsafe path/);
+    expect(() => planFromBundle(JSON.parse(JSON.stringify(bundle)))).toThrow(/unsafe path/);
     expect(existsSync(join(other, '..', 'escape.sh'))).toBe(false);
   });
 

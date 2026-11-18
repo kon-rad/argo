@@ -48,13 +48,15 @@ export async function readAcks(): Promise<{ acks: AckRow[]; hosts: { slug: strin
  * (name -> digest) or null when the policy is legacy (nothing is desired, only observed).
  */
 export function machineStates(
-  data: Awaited<ReturnType<typeof readAcks>>, desired: (agent: string) => Map<string, string> | null, staleAfterHours: number, now = new Date(),
+  data: Awaited<ReturnType<typeof readAcks>>, desired: (agent: string) => Map<string, string> | null, staleAfterHours: number, now = new Date(), expectedPolicyDigest?: string | null,
 ): HostState[] {
   const staleMs = staleAfterHours * 3600_000;
   const out: HostState[] = [];
   const byHost = new Map<string, AckRow[]>();
   for (const a of data.acks) byHost.set(a.host, [...(byHost.get(a.host) ?? []), a]);
-  for (const h of data.hosts) {
+  const hosts = [...data.hosts];
+  for (const host of byHost.keys()) if (!hosts.some((h) => h.slug === host)) hosts.push({ slug: host, display: host });
+  for (const h of hosts) {
     const rows = byHost.get(h.slug) ?? [];
     if (!rows.length) { out.push({ host: h.slug, display: h.display, status: 'never', lastAck: null, views: [] }); continue; }
     const views: ViewState[] = rows.map((r) => {
@@ -68,10 +70,11 @@ export function machineStates(
         return { name, desired: d, observed: o, state };
       });
       const stale = now.getTime() - new Date(r.received_at).getTime() > staleMs;
-      const drift = skills.some((s) => s.state === 'drift' || s.state === 'missing' || s.state === 'extra');
+      const policyDrift = want !== null && expectedPolicyDigest !== undefined && r.policy_digest !== expectedPolicyDigest;
+      const drift = policyDrift || skills.some((s) => s.state === 'drift' || s.state === 'missing' || s.state === 'extra');
       const status: ViewState['status'] = r.status === 'failed' ? 'failed' : r.status === 'dirty' ? 'dirty' : stale ? 'stale' : drift ? 'drift' : 'current';
       return { agent: r.agent, runtime: r.runtime, viewDigest: r.view_digest, generatedAt: r.generated_at ? new Date(r.generated_at).toISOString() : null,
-        receivedAt: new Date(r.received_at).toISOString(), status, error: r.error, skills, missing: r.missing, dirty: r.dirty };
+        receivedAt: new Date(r.received_at).toISOString(), status, error: r.error ?? (policyDrift ? 'Acknowledged policy differs from the current policy; synchronize this view again.' : null), skills, missing: r.missing, dirty: r.dirty };
     });
     const last = data.lastSeen.get(h.slug) ?? rows.map((r) => new Date(r.received_at)).sort((a, b) => b.getTime() - a.getTime())[0]!;
     const rank = ['failed', 'dirty', 'stale', 'drift', 'current'] as const;

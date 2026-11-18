@@ -1,6 +1,6 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from '@earendil-works/pi-ai';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -8,6 +8,7 @@ import { ZenAgent } from '../src/agent.js';
 import { loadConfig, type ZenConfig } from '../src/config.js';
 import { packageDigest } from '../src/skillpkg.js';
 import { resolveSkills, VIEW_FORMAT } from '../src/skills.js';
+import { startServer } from '../src/serve.js';
 import { skillTools } from '../src/tools/skill.js';
 import type { ToolContext } from '../src/tools/index.js';
 
@@ -207,4 +208,68 @@ test('a managed run pins a stable snapshot: a later sync does not change it, and
   assert.deepEqual(resumed.packages.map((p) => p.digest), [v1]);
   // A new session gets the new version.
   assert.deepEqual(resolveSkills(cfg, 'writer', 'fresh').packages.map((p) => p.digest), [v2]);
+});
+
+for (const enforce of [false, true]) test(`resume survives view removal (enforce=${enforce})`, () => {
+  const root = managedRoot();
+  view(root, 'writer', 1, [{ name: 'report', digest: store(root, 'report') }]);
+  const cfg = cfgFor(root, legacy(), enforce);
+  const first = resolveSkills(cfg, 'writer', 'resume-removed');
+  rmSync(join(root, 'views'), { recursive: true, force: true });
+  const resumed = resolveSkills(cfg, 'writer', 'resume-removed');
+  assert.equal(resumed.mode, 'managed');
+  assert.deepEqual(resumed.packages, first.packages);
+  assert.deepEqual(resumed.skills.map((s) => s.name), ['report']);
+  assert.equal(resolveSkills({ ...cfg, managedSkills: null }, 'writer', 'resume-removed').mode, 'managed');
+});
+
+for (const mismatch of ['agent', 'runtime']) test(`rejects a substituted view ${mismatch}`, () => {
+  const root = managedRoot();
+  view(root, 'writer', 1, [{ name: 'report', digest: store(root, 'report') }]);
+  const file = join(root, 'views', 'writer', 'zen-agent', 'manifest.json');
+  const manifest = JSON.parse(readFileSync(file, 'utf8'));
+  manifest[mismatch] = mismatch === 'agent' ? 'editor' : 'codex';
+  writeFileSync(file, JSON.stringify(manifest));
+  const resolved = resolveSkills(cfgFor(root, legacy(), false), 'writer', 'wrong-identity');
+  assert.equal(resolved.mode, 'managed-missing'); assert.deepEqual(resolved.skills, []);
+  assert.match(resolved.rejected[0]!.reason, /agent|persona|runtime/);
+});
+
+for (const corruption of ['record', 'package']) test(`damaged snapshot ${corruption} fails closed`, () => {
+  const root = managedRoot();
+  view(root, 'writer', 1, [{ name: 'report', digest: store(root, 'report') }, { name: 'second', digest: store(root, 'second') }]);
+  const cfg = cfgFor(root, legacy(), false);
+  const first = resolveSkills(cfg, 'writer', 'damaged-snapshot');
+  rmSync(join(root, 'views'), { recursive: true, force: true });
+  const file = corruption === 'record' ? join(first.snapshot!, '.snapshot.json') : join(first.snapshot!, 'report', 'SKILL.md');
+  chmodSync(file, 0o644);
+  writeFileSync(file, corruption === 'record' ? '{broken' : '# changed after the session started');
+  const resumed = resolveSkills(cfg, 'writer', 'damaged-snapshot');
+  assert.equal(resumed.mode, 'managed-missing'); assert.deepEqual(resumed.skills, []);
+  assert.match(resumed.rejected[0]!.reason, /snapshot/);
+});
+
+test('managed chat HTTP catalogs are scoped to their verified snapshots', async () => {
+  const vault = mkdtempSync(join(tmpdir(), 'zen-chat-managed-'));
+  writeFileSync(join(vault, 'AGENTS.md'), '# Fixture rules'); mkdirSync(join(vault, 'defs'));
+  for (const name of ['writer', 'editor']) writeFileSync(join(vault, 'defs', `${name}.md`), `You are ${name}.`);
+  const root = managedRoot();
+  view(root, 'writer', 1, [{ name: 'report', digest: store(root, 'report') }]);
+  view(root, 'editor', 1, [{ name: 'render', digest: store(root, 'render') }]);
+  const faux = fauxProvider(); const models = createModels(); models.setProvider(faux.provider);
+  const cfg = loadConfig({ workdir: vault, env: {}, overrides: {
+    model: 'faux/faux-1', tools: ['skills'], skills: [legacy()], managedSkills: { root, enforce: true, snapshots: null },
+    persona: { org: join(vault, 'none.json'), definitions: join(vault, 'defs'), memory: join(vault, 'mem') },
+  } });
+  const started = await startServer({ config: cfg, models, env: {}, token: 'synthetic-fixture-token', port: 0 });
+  try {
+    const writer = started.host.create({ persona: 'writer' }); const editor = started.host.create({ persona: 'editor' });
+    const headers = { authorization: 'Bearer synthetic-fixture-token' };
+    const global = await (await fetch(`${started.url}/zen/skills`, { headers })).json() as { skills: { name: string }[] };
+    assert.deepEqual(global.skills, []);
+    for (const [chat, name] of [[writer, 'report'], [editor, 'render']] as const) {
+      const scoped = await (await fetch(`${started.url}/zen/chats/${chat.id}/skills`, { headers })).json() as { skills: { name: string }[] };
+      assert.deepEqual(scoped.skills.map((s) => s.name), [name]);
+    }
+  } finally { await new Promise<void>((resolve) => started.server.close(() => resolve())); }
 });

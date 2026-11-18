@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import Skills from '../src/routes/skills/Skills.js';
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
@@ -24,12 +24,30 @@ function stub(handler: (url: string) => Response): void {
 
 function renderAt(view: Parameters<typeof Skills>[0]['view'], path = '/skills') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><Skills view={view} /></MemoryRouter></QueryClientProvider>);
+  const route = view === 'agent' ? '/skills/agents/:agent' : view === 'detail' ? '/skills/s/:name' : '*';
+  return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><Routes><Route path={route} element={<Skills view={view} />} /></Routes></MemoryRouter></QueryClientProvider>);
 }
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Skills library', () => {
+  it('shows a failed forced rescan while retaining stale data, and retries a forced rescan', async () => {
+    let forced = 0;
+    stub((url) => {
+      if (url.includes('refresh=1') && ++forced === 1) return json({ error: { message: 'rescan unavailable' } }, 500);
+      return json({ mode: 'legacy', policy, roots: [], skills: [row('report')], generatedAt: '2026-01-01T00:00:00Z' });
+    });
+    renderAt('library');
+    await screen.findByRole('link', { name: 'report' });
+    fireEvent.click(screen.getByRole('button', { name: 'Rescan' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/rescan unavailable/);
+    expect(screen.getByRole('link', { name: 'report' })).toBeTruthy();
+    expect(screen.getByText(/previous catalog/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(forced).toBe(2);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
   it('shows the empty state and the legacy banner for an empty catalog', async () => {
     stub(() => json({ mode: 'legacy', policy, roots: [], skills: [], generatedAt: '2026-01-01T00:00:00Z' }));
     renderAt('library');
@@ -59,6 +77,19 @@ describe('Skills library', () => {
     fireEvent.change(screen.getByLabelText('Search skills'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('Flag'), { target: { value: 'override' } });
     expect(screen.queryAllByText('ingest')).toHaveLength(0);
+  });
+});
+
+describe('Skills agent profile links', () => {
+  it.each([false, true])('shows the org profile link only when org is enabled: %s', async (org) => {
+    stub((url) => url.includes('/meta') ? json({ modules: org ? ['skills', 'org'] : ['skills'] }) : json({
+      agent: { name: 'alpha', team: 'media', runtime: 'codex', support: 'catalog-only', supportNote: 'Catalog only.', assigned: 0, references: 0 },
+      cells: [], notes: [], mode: 'managed',
+    }));
+    renderAt('agent', '/skills/agents/alpha');
+    await screen.findByRole('heading', { name: 'alpha' });
+    if (org) expect(await screen.findByRole('link', { name: 'Profile' })).toBeTruthy();
+    else expect(screen.queryByRole('link', { name: 'Profile' })).toBeNull();
   });
 });
 

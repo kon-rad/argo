@@ -239,7 +239,7 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
         return failed ? 2 : 0;
       }
       case 'status': {
-        const views = inspectRoot(root);
+        const views = inspectRoot(root, io.env);
         if (json) { io.out(JSON.stringify({ root, views }, null, 2)); return 0; }
         if (!existsSync(root)) io.out(`no managed root at ${root}`);
         for (const v of views) io.out(`${v.agent}/${v.runtime}: ${v.status} ${short(v.viewDigest)} generated ${v.generatedAt}${v.error ? `: ${v.error}` : ''}`);
@@ -248,7 +248,7 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
       case 'ack': {
         let last: { policyDigest: string | null } = { policyDigest: null };
         try { last = JSON.parse(readFileSync(join(root, 'state.json'), 'utf8')); } catch { /* never synced */ }
-        return (await ack(io, { policyDigest: last.policyDigest, views: inspectRoot(root) }, opts['server'], opts['token-file'])) ? 0 : 3;
+        return (await ack(io, { policyDigest: last.policyDigest, views: inspectRoot(root, io.env) }, opts['server'], opts['token-file'])) ? 0 : 3;
       }
       case 'view-path': {
         if (!args[0]) break;

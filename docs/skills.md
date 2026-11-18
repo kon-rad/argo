@@ -118,6 +118,10 @@ For a Codex catalog, create a separate workspace with `.agents/skills` pointing 
 
 Package validation rejects credential filenames (including `auth.json` and `.credentials.json`) before reading their contents. Resolved aliases may not target ignored directories or credential paths. The detail and file APIs apply the same path checks at read time, so a rejected package or a file replaced by a link is not an alternative route to its contents.
 
+Bundles and generated stores are stricter: every file must participate in the approved digest. Ignored paths, credential names, duplicate entries and unlisted staging files are refused. A failed deployment preserves the previous view. Remote acknowledgements require HTTPS; HTTP is allowed only on loopback for development, and redirects are refused.
+
+Standalone acknowledgements recheck prerequisites from verified installed metadata. A changed policy digest produces drift even if the selected package digests happen to be identical. Removal checks include wildcard grants; explicitly resolving one skill adds a denial without removing the wildcard's grants to other skills. A create proposal refuses an occupied destination instead of replacing a newer package.
+
 ## Changing skills
 
 The app and `secondbrain skills` call the same service. It writes only into two vault folders:
