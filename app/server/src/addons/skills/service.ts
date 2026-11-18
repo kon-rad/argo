@@ -47,7 +47,7 @@ const MAX_FILE_BYTES = 512 * 1024;
 
 /** Only accepted, merged jobs with verdicts bound to the exact repository and reviewed head qualify. */
 async function acceptedReviewReceipts(repo: string): Promise<life.ReviewReceipt[]> {
-  const result = await query<life.ReviewReceipt>(`SELECT snapshot->>'repo' AS repo, verdict->>'head' AS head, merged, snapshot->>'branch' AS branch
+  const result = await query<life.ReviewReceipt>(`SELECT snapshot->>'repo' AS repo, snapshot->>'base' AS base, verdict->>'head' AS head, merged, snapshot->>'branch' AS branch
     FROM review_jobs WHERE lower(snapshot->>'repo')=$1 AND verdict->>'repo'=snapshot->>'repo'
       AND verdict->>'decision'='accept' AND verdict->>'head'=snapshot->>'head' AND verdict->>'base'=snapshot->>'base'
       AND verdict->>'reviewer'=reviewer AND reviewer<>builder AND merged IS NOT NULL

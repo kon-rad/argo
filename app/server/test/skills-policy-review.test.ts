@@ -66,7 +66,7 @@ it('rejects approval of a stale digest or revision', async () => {
 });
 it('accepts exact merged review evidence and refuses foreign or mismatched evidence', async () => {
   const f = fixture();
-  f.reviews.push({ repo: 'other-org/other-vault', branch: 'main', head: f.revision, merged: f.revision });
+  f.reviews.push({ repo: 'other-org/other-vault', branch: 'main', base: sh(f.f.vault, 'rev-parse', `${f.revision}^`), head: f.revision, merged: f.revision });
   await expect(f.service.reviewedPolicy()).rejects.toThrow(/no current/);
   f.reviews[0]!.repo = 'fixture-org/fixture-vault'; f.reviews[0]!.branch = 'other';
   await expect(f.service.reviewedPolicy()).rejects.toThrow(/no current/);
@@ -80,7 +80,7 @@ it('does not replay an older owner approval after a newer approval supersedes th
   write(join(f.f.vault, SETTINGS.policyFile), POLICY.replace('[report]', '[clip]')); sh(f.f.vault, 'add', SETTINGS.policyFile); sh(f.f.vault, 'commit', '-qm', 'Superseding policy'); sh(f.f.vault, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
   await approve(f); expect(f.approvals).toHaveLength(2);
   sh(f.f.vault, 'reset', '--hard', f.revision); sh(f.f.vault, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
-  f.reviews.push({ repo: 'fixture-org/fixture-vault', branch: 'main', head: f.revision, merged: f.revision });
+  f.reviews.push({ repo: 'fixture-org/fixture-vault', branch: 'main', base: sh(f.f.vault, 'rev-parse', `${f.revision}^`), head: f.revision, merged: f.revision });
   await expect(f.service.reviewedPolicy()).rejects.toThrow(/superseded policy/);
 });
 it('fails closed when the approval store is unavailable', async () => {
@@ -148,4 +148,27 @@ it('keeps the prior active view when a local team edit would add a granted skill
   const rosterPath = join(f.f.vault, '.agents/org/org.json'), doc = JSON.parse(readFileSync(rosterPath, 'utf8')); doc.agents.alpha.team = 'eng'; write(rosterPath, JSON.stringify(doc));
   await expect(f.service.reviewedPolicy()).rejects.toThrow(/Roster authorization sources have uncommitted changes/);
   const after = readCurrent(root, 'alpha', 'zen-agent'); expect(after.dir).toBe(before.dir); expect(after.manifest).toEqual(before.manifest);
+});
+it('does not approve an unreviewed policy through a later unrelated accepted PR', async () => {
+  const f = fixture(), base = f.revision;
+  write(join(f.f.vault, 'Notes/unrelated.md'), 'A reviewed note unrelated to the policy.'); sh(f.f.vault, 'add', 'Notes/unrelated.md'); sh(f.f.vault, 'commit', '-qm', 'Unrelated reviewed change');
+  const head = sh(f.f.vault, 'rev-parse', 'HEAD'); sh(f.f.vault, 'update-ref', 'refs/remotes/origin/main', head);
+  f.reviews.push({ repo: 'fixture-org/fixture-vault', branch: 'main', base, head, merged: head });
+  await expect(f.service.reviewedPolicy()).rejects.toThrow(/no current accepted review/);
+  // A receipt for the PR that actually introduced the policy authorizes its unchanged successor.
+  f.reviews.push({ repo: 'fixture-org/fixture-vault', branch: 'main', base: sh(f.f.vault, 'rev-parse', `${base}^`), head: base, merged: base });
+  expect((await f.service.reviewedPolicy()).policy.digest).toBe(parsePolicy(POLICY).digest);
+  write(join(f.f.vault, 'Notes/later.md'), 'Another later note.'); sh(f.f.vault, 'add', 'Notes/later.md'); sh(f.f.vault, 'commit', '-qm', 'Later note'); sh(f.f.vault, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  expect((await f.service.reviewedPolicy()).policy.digest).toBe(parsePolicy(POLICY).digest);
+});
+it('requires a valid ancestral review base whose policy blob differs from the reviewed policy', async () => {
+  const f = fixture();
+  const receipt: ReviewReceipt = { repo: 'fixture-org/fixture-vault', branch: 'main', base: 'unknown', head: f.revision, merged: f.revision }; f.reviews.push(receipt);
+  await expect(f.service.reviewedPolicy()).rejects.toThrow(/no current/);
+  receipt.base = f.revision; await expect(f.service.reviewedPolicy()).rejects.toThrow(/no current/);
+  write(join(f.f.vault, SETTINGS.policyFile), POLICY + '# Temporary policy edit\n'); sh(f.f.vault, 'add', SETTINGS.policyFile); sh(f.f.vault, 'commit', '-qm', 'Temporary policy edit');
+  write(join(f.f.vault, SETTINGS.policyFile), POLICY); sh(f.f.vault, 'add', SETTINGS.policyFile); sh(f.f.vault, 'commit', '-qm', 'Restore same base policy bytes');
+  const head = sh(f.f.vault, 'rev-parse', 'HEAD'); sh(f.f.vault, 'update-ref', 'refs/remotes/origin/main', head);
+  receipt.base = f.revision; receipt.head = head; receipt.merged = head;
+  await expect(f.service.reviewedPolicy()).rejects.toThrow(/no current/);
 });

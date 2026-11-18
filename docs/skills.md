@@ -169,7 +169,7 @@ The default managed root is `~/.local/share/secondbrain/skills` (`skills.managed
 
 ### Policy approval and online authorization
 
-A valid local policy is an inspection proposal, not deployment authority. Before `pack` or `sync` (including `--dry-run`), the CLI contacts the canonical HTTPS server using a live device token. The server reloads its clean, tracked, committed default-branch policy and requires an accepted Vera review receipt or an explicit owner approval for that exact repository, path, revision and digest. It resolves the requested agents/runtimes itself and compares the complete plan fingerprint. A serialized bundle cannot grant itself authority by carrying a reviewed flag or copied receipt.
+A valid local policy is an inspection proposal, not deployment authority. Before `pack` or `sync` (including `--dry-run`), the CLI contacts the canonical HTTPS server using a live device token. The server reloads its clean, tracked, committed default-branch policy and requires an accepted Vera review receipt or an explicit owner approval for that exact repository, path, revision and digest. The accepted review must actually introduce the policy change after its recorded base and preserve its exact blob on merge; an unrelated later PR cannot approve policy already present in its base. Lifecycle merge evidence likewise must introduce the recorded apply commit. It resolves the requested agents/runtimes itself and compares the complete plan fingerprint. A serialized bundle cannot grant itself authority by carrying a reviewed flag or copied receipt.
 
 When the policy has no accepted review receipt, the authenticated owner can approve its exact committed version through the owner-only API or from a trusted database-owning operator session:
 

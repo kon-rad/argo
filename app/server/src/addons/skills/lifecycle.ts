@@ -24,7 +24,7 @@ export class LifecycleError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
-export interface ReviewReceipt { repo: string; head: string; merged: string; branch: string }
+export interface ReviewReceipt { repo: string; base: string; head: string; merged: string; branch: string }
 export type ReviewReceiptProvider = (repo: string) => Promise<ReviewReceipt[]>;
 
 export interface LifecycleContext {
@@ -614,10 +614,14 @@ async function mergedProvenance(ctx: LifecycleContext, stored: StoredChange): Pr
   if ((stored.hasPackage && !packagePath) || (stored.hasPolicy && !policyPath)) return false;
   let approved = false;
   for (const receipt of receipts) {
-    if (receipt.repo.toLowerCase() !== repo || receipt.branch !== defaultRef.slice('refs/remotes/origin/'.length) || ![receipt.head, receipt.merged].every(sha => /^[0-9a-f]{40,64}$/.test(sha))) continue;
-    if ((await git(top, ['merge-base', '--is-ancestor', stored.commit, receipt.head])) === null ||
+    if (receipt.repo.toLowerCase() !== repo || receipt.branch !== defaultRef.slice('refs/remotes/origin/'.length) || ![receipt.base, receipt.head, receipt.merged].every(sha => /^[0-9a-f]{40,64}$/.test(sha))) continue;
+    if ((await git(top, ['merge-base', '--is-ancestor', receipt.base, receipt.head])) === null ||
+        (await git(top, ['merge-base', '--is-ancestor', stored.commit, receipt.head])) === null ||
         (await git(top, ['merge-base', '--is-ancestor', receipt.head, receipt.merged])) === null ||
         (await git(top, ['merge-base', '--is-ancestor', receipt.merged, tip])) === null) continue;
+    // A later unrelated review must not approve an apply commit already present in its base.
+    const introduced: string | undefined = (await git(top, ['merge-base', stored.commit, receipt.base]))?.trim();
+    if (!introduced || introduced === stored.commit) continue;
     if (!await reviewedTargetsMatch(top, receipt.head, stored, packagePath, policyPath) ||
         (receipt.merged !== receipt.head && !await reviewedTargetsMatch(top, receipt.merged, stored, packagePath, policyPath))) continue;
     approved = true; break;

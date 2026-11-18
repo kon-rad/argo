@@ -36,8 +36,8 @@ it('keeps matching local bytes pending until the recorded apply commit reaches t
  sh(f.vault,'update-ref','refs/remotes/origin/main','HEAD');sh(f.vault,'symbolic-ref','refs/remotes/origin/HEAD','refs/remotes/origin/main');
  sh(f.vault,'merge','-q','--ff-only',applied.branch);expect(await status()).toBe('pending');
  sh(f.vault,'update-ref','refs/remotes/origin/main',applied.commit);expect(await status()).toBe('pending');
- receipts.push({repo:'wrong-org/wrong-repo',head:applied.commit,merged:applied.commit,branch:'main'});expect(await status()).toBe('pending');
- receipts.push({repo:'fixture-org/fixture-vault',head:applied.commit,merged:applied.commit,branch:'main'});expect(await status()).toBe('live');
+ receipts.push({repo:'wrong-org/wrong-repo',base:sh(f.vault,'rev-parse',`${applied.commit}^`),head:applied.commit,merged:applied.commit,branch:'main'});expect(await status()).toBe('pending');
+ receipts.push({repo:'fixture-org/fixture-vault',base:sh(f.vault,'rev-parse',`${applied.commit}^`),head:applied.commit,merged:applied.commit,branch:'main'});expect(await status()).toBe('live');
  // Missing default tracking evidence remains conservative even with a receipt.
  sh(f.vault,'update-ref','-d','refs/remotes/origin/main');expect(await status()).toBe('pending');
 });
@@ -59,11 +59,27 @@ it.each(['package','policy'] as const)('keeps a later unreviewed %s reintroducti
  }else id=(await service.propose({kind:'disable',skill:'video'})).id;
  const applied=await service.apply(id);sh(f.vault,'merge','-q','--ff-only',applied.branch);
  sh(f.vault,'revert','--no-edit',applied.commit);const acceptedHead=sh(f.vault,'rev-parse','HEAD');
- receipts.push({repo:'fixture-org/fixture-vault',head:acceptedHead,merged:acceptedHead,branch:'main'});
+ receipts.push({repo:'fixture-org/fixture-vault',base:sh(f.vault,'rev-parse',`${applied.commit}^`),head:acceptedHead,merged:acceptedHead,branch:'main'});
  sh(f.vault,'cherry-pick',applied.commit);const tip=sh(f.vault,'rev-parse','HEAD');
  sh(f.vault,'update-ref','refs/remotes/origin/main',tip);sh(f.vault,'symbolic-ref','refs/remotes/origin/HEAD','refs/remotes/origin/main');
  service.invalidate();expect((await service.changes()).find(change=>change.id===id)!.status).toBe('pending');
  // Acceptance of the actual reintroduced aggregate, rather than ancestry alone, is sufficient.
- receipts.push({repo:'fixture-org/fixture-vault',head:tip,merged:tip,branch:'main'});
+ receipts.push({repo:'fixture-org/fixture-vault',base:sh(f.vault,'rev-parse',`${applied.commit}^`),head:tip,merged:tip,branch:'main'});
  expect((await service.changes()).find(change=>change.id===id)!.status).toBe('live');
+});
+it('does not mark an unreviewed apply commit live through a later unrelated accepted PR',async()=>{
+ const {f,service,receipts}=fixture();sh(f.vault,'remote','add','origin','https://github.com/fixture-org/fixture-vault.git');
+ await service.createDraft('report','report');const loaded=await service.readDraftFile('report','SKILL.md');
+ await service.writeDraftFile('report','SKILL.md',skillMd('report','A change requiring its own review.'),false,loaded.version);
+ const change=await service.propose({kind:'update',skill:'report',draft:'report'}),applied=await service.apply(change.id);
+ const originalBase=sh(f.vault,'rev-parse',`${applied.commit}^`);sh(f.vault,'merge','-q','--ff-only',applied.branch);
+ write(join(f.vault,'Notes/unrelated.md'),'A reviewed note.');sh(f.vault,'add','Notes/unrelated.md');sh(f.vault,'commit','-qm','Unrelated accepted change');
+ const head=sh(f.vault,'rev-parse','HEAD');sh(f.vault,'update-ref','refs/remotes/origin/main',head);sh(f.vault,'symbolic-ref','refs/remotes/origin/HEAD','refs/remotes/origin/main');
+ const receipt:ReviewReceipt={repo:'fixture-org/fixture-vault',base:applied.commit,head,merged:head,branch:'main'};receipts.push(receipt);
+ const status=async()=>{service.invalidate();return(await service.changes()).find(row=>row.id===change.id)!.status;};
+ expect(await status()).toBe('pending');receipt.base='unavailable';expect(await status()).toBe('pending');
+ receipts.push({repo:'fixture-org/fixture-vault',base:originalBase,head:applied.commit,merged:applied.commit,branch:'main'});
+ expect(await status()).toBe('live');
+ write(join(f.vault,'Notes/later.md'),'Later note.');sh(f.vault,'add','Notes/later.md');sh(f.vault,'commit','-qm','Later note');sh(f.vault,'update-ref','refs/remotes/origin/main','HEAD');
+ expect(await status()).toBe('live');
 });

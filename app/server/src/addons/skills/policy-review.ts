@@ -88,13 +88,24 @@ export function matchesApproval(snapshot: PolicySnapshot, receipt: PolicyProvena
 /** The accepted review must contain this policy change, preserve the exact blob on merge, and reach the current tip. */
 export async function acceptedPolicyReview(snapshot: PolicySnapshot, receipts: ReviewReceipt[]): Promise<PolicyProvenance | null> {
   for (const receipt of receipts) {
-    if (receipt.repo.toLowerCase() !== snapshot.repo || receipt.branch !== snapshot.branch || !sha.test(receipt.head) || !sha.test(receipt.merged)) continue;
+    if (receipt.repo.toLowerCase() !== snapshot.repo || receipt.branch !== snapshot.branch || !sha.test(receipt.base) || !sha.test(receipt.head) || !sha.test(receipt.merged)) continue;
     const ancestry = await Promise.all([
+      git(snapshot.top, ['merge-base', '--is-ancestor', receipt.base, receipt.head]),
       git(snapshot.top, ['merge-base', '--is-ancestor', snapshot.revision, receipt.head]),
       git(snapshot.top, ['merge-base', '--is-ancestor', receipt.head, receipt.merged]),
       git(snapshot.top, ['merge-base', '--is-ancestor', receipt.merged, snapshot.head]),
     ]);
     if (ancestry.some(value => value === null)) continue;
+    // Prove that this PR introduced the policy revision, rather than inheriting it in its base.
+    // A successful merge-base answer distinguishes non-ancestry from unavailable Git evidence.
+    const introduced: string | undefined = (await git(snapshot.top, ['merge-base', snapshot.revision, receipt.base]))?.trim();
+    if (!introduced || introduced === snapshot.revision) continue;
+    const baseTree = await git(snapshot.top, ['ls-tree', '-z', receipt.base, '--', snapshot.path]);
+    if (baseTree === null) continue;
+    if (baseTree !== '') {
+      const baseEntry = /^100(?:644|755) blob ([0-9a-f]+)\t[^\0]+\0$/.exec(baseTree);
+      if (!baseEntry || baseEntry[1] === snapshot.blob) continue;
+    }
     const [reviewed, merged] = await Promise.all([regularBlob(snapshot.top, receipt.head, snapshot.path), regularBlob(snapshot.top, receipt.merged, snapshot.path)]);
     if (reviewed?.id !== snapshot.blob || merged?.id !== snapshot.blob) continue;
     return { repo: snapshot.repo, path: snapshot.path, revision: snapshot.revision, digest: snapshot.digest, source: `review:${receipt.head}:${receipt.merged}`, approvedBy: 'accepted-review' };
