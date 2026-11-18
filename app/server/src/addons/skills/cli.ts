@@ -3,8 +3,9 @@ import { join } from 'node:path';
 import { ChangeKindSchema, ChangeRequestSchema, RuntimeSchema, type ChangePreview, type SkillRuntime } from '@secondbrain/contracts/skills';
 import { parseArgs } from '../../cli-args.js';
 import { LifecycleError } from './lifecycle.js';
-import { ackPayload, inspectRoot, packBundle, planFromBundle, planViews, readCurrent, ReconcileError, sendAck, syncViews, type SyncReport } from './reconcile.js';
+import { ackPayload, authorizeRemotePlan, canonicalAuthorityOrigin, inspectRoot, packBundle, planFromBundle, proposeViews, readCurrent, ReconcileError, sendAck, syncViews, type Plan, type SyncReport } from './reconcile.js';
 import { expandPath, type SkillsService } from './service.js';
+import { PolicyReviewError } from './policy-review.js';
 
 /**
  * `secondbrain skills ...`: the same service the web app uses. Every command that changes something
@@ -31,14 +32,20 @@ Change (writes only drafts and proposals; nothing becomes active here)
       kinds: create | update | disable | deprecate | restore | remove | rollback
   changes [--json]                          proposed changes and their status
   apply <change-id>                         commit it on branch skills/<id> (temporary worktree; your checkout is untouched)
+  approve-policy --digest <sha256:...> --revision <full-sha> --source <owner-approval-reference> --reviewer <name>
+                                            record explicit owner approval of exact committed policy (owner database access required)
 
 Deploy to this machine
   sync [--agents a,b] [--runtime zen-agent|claude-code|hermes|codex] [--root <dir>] [--bundle <file>] [--repair]
-       [--ack --server <url> [--token-file <file>]]
-  pack --out <file> [--agents a,b] [--runtime <r>]   a bundle for a host with no vault checkout (copy it yourself)
+       --server <https-origin> [--token-file <file>] [--ack]
+  pack --out <file> [--agents a,b] [--runtime <r>] --server <https-origin> [--token-file <file>]
+                                            bundle only after online verification against the server's reviewed policy
   status [--root <dir>] [--json]                     verify deployed views against their digests
   ack --server <url> [--root <dir>] [--token-file <file>]   send this machine's state (device token: SB_LEDGER_TOKEN)
   view-path <agent> [--runtime <r>] [--root <dir>]   the folder to point a runtime at
+
+Pack, sync (including dry-run), and ack require the operator-configured skills.authorityOrigin.
+--server or SECONDBRAIN_SERVER must match that HTTPS origin. Pack and sync require online authorization and a live device token (SB_LEDGER_TOKEN or --token-file). No offline approval or skip flag exists; already installed views remain available offline.
 `;
 
 export interface CliIo { out: (s: string) => void; err: (s: string) => void; env: NodeJS.ProcessEnv; fetch?: typeof fetch; engine?: string | null }
@@ -60,6 +67,7 @@ function printPreview(io: CliIo, p: ChangePreview): void {
 }
 
 function token(io: CliIo, file: string | true | undefined): string {
+  if (file === true) throw new ReconcileError('--token-file requires a path');
   if (typeof file === 'string') {
     const st = statSync(file);
     if (st.mode & 0o077) throw new ReconcileError(`${file} is readable by other users; chmod 600 it`);
@@ -70,9 +78,25 @@ function token(io: CliIo, file: string | true | undefined): string {
   return t;
 }
 
-async function ack(io: CliIo, report: Pick<SyncReport, 'policyDigest' | 'views'>, server: string | true | undefined, tokenFile: string | true | undefined): Promise<boolean> {
-  const url = typeof server === 'string' ? server : io.env['SECONDBRAIN_SERVER'];
-  if (!url) throw new ReconcileError('--server <url> (or SECONDBRAIN_SERVER) is required to acknowledge');
+function destination(authorityOrigin: string | null | undefined, io: CliIo, server: string | true | undefined): string {
+  // Check the configured trust anchor and every supplied selector before reading a token file.
+  canonicalAuthorityOrigin(authorityOrigin);
+  if (server === true) throw new ReconcileError('--server requires an HTTPS origin');
+  const environment = io.env['SECONDBRAIN_SERVER'];
+  if (environment !== undefined) canonicalAuthorityOrigin(authorityOrigin, environment);
+  const requested = server ?? environment;
+  if (!requested) throw new ReconcileError('--server <https-origin> (or SECONDBRAIN_SERVER) is required and must match skills.authorityOrigin');
+  return canonicalAuthorityOrigin(authorityOrigin, requested);
+}
+
+async function authorize(plan: Plan, authorityOrigin: string | null | undefined, io: CliIo, server: string | true | undefined, tokenFile: string | true | undefined): Promise<void> {
+  const url = destination(authorityOrigin, io, server);
+  if (!plan.views.length) throw new ReconcileError('No agent/runtime views were selected; nothing packed or synchronized. Select an available agent and runtime.');
+  await authorizeRemotePlan(plan, { authorityOrigin }, url, token(io, tokenFile), io.fetch);
+}
+
+async function ack(authorityOrigin: string | null | undefined, io: CliIo, report: Pick<SyncReport, 'policyDigest' | 'views'>, server: string | true | undefined, tokenFile: string | true | undefined): Promise<boolean> {
+  const url = destination(authorityOrigin, io, server);
   const r = await sendAck(url, token(io, tokenFile), ackPayload(report, io.engine ?? null), io.fetch);
   if (r.ok) io.out(`acknowledged to ${url}: ${r.body}`);
   else io.err(`acknowledgement refused (HTTP ${r.status}): ${r.body}. The deployment on this machine is unchanged; the server still shows the previous acknowledgement.`);
@@ -99,6 +123,18 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
   const agents = typeof opts['agents'] === 'string' ? opts['agents'].split(',').map((s) => s.trim()).filter(Boolean) : undefined;
   try {
     switch (cmd) {
+      case 'approve-policy': {
+        const digest = opts['digest'], revision = opts['revision'], source = opts['source'], approvedBy = opts['reviewer'];
+        if (typeof digest !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(digest)
+          || typeof revision !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(revision)
+          || typeof source !== 'string' || !source.trim() || source.length > 200 || /[\u0000-\u001f\u007f]/.test(source)
+          || typeof approvedBy !== 'string' || !approvedBy.trim() || approvedBy.length > 100 || /[\u0000-\u001f\u007f]/.test(approvedBy)) {
+          throw new LifecycleError(400, 'approve-policy needs --digest sha256:<64 hex>, --revision <full Git SHA>, --source <approval reference, at most 200 characters>, and --reviewer <identity, at most 100 characters>');
+        }
+        const approval = await service.approvePolicy({ digest, revision, source: source.trim(), approvedBy: approvedBy.trim() });
+        io.out(json ? JSON.stringify({ approval }, null, 2) : `Owner policy approval recorded for ${digest} at ${revision}. Package content and permission policy were not changed.`);
+        return 0;
+      }
       case 'list': {
         const lib = await service.library(opts['refresh'] === true);
         if (json) { io.out(JSON.stringify(lib, null, 2)); return 0; }
@@ -210,7 +246,9 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
       case 'pack': {
         if (typeof opts['out'] !== 'string') break;
         const s = await service.current(true);
-        const bundle = packBundle(planViews(s.catalog, s.policy, s.roster, { agents, runtime }));
+        const plan = proposeViews(s.catalog, s.policy, s.roster, { agents, runtime });
+        await authorize(plan, service.settings.authorityOrigin, io, opts['server'], opts['token-file']);
+        const bundle = packBundle(plan);
         try { writeFileSync(opts['out'], JSON.stringify(bundle), { mode: 0o600, flag: 'wx' }); }
         catch (err) {
           if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw new ReconcileError('bundle output already exists; choose a new file (existing files and symlinks are never overwritten)');
@@ -225,10 +263,13 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
           plan = planFromBundle(JSON.parse(readFileSync(opts['bundle'], 'utf8')));
           if (agents) plan.views = plan.views.filter((v) => agents.includes(v.agent));
           if (runtime) plan.views = plan.views.filter((v) => v.runtime === runtime);
+          const needed = new Set(plan.views.flatMap(view => view.skills.map(skill => skill.digest)));
+          plan.packages = new Map([...plan.packages].filter(([digest]) => needed.has(digest)));
         } else {
           const s = await service.current(true);
-          plan = planViews(s.catalog, s.policy, s.roster, { agents, runtime });
+          plan = proposeViews(s.catalog, s.policy, s.roster, { agents, runtime });
         }
+        await authorize(plan, service.settings.authorityOrigin, io, opts['server'], opts['token-file']);
         if (opts['dry-run']) {
           for (const v of plan.views) io.out(`${v.agent}/${v.runtime}: ${v.skills.map((x) => `${x.name}@${short(x.digest, 8)}`).join(' ') || '(none)'}${v.excluded.length ? `; excluded ${v.excluded.map((x) => x.name).join(', ')}` : ''}`);
           io.out('dry run: nothing deployed');
@@ -242,7 +283,7 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
           for (const m of v.missing) io.out(`  ${m.skill} needs ${[...m.bins.map((b) => `program ${b}`), ...m.env.map((e) => `env ${e}`)].join(', ')} (not installed by sync)`);
         }
         io.out(`managed root: ${root}`);
-        if (opts['ack']) { if (!(await ack(io, report, opts['server'], opts['token-file']))) return 3; }
+        if (opts['ack']) { if (!(await ack(service.settings.authorityOrigin, io, report, opts['server'], opts['token-file']))) return 3; }
         return failed ? 2 : 0;
       }
       case 'status': {
@@ -256,7 +297,7 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
       case 'ack': {
         let last: { policyDigest: string | null } = { policyDigest: null };
         try { last = JSON.parse(readFileSync(join(root, 'state.json'), 'utf8')); } catch { /* never synced */ }
-        return (await ack(io, { policyDigest: last.policyDigest, views: inspectRoot(root, io.env) }, opts['server'], opts['token-file'])) ? 0 : 3;
+        return (await ack(service.settings.authorityOrigin, io, { policyDigest: last.policyDigest, views: inspectRoot(root, io.env) }, opts['server'], opts['token-file'])) ? 0 : 3;
       }
       case 'view-path': {
         if (!args[0]) break;
@@ -274,7 +315,7 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
     io.err(USAGE);
     return 1;
   } catch (err) {
-    if (err instanceof LifecycleError || err instanceof ReconcileError) { io.err(`skills: ${err.message}`); return err instanceof LifecycleError && err.status === 409 ? 2 : 1; }
+    if (err instanceof LifecycleError || err instanceof ReconcileError || err instanceof PolicyReviewError) { io.err(`skills: ${err.message}`); return (err instanceof LifecycleError || err instanceof PolicyReviewError) && err.status === 409 ? 2 : 1; }
     if ((err as { name?: string }).name === 'ZodError') { io.err(`skills: ${(err as Error).message}`); return 1; }
     throw err;
   }

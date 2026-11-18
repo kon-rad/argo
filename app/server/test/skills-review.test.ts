@@ -1,9 +1,10 @@
+import { reviewedPlanViews as planViews } from './helpers/skills-reviewed.js';
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { runSkillsCli } from '../src/addons/skills/cli.js';
 import { machineStates, type AckRow } from '../src/addons/skills/machines.js';
-import { ackPayload, inspectRoot, packBundle, planFromBundle, planViews, readCurrent, sendAck, syncViews, verifyView } from '../src/addons/skills/reconcile.js';
+import { ackPayload, inspectRoot, packBundle, planFromBundle, readCurrent, sendAck, syncViews, verifyView } from '../src/addons/skills/reconcile.js';
 import { SkillsService } from '../src/addons/skills/service.js';
 import { MANAGED_POLICY, SETTINGS, sh, skillMd, skillsFixture, write } from './helpers/skills.js';
 
@@ -53,6 +54,7 @@ describe('Vera review: skills transport and lifecycle', () => {
     syncViews(root, plan, { env: { PATH: '' } });
     const before = readCurrent(root, 'alpha', 'zen-agent').dir;
     write(join(f.vault, '.agents', 'skills', 'report', 'SKILL.md'), skillMd('report', 'Updated report.'));
+    sh(f.vault, 'add', '-A'); sh(f.vault, 'commit', '-qm', 'fixture reviewed source update');
     service.invalidate();
     const state = await service.current();
     const next = planViews(state.catalog, state.policy, state.roster, { agents: ['alpha'] });
@@ -67,6 +69,7 @@ describe('Vera review: skills transport and lifecycle', () => {
   it('refuses a stale create after a newer package occupies its destination', async () => {
     const { f, service } = await fixture();
     await service.createDraft('new-skill', undefined, 'Proposed skill.');
+    await service.writeDraftFile('new-skill', 'SKILL.md', skillMd('new-skill', 'Summarizes a source document.', '', '# Instructions\n\nRead the document and summarize its claims with citations.\n'), false, (await service.readDraftFile('new-skill', 'SKILL.md')).version);
     const change = await service.propose({ kind: 'create', skill: 'new-skill', draft: 'new-skill' });
     const target = join(f.vault, '.agents', 'skills', 'new-skill', 'SKILL.md');
     const newer = skillMd('new-skill', 'Newer owner package.', '', '# Preserve me');
@@ -96,7 +99,7 @@ describe('Vera review: skills transport and lifecycle', () => {
     expect(first.views[0]!.missing[0]!.env).toContain('FIXTURE_CLIP_KEY');
     const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
     const io = { out: (_s: string) => {}, err: (_s: string) => {}, env: { PATH: '', SB_LEDGER_TOKEN: 'synthetic-token' }, fetch };
-    expect(await runSkillsCli(['ack', '--root', root, '--server', 'https://brain.example.com'], service, io)).toBe(0);
+    expect(await runSkillsCli(['ack', '--root', root, '--server', 'https://skills.test'], service, io)).toBe(0);
     const body = JSON.parse(fetch.mock.calls[0]![1].body);
     expect(body.views[0].missing[0].env).toContain('FIXTURE_CLIP_KEY');
     expect(inspectRoot(root, { PATH: '', FIXTURE_CLIP_KEY: 'synthetic' })[0]!.missing[0]!.env).toEqual([]);

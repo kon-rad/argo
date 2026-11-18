@@ -1,8 +1,9 @@
+import { reviewedPlanViews as planViews, fixtureAuthorizationFetch } from './helpers/skills-reviewed.js';
 import { chmodSync, lstatSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { runSkillsCli } from '../src/addons/skills/cli.js';
-import { planViews, readCurrent, syncViews } from '../src/addons/skills/reconcile.js';
+import { readCurrent, syncViews } from '../src/addons/skills/reconcile.js';
 import { SkillsService } from '../src/addons/skills/service.js';
 import { MANAGED_POLICY, SETTINGS, skillMd, skillsFixture, write } from './helpers/skills.js';
 
@@ -21,7 +22,7 @@ function fixture() {
   write(join(f.vault, SETTINGS.policyFile), MANAGED_POLICY);
   const service = new SkillsService(f.vault, SETTINGS, { engineSkills: f.engine, db: false, observations: async () => ({ acks: [], hosts: [], lastSeen: new Map() }) });
   const lines: string[] = [];
-  const io = { out: (text: string) => lines.push(text), err: (text: string) => lines.push(text), env: { PATH: '' } };
+  const io = { out: (text: string) => lines.push(text), err: (text: string) => lines.push(text), env: { PATH: '', SECONDBRAIN_SERVER: 'https://skills.test', SB_LEDGER_TOKEN: 'fixture-token' }, fetch: fixtureAuthorizationFetch };
   return { f, service, io, lines };
 }
 

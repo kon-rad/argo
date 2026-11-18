@@ -7,7 +7,7 @@ import type { Change, ChangeKind, ChangePreview, ChangeRequest, Draft, FileDiff,
 import type { Candidate, Catalog } from './catalog.js';
 import { unifiedDiff } from './diff.js';
 import { blob, git, gitTop, toPosix, treeAt } from './git.js';
-import { digestOf, isIgnoredName, isSecretLike, isText, LIMITS, NAME_RE, readMeta, scanPackage } from './package.js';
+import { digestOf, isIgnoredName, isSecretLike, isText, LIMITS, NAME_RE, readMeta, scanPackage, splitFrontmatter } from './package.js';
 import { dependentsOf, grantsOf, lifecycleOf, parsePolicy, resolveAgent, selectedCandidate, type LoadedPolicy, type Policy } from './policy.js';
 import type { Roster } from './roster.js';
 
@@ -24,7 +24,7 @@ export class LifecycleError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
-export interface ReviewReceipt { repo: string; head: string; merged: string; branch: string }
+export interface ReviewReceipt { repo: string; base: string; head: string; merged: string; branch: string }
 export type ReviewReceiptProvider = (repo: string) => Promise<ReviewReceipt[]>;
 
 export interface LifecycleContext {
@@ -47,6 +47,8 @@ export interface LifecycleContext {
 export const RUNNING_SESSIONS = 'Changes apply to new runs after the change is merged and machines are synced. Sessions already running keep what they loaded: zen-agent runs keep their pinned snapshot until they end, and other runtimes keep instructions already in context. Stop or restart a session to drop a revoked skill; a machine that is offline keeps its last deployment until it syncs.';
 
 const DRAFT_LIMIT_BYTES = 512 * 1024;
+const TEMPLATE_DESCRIPTION = 'Describe what this skill does and when an agent should use it.';
+const TEMPLATE_STEPS = 'Steps the agent follows.';
 
 // ---- safe paths ----
 
@@ -151,7 +153,7 @@ function fileEntries(files: { path: string; size: number; exec: boolean; sha256:
   });
 }
 
-export function validatePackage(dir: string, folder: string): { validation: Validation; digest: string | null; files: FileEntry[] } {
+export function validatePackage(dir: string, folder: string, forExport = false): { validation: Validation; digest: string | null; files: FileEntry[] } {
   const scan = scanPackage(dir, { rejectIgnored: true });
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -160,6 +162,11 @@ export function validatePackage(dir: string, folder: string): { validation: Vali
   try { md = readFileSync(join(dir, 'SKILL.md'), 'utf8'); } catch { /* reported by the scan */ }
   const meta = readMeta(md, folder);
   errors.push(...meta.errors);
+  if (forExport) {
+    if (meta.description.trim() === TEMPLATE_DESCRIPTION) errors.push('replace the starter description placeholder before exporting');
+    const instructions = splitFrontmatter(md).body.replace(/^#{1,6}\s+.*$/gm, '').trim();
+    if (!instructions || instructions === TEMPLATE_STEPS) errors.push('replace the starter instruction placeholder with the steps the agent should follow before exporting');
+  }
   warnings.push(...meta.warnings);
   if (meta.name && meta.name !== folder) errors.push(`frontmatter name "${meta.name}" must equal the skill name "${folder}"`);
   return { validation: { valid: errors.length === 0, errors: [...new Set(errors)], warnings }, digest: scan.ok ? scan.digest : null, files: scan.ok ? fileEntries(scan.files) : [] };
@@ -209,8 +216,8 @@ export function createDraft(ctx: LifecycleContext, name: string, from?: string, 
         base = null;
       }
     } else {
-      const desc = (description ?? 'Describe what this skill does and when an agent should use it.').replace(/\n/g, ' ');
-      atomicWrite(join(staging, 'SKILL.md'), `---\nname: ${name}\ndescription: ${JSON.stringify(desc)}\n---\n\n# ${name}\n\nSteps the agent follows.\n`);
+      const desc = (description ?? TEMPLATE_DESCRIPTION).replace(/\n/g, ' ');
+      atomicWrite(join(staging, 'SKILL.md'), `---\nname: ${name}\ndescription: ${JSON.stringify(desc)}\n---\n\n# ${name}\n\n${TEMPLATE_STEPS}\n`);
     }
     renameSync(staging, dir);
     atomicWrite(draftMetaPath(ctx, name), `${JSON.stringify({ name, base, createdAt: new Date().toISOString() } satisfies DraftMeta, null, 2)}\n`);
@@ -368,7 +375,7 @@ export async function previewChange(ctx: LifecycleContext, req: ChangeRequest): 
     if (!req.draft) throw new LifecycleError(400, `${kind} needs a draft`);
     const draft = getDraft(ctx, req.draft);
     if (req.draft !== name) blocked.push(`the draft is named ${req.draft}, the change is for ${name}`);
-    validation = draft.validation;
+    validation = validatePackage(draftDir(ctx, req.draft), req.draft, true).validation;
     if (!validation.valid) blocked.push('the draft does not validate');
     const after = readDir(draftDir(ctx, req.draft));
     targetDigest = digestOf([...after].map(([path, f]) => ({ path, size: f.data.length, exec: f.exec, sha256: createSha(f.data) })));
@@ -479,7 +486,7 @@ function validateHistorical(files: Map<string, { data: Buffer; exec: boolean }>,
       if (!within(dir, target)) throw new LifecycleError(422, 'historical package path leaves its validation folder');
       atomicWrite(target, file.data, file.exec);
     }
-    return validatePackage(dir, name);
+    return validatePackage(dir, name, true);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -607,10 +614,14 @@ async function mergedProvenance(ctx: LifecycleContext, stored: StoredChange): Pr
   if ((stored.hasPackage && !packagePath) || (stored.hasPolicy && !policyPath)) return false;
   let approved = false;
   for (const receipt of receipts) {
-    if (receipt.repo.toLowerCase() !== repo || receipt.branch !== defaultRef.slice('refs/remotes/origin/'.length) || ![receipt.head, receipt.merged].every(sha => /^[0-9a-f]{40,64}$/.test(sha))) continue;
-    if ((await git(top, ['merge-base', '--is-ancestor', stored.commit, receipt.head])) === null ||
+    if (receipt.repo.toLowerCase() !== repo || receipt.branch !== defaultRef.slice('refs/remotes/origin/'.length) || ![receipt.base, receipt.head, receipt.merged].every(sha => /^[0-9a-f]{40,64}$/.test(sha))) continue;
+    if ((await git(top, ['merge-base', '--is-ancestor', receipt.base, receipt.head])) === null ||
+        (await git(top, ['merge-base', '--is-ancestor', stored.commit, receipt.head])) === null ||
         (await git(top, ['merge-base', '--is-ancestor', receipt.head, receipt.merged])) === null ||
         (await git(top, ['merge-base', '--is-ancestor', receipt.merged, tip])) === null) continue;
+    // A later unrelated review must not approve an apply commit already present in its base.
+    const introduced: string | undefined = (await git(top, ['merge-base', stored.commit, receipt.base]))?.trim();
+    if (!introduced || introduced === stored.commit) continue;
     if (!await reviewedTargetsMatch(top, receipt.head, stored, packagePath, policyPath) ||
         (receipt.merged !== receipt.head && !await reviewedTargetsMatch(top, receipt.merged, stored, packagePath, policyPath))) continue;
     approved = true; break;
@@ -651,7 +662,7 @@ export async function applyChange(ctx: LifecycleContext, id: string, opts: { mes
     if (current.preview.blocked.length) throw new LifecycleError(409, `not applied: ${current.preview.blocked.join('; ')}`);
   }
   if (stored.hasPackage) {
-    const check = validatePackage(join(changeDir(ctx, id), 'package'), stored.skill);
+    const check = validatePackage(join(changeDir(ctx, id), 'package'), stored.skill, true);
     if (!check.validation.valid) throw new LifecycleError(422, `stored package: ${check.validation.errors.join('; ')}`);
     if (check.digest !== stored.preview.targetDigest) throw new LifecycleError(409, 'the stored package does not match its previewed digest; it was edited after export');
   }
@@ -678,6 +689,9 @@ export async function applyChange(ctx: LifecycleContext, id: string, opts: { mes
       // targetPath is repo-relative for update/rollback (gitRel) and vault-relative for create.
       const dest = stored.kind === 'create' ? inTree(stored.targetPath) : join(wt, ...stored.targetPath.split('/'));
       if (!within(wt, dest)) throw new LifecycleError(400, 'target leaves the repository');
+      // The Git worktree may differ from the source checkout: inspect every ancestor before mkdir/rm/write.
+      try { assertRegularPolicyPath(wt, join(dest, 'SKILL.md')); }
+      catch (err) { throw new LifecycleError(422, `package destination requires regular, unlinked directory ancestors: ${(err as Error).message}`); }
       if (stored.kind === 'create') {
         // Check both the live source and new Git worktree, then claim the destination exclusively.
         if (occupied(join(ctx.vaultRoot, stored.targetPath)) || occupied(dest)) throw new LifecycleError(409, 'create destination is occupied; propose the change again');

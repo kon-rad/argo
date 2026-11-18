@@ -1,11 +1,12 @@
+import { reviewedPlanViews as planViews } from './helpers/skills-reviewed.js';
 import { chmodSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { SkillsService } from '../src/addons/skills/service.js';
-import { ackPayload, inspectRoot, planViews, readCurrent, syncViews } from '../src/addons/skills/reconcile.js';
+import { ackPayload, inspectRoot, readCurrent, syncViews } from '../src/addons/skills/reconcile.js';
 import { machineStates, type AckRow } from '../src/addons/skills/machines.js';
 import { AckRequestSchema } from '@secondbrain/contracts/skills';
-import { SETTINGS, skillMd, skillsFixture, write } from './helpers/skills.js';
+import { SETTINGS, sh, skillMd, skillsFixture, write } from './helpers/skills.js';
 
 async function setup(grants = '[report]') {
   const f = skillsFixture();
@@ -27,6 +28,8 @@ it.each(['staging', 'activation'] as const)('preserves both previous generations
   write(join(f.vault, '.agents/skills/report/SKILL.md'), skillMd('report', 'New report revision.'));
   write(join(f.vault, '.agents/skills/ingest/SKILL.md'), skillMd('ingest', 'New ingest revision.'));
   write(join(f.vault, SETTINGS.policyFile), 'version: 1\nmode: managed\nagents:\n  alpha:\n    grant: [report]\n  beta:\n    grant: [ingest]\n');
+  sh(f.vault, 'add', '-A'); sh(f.vault, 'commit', '-qm', 'fixture reviewed package updates');
+  sh(f.engine, 'add', '-A'); sh(f.engine, 'commit', '-qm', 'fixture reviewed engine update');
   const changed = await service.current(true), next = planViews(changed.catalog, changed.policy, changed.roster, { agents: ['alpha', 'beta'] });
   const report = syncViews(root, next, { hooks: phase === 'staging' ? { afterStage(digest) { if (digest === next.views[1]!.skills[0]!.digest) throw new Error('second staging fault'); } } : {
     beforeActivate(view) { if (view.agent === 'beta') throw new Error('second activation fault'); },

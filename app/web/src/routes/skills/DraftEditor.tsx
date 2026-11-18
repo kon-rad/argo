@@ -5,6 +5,14 @@ import { skillsApi, type Draft } from './api.js';
 import { ChangeFlow } from './ChangeFlow.js';
 import { button, Chip, Digest, ErrorState, input, Loading, primary } from './ui.js';
 
+type LocalFile = { content: string; exec: boolean };
+type LocalEdit = {
+  text: string; exec: boolean; expectedVersion: string | null | undefined;
+  conflict: LocalFile | null; missingFile: boolean; base: LocalFile | null; refreshError: string | null;
+};
+type LocalEdits = Record<string, LocalEdit>;
+const localEditsKey = (draft: string) => ['skills', 'local-edits', draft] as const;
+
 /**
  * Edit a draft package. Drafts live outside every skill folder, so nothing here reaches an agent; saving a file
  * saves the draft only. Publishing goes through a previewed change exported for review.
@@ -12,6 +20,9 @@ import { button, Chip, Digest, ErrorState, input, Loading, primary } from './ui.
 export function DraftEditor({ name, onDeleted }: { name: string; onDeleted?: () => void }) {
   const qc = useQueryClient();
   const draft = useQuery({ queryKey: ['skills', 'draft', name], queryFn: () => skillsApi.draft(name) });
+  // App-session editing buffers survive file selection and closing this panel.
+  // They are never sent to an agent or treated as saved draft files.
+  const local = useQuery<LocalEdits>({ queryKey: localEditsKey(name), queryFn: async () => ({}), initialData: {}, enabled: false, gcTime: Infinity });
   const [path, setPath] = useState<string | null>(null);
   const [newPath, setNewPath] = useState('');
   const [publishing, setPublishing] = useState(false);
@@ -22,13 +33,15 @@ export function DraftEditor({ name, onDeleted }: { name: string; onDeleted?: () 
   };
   const remove = useMutation({
     mutationFn: () => skillsApi.deleteDraft(name),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['skills'] }); onDeleted?.(); },
+    onSuccess: () => { qc.setQueryData(localEditsKey(name), {}); void qc.invalidateQueries({ queryKey: ['skills'] }); onDeleted?.(); },
   });
 
   if (draft.isPending) return <Loading what={`draft ${name}`} />;
   if (draft.isError) return <ErrorState error={draft.error} retry={() => void draft.refetch()} />;
   const d = draft.data.draft;
-  const selected = path ?? (d.files.some((f) => f.path === 'SKILL.md') ? 'SKILL.md' : d.files[0]?.path ?? null);
+  const buffers = local.data ?? {};
+  const paths = [...new Set([...d.files.map(f => f.path), ...Object.keys(buffers)])];
+  const selected = path ?? (d.files.some((f) => f.path === 'SKILL.md') ? 'SKILL.md' : paths[0] ?? null);
 
   return (
     <section aria-label={`Draft ${name}`} className="space-y-2 rounded border border-[var(--rule)] p-3">
@@ -38,17 +51,19 @@ export function DraftEditor({ name, onDeleted }: { name: string; onDeleted?: () 
         {d.base ? <span className="text-xs text-[var(--ink-dim)]">based on <code>{d.base.id}</code> <Digest value={d.base.digest} /></span> : <span className="text-xs text-[var(--ink-dim)]">new skill</span>}
         <span className="text-xs text-[var(--ink-dim)]">draft digest <Digest value={d.digest} /></span>
       </div>
+      {Object.keys(buffers).length > 0 && <p role="status" className="text-xs text-[var(--ink-dim)]">Unsaved local edits are retained while switching files or closing this editor in the current app session. Save or discard them explicitly.</p>}
       {!d.validation.valid && <ul role="alert" className="list-disc pl-5 text-xs text-[var(--warn)]">{d.validation.errors.map((e) => <li key={e}>{e}</li>)}</ul>}
       {d.validation.warnings.length > 0 && <ul className="list-disc pl-5 text-xs text-amber-700 dark:text-amber-400">{d.validation.warnings.map((e) => <li key={e}>{e}</li>)}</ul>}
       <div className="flex flex-col gap-2 md:flex-row">
         <ul aria-label="Draft files" className="shrink-0 space-y-0.5 text-xs md:w-56">
-          {d.files.map((f) => (
-            <li key={f.path}>
-              <button type="button" className={`w-full truncate rounded px-1 py-1 text-left ${f.path === selected ? 'bg-[var(--paper-sunk)]' : ''}`} onClick={() => setPath(f.path)}>
-                {f.path} <span className="text-[var(--ink-faint)]">{f.size} B</span>
+          {paths.map(filePath => {
+            const f = d.files.find(file => file.path === filePath);
+            return <li key={filePath}>
+              <button type="button" className={`w-full truncate rounded px-1 py-1 text-left ${filePath === selected ? 'bg-[var(--paper-sunk)]' : ''}`} onClick={() => setPath(filePath)}>
+                {filePath} <span className="text-[var(--ink-faint)]">{f ? `${f.size} B` : 'not saved'}{Object.hasOwn(buffers, filePath) ? ' · unsaved local edits' : ''}</span>
               </button>
-            </li>
-          ))}
+            </li>;
+          })}
           <li>
             <form className="mt-1 flex gap-1" onSubmit={(e) => { e.preventDefault(); if (newPath.trim()) { setPath(newPath.trim()); setNewPath(''); } }}>
               <input aria-label="New file path" className={`${input} min-w-0 flex-1`} placeholder="references/notes.md" value={newPath} onChange={(e) => setNewPath(e.target.value)} />
@@ -62,7 +77,7 @@ export function DraftEditor({ name, onDeleted }: { name: string; onDeleted?: () 
       </div>
       <div className="flex flex-wrap gap-2">
         {!publishing && <button type="button" className={primary} disabled={!d.validation.valid} onClick={() => setPublishing(true)}>{d.base ? 'Prepare update' : 'Prepare new skill'}</button>}
-        <button type="button" className={button} disabled={remove.isPending} onClick={() => { if (window.confirm(`Delete draft ${name}? Its files are discarded.`)) remove.mutate(); }}>Delete draft</button>
+        <button type="button" className={button} disabled={remove.isPending} onClick={() => { if (window.confirm(`Delete draft ${name}? Its saved files and retained local edits are discarded.`)) remove.mutate(); }}>Delete draft</button>
         {remove.isError && <span className="text-xs text-[var(--warn)]">{remove.error.message}</span>}
       </div>
       {publishing && <ChangeFlow key={d.digest} request={{ kind: d.base ? 'update' : 'create', skill: d.name, draft: d.name }} onDone={() => setPublishing(false)} />}
@@ -70,24 +85,36 @@ export function DraftEditor({ name, onDeleted }: { name: string; onDeleted?: () 
   );
 }
 
-type LocalFile = { content: string; exec: boolean };
-
 function FileEditor({ draft, path, exists, exec, onSaved, onKeepSelected, onDiscard }: {
   draft: string; path: string; exists: boolean; exec: boolean; onSaved: (d: Draft) => void; onKeepSelected: () => void; onDiscard: () => void;
 }) {
   const qc = useQueryClient();
   const file = useQuery({ queryKey: ['skills', 'draft-file', draft, path], queryFn: () => skillsApi.draftFile(draft, path), enabled: exists });
-  const [text, setText] = useState('');
-  const [executable, setExecutable] = useState(exec);
-  const [expectedVersion, setExpectedVersion] = useState<string | null | undefined>(exists ? undefined : null);
-  const [conflict, setConflict] = useState<LocalFile | null>(null);
-  const [missingFile, setMissingFile] = useState(false);
+  const [restored] = useState(() => {
+    const buffers = qc.getQueryData<LocalEdits>(localEditsKey(draft));
+    return buffers && Object.hasOwn(buffers, path) ? buffers[path] : undefined;
+  });
+  const [text, setText] = useState(restored?.text ?? '');
+  const [executable, setExecutable] = useState(restored?.exec ?? exec);
+  const [expectedVersion, setExpectedVersion] = useState<string | null | undefined>(restored ? restored.expectedVersion : exists ? undefined : null);
+  const [conflict, setConflict] = useState<LocalFile | null>(restored?.conflict ?? null);
+  const [missingFile, setMissingFile] = useState(restored?.missingFile ?? false);
+  const [base, setBase] = useState<LocalFile | null>(restored?.base ?? (exists ? null : { content: '', exec }));
   const [refreshing, setRefreshing] = useState(false);
-  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(restored?.refreshError ?? null);
+  const unsaved = conflict !== null || (base !== null && (text !== base.content || executable !== base.exec));
+  const clearLocal = () => qc.setQueryData<LocalEdits>(localEditsKey(draft), previous => {
+    if (!previous || !Object.hasOwn(previous, path)) return previous;
+    const next = { ...previous }; delete next[path]; return next;
+  });
+  useEffect(() => {
+    if (unsaved) qc.setQueryData<LocalEdits>(localEditsKey(draft), previous => ({ ...previous, [path]: { text, exec: executable, expectedVersion, conflict, missingFile, base, refreshError } }));
+    else clearLocal();
+  }, [qc, draft, path, unsaved, text, executable, expectedVersion, conflict, missingFile, base, refreshError]);
   // Background refetches must not replace unsaved edits or advance their optimistic-write token.
   useEffect(() => {
     if (expectedVersion === undefined && conflict === null && file.data?.content != null && file.data.version) {
-      setText(file.data.content); setExecutable(file.data.exec ?? exec); setExpectedVersion(file.data.version);
+      setText(file.data.content); setExecutable(file.data.exec ?? exec); setExpectedVersion(file.data.version); setBase({ content: file.data.content, exec: file.data.exec ?? exec });
     }
   }, [file.data, expectedVersion, conflict]);
   const refreshCurrent = async (): Promise<'present' | 'missing' | 'error'> => {
@@ -95,7 +122,7 @@ function FileEditor({ draft, path, exists, exec, onSaved, onKeepSelected, onDisc
     try {
       const current = await file.refetch();
       if (current.isError && current.error instanceof ApiError && current.error.status === 404) {
-        setMissingFile(true); setExpectedVersion(null); setText(''); setExecutable(false);
+        setMissingFile(true); setExpectedVersion(null); setText(''); setExecutable(false); setBase({ content: '', exec: false });
         await qc.invalidateQueries({ queryKey: ['skills', 'draft', draft] });
         return 'missing';
       }
@@ -103,7 +130,7 @@ function FileEditor({ draft, path, exists, exec, onSaved, onKeepSelected, onDisc
         setExpectedVersion(undefined); setRefreshError('The current file could not be refreshed. Try again before saving.');
         return 'error';
       }
-      setMissingFile(false); setText(current.data.content ?? ''); setExecutable(current.data.exec ?? exec); setExpectedVersion(current.data.version);
+      setMissingFile(false); setText(current.data.content ?? ''); setExecutable(current.data.exec ?? exec); setExpectedVersion(current.data.version); setBase({ content: current.data.content ?? '', exec: current.data.exec ?? exec });
       await qc.invalidateQueries({ queryKey: ['skills', 'draft', draft] });
       return 'present';
     } finally { setRefreshing(false); }
@@ -118,14 +145,14 @@ function FileEditor({ draft, path, exists, exec, onSaved, onKeepSelected, onDisc
     onSuccess: async (r, value) => {
       // Refresh after setting the save response so a newer deletion cannot be hidden by stale listing data.
       onSaved(r.draft);
-      if (await refreshCurrent() === 'present') setConflict(null);
+      if (await refreshCurrent() === 'present') { setConflict(null); clearLocal(); }
       else setConflict({ content: value.content, exec: value.exec });
     },
     onError: (error, value) => handleConflict(error, { content: value.content, exec: value.exec }),
   });
   const del = useMutation({
     mutationFn: (value: LocalFile & { expectedVersion: string }) => skillsApi.deleteDraftFile(draft, path, value.expectedVersion),
-    onSuccess: (r) => { setExpectedVersion(null); setText(''); setExecutable(false); setMissingFile(true); setConflict(null); save.reset(); onSaved(r.draft); },
+    onSuccess: (r) => { setExpectedVersion(null); setText(''); setExecutable(false); setBase({ content: '', exec: false }); setMissingFile(true); setConflict(null); clearLocal(); save.reset(); onSaved(r.draft); },
     onError: (error, value) => handleConflict(error, { content: value.content, exec: value.exec }),
   });
   if (exists && file.isPending) return <Loading what={path} />;
@@ -138,6 +165,10 @@ function FileEditor({ draft, path, exists, exec, onSaved, onKeepSelected, onDisc
     <div className="space-y-1">
       <label className="block text-xs text-[var(--ink-dim)]" htmlFor={`draft-${path}`}>{path}{currentFile?.truncated ? ' (shown truncated; saving would cut it, edit it outside the app)' : ''}</label>
       <textarea id={`draft-${path}`} className={`${input} h-72 w-full font-mono text-xs`} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} disabled={pending || conflict !== null} />
+      {unsaved && conflict === null && <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span>Unsaved text or executable-mode changes.</span>
+        <button type="button" className={button} disabled={pending || refreshing} onClick={() => { setText(base?.content ?? ''); setExecutable(base?.exec ?? exec); clearLocal(); if (!exists) onDiscard(); }}>Discard unsaved changes</button>
+      </div>}
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className={primary} disabled={pending || unresolved || currentFile?.truncated || refreshing} onClick={() => { if (expectedVersion !== undefined) { onKeepSelected(); save.mutate({ content: text, exec: executable, expectedVersion }); } }}>{save.isPending ? 'Saving…' : 'Save draft file'}</button>
         <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={executable} onChange={(e) => setExecutable(e.target.checked)} disabled={pending || conflict !== null} /> executable</label>
@@ -154,7 +185,7 @@ function FileEditor({ draft, path, exists, exec, onSaved, onKeepSelected, onDisc
           <button type="button" className={button} disabled={pending || refreshing} onClick={() => void refreshCurrent()}>Refresh current file</button>
           {missingFile ? <>
             <button type="button" className={primary} disabled={pending || refreshing || expectedVersion !== null} onClick={() => { save.reset(); del.reset(); save.mutate({ ...conflict, expectedVersion: null }); }}>Recreate file with my changes</button>
-            <button type="button" className={button} disabled={pending || refreshing} onClick={() => { setConflict(null); save.reset(); del.reset(); onDiscard(); }}>Discard my local changes</button>
+            <button type="button" className={button} disabled={pending || refreshing} onClick={() => { setConflict(null); clearLocal(); save.reset(); del.reset(); onDiscard(); }}>Discard my local changes</button>
           </> : <>
             <button type="button" className={button} disabled={pending || refreshing || expectedVersion === undefined || currentFile?.kind === 'binary'} onClick={() => { setConflict(null); save.reset(); del.reset(); }}>Use current file</button>
             <button type="button" className={button} disabled={pending || refreshing || expectedVersion === undefined || currentFile?.kind === 'binary'} onClick={() => { setText(conflict.content); setExecutable(conflict.exec); setConflict(null); save.reset(); del.reset(); }}>Restore my text and mode to merge</button>

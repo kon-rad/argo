@@ -1,8 +1,9 @@
+import { reviewedPlanViews as planViews, authorizeFixturePlan } from './helpers/skills-reviewed.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { supportFor } from '../src/addons/skills/policy.js';
-import { planFromBundle, packBundle, planViews, readCurrent, syncViews, verifyView } from '../src/addons/skills/reconcile.js';
+import { planFromBundle, packBundle, readCurrent, syncViews, verifyView } from '../src/addons/skills/reconcile.js';
 import { SkillsService } from '../src/addons/skills/service.js';
 import { MANAGED_POLICY, SETTINGS, skillsFixture, write } from './helpers/skills.js';
 
@@ -20,7 +21,7 @@ it('resolves, transports and verifies Codex catalogs without claiming native iso
   expect(supportFor('codex').level).toBe('catalog-only');
   expect((await service.agent('delta'))!.agent.support).toBe('catalog-only');
   const root = join(f.base, 'codex-deployment');
-  const report = syncViews(root, planFromBundle(packBundle(plan)));
+  const report = syncViews(root, await authorizeFixturePlan(planFromBundle(packBundle(plan))));
   expect(report.views[0]!.status).toBe('not-ready');
   expect(report.views[0]!.missing.some(item => item.skill === 'clip' && item.bins.includes('definitely-not-a-real-program-xyz'))).toBe(true);
   const current = readCurrent(root, 'delta', 'codex');

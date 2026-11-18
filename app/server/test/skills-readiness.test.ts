@@ -1,3 +1,4 @@
+import { reviewedPlanViews as planViews } from './helpers/skills-reviewed.js';
 import {join} from 'node:path';
 import {beforeEach,afterEach,it,expect} from 'vitest';
 import {AckRequestSchema} from '@secondbrain/contracts/skills';
@@ -6,7 +7,7 @@ import {addDevice} from '../src/ingest/devices.js';
 import {SkillsService} from '../src/addons/skills/service.js';
 import {readMeta} from '../src/addons/skills/package.js';
 import {recordAck,readAcks,machineStates} from '../src/addons/skills/machines.js';
-import {ackPayload,inspectRoot,planViews,readCurrent,syncViews} from '../src/addons/skills/reconcile.js';
+import {ackPayload,inspectRoot,readCurrent,syncViews} from '../src/addons/skills/reconcile.js';
 import {truncateAll} from './helpers.js';
 import {skillsFixture,SETTINGS,MANAGED_POLICY,skillMd,write} from './helpers/skills.js';
 beforeEach(truncateAll);

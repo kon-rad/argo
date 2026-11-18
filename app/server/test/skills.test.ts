@@ -1,10 +1,11 @@
+import { reviewedPlanViews as planViews, fixtureAuthorizationFetch } from './helpers/skills-reviewed.js';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runSkillsCli } from '../src/addons/skills/cli.js';
 import { scanPackage } from '../src/addons/skills/package.js';
-import { packBundle, planFromBundle, planViews, ReconcileError, syncViews, verifyView } from '../src/addons/skills/reconcile.js';
+import { packBundle, planFromBundle, ReconcileError, syncViews, verifyView } from '../src/addons/skills/reconcile.js';
 import { SkillsService } from '../src/addons/skills/service.js';
 import { MANAGED_POLICY, SETTINGS, sh, skillMd, skillsFixture, write } from './helpers/skills.js';
 
@@ -322,6 +323,7 @@ describe('skills reconciliation', () => {
     const before = readlinkSync(join(root, 'views', 'alpha', 'zen-agent'));
     // A new revision whose source changes between resolution and staging: digest mismatch.
     write(join(st.catalog.byName.get('report')![0]!.dir, 'SKILL.md'), skillMd('report', 'Private report skill v2.'));
+    sh(join(root, '..', 'vault'), 'add', '-A'); sh(join(root, '..', 'vault'), 'commit', '-qm', 'fixture reviewed source update');
     s.invalidate();
     const st2 = await s.current();
     const plan2 = planViews(st2.catalog, st2.policy, st2.roster, { agents: ['alpha'] });
@@ -357,7 +359,7 @@ describe('skills reconciliation', () => {
   it('a second host deploys the same digests from a bundle (explicit transport) and the CLI reports honestly', async () => {
     const { f, s, root } = await managed();
     const out: string[] = [];
-    const io = { out: (x: string) => out.push(x), err: (x: string) => out.push(`ERR ${x}`), env: { PATH: '' } as NodeJS.ProcessEnv };
+    const io = { out: (x: string) => out.push(x), err: (x: string) => out.push(`ERR ${x}`), env: { PATH: '', SECONDBRAIN_SERVER: 'https://skills.test', SB_LEDGER_TOKEN: 'fixture-token' } as NodeJS.ProcessEnv, fetch: fixtureAuthorizationFetch };
     expect(await runSkillsCli(['sync', '--agents', 'alpha,beta', '--root', root], s, io)).toBe(2);
     const bundleFile = join(f.base, 'bundle.json');
     expect(await runSkillsCli(['pack', '--out', bundleFile, '--agents', 'alpha,beta'], s, io)).toBe(0);
@@ -373,7 +375,7 @@ describe('skills reconciliation', () => {
     expect(await runSkillsCli(['propose', 'disable', 'video'], s, io)).toBe(0);
     expect(out.join('\n')).toMatch(/Exported for review as change .*Nothing is active yet/);
     // An acknowledgement without a token is refused locally, never sent.
-    expect(await runSkillsCli(['ack', '--server', 'http://127.0.0.1:9', '--root', root], s, io)).toBe(1);
+    expect(await runSkillsCli(['ack', '--server', 'https://skills.test', '--root', root], s, { ...io, env: { PATH: '' } })).toBe(1);
     expect(out.at(-1)).toMatch(/no device token/);
   });
 });

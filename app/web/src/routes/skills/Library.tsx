@@ -131,6 +131,8 @@ export function ModeBanner({ data }: { data: Pick<LibraryResponse, 'mode' | 'pol
         Policy file <code>{policy.file}</code>{' '}
         {policy.exists ? <>at <Revision revision={policy.revision} dirty={policy.dirty} /> <Digest value={policy.digest} /></> : '(not present)'}
       </p>
+      {mode === 'managed' && policy.reviewed === false && <p role="status" className="text-xs text-amber-700 dark:text-amber-400">Activation blocked: {policy.reviewError ?? 'This exact committed policy still needs review approval.'} Installed views keep their previous policy until an approved sync succeeds.</p>}
+      {mode === 'managed' && policy.reviewed && policy.approval && <p className="text-xs text-[var(--ink-dim)]">Policy approved by {policy.approval.approvedBy} at revision <code>{policy.approval.revision.slice(0, 12)}</code>.</p>}
       {policy.errors.length > 0 && (
         <ul role="alert" className="list-disc pl-5 text-xs text-[var(--warn)]">{policy.errors.map((e) => <li key={e}>{e}</li>)}</ul>
       )}

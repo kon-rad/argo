@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import yaml from 'js-yaml';
 import type { RosterAgent } from './policy.js';
 
@@ -9,7 +10,11 @@ import type { RosterAgent } from './policy.js';
  * `knowledge:` paths, which the compiled roster does not carry. Humans are left out. A vault with no
  * org config has no agents; that is an empty matrix, not an error.
  */
-export interface Roster { agents: RosterAgent[]; teams: string[]; error: string | null }
+export interface Roster { agents: RosterAgent[]; teams: string[]; error: string | null; sourceDigest?: string }
+/** Internal evidence tying parsed roster data to the exact file bytes that produced it. */
+export function rosterSourceDigest(sources: [string, string][]): string {
+  return `sha256:${createHash('sha256').update(JSON.stringify([...sources].sort(([a], [b]) => a.localeCompare(b)))).digest('hex')}`;
+}
 
 const AGENT = /^[a-z0-9][a-z0-9-]{0,31}$/;
 type Obj = Record<string, unknown>;
@@ -18,12 +23,13 @@ const obj = (v: unknown): Obj => isObj(v) ? v : {};
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
 /** Absence is compatible with legacy defaults; an existing bad source is never an empty successful read. */
-function readYaml(path: string, errors: string[], label: string): Obj {
+function readYaml(path: string, errors: string[], label: string, capture: (path: string, bytes: Buffer) => void): Obj {
   let present = false;
   try {
     const st = lstatSync(path); present = true;
     if (!st.isFile() || st.isSymbolicLink()) throw new Error('not a regular source file');
-    const value: unknown = yaml.safeLoad(readFileSync(path, 'utf8'));
+    const bytes = readFileSync(path); capture(path, bytes);
+    const value: unknown = yaml.safeLoad(bytes.toString('utf8'));
     if (!isObj(value)) throw new Error('not a YAML mapping');
     return value;
   } catch (err) {
@@ -53,6 +59,8 @@ function sourceAgentErrors(agent: Obj, errors: string[], label: string): void {
 }
 
 export function loadRoster(vaultRoot: string): Roster {
+  const sources: [string, string][] = [];
+  const capture = (path: string, bytes: Buffer) => { sources.push([relative(vaultRoot, path).split(sep).join('/'), createHash('sha256').update(bytes).digest('hex')]); };
   const orgDir = join(vaultRoot, '.agents', 'org');
   const configDir = join(orgDir, 'config');
   let agents: Obj = {};
@@ -64,7 +72,8 @@ export function loadRoster(vaultRoot: string): Roster {
     try {
       const st = lstatSync(compiled);
       if (!st.isFile() || st.isSymbolicLink()) throw new Error('compiled roster must be a regular file');
-      const doc: unknown = JSON.parse(readFileSync(compiled, 'utf8'));
+      const bytes = readFileSync(compiled); capture(compiled, bytes);
+      const doc: unknown = JSON.parse(bytes.toString('utf8'));
       if (!isObj(doc) || !isObj(doc['agents']) || (doc['teams'] !== undefined && !isObj(doc['teams']))) throw new Error('expected agents and teams objects');
       for (const [name, agent] of Object.entries(doc['agents'])) {
         if (!AGENT.test(name) || !isObj(agent)) throw new Error(`invalid agent entry ${name}`);
@@ -80,7 +89,7 @@ export function loadRoster(vaultRoot: string): Roster {
     }
   }
   const sourceErrors: string[] = [];
-  const orgSource = readYaml(join(configDir, 'org.yaml'), sourceErrors, 'config/org.yaml');
+  const orgSource = readYaml(join(configDir, 'org.yaml'), sourceErrors, 'config/org.yaml', capture);
   if (orgSource['defaults'] !== undefined && !isObj(orgSource['defaults'])) sourceErrors.push('config/org.yaml has invalid defaults');
   const defaults = obj(orgSource['defaults']);
   if (defaults['knowledge'] !== undefined && !stringList(defaults['knowledge'])) sourceErrors.push('config/org.yaml has invalid default knowledge paths');
@@ -89,7 +98,7 @@ export function loadRoster(vaultRoot: string): Roster {
   for (const f of sourceNames(agentsDir, sourceErrors, 'config/agents')) {
     const m = /^([a-z0-9][a-z0-9-]{0,31})\.ya?ml$/.exec(f);
     if (m) {
-      const cfg = readYaml(join(agentsDir, f), sourceErrors, `config/agents/${f}`);
+      const cfg = readYaml(join(agentsDir, f), sourceErrors, `config/agents/${f}`, capture);
       sourceAgentErrors(cfg, sourceErrors, `config/agents/${f}`);
       fromConfig[m[1]!] = cfg;
     }
@@ -98,7 +107,7 @@ export function loadRoster(vaultRoot: string): Roster {
   const teamsDir = join(configDir, 'teams');
   for (const f of sourceNames(teamsDir, sourceErrors, 'config/teams')) {
     const m = /^(.+)\.ya?ml$/.exec(f);
-    if (m) sourceTeams[m[1]!] = readYaml(join(teamsDir, f), sourceErrors, `config/teams/${f}`);
+    if (m) sourceTeams[m[1]!] = readYaml(join(teamsDir, f), sourceErrors, `config/teams/${f}`, capture);
   }
   if (!compiledPresent) { agents = fromConfig; teams = sourceTeams; }
   error = [error, ...sourceErrors].filter(Boolean).join('; ') || null;
@@ -115,5 +124,5 @@ export function loadRoster(vaultRoot: string): Roster {
     });
   }
   out.sort((x, y) => x.name.localeCompare(y.name));
-  return { agents: out, teams: Object.keys(teams).sort(), error };
+  return { agents: out, teams: Object.keys(teams).sort(), error, sourceDigest: rosterSourceDigest(sources) };
 }

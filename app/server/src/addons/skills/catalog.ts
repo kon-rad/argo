@@ -167,12 +167,13 @@ export async function buildCatalog(specs: RootSpec[], opts: { git?: boolean } = 
     const realRoot = [...gits.keys()].filter((r) => inside(r, c.dir)).sort((a, b) => b.length - a.length)[0];
     const g = realRoot ? gits.get(realRoot) : null;
     if (!g) return;
-    const st = pathState(g, c.dir);
+    const st = pathState(g, c.dir, c.packageFiles);
     c.gitTop = g.top;
     c.gitRel = st.rel;
     c.tracked = st.tracked;
     c.dirty = st.dirty;
-    c.revision = st.tracked ? await lastRevision(g.top, st.rel) : null;
+    if (st.untracked?.length) c.warnings.push(`Untracked package members (including Git-ignored files): ${st.untracked.slice(0, 20).join(', ')}${st.untracked.length > 20 ? `; ${st.untracked.length} members total` : ''}. Commit and review every package member before managed deployment.`);
+    c.revision = g.tracked?.size ? await lastRevision(g.top, st.rel) : null;
   });
 
   const order = new Map(specs.map((s, i) => [s.id, i]));

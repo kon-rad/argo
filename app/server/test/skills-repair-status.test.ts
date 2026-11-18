@@ -1,3 +1,4 @@
+import { reviewedPlanViews as planViews } from './helpers/skills-reviewed.js';
 import {chmodSync,readFileSync,rmSync,symlinkSync,writeFileSync,statSync,renameSync,readlinkSync} from 'node:fs';
 import {join} from 'node:path';
 import {beforeEach,afterEach,it,expect} from 'vitest';
@@ -8,7 +9,7 @@ import {truncateAll} from './helpers.js';
 import {SkillsService} from '../src/addons/skills/service.js';
 import {runSkillsCli} from '../src/addons/skills/cli.js';
 import {recordAck,readAcks} from '../src/addons/skills/machines.js';
-import {ackPayload,inspectRoot,planViews,readCurrent,syncViews,verifyView} from '../src/addons/skills/reconcile.js';
+import {ackPayload,inspectRoot,readCurrent,syncViews,verifyView} from '../src/addons/skills/reconcile.js';
 import {skillsFixture,SETTINGS,MANAGED_POLICY,write} from './helpers/skills.js';
 beforeEach(truncateAll);
 afterEach(async()=>{
@@ -57,7 +58,7 @@ it.each(['manifest removed','broken link','link removed','invalid manifest','vie
   const result=await recordAck({id:device.id,host:'broken-view-fixture'},payload);return new Response(JSON.stringify(result),{status:200});
  }};
  expect(await runSkillsCli(['status','--root',root],service,io)).toBe(2);expect(lines.join(' ')).toMatch(/failed/);
- expect(await runSkillsCli(['ack','--root',root,'--server','https://brain.example.com'],service,io)).toBe(0);
+ expect(await runSkillsCli(['ack','--root',root,'--server','https://skills.test'],service,io)).toBe(0);
  const observed=(await readAcks()).acks.find(a=>a.host==='broken-view-fixture')!;
  expect(observed.status).toBe('failed');expect(observed.skills).toEqual([]);
 });

@@ -24,7 +24,8 @@ mkdirSync(join(dir, 'full'), { recursive: true });
 mkdirSync(join(dir, 'broken'), { recursive: true });
 
 const { SkillsService } = await import('../../src/addons/skills/service.js');
-const { planViews, syncViews } = await import('../../src/addons/skills/reconcile.js');
+const { syncViews } = await import('../../src/addons/skills/reconcile.js');
+const { reviewedPlanViews: planViews } = await import('./skills-reviewed.js');
 
 // The fixture's own engine folder is listed as an external root, so the app (which also reads the real
 // engine skills) resolves the fixture's link-skills link the same way the tests do.

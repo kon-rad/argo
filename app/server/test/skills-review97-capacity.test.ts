@@ -1,9 +1,10 @@
+import { reviewedPlanViews as planViews, authorizeFixturePlan } from './helpers/skills-reviewed.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { ACK_LIMITS, AckRequestSchema } from '@secondbrain/contracts/skills';
 import { SkillsService } from '../src/addons/skills/service.js';
-import { ackPayload, inspectRoot, packBundle, planFromBundle, planViews, readCurrent, removeTree, syncViews, type Plan, type ViewPlan } from '../src/addons/skills/reconcile.js';
+import { ackPayload, inspectRoot, packBundle, planFromBundle, readCurrent, removeTree, syncViews, type Plan, type ViewPlan } from '../src/addons/skills/reconcile.js';
 import { MANAGED_POLICY, SETTINGS, skillsFixture, write } from './helpers/skills.js';
 
 const roots: string[] = [];
@@ -27,15 +28,17 @@ it('bounds planning, bundle export and imported bundles before a 65-view deploym
   expect(existsSync(root)).toBe(false);
 });
 
-it('counts existing unselected views before activating an additional view', () => {
+it('counts existing unselected views before activating an additional view', async () => {
   const f = fixture(), root = join(f.base, 'managed');
   const plan: Plan = { policyDigest: null, views: emptyViews(ACK_LIMITS.views), packages: new Map() };
+  await authorizeFixturePlan(plan);
   const report = syncViews(root, plan);
   expect(report.views).toHaveLength(64);
   expect(report.views.every(view => view.status === 'current')).toBe(true);
   expect(AckRequestSchema.parse(ackPayload(report, null)).views).toHaveLength(64);
   const previous = readCurrent(root, 'agent-0', 'codex').dir;
   const next: Plan = { ...plan, views: [{ ...plan.views[0]!, agent: 'additional-agent' }] };
+  await authorizeFixturePlan(next);
   expect(() => syncViews(root, next)).toThrow(/65 views.*64/);
   expect(readCurrent(root, 'agent-0', 'codex').dir).toBe(previous);
   expect(inspectRoot(root)).toHaveLength(64);
@@ -53,14 +56,10 @@ it('refuses a byte-oversized valid-count plan before creating a root', () => {
   expect(existsSync(root)).toBe(false);
 });
 
-it('preserves unknown source dirtiness through planning, bundles and generated manifests', async () => {
+it('refuses unknown source provenance before bundle export or deployment', async () => {
   const f = fixture(); write(join(f.vault, SETTINGS.policyFile), 'version: 1\nmode: managed\norg:\n  grant: [report]\n');
   const service = new SkillsService(f.vault, SETTINGS, { engineSkills: f.engine, db: false });
   const state = await service.current(); state.catalog.byName.get('report')![0]!.dirty = null;
-  const plan = planViews(state.catalog, state.policy, state.roster, { agents: ['alpha'] });
-  expect(plan.views[0]!.skills[0]!.dirty).toBeNull();
-  const restored = planFromBundle(packBundle(plan));
-  expect(restored.views[0]!.skills[0]!.dirty).toBeNull();
-  const root = join(f.base, 'managed'); expect(syncViews(root, restored).views[0]!.status).toBe('current');
-  expect(readCurrent(root, 'alpha', 'zen-agent').manifest!.skills[0]!.dirty).toBeNull();
+  expect(() => planViews(state.catalog, state.policy, state.roster, { agents: ['alpha'] })).toThrow(/unknown Git provenance/);
+  expect(existsSync(join(f.base, 'managed'))).toBe(false);
 });

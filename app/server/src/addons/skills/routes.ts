@@ -1,15 +1,18 @@
 import express, { Router, type Request } from 'express';
 import { z } from 'zod';
 import {
-  ACK_LIMITS, AckRequestSchema, ChangeRequestSchema, DraftCreateRequestSchema, DraftFileDeleteRequestSchema, DraftFileWriteRequestSchema, SkillNameSchema,
+  ACK_LIMITS, AckRequestSchema, AgentNameSchema, ChangeRequestSchema, DigestSchema, DraftCreateRequestSchema, DraftFileDeleteRequestSchema, DraftFileWriteRequestSchema, RuntimeSchema, SkillNameSchema,
 } from '@secondbrain/contracts/skills';
 import type { FeatureRoutes } from '../../features/types.js';
+import { config } from '../../config.js';
 import { findDevice } from '../../ingest/devices.js';
 import { HttpError, parseOr400, wrap } from '../../routes/http.js';
 import { settings } from '../../settings.js';
 import { LifecycleError } from './lifecycle.js';
 import { recordAck } from './machines.js';
 import { SkillsService } from './service.js';
+import { PolicyReviewError } from './policy-review.js';
+import { planFingerprint, planViews, ReconcileError, validatePlanCapacity, type Plan } from './reconcile.js';
 
 /**
  * /api/skills (behind the login): library, detail, files, matrix, agent catalogs, machines, drafts
@@ -22,17 +25,28 @@ const nameParam = (req: Request): string => parseOr400(SkillNameSchema, req.para
 const lifecycle = async <T>(fn: () => Promise<T>): Promise<T> => {
   try { return await fn(); } catch (err) {
     if (err instanceof LifecycleError) throw new HttpError(err.status, err.message);
+    if (err instanceof PolicyReviewError) throw new HttpError(err.status, err.message);
+    if (err instanceof ReconcileError) throw new HttpError(409, err.message);
     throw err;
   }
 };
 
-export function skillsRouter(service: SkillsService): Router {
+export function skillsRouter(service: SkillsService, ownerIdentity = config.orgOwner): Router {
   const r = Router();
   r.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 
   r.get('/', wrap(async (req, res) => { res.json(await service.library(req.query['refresh'] === '1')); }));
   r.get('/matrix', wrap(async (_req, res) => { res.json(await service.matrix()); }));
   r.get('/machines', wrap(async (_req, res) => { res.json(await lifecycle(() => service.machines())); }));
+  r.post('/policy/approve', wrap(async (req, res) => {
+    const body = parseOr400(z.object({
+      digest: DigestSchema, revision: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+      source: z.string().trim().min(1).max(200).regex(/^[^\u0000-\u001f\u007f]+$/),
+      approvedBy: z.string().trim().min(1).max(100).regex(/^[^\u0000-\u001f\u007f]+$/).optional(),
+    }).strict(), req.body);
+    if (body.approvedBy !== undefined && body.approvedBy !== ownerIdentity) throw new HttpError(400, 'Policy approval identity is the configured authenticated owner; a request cannot select another reviewer.');
+    res.status(201).json({ approval: await lifecycle(() => service.approvePolicy({ digest: body.digest, revision: body.revision, source: body.source, approvedBy: ownerIdentity })) });
+  }));
   r.get('/agents/:agent', wrap(async (req, res) => {
     const agent = parseOr400(z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/), req.params['agent']);
     const out = await service.agent(agent);
@@ -113,11 +127,57 @@ export function ackRouter(): Router {
   return router;
 }
 
+/** A device may verify a canonical reviewed plan, but it may never create policy approval. */
+export function authorizeRouter(service: SkillsService): Router {
+  const router = Router();
+  router.post('/',
+    wrap(async (req, res) => {
+      const match = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '');
+      const device = match ? await findDevice(match[1]!) : null;
+      if (!device) throw new HttpError(401, 'bad, revoked or missing device token');
+      res.locals['device'] = device;
+      res.setHeader('Cache-Control', 'no-store');
+    }, true),
+    express.json({ limit: 32 * 1024 }),
+    wrap(async (req, res) => {
+      const body = parseOr400(z.object({
+        policyDigest: DigestSchema, fingerprint: DigestSchema,
+        views: z.array(z.object({ agent: AgentNameSchema, runtime: RuntimeSchema }).strict()).min(1).max(ACK_LIMITS.views),
+      }).strict(), req.body);
+      const selected = new Set<string>();
+      for (const view of body.views) {
+        const key = `${view.agent}\0${view.runtime}`;
+        if (selected.has(key)) throw new HttpError(422, 'An agent/runtime view is listed more than once');
+        selected.add(key);
+      }
+      const canonical = await lifecycle(async () => {
+        const state = await service.reviewedPolicy();
+        const plan: Plan = { policyDigest: state.policy.digest, views: [], packages: new Map() };
+        for (const runtime of new Set(body.views.map(view => view.runtime))) {
+          const agents = body.views.filter(view => view.runtime === runtime).map(view => view.agent);
+          const group = planViews(state.catalog, state.policy, state.roster, { agents, runtime });
+          plan.views.push(...group.views);
+          for (const [digest, source] of group.packages) plan.packages.set(digest, source);
+        }
+        validatePlanCapacity(plan);
+        return plan;
+      });
+      const fingerprint = planFingerprint(canonical);
+      if (body.policyDigest !== canonical.policyDigest || body.fingerprint !== fingerprint) throw new HttpError(409, 'The requested plan does not match the current reviewed policy and packages; refresh it before deploying.');
+      res.json({ policyDigest: canonical.policyDigest, fingerprint });
+    }));
+  return router;
+}
+
 export function serviceFor(vaultRoot: string): SkillsService {
   return new SkillsService(vaultRoot, settings(vaultRoot).skills);
 }
 
-export const routes: FeatureRoutes = ({ vaultRoot }) => [
-  { path: '/api/skills/ack', router: ackRouter(), mount: 'raw' },
-  { path: '/api/skills', router: skillsRouter(serviceFor(vaultRoot)) },
-];
+export const routes: FeatureRoutes = ({ vaultRoot }) => {
+  const service = serviceFor(vaultRoot);
+  return [
+    { path: '/api/skills/ack', router: ackRouter(), mount: 'raw' },
+    { path: '/api/skills/authorize', router: authorizeRouter(service), mount: 'raw' },
+    { path: '/api/skills', router: skillsRouter(service) },
+  ];
+};
