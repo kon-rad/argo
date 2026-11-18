@@ -195,3 +195,7 @@ health. Source event timestamps and explicit pending byte/record units travel to
 Postgres independently of receipt time. Inactive attempt expiry is globally bounded;
 quarantine has explicit supported-importer replay and no automatic deletion.
 See [collection health](collection-health.md) for compatibility and operator commands.
+
+### Local model usage addon
+
+The optional `localai` addon imports local gateway export pages transactionally with their cursors. Its manifest registers the protected read-only `/api/local-ai` API, five-minute pull timer and `secondbrain local-ai-pull` command. The Usage ledger renders its separate local-call summary only when enabled; cloud usage facts stay independent.

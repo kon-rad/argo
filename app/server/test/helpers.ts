@@ -20,6 +20,7 @@ export async function truncateAll(): Promise<void> {
                social_post_metrics, social_post_stats, social_metric_status, social_metric_tokens, instagram_login_states,
                social_post_media, social_posts, social_accounts,
                chat_messages, chat_conversations, chat_settings, classify_decisions, uploads
+               , local_ai_runs, local_ai_texts, local_ai_run_texts, local_models, local_model_loads, local_ai_cursors
                RESTART IDENTITY CASCADE`);
 }
 

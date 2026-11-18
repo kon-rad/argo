@@ -258,3 +258,5 @@ Report vulnerabilities privately through GitHub's Security tab, never in a publi
 ## License
 
 [MIT](LICENSE). Built by [Konrad Gnat](https://github.com/kon-rad) and contributors. <!-- public-ok -->
+
+The optional `localai` addon shows calls from a local model logging gateway on Usage. See [modules](docs/modules.md#localai).

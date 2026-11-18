@@ -266,6 +266,8 @@ const Schema = z.object({
   // localhost only. Used by the voice module's Listen button; never on a server.
   TTS_URL: z.string().url().default('http://127.0.0.1:8880'),
   TTS_MODEL: z.string().default('mlx-community/Kokoro-82M-bf16'),
+  LOCAL_AI_EXPORT_URL: z.string().url().optional(),
+  LOCAL_AI_HOST: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/).default('local'),
   // social module: LinkedIn is the first provider. App-level OAuth credentials
   // from developer.linkedin.com; one app serves every connected account.
   LINKEDIN_CLIENT_ID: z.string().optional(),
@@ -470,6 +472,8 @@ export const config = {
   boardToken: parsed.data.BOARD_TOKEN,
   ttsUrl: parsed.data.TTS_URL.replace(/\/+$/, ''),
   ttsModel: parsed.data.TTS_MODEL,
+  localAiExportUrl: parsed.data.LOCAL_AI_EXPORT_URL?.replace(/\/+$/, ''),
+  localAiHost: parsed.data.LOCAL_AI_HOST,
   webDist: resolve(appRoot, 'web', 'dist'),
   linkedinClientId: parsed.data.LINKEDIN_CLIENT_ID,
   linkedinClientSecret: parsed.data.LINKEDIN_CLIENT_SECRET,

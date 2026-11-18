@@ -197,7 +197,7 @@ export interface FeatureNav {
 }
 
 export interface AppMeta {
-  modules: ('ring' | 'agents' | 'projects' | 'org' | 'board' | 'usage' | 'summaries' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat' | 'uploads' | 'warehouse' | 'skills')[];
+  modules: ('ring' | 'agents' | 'projects' | 'org' | 'board' | 'usage' | 'summaries' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat' | 'uploads' | 'warehouse' | 'skills' | 'localai')[];
   /** The header links of the core features that are on. */
   nav?: FeatureNav[];
   owner: string;
@@ -507,6 +507,23 @@ export interface LiveAgent {
 }
 export interface LiveMachine { slug: string; display: string; kind: string | null; agents: LiveAgent[] }
 export interface LiveNow { at: string; serverMachine: string; total: number; machines: LiveMachine[] }
+export interface LocalAiAgg {
+  runs: number; errors: number; prompt: number; cached: number; output: number;
+  avg_output_tps: number | null; avg_ttft_ms: number | null; energy_wh: number; audio_seconds: number;
+}
+export interface LocalAiSummary {
+  bucket: 'hour' | 'day'; tz: string; total: LocalAiAgg;
+  models: (LocalAiAgg & { host: string; model: string; service: string })[];
+  callers: (LocalAiAgg & { caller: string })[];
+  series: { bucket: string; key: string; prompt: number; output: number; runs: number }[];
+  hosts: { host: string; display: string; last_ok_at: string | null; last_try_at: string | null; error: string | null; last_run_at: string | null }[];
+}
+export interface LocalAiRun {
+  host: string; id: string; started_at: string; ended_at: string | null; state: string; service: string; route: string; model: string; caller: string;
+  tool_names: string[] | null; message_count: number | null; prompt_tokens: number | null; cached_tokens: number | null; output_tokens: number | null;
+  ttft_ms: number | null; total_ms: number | null; output_tps: number | null; cold_start: boolean | null; done_reason: string | null;
+  audio_seconds: number | null; voice: string | null; energy_j: number | null; error: string | null;
+}
 export interface UsageHost { slug: string; display: string; kind: 'laptop' | 'server' | 'pi'; chip: string | null; notes: string | null }
 /** One summary of a finished agent session (`secondbrain summarize`). touched and metrics are computed, the rest is model-written. */
 export interface AgentSummary {
@@ -927,6 +944,8 @@ export interface MemoryCandidate {
 }
 
 export const api = {
+  localAiSummary: (from: string, to: string, bucket: 'hour' | 'day', tz: string) => request<LocalAiSummary>('/local-ai/summary', { from, to, bucket, tz }),
+  localAiRuns: (from: string, to: string, caller?: string) => request<{ runs: LocalAiRun[] }>('/local-ai/runs', { from, to, caller, limit: 50 }),
   search: searchApi.search,
   globalSearch: searchApi.globalSearch,
   projectsReport: projectsApi.report,

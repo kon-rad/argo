@@ -14,6 +14,7 @@ import { bucketEnd, formatTokens, money, TYPE_SERIES } from './format.js';
 import { zoned } from '../../lib/time.js';
 import { useAppTimezone } from '../../lib/useTimezone.js';
 import AgentSessions from './AgentSessions.js';
+import LocalModels from './LocalModels.js';
 import Summaries from './Summaries.js';
 import LiveAgents, { useLiveCount } from './LiveAgents.js';
 import Subscriptions from './Subscriptions.js';
@@ -331,6 +332,8 @@ function UsageLedger({ claudeConfigured, onSelectBucketZone }: { claudeConfigure
           </tbody>
         </DataTable>
       </section>
+
+      <LocalModels from={from} to={to} bucket={bucket} tz={tz} fmtBucket={fmtBucket} />
 
       <section>
         <h2 className="text-sm font-semibold">Agent wakes (the company board)</h2>

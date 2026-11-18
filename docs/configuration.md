@@ -421,3 +421,10 @@ and operator runbook.
 | `USAGE_PUSH_TICK_MS` | `30000` | Collection elapsed budget checked between files, at most 120000 |
 | `USAGE_PUSH_DEADLINE_MS` | `180000` | Overall normal SSH subprocess deadline, at most 600000 |
 | `USAGE_PUSH_BACKFILL_MS` | `600000` | First-attempt SSH deadline, at most 1800000 |
+
+### Local model usage
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LOCAL_AI_EXPORT_URL` | unset | Base URL of the local model gateway; no pull when unset |
+| `LOCAL_AI_HOST` | `local` | Registered `usage_hosts` slug for collected rows |

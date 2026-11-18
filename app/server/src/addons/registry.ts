@@ -11,6 +11,7 @@
  */
 import type { FeatureManifest } from '../features/types.js';
 import agents from './agents/manifest.js';
+import localai from './localai/manifest.js';
 import chat from './chat/manifest.js';
 import warehouse from './warehouse/manifest.js';
 import classify from './classify/manifest.js';
@@ -32,6 +33,7 @@ import observatory from './observatory/manifest.js';
 import skills from './skills/manifest.js';
 
 export const ADDON_MANIFESTS: readonly FeatureManifest[] = [
+  localai,
   ring,
   agents,
   map,
