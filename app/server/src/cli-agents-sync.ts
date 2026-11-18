@@ -1,26 +1,6 @@
-import { exitFlushed } from './cli-exit.js';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { config } from './config.js';
-import { syncAgents } from './agents/sync.js';
-import type { Host } from './archive/types.js';
-import { pool } from './db.js';
+import { fileURLToPath } from 'node:url';
+import { superviseSelf } from './usage/supervise.js';
 
-// `secondbrain agents-sync`: Hermes conversations + cron jobs/runs/outputs → Postgres.
-// On the server a systemd timer runs it as the service user (deploy/secondbrain-agents-sync.*).
-const root = config.env.HERMES_HOME ?? join(homedir(), '.hermes');
-const host = (config.env.AGENTS_SYNC_HOST ?? (config.env.DEPLOYMENT === 'server' ? 'droplet' : 'mac')) as Host;
-
-let code = 1;
-try {
-  const c = await syncAgents(root, host);
-  console.log(`agents-sync ${host} ${root}: ${c.homes} homes, ${c.sessions} sessions, ${c.messages} messages, ` +
-    `${c.jobs} jobs, ${c.runs} runs, ${c.outputs} outputs, ${c.usage} usage snapshots changed`);
-  for (const e of c.errors) console.error(`  ! ${e}`);
-  code = c.errors.length ? 2 : 0;
-} catch (err) {
-  console.error(`agents-sync failed: ${err instanceof Error ? err.message : String(err)}`);
-} finally {
-  await pool.end();
-}
-await exitFlushed(code);
+const code = await superviseSelf(fileURLToPath(import.meta.url), 600000, true);
+if (code !== null) process.exit(code);
+await import('./cli-agents-sync-worker.js');

@@ -64,7 +64,7 @@ export default function SyncChip() {
       title={title}
       aria-label={`Vault sync. ${title}`}
     >
-      {label}
+      {`Vault sync: ${label.replace(/^sync: /, '')}`}
     </div>
   );
 }

@@ -15,7 +15,7 @@ def test_usage_install_lifecycle(tmp_path):
     shutil.copy(SCRIPT, app / 'bin/install.sh')
     (app / 'bin/statusline-usage.mjs').write_text('// synthetic\n')
     dist = app / 'server/dist'
-    for group, names in {'usage': 'push readFrom walkFiles lines statusline types wire', 'archive': 'stage clean redact'}.items():
+    for group, names in {'usage': 'push readFrom walkFiles lines statusline types wire upload supervise sourceHealth', 'archive': 'stage clean redact'}.items():
         (dist / group).mkdir(parents=True)
         for name in names.split():
             (dist / group / (name + '.js')).write_text('// synthetic\n')
@@ -47,6 +47,9 @@ def test_usage_install_lifecycle(tmp_path):
     assert config['EnvironmentVariables']['USAGE_HOST'] == 'laptop-a'
     assert config['EnvironmentVariables']['CODEX_HOME'] == env['CODEX_HOME']
     assert config['StartInterval'] == 60
+    bundle = home / '.local/share/secondbrain/usage-push/usage'
+    assert (bundle / 'supervise.js').is_file()
+    assert (bundle / 'sourceHealth.js').is_file()
     assert 'laptop-a' in run('doctor').stdout
     assert run(env=dict(env, USAGE_HOST='laptop-b')).returncode == 0
     assert 'laptop-b' in run('doctor').stdout

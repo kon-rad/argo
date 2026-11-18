@@ -10,7 +10,7 @@ describe('usage schema', () => {
       `SELECT table_name, table_type FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE ANY($1)
        ORDER BY 1`, [['usage_%', 'plan_usage_%', 'hermes_usage_%']]);
     expect(rows).toEqual(
-      ['hermes_usage_snapshots', 'plan_usage_snapshots', 'usage_calls', 'usage_facts', 'usage_files', 'usage_hosts', 'usage_launches', 'usage_runs', 'usage_session_tasks']
+      ['hermes_usage_snapshots', 'plan_usage_snapshots', 'usage_calls', 'usage_facts', 'usage_files', 'usage_hosts', 'usage_import_quarantine', 'usage_launches', 'usage_runs', 'usage_session_tasks']
         .map(table_name => ({ table_name, table_type: ['usage_facts', 'usage_session_tasks'].includes(table_name) ? 'VIEW' : 'BASE TABLE' })));
   });
 

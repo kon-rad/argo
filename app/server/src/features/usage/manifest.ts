@@ -8,6 +8,8 @@ export default defineFeature({
   cli: [
     { command: 'session-restart', entry: 'cli-session-restart.js', summary: 'restart an archived Usage session here with a chosen persona, harness, provider and model' },
     { command: 'plan-alert', entry: 'cli-plan-alert.js', summary: '[--dry-run] alert at 60/80/90% of the plan windows' },
+
+    { command: 'usage-quarantine', entry: 'cli-usage-quarantine.js', summary: 'list, inspect, replay retained imports or clean expired attempt history' },
     { command: 'usage-sync', entry: 'cli-usage-sync.js', summary: "this machine's Claude Code and Codex usage into the ledger" },
     { command: 'usage-push', entry: 'cli-usage-push.js', summary: 'send new Claude Code and Codex usage to the server ledger over one SSH call' },
     { command: 'usage-backfill', entry: 'cli-usage-backfill.js', summary: 'wire lines for archived sessions (pipe to the server importer); --actions, --bots label what is already in the ledger' },

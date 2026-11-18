@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { findHomes, outputRunAt, syncAgents } from '../src/agents/sync.js';
 import { createApp } from '../src/app.js';
 import { query } from '../src/db.js';
@@ -187,4 +187,33 @@ describe('/api/agents', () => {
     expect((await request(server).get('/api/agents/chats')).status).toBe(401);
     expect((await request(server).get('/api/agents/cron/jobs')).status).toBe(401);
   });
+});
+
+it('Hermes no-change health uses source message times and counter revisions, independently per profile', async () => {
+  await syncAgents(root, 'test-box');
+  const before = (await query(`SELECT profile,session_id,input_tokens,output_tokens FROM hermes_usage_snapshots ORDER BY profile,session_id`)).rows;
+  const streams = (await query(`SELECT path,observed_at,imported_at,backlog,backlog_unit FROM collection_streams
+    WHERE host='test-box' ORDER BY path`)).rows;
+  expect(streams).toHaveLength(2);
+  for (const row of streams) {
+    expect(row).toMatchObject({ backlog: 0, backlog_unit: 'records' });
+    expect(row.imported_at.getTime()).toBeLessThan(Date.now() - 86400_000);
+    expect(row.imported_at).toEqual(row.observed_at);
+  }
+  const result = await syncAgents(root, 'test-box');
+  expect(result).toMatchObject({ sessions: 0, messages: 0, usage: 0, calls: 0, errors: [] });
+  expect((await query(`SELECT path,observed_at,imported_at,backlog,backlog_unit FROM collection_streams
+    WHERE host='test-box' ORDER BY path`)).rows).toEqual(streams);
+  expect((await query(`SELECT profile,session_id,input_tokens,output_tokens FROM hermes_usage_snapshots ORDER BY profile,session_id`)).rows).toEqual(before);
+  const db = new DatabaseSync(join(root, 'state.db'));
+  try { db.prepare('UPDATE messages SET content=? WHERE id=1').run('source revision'); } finally { db.close(); }
+  const counts = await syncAgents(root, 'test-box');
+  expect(counts.messages).toBe(1);
+  const attempts = (await query(`SELECT backlog FROM collection_attempts WHERE host='test-box' AND path=$1 ORDER BY attempt_seq DESC LIMIT 2`, [root])).rows;
+  expect(attempts.map(r => r.backlog)).toEqual([0, 1]);
+});
+
+afterAll(async () => {
+  await truncateAll();
+  await query("DELETE FROM usage_hosts WHERE slug IN ('test-box', 'other-box')");
 });

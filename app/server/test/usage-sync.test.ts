@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { query } from '../src/db.js';
 import { syncUsage } from '../src/usage/sync.js';
 import { truncateAll } from './helpers.js';
@@ -63,4 +63,31 @@ describe('syncUsage', () => {
     expect(next.calls).toBe(1);
     expect((await query(`SELECT count(*)::int n FROM usage_calls`)).rows[0]!.n).toBe(3);
   });
+});
+
+it('reports source-time health on no-change ticks and durably retains source poison before advancing', async () => {
+  const path = join(paths.claudeProjectsDir, '-home-hermes-secondBrain', 'sess-1.jsonl');
+  appendFileSync(path, 'API_TOKEN=synthetic-poison-long-enough\n');
+  await syncUsage(paths, 'test-box');
+  let stream = (await query(`SELECT * FROM collection_streams WHERE host='test-box' AND runtime='claude-code'`)).rows[0]!;
+  expect(stream).toMatchObject({ backlog: 0, backlog_unit: 'bytes', rejected: 1, quarantined: 1 });
+  expect(stream.observed_at.toISOString()).toBe('2026-10-13T10:00:07.000Z');
+  expect(stream.imported_at.toISOString()).toBe('2026-10-13T10:00:07.000Z');
+  const before = (await query('SELECT call_id,input_tokens,output_tokens FROM usage_calls ORDER BY call_id')).rows;
+  const seq = stream.attempt_seq;
+  const next = await syncUsage(paths, 'test-box');
+  expect(next).toMatchObject({ calls: 0, messages: 0, errors: [] });
+  stream = (await query(`SELECT * FROM collection_streams WHERE host='test-box' AND runtime='claude-code'`)).rows[0]!;
+  expect(stream.attempt_seq).toBeGreaterThan(seq);
+  expect(stream.imported_at.toISOString()).toBe('2026-10-13T10:00:07.000Z');
+  expect((await query('SELECT call_id,input_tokens,output_tokens FROM usage_calls ORDER BY call_id')).rows).toEqual(before);
+  const quarantine = (await query('SELECT wire,origin_path FROM usage_import_quarantine')).rows;
+  expect(quarantine).toHaveLength(1);
+  expect(quarantine[0]!.origin_path).toBe(path);
+  expect(quarantine[0]!.wire).not.toContain('synthetic-poison-long-enough');
+});
+
+afterAll(async () => {
+  await truncateAll();
+  await query("DELETE FROM usage_hosts WHERE slug IN ('test-box', 'other-box')");
 });

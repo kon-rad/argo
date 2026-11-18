@@ -163,3 +163,28 @@ it('enforces launch and task evidence identity with foreign keys and a writable 
   await query('DELETE FROM archive_sessions WHERE id=$1', [s.id]);
   expect((await query('SELECT count(*)::int n FROM archive_session_tasks')).rows[0].n).toBe(0);
 });
+
+
+it('acknowledges trusted launches alongside quarantined fragments and source health', async () => {
+  const path = '/synthetic/codex';
+  const health = { v: 1, collectorInstance: 'merge-fixture', runtime: 'codex', path,
+    attemptSeq: 1, collectorVersion: 'fixture', startedAt: at, endedAt: at, outcome: 'ok',
+    observedAt: at, importedAt: at, backlog: 0, oldestPendingAt: null,
+    rejected: 0, quarantined: 0, reason: null, capabilities: ['heartbeat'] };
+  const imported = await importLines([
+    L({ ...session('mixed-session'), path: path + '/session.jsonl' }),
+    L(launch('mixed-run', 'mixed-session')),
+    L({ t: 'launch', launch: { v: 99 } }),
+    L({ t: 'health', health }),
+  ], host, { quarantine: true });
+  expect(imported.accepted).toEqual([1, 2, 4]);
+  expect(imported.rejected).toEqual([3]);
+  expect(imported.quarantined).toEqual([3]);
+  expect((await rows())[0].task_ids).toEqual([task]);
+  expect((await query('SELECT count(*)::int n FROM usage_launches')).rows[0].n).toBe(1);
+  expect((await query('SELECT count(*)::int n FROM usage_import_quarantine')).rows[0].n).toBe(1);
+  const stream = (await query('SELECT observed_at, imported_at, outcome FROM collection_streams WHERE host=$1 AND path=$2', [host, path])).rows[0];
+  expect(stream.observed_at.toISOString()).toBe(at);
+  expect(stream.imported_at.toISOString()).toBe(at);
+  expect(stream.outcome).toBe('retry');
+});

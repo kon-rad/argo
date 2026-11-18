@@ -176,3 +176,22 @@ replay and rollback are in [Usage provenance](usage-provenance.md).
 ### Recorded tool result derivation
 
 Codex and Hermes archives use `archive/toolResult.ts` for structured output and nullable success/failure, shared by import and detail expansion. `archive/store.ts` derives persisted fields and records a parser version independent of raw SHA. `archive/replayResults.ts` reuses that derivation for scoped dry-run/replay without rewriting raw, source identity, timestamps or token records. List counts and detail use the same invocation rendering predicate. Explicit run lifecycle failures remain separate from tool failures. See [operator replay](tool-result-replay.md).
+
+Collection health uses additive Postgres `collection_attempts` and
+`collection_streams`, keyed independently by host, collector instance, runtime and
+path. Device authentication supplies host. Attempt receipt does not update source
+activity. SSH v2 acknowledgements distinguish accepted positions from durable
+`usage_import_quarantine` entries; failed acknowledgements retain local source
+cursors. See [collection health](collection-health.md) for compatibility and bounds.
+
+
+### Collection supervision and source health
+
+Session collectors run synchronous scanning, Hermes snapshot/parsing and import in
+supervised child process groups. A parent deadline covers the whole attempt and
+owns temporary snapshot cleanup. Committed per-file cursors survive; in-flight
+transactions roll back on termination. A separate bounded child reports timeout
+health. Source event timestamps and explicit pending byte/record units travel to
+Postgres independently of receipt time. Inactive attempt expiry is globally bounded;
+quarantine has explicit supported-importer replay and no automatic deletion.
+See [collection health](collection-health.md) for compatibility and operator commands.

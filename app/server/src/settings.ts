@@ -364,6 +364,12 @@ const Settings = z.object({
   timezone: TimeZone,
   /** Providers and panels shown on the Usage page. Empty provider lists do no polling. */
   usage: z.object({
+    expectedStreams: z.array(z.object({
+      host: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/), collectorInstance: z.string().min(1).max(128),
+      runtime: z.string().min(1).max(64), path: z.string().min(1).max(1024),
+      intervalSec: z.number().int().min(30).max(86400).default(120),
+      state: z.enum(['enabled', 'paused', 'retired']).default('enabled'),
+    })).default([]),
     subscriptions: z.array(z.enum(['codex', 'claude-code'])).default([]),
     credits: z.array(z.enum(['openrouter', 'fal', 'gemini'])).default([]),
     sections: z.array(z.enum(['running', 'ledger', 'sessions', 'summaries']))
