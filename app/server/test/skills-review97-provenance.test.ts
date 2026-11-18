@@ -1,3 +1,4 @@
+import { reviewedPlanViews as planViews } from './helpers/skills-reviewed.js';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
@@ -5,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SkillsService } from '../src/addons/skills/service.js';
 import { rootGit, pathState } from '../src/addons/skills/git.js';
 import { loadRoster } from '../src/addons/skills/roster.js';
-import { planViews, readCurrent, syncViews } from '../src/addons/skills/reconcile.js';
+import { readCurrent, syncViews } from '../src/addons/skills/reconcile.js';
 import { SETTINGS, skillMd, skillsFixture, write } from './helpers/skills.js';
 
 afterEach(() => vi.unstubAllEnvs());

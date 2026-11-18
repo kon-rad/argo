@@ -67,6 +67,9 @@ export function skillsFixture(opts: { git?: boolean; base?: string } = {}): Skil
   }));
   write(join(vault, '.agents', 'org', 'config', 'agents', 'alpha.yaml'), 'role: writer\nknowledge:\n  - .agents/skills/video\n  - Notes/plan.md\n');
   if (opts.git ?? true) {
+    sh(engine, 'init', '-q', '-b', 'main');
+    sh(engine, 'add', '-A');
+    sh(engine, 'commit', '-q', '-m', 'fixture engine');
     sh(vault, 'init', '-q', '-b', 'main');
     sh(vault, 'add', '-A');
     sh(vault, 'commit', '-q', '-m', 'fixture');

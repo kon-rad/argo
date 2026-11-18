@@ -1,3 +1,4 @@
+import { reviewedPlanViews as planViews, authorizeFixturePlan } from './helpers/skills-reviewed.js';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -6,8 +7,8 @@ import { SkillsService } from '../src/addons/skills/service.js';
 import { loadRoster } from '../src/addons/skills/roster.js';
 import { resolveAgent, selectedCandidate, unresolvedAssignments } from '../src/addons/skills/policy.js';
 import { machineStates, type AckRow } from '../src/addons/skills/machines.js';
-import { ackPayload, inspectRoot, packBundle, planFromBundle, planViews, readCurrent, syncViews } from '../src/addons/skills/reconcile.js';
-import { SETTINGS, skillMd, skillsFixture, write } from './helpers/skills.js';
+import { ackPayload, inspectRoot, packBundle, planFromBundle, readCurrent, syncViews } from '../src/addons/skills/reconcile.js';
+import { SETTINGS, sh, skillMd, skillsFixture, write } from './helpers/skills.js';
 
 const POLICY = 'version: 1\nmode: managed\norg:\n  grant: [report]\n';
 async function fixture() {
@@ -122,6 +123,7 @@ describe('unresolved skill dependencies block availability and deployment', () =
       write(join(f.vault, '.agents/skills/clip/SKILL.md'), skillMd('clip', 'Needs video.', 'metadata:\n  depends: [video]\n'));
     }
     write(join(f.vault, SETTINGS.policyFile), policy);
+    sh(f.vault, 'add', '-A'); sh(f.vault, 'commit', '-qm', 'fixture reviewed dependency metadata');
     const state = await service.current(true), agent = state.roster.agents.find(a => a.name === 'alpha')!;
     const cells = resolveAgent(agent, state.policy, state.catalog);
     expect(cells.get('report')!.state).toBe('unavailable');
@@ -148,7 +150,8 @@ describe('unresolved skill dependencies block availability and deployment', () =
     write(join(f.vault, '.agents/skills/report/SKILL.md'), skillMd('report', 'Needs denied video.', 'metadata:\n  depends: [video]\n'));
     const candidate = (await service.current(true)).catalog.byName.get('report')![0]!;
     const claimed = { ...plan, views: [{ ...plan.views[0]!, excluded: [], skills: [{ ...plan.views[0]!.skills[0]!, digest: candidate.digest!, depends: [] }] }], packages: new Map([[candidate.digest!, { files: candidate.packageFiles.map(f => ({ path: f.path, exec: f.exec, read: () => readFileSync(f.abs) })) }]]) };
-    const transported = planFromBundle(packBundle(claimed));
+    await authorizeFixturePlan(claimed);
+    const transported = await authorizeFixturePlan(planFromBundle(packBundle(claimed)));
     const failed = syncViews(root, transported); expect(failed.views[0]!.status).toBe('failed');
     expect(failed.views[0]!.excluded?.some(e => e.name === 'report' && e.reason.includes('video'))).toBe(true);
     expect(readCurrent(root, 'alpha', 'zen-agent').dir).toBe(before);

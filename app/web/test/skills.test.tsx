@@ -260,7 +260,8 @@ for (const operation of ['save','remove'] as const) for (const recovery of ['rec
   await screen.findByText(/Another client removed this file/);
   await waitFor(()=>expect((screen.getByRole('button',{name:'Recreate file with my changes'}) as HTMLButtonElement).disabled).toBe(false));
   expect(listing.mock.calls.length).toBeGreaterThan(1);
-  expect(screen.queryByRole('button',{name:/references\/note.md/})).toBeNull();
+  expect(client.getQueryData<{draft:{files:{path:string}[]}}>(['skills','draft','report'])?.draft.files.some(file=>file.path===path)).toBe(false);
+  expect(screen.getByRole('button',{name:/references\/note.md/}).textContent).toMatch(/not saved.*unsaved local edits/);
   expect((screen.getByRole('textbox',{name:'Your unsaved draft changes'}) as HTMLTextAreaElement).value).toBe('Retained local note');
   expect((screen.getByRole('checkbox',{name:'Your unsaved executable choice'}) as HTMLInputElement).checked).toBe(true);
   expect(writes).toHaveBeenCalledTimes(operation==='save'?1:0);
@@ -331,4 +332,98 @@ for (const recovery of ['recreate','discard'] as const) it(`keeps a deleted defa
     fireEvent.click(screen.getByRole('button',{name:'Discard my local changes'}));
     await screen.findByText('No files yet. Add SKILL.md first.');expect(missing).toBe(true);expect(writes).toHaveBeenCalledTimes(1);
   }
+});
+
+function draftNavigationFixture() {
+  const files: Record<string,{content:string;exec:boolean;version:string}> = {
+    'SKILL.md':{content:'Original instructions',exec:false,version:'a'.repeat(64)},
+    'references/note.md':{content:'Original note',exec:false,version:'b'.repeat(64)},
+  };
+  let revision=0;
+  const draft=()=>({name:'report',base:{id:'private:report',digest:null},files:Object.entries(files).map(([path,file])=>({path,size:file.content.length,exec:file.exec,sha256:file.version,kind:'text' as const})),updatedAt:'2026-01-01T00:00:00Z',validation:{valid:true,errors:[],warnings:[]},digest:`sha256:${'c'.repeat(64)}`});
+  vi.spyOn(skillsApi,'draft').mockImplementation(async()=>({draft:draft()}));
+  vi.spyOn(skillsApi,'drafts').mockImplementation(async()=>({drafts:[draft()]}));
+  vi.spyOn(skillsApi,'changes').mockResolvedValue({changes:[]});
+  vi.spyOn(skillsApi,'draftFile').mockImplementation(async(_name,path)=>{
+    const file=files[path];if(!file)throw new ApiError(404,'Missing file');
+    return{id:'draft:report',path,size:file.content.length,content:file.content,kind:'text',truncated:false,sha256:file.version,version:file.version,exec:file.exec};
+  });
+  const writes=vi.spyOn(skillsApi,'writeDraftFile').mockImplementation(async(_name,body)=>{
+    if(body.expectedVersion!==(files[body.path]?.version??null))throw new ApiError(409,'Changed since loaded');
+    files[body.path]={content:body.content,exec:body.exec??false,version:String(++revision).padStart(64,'0')};
+    return{draft:draft()};
+  });
+  return{files,writes};
+}
+
+it('retains independent unsaved text and executable modes across file selection with explicit save or discard',async()=>{
+  const{files,writes}=draftNavigationFixture();
+  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});render(<QueryClientProvider client={client}><DraftEditor name="report" /></QueryClientProvider>);
+  const root=await screen.findByRole('textbox',{name:'SKILL.md'});
+  await waitFor(()=>expect((root as HTMLTextAreaElement).value).toBe('Original instructions'));
+  fireEvent.change(root,{target:{value:'Unsaved root instructions'}});fireEvent.click(screen.getByRole('checkbox',{name:'executable'}));
+  fireEvent.click(screen.getByRole('button',{name:/references\/note.md/}));
+  const note=await screen.findByRole('textbox',{name:'references/note.md'});
+  await waitFor(()=>expect((note as HTMLTextAreaElement).value).toBe('Original note'));
+  fireEvent.change(note,{target:{value:'Unsaved note edit'}});fireEvent.click(screen.getByRole('checkbox',{name:'executable'}));
+  fireEvent.click(screen.getByRole('button',{name:/^SKILL.md /}));
+  await waitFor(()=>expect((screen.getByRole('textbox',{name:'SKILL.md'}) as HTMLTextAreaElement).value).toBe('Unsaved root instructions'));
+  expect((screen.getByRole('checkbox',{name:'executable'}) as HTMLInputElement).checked).toBe(true);
+  expect(writes).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button',{name:'Discard unsaved changes'}));
+  expect((screen.getByRole('textbox',{name:'SKILL.md'}) as HTMLTextAreaElement).value).toBe('Original instructions');
+  expect((screen.getByRole('checkbox',{name:'executable'}) as HTMLInputElement).checked).toBe(false);
+  fireEvent.click(screen.getByRole('button',{name:/references\/note.md/}));
+  await waitFor(()=>expect((screen.getByRole('textbox',{name:'references/note.md'}) as HTMLTextAreaElement).value).toBe('Unsaved note edit'));
+  expect((screen.getByRole('checkbox',{name:'executable'}) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole('button',{name:'Save draft file'}));
+  await screen.findByText('Draft file saved. The draft is not active.');
+  expect(writes).toHaveBeenCalledWith('report',expect.objectContaining({path:'references/note.md',content:'Unsaved note edit',exec:true,expectedVersion:'b'.repeat(64)}));
+  expect(files['SKILL.md']!.content).toBe('Original instructions');
+  expect(files['references/note.md']!.content).toBe('Unsaved note edit');
+  await waitFor(()=>expect(screen.queryByText(/Unsaved local edits are retained/)).toBeNull());
+});
+
+it('retains text, mode and original optimistic version when the draft editor closes and reopens',async()=>{
+  const{files,writes}=draftNavigationFixture();renderAt('changes','/skills/changes');
+  fireEvent.click(await screen.findByRole('button',{name:'report'}));
+  const editor=await screen.findByRole('textbox',{name:'SKILL.md'});
+  await waitFor(()=>expect((editor as HTMLTextAreaElement).value).toBe('Original instructions'));
+  fireEvent.change(editor,{target:{value:'Locally retained edit'}});fireEvent.click(screen.getByRole('checkbox',{name:'executable'}));
+  fireEvent.click(screen.getByRole('button',{name:'report'}));
+  expect(screen.queryByRole('region',{name:'Draft report'})).toBeNull();
+  files['SKILL.md']={content:'Newer remote instructions',exec:false,version:'f'.repeat(64)};
+  fireEvent.click(screen.getByRole('button',{name:'report'}));
+  await waitFor(()=>expect((screen.getByRole('textbox',{name:'SKILL.md'}) as HTMLTextAreaElement).value).toBe('Locally retained edit'));
+  expect((screen.getByRole('checkbox',{name:'executable'}) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole('button',{name:'Save draft file'}));
+  await screen.findByRole('region',{name:'Draft file conflict'});
+  expect(writes).toHaveBeenCalledWith('report',expect.objectContaining({content:'Locally retained edit',exec:true,expectedVersion:'a'.repeat(64)}));
+  expect((screen.getByRole('textbox',{name:'Your unsaved draft changes'}) as HTMLTextAreaElement).value).toBe('Locally retained edit');
+  expect((screen.getByRole('checkbox',{name:'Your unsaved executable choice'}) as HTMLInputElement).checked).toBe(true);
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Use current file'}) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole('button',{name:'Use current file'}));
+  await waitFor(()=>expect(screen.queryByText(/Unsaved local edits are retained/)).toBeNull());
+  fireEvent.click(screen.getByRole('button',{name:'report'}));fireEvent.click(screen.getByRole('button',{name:'report'}));
+  await waitFor(()=>expect((screen.getByRole('textbox',{name:'SKILL.md'}) as HTMLTextAreaElement).value).toBe('Newer remote instructions'));
+  expect((screen.getByRole('checkbox',{name:'executable'}) as HTMLInputElement).checked).toBe(false);
+});
+
+it('keeps unsaved new-file buffers visible and recoverable after switching and closing the editor',async()=>{
+  const{files,writes}=draftNavigationFixture();renderAt('changes','/skills/changes');
+  fireEvent.click(await screen.findByRole('button',{name:'report'}));
+  await screen.findByRole('textbox',{name:'SKILL.md'});
+  fireEvent.change(screen.getByRole('textbox',{name:'New file path'}),{target:{value:'references/new.md'}});
+  fireEvent.click(screen.getByRole('button',{name:'Add'}));
+  const editor=await screen.findByRole('textbox',{name:'references/new.md'});
+  fireEvent.change(editor,{target:{value:'Never saved new file'}});fireEvent.click(screen.getByRole('checkbox',{name:'executable'}));
+  fireEvent.click(screen.getByRole('button',{name:/^SKILL.md /}));
+  expect(screen.getByRole('button',{name:/references\/new.md/}).textContent).toMatch(/not saved.*unsaved local edits/);
+  fireEvent.click(screen.getByRole('button',{name:'report'}));fireEvent.click(screen.getByRole('button',{name:'report'}));
+  fireEvent.click(await screen.findByRole('button',{name:/references\/new.md/}));
+  await waitFor(()=>expect((screen.getByRole('textbox',{name:'references/new.md'}) as HTMLTextAreaElement).value).toBe('Never saved new file'));
+  expect((screen.getByRole('checkbox',{name:'executable'}) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole('button',{name:'Save draft file'}));await screen.findByText('Draft file saved. The draft is not active.');
+  expect(writes).toHaveBeenCalledWith('report',expect.objectContaining({path:'references/new.md',content:'Never saved new file',exec:true,expectedVersion:null}));
+  expect(files['references/new.md']!.content).toBe('Never saved new file');
 });

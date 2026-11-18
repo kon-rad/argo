@@ -15,6 +15,7 @@ import { loadedEvidence, machineStates, readAcks } from './machines.js';
 import { isText, LIMITS, packageFileAllowed, splitFrontmatter } from './package.js';
 import { dependentsOf, lifecycleOf, loadPolicyFile, policyWarnings, resolveAgent, selectedCandidate, supportFor, unresolvedAssignments, type LoadedPolicy } from './policy.js';
 import { loadRoster, type Roster } from './roster.js';
+import { acceptedPolicyReview, cleanTrackedRoster, markPolicyReviewed, matchesApproval, policySnapshot, PolicyReviewError, type PolicyApprovalProvider, type PolicyProvenance } from './policy-review.js';
 
 /**
  * The one application service behind `/api/skills` and `secondbrain skills`: catalog, policy, roster,
@@ -59,7 +60,7 @@ export class SkillsService {
   private loading: Promise<State> | null = null;
   readonly policyPath: string;
 
-  constructor(readonly vaultRoot: string, readonly settings: SkillsSettings, private readonly opts: { engineSkills?: string | null; git?: boolean; db?: boolean; observations?: typeof readAcks; reviewReceipts?: life.ReviewReceiptProvider } = {}) {
+  constructor(readonly vaultRoot: string, readonly settings: SkillsSettings, private readonly opts: { engineSkills?: string | null; git?: boolean; db?: boolean; observations?: typeof readAcks; reviewReceipts?: life.ReviewReceiptProvider; policyApprovals?: PolicyApprovalProvider } = {}) {
     this.policyPath = expandPath(vaultRoot, settings.policyFile);
   }
 
@@ -83,19 +84,82 @@ export class SkillsService {
 
   invalidate(): void { this.state = null; }
 
+  private approvalProvider(): PolicyApprovalProvider {
+    if (this.opts.policyApprovals) return this.opts.policyApprovals;
+    if (this.opts.db === false) throw new PolicyReviewError('Policy approval records require the operational database.', 503);
+    return {
+      read: async (repo, path, revision, digest) => (await query<PolicyProvenance>(`SELECT repo, path, revision, digest, source, approved_by AS "approvedBy" FROM skill_policy_approvals WHERE repo=$1 AND path=$2 ORDER BY approved_at DESC, id DESC LIMIT 1`, [repo, path])).rows,
+      write: async receipt => { await query(`INSERT INTO skill_policy_approvals (repo,path,revision,digest,source,approved_by) VALUES ($1,$2,$3,$4,$5,$6)`, [receipt.repo, receipt.path, receipt.revision, receipt.digest, receipt.source, receipt.approvedBy]); },
+    };
+  }
+
+  private async authorizePolicy(policy: LoadedPolicy): Promise<PolicyProvenance> {
+    if (this.opts.git === false) throw new PolicyReviewError('Git provenance is disabled; managed policy approval is unavailable.');
+    const snapshot = await policySnapshot(this.vaultRoot, this.policyPath, policy);
+    let latest: PolicyProvenance | null;
+    try {
+      const approvals = await this.approvalProvider().read(snapshot.repo, snapshot.path, snapshot.revision, snapshot.digest);
+      if (approvals.length > 1) throw new Error('Approval provider must return only the latest receipt per policy path.');
+      latest = approvals[0] ?? null;
+    } catch (err) { throw new PolicyReviewError(`Policy approval evidence is unavailable: ${(err as Error).message}`, 503); }
+    let receipt = latest && matchesApproval(snapshot, latest) ? latest : null;
+    const reviews = this.opts.reviewReceipts ?? (this.opts.db === false ? async () => [] : acceptedReviewReceipts);
+    if (!receipt) {
+      // A reviewed successor may supersede an owner receipt. An older review cannot resurrect it
+      // after a branch rewind; the owner must approve that new snapshot explicitly.
+      const successor = !latest || latest.repo === snapshot.repo && latest.path === snapshot.path && /^[0-9a-f]{40,64}$/.test(latest.revision) &&
+        (await git(snapshot.top, ['merge-base', '--is-ancestor', latest.revision, snapshot.revision])) !== null;
+      if (successor) {
+        try { receipt = await acceptedPolicyReview(snapshot, await reviews(snapshot.repo)); }
+        catch (err) { throw new PolicyReviewError(`Accepted policy review evidence is unavailable: ${(err as Error).message}`, 503); }
+      }
+    }
+    if (!receipt) throw new PolicyReviewError('This committed skills policy has no current accepted review or explicit owner approval for its exact repository, path, revision and digest; older approvals cannot authorize a superseded policy.');
+    markPolicyReviewed(policy, receipt);
+    return receipt;
+  }
+
+  /** Fresh state authorized for managed planning. Ordinary inspection never grants authorization. */
+  async reviewedPolicy(): Promise<State> {
+    const state = await this.current(true);
+    if (state.roster.error) throw new PolicyReviewError(`Roster authorization sources are invalid: ${state.roster.error}`);
+    const rosterDigest = await cleanTrackedRoster(this.vaultRoot);
+    if (!state.roster.sourceDigest || state.roster.sourceDigest !== rosterDigest) throw new PolicyReviewError('Roster authorization sources changed while loading; rescan and retry without local edits.');
+    await this.authorizePolicy(state.policy);
+    return state;
+  }
+
+  /** Called only through an authenticated owner operation; stores metadata, never policy source. */
+  async approvePolicy(input: { digest: string; revision: string; source: string; approvedBy: string }): Promise<PolicyProvenance> {
+    if (!input.source?.trim() || input.source.length > 200 || !input.approvedBy?.trim() || input.approvedBy.length > 100) throw new PolicyReviewError('Owner approval needs a source (at most 200 characters) and an approving identity (at most 100).', 422);
+    if (this.opts.git === false) throw new PolicyReviewError('Git provenance is disabled; policy approval refused.');
+    const state = await this.current(true), snapshot = await policySnapshot(this.vaultRoot, this.policyPath, state.policy);
+    if (input.digest !== snapshot.digest || input.revision !== snapshot.revision) throw new PolicyReviewError('Policy changed since approval was requested; inspect the current committed digest and revision and approve those exact values.');
+    const receipt = { repo: snapshot.repo, path: snapshot.path, revision: snapshot.revision, digest: snapshot.digest, source: input.source.trim(), approvedBy: input.approvedBy.trim() };
+    try { await this.approvalProvider().write(receipt); }
+    catch (err) { throw new PolicyReviewError(`Could not save owner policy approval: ${(err as Error).message}`, 503); }
+    this.invalidate();
+    return receipt;
+  }
+
   private async policyStatus(p: LoadedPolicy): Promise<PolicyStatus> {
-    let revision: string | null = null;
-    let dirty: boolean | null = null;
+    let revision: string | null = null, dirty: boolean | null = null;
     if (p.exists && (this.opts.git ?? true)) {
       const top = await gitTop(dirname(this.policyPath));
       if (top) {
-        const rel = toPosix(relative(top, this.policyPath));
-        revision = await lastRevision(top, rel);
-        const st = await git(top, ['status', '--porcelain', '--', rel]);
-        dirty = st === null ? null : st.trim() !== '';
+        let path = this.policyPath; try { path = realpathSync(path); } catch { /* Missing path remains unknown. */ }
+        const rel = toPosix(relative(top, path)); revision = await lastRevision(top, rel);
+        const st = await git(top, ['status', '--porcelain', '--', rel]); dirty = st === null ? null : st.trim() !== '';
       }
     }
-    return { file: toPosix(this.settings.policyFile), exists: p.exists, valid: p.valid, errors: p.errors, warnings: p.warnings, digest: p.digest, revision, dirty };
+    let approval: PolicyProvenance | null = null, reviewError: string | null = null;
+    if (p.mode === 'managed' && p.exists && p.valid) {
+      // Inspect an independent parsed object: displaying approval must not mark the catalog state used by a caller.
+      try { approval = await this.authorizePolicy({ ...p, policy: structuredClone(p.policy) }); }
+      catch (err) { reviewError = (err as Error).message; }
+    }
+    return { file: toPosix(this.settings.policyFile), exists: p.exists, valid: p.valid, errors: p.errors, warnings: p.warnings, digest: p.digest, revision, dirty,
+      reviewed: approval !== null, reviewError, approval };
   }
 
   private cellsFor(s: State): Map<string, Map<string, AssignmentCell>> {

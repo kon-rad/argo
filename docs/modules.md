@@ -36,7 +36,7 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 
 ## skills
 
-Off by default. Enable `skills` through the vault addons list or `MODULES` for the **Skills** page under Work, `/api/skills`, the device-token acknowledgement route and `secondbrain skills` (`cli-skills`). With no policy file every runtime keeps its own skill folders, as before; the page is read-only inventory until the Git-tracked policy says `mode: managed`. No timers. Tables: `skill_view_acks`, `skill_ack_log` (machine acknowledgements only). See [Skills](skills.md).
+Off by default. Enable `skills` through the vault addons list or `MODULES` for the **Skills** page under Work, `/api/skills`, the device-token acknowledgement route and `secondbrain skills` (`cli-skills`). With no policy file every runtime keeps its own skill folders, as before; the page is read-only inventory until the Git-tracked policy says `mode: managed`. No timers. Tables: `skill_view_acks`, `skill_ack_log` (machine acknowledgements) and `skill_policy_approvals` (exact owner approval receipts, no editable policy). Pack and sync require online HTTPS device-token verification against a clean committed approved policy. See [Skills](skills.md).
 
 ## observatory
 

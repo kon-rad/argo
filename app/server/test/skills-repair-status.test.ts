@@ -1,3 +1,4 @@
+import { reviewedPlanViews as planViews } from './helpers/skills-reviewed.js';
 import {chmodSync,readFileSync,rmSync,symlinkSync,writeFileSync,statSync,renameSync,readlinkSync} from 'node:fs';
 import {join} from 'node:path';
 import {beforeEach,afterEach,it,expect} from 'vitest';
@@ -8,7 +9,7 @@ import {truncateAll} from './helpers.js';
 import {SkillsService} from '../src/addons/skills/service.js';
 import {runSkillsCli} from '../src/addons/skills/cli.js';
 import {recordAck,readAcks} from '../src/addons/skills/machines.js';
-import {ackPayload,inspectRoot,planViews,readCurrent,syncViews,verifyView} from '../src/addons/skills/reconcile.js';
+import {ackPayload,inspectRoot,readCurrent,syncViews,verifyView} from '../src/addons/skills/reconcile.js';
 import {skillsFixture,SETTINGS,MANAGED_POLICY,write} from './helpers/skills.js';
 beforeEach(truncateAll);
 afterEach(async()=>{

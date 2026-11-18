@@ -1,3 +1,4 @@
+import { reviewedPlanViews as planViews } from './helpers/skills-reviewed.js';
 import { join } from 'node:path';
 import express from 'express';
 import request from 'supertest';
@@ -5,13 +6,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LibraryResponseSchema, MachinesResponseSchema, MatrixResponseSchema, SkillDetailResponseSchema, type AckRequest } from '@secondbrain/contracts/skills';
 import { skillsRouter } from '../src/addons/skills/routes.js';
 import { SkillsService } from '../src/addons/skills/service.js';
-import { planViews, syncViews } from '../src/addons/skills/reconcile.js';
+import { syncViews } from '../src/addons/skills/reconcile.js';
 import { machineStates, readAcks } from '../src/addons/skills/machines.js';
 import { createApp } from '../src/app.js';
 import { query } from '../src/db.js';
 import { addDevice, findDevice } from '../src/ingest/devices.js';
 import { errorHandler } from '../src/routes/http.js';
-import { MANAGED_POLICY, SETTINGS, skillsFixture, write } from './helpers/skills.js';
+import { MANAGED_POLICY, SETTINGS, skillMd, skillsFixture, write } from './helpers/skills.js';
 
 const HOSTS = ['skills-host-a', 'skills-host-b', 'skills-host-c'];
 
@@ -73,6 +74,9 @@ describe('skills routes and module gating', () => {
     expect((await request(app).post('/api/skills/drafts').send({ name: 'newskill', description: 'A new skill.' })).status).toBe(201);
     expect((await request(app).put('/api/skills/drafts/newskill/file').send({ path: '../x', content: 'x' })).status).toBe(400);
     expect((await request(app).put('/api/skills/drafts/newskill/file').send({ path: 'scripts/run.sh', content: '#!/bin/sh\n', exec: true, expectedVersion: null })).status).toBe(200);
+    const loaded = await request(app).get('/api/skills/drafts/newskill/file').query({ path: 'SKILL.md' });
+    expect(loaded.status).toBe(200);
+    expect((await request(app).put('/api/skills/drafts/newskill/file').send({ path: 'SKILL.md', content: skillMd('newskill', 'Summarizes a source document.', '', '# Instructions\n\nRead the document and summarize its claims with citations.\n'), expectedVersion: loaded.body.version })).status).toBe(200);
     const preview = await request(app).post('/api/skills/changes/preview').send({ kind: 'create', skill: 'newskill', draft: 'newskill' });
     expect(preview.status).toBe(200);
     expect(preview.body.preview.blocked).toEqual([]);
@@ -80,7 +84,9 @@ describe('skills routes and module gating', () => {
     const made = await request(app).post('/api/skills/changes').send({ kind: 'create', skill: 'newskill', draft: 'newskill' });
     expect(made.status).toBe(201);
     expect(made.body.change.status).toBe('proposed');
-    const lib = LibraryResponseSchema.parse((await request(app).get('/api/skills?refresh=1')).body);
+    const library = await request(app).get('/api/skills?refresh=1');
+    expect(library.status, JSON.stringify(library.body)).toBe(200);
+    const lib = LibraryResponseSchema.parse(library.body);
     expect(lib.skills.some((s) => s.name === 'newskill')).toBe(false);
     const refused = await request(app).post('/api/skills/changes').send({ kind: 'remove', skill: 'report' });
     expect(refused.status).toBe(409);

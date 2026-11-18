@@ -7,6 +7,7 @@ import type { Catalog } from './catalog.js';
 import { isIgnoredName, isSecretLike, LIMITS, NAME_RE, readMeta, scanPackage } from './package.js';
 import { resolveAgent, selectedCandidate, supportFor, unresolvedAssignments, type LoadedPolicy } from './policy.js';
 import type { Roster } from './roster.js';
+import { assertPolicyReviewed } from './policy-review.js';
 
 /**
  * Machine reconciliation: resolve the approved skills per agent and runtime, stage the exact packages
@@ -30,6 +31,60 @@ export interface ViewPlan { agent: string; runtime: SkillRuntime; skills: Planne
 export interface Plan { policyDigest: string | null; views: ViewPlan[]; packages: Map<string, PackageSource> }
 
 export class ReconcileError extends Error {}
+
+// Approval is an in-process capability, never a boolean that a transport bundle can assert.
+// The fingerprint binds every manifest field that can affect a runtime and every selected digest.
+const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
+const authorizedPlans = new WeakMap<Plan, { fingerprint: string; at: number }>();
+const AUTHORIZATION_MAX_AGE_MS = 60_000;
+export function planFingerprint(plan: Pick<Plan, 'policyDigest' | 'views'>): string {
+  const views = plan.views.map(v => ({ agent: v.agent, runtime: v.runtime,
+    skills: v.skills.map(s => ({ name: s.name, id: s.id, digest: s.digest, revision: s.revision,
+      dirty: s.dirty, description: s.description, depends: [...(s.depends ?? [])].sort(),
+      requires: { bins: [...s.requires.bins].sort(), env: [...s.requires.env].sort() } }))
+      .sort((a, b) => compare(a.name, b.name)),
+    excluded: [...(v.excluded ?? [])].map(e => ({ name: e.name, reason: e.reason }))
+      .sort((a, b) => compare(a.name, b.name) || compare(a.reason, b.reason)),
+  })).sort((a, b) => compare(a.agent, b.agent) || compare(a.runtime, b.runtime));
+  return `sha256:${createHash('sha256').update(JSON.stringify({ policyDigest: plan.policyDigest, views })).digest('hex')}`;
+}
+function authorizePlan(plan: Plan): void { authorizedPlans.set(plan, { fingerprint: planFingerprint(plan), at: Date.now() }); }
+function assertPlanAuthorized(plan: Plan): void {
+  const proof = authorizedPlans.get(plan);
+  if (!proof || proof.fingerprint !== planFingerprint(plan) || Date.now() - proof.at > AUTHORIZATION_MAX_AGE_MS)
+    throw new ReconcileError('Managed plan has no current accepted policy review authorization, or was modified after authorization. Verify it with the server before packing or synchronizing; existing views are unchanged.');
+}
+
+/** Authenticate an untrusted local proposal/bundle against the server's clean, reviewed canonical plan.
+ * A device token can request verification but cannot approve a policy. No receipt in a bundle is trusted.
+ * An offline/unreachable server fails closed; already installed views remain available.
+ */
+export async function authorizeRemotePlan(plan: Plan, server: string, token: string, fetchFn: typeof fetch = fetch): Promise<void> {
+  authorizedPlans.delete(plan);
+  planCapacity(plan);
+  let base: URL;
+  try { base = new URL(server); } catch { throw new ReconcileError('A valid HTTPS skills server is required for policy review authorization'); }
+  if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash || (base.pathname !== '/' && base.pathname !== ''))
+    throw new ReconcileError('Policy review authorization requires an HTTPS server origin without credentials, a path, query or fragment');
+  if (!token || /[\r\n]/.test(token)) throw new ReconcileError('A live device token is required for policy review authorization');
+  const fingerprint = planFingerprint(plan);
+  let response: Response;
+  try {
+    response = await fetchFn(new URL('/api/skills/authorize', base), { method: 'POST', redirect: 'error', credentials: 'omit',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ policyDigest: plan.policyDigest, fingerprint, views: plan.views.map(({ agent, runtime }) => ({ agent, runtime })) }),
+      signal: AbortSignal.timeout(30_000) });
+  } catch { throw new ReconcileError('Skills policy authorization server is unavailable; nothing deployed, existing views are unchanged'); }
+  if (!response.ok) throw new ReconcileError(`Skills policy review authorization refused (HTTP ${response.status}); nothing deployed, existing views are unchanged`);
+  // The tiny response has no package content. Refuse oversized or malformed protocol responses.
+  const body = await response.text();
+  if (body.length > 1024) throw new ReconcileError('Invalid skills policy authorization response');
+  let accepted: { policyDigest?: unknown; fingerprint?: unknown };
+  try { accepted = JSON.parse(body) as typeof accepted; } catch { throw new ReconcileError('Invalid skills policy authorization response'); }
+  if (!accepted || accepted.policyDigest !== plan.policyDigest || accepted.fingerprint !== fingerprint || planFingerprint(plan) !== fingerprint)
+    throw new ReconcileError('Skills policy authorization does not match this exact plan; nothing deployed, existing views are unchanged');
+  authorizePlan(plan);
+}
 
 const hex = (digest: string) => digest.slice('sha256:'.length);
 const dirtyNames = (names: string[]) => [...new Set(names.filter(n => NAME_RE.test(n)))].slice(0, ACK_LIMITS.skillsPerView);
@@ -105,10 +160,19 @@ function acknowledgementCapacity(views: AckView[], policyDigest: string | null, 
   if (!parsed.success) throw new ReconcileError(`Managed views cannot be acknowledged: ${parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`);
   if (Buffer.byteLength(JSON.stringify(payload)) > ACK_LIMITS.bytes) throw new ReconcileError(`Managed views exceed the ${ACK_LIMITS.bytes}-byte acknowledgement capacity; select fewer agents or skills in a separate managed root before synchronizing.`);
 }
-function planCapacity(plan: Plan): void { acknowledgementCapacity(plan.views.map(plannedAck), plan.policyDigest); }
+export function validatePlanCapacity(plan: Plan): void { acknowledgementCapacity(plan.views.map(plannedAck), plan.policyDigest); }
+const planCapacity = validatePlanCapacity;
 
 /** The managed resolution for the selected agents. Refuses a legacy or unparseable policy: there is nothing approved to deploy. */
 export function planViews(catalog: Catalog, policy: LoadedPolicy, roster: Roster, sel: { agents?: string[]; runtime?: SkillRuntime } = {}): Plan {
+  const plan = proposeViews(catalog, policy, roster, sel);
+  assertPolicyReviewed(policy);
+  authorizePlan(plan);
+  return plan;
+}
+
+/** Inspection-only proposal. It cannot be packed or activated until a trusted authority verifies it. */
+export function proposeViews(catalog: Catalog, policy: LoadedPolicy, roster: Roster, sel: { agents?: string[]; runtime?: SkillRuntime } = {}): Plan {
   if (policy.mode !== 'managed') throw new ReconcileError('the skills policy is in legacy mode (or missing): runtimes keep their own folders and there is nothing managed to deploy. Set `mode: managed` in the policy through review first.');
   if (!policy.valid) throw new ReconcileError(`the skills policy does not parse (${policy.errors.join('; ')}); nothing deployed, existing deployments left as they are`);
   if (roster.error) throw new ReconcileError(`the agent roster is invalid (${roster.error}); nothing deployed, existing views left unchanged`);
@@ -132,6 +196,7 @@ export function planViews(catalog: Catalog, policy: LoadedPolicy, roster: Roster
         continue;
       }
       const cand = selectedCandidate(policy.policy, catalog, c.skill).candidate!;
+      if (cand.dirty !== false || cand.tracked !== true) throw new ReconcileError(`Skill ${c.skill} is dirty, untracked, or has unknown Git provenance; commit and review every package member before deploying managed views`);
       skills.push({ name: c.skill, id: cand.id, digest: cand.digest!, revision: cand.revision, dirty: cand.dirty, description: cand.description, depends: cand.metadata.depends, requires: cand.metadata.requires });
       if (!packages.has(cand.digest!)) packages.set(cand.digest!, { files: cand.packageFiles.map((f) => ({ path: f.path, exec: f.exec, read: () => readFileSync(f.abs) })) });
     }
@@ -155,6 +220,7 @@ export const BUNDLE_MAX_BYTES = 200 * 1024 * 1024;
 
 export function packBundle(plan: Plan): Bundle {
   planCapacity(plan);
+  assertPlanAuthorized(plan);
   const packages: Bundle['packages'] = {};
   let total = 0;
   for (const [digest, src] of plan.packages) {
@@ -463,6 +529,7 @@ function saveReport(root: string, report: SyncReport): void {
 export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; hooks?: SyncHooks; env?: NodeJS.ProcessEnv } = {}): SyncReport {
   const hooks = opts.hooks ?? {};
   planCapacity(plan);
+  assertPlanAuthorized(plan);
   const installed = new Map(inspectRoot(root, opts.env).map(view => [`${view.agent}/${view.runtime}`, view]));
   const projected = new Map(installed);
   for (const view of plan.views) projected.set(`${view.agent}/${view.runtime}`, plannedAck(view));

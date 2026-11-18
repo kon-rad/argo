@@ -167,6 +167,20 @@ The default managed root is `~/.local/share/secondbrain/skills` (`skills.managed
 
 `secondbrain skills sync` resolves the managed policy for the selected agents (default: every agent with an adapter runtime), stages each package, verifies its full digest, builds a new generation, verifies it again through its own links and switches the view with one atomic rename. If anything fails, the previous view stays active and the staging area is removed. A view whose deployed files were modified on the machine is reported **dirty** and left as is; `--repair` moves the modified store folders to `quarantine/` and redeploys. A folder under `views/` that the manager did not create is never replaced. Programs and environment variables a package declares are checked and reported, never installed or copied.
 
+### Policy approval and online authorization
+
+A valid local policy is an inspection proposal, not deployment authority. Before `pack` or `sync` (including `--dry-run`), the CLI contacts the canonical HTTPS server using a live device token. The server reloads its clean, tracked, committed default-branch policy and requires an accepted Vera review receipt or an explicit owner approval for that exact repository, path, revision and digest. It resolves the requested agents/runtimes itself and compares the complete plan fingerprint. A serialized bundle cannot grant itself authority by carrying a reviewed flag or copied receipt.
+
+When the policy has no accepted review receipt, the authenticated owner can approve its exact committed version through the owner-only API or from a trusted database-owning operator session:
+
+```sh
+secondbrain skills approve-policy --digest "$POLICY_DIGEST" --revision "$POLICY_REVISION" --source "owner approval reference" --reviewer "$OWNER_ID"
+```
+
+Use the committed digest and full Git revision shown by inspection. The approval is operational metadata linked to the owner's decision; it does not edit policy, package files or grants. Device tokens cannot create approval. HTTP approval records the configured authenticated owner's identity, while the privileged CLI explicitly records its operator assertion. Database grants withhold approval writes from bot roles.
+
+Pack and sync require `--server https://...` (or `SECONDBRAIN_SERVER`) and `--token-file` (mode 600) or `SB_LEDGER_TOKEN`. Authorization follows no redirects and accepts only a matching bounded response. It is short-lived and tied to the exact plan. An unreachable server, dirty policy, absent/revoked approval or tampered bundle leaves existing deployments unchanged; there is no skip or offline-approval flag. Already installed views remain available while offline. Bundle selections are filtered before authorization, and unselected package payloads are not deployed.
+
 ### Two hosts
 
 Host A has the vault checkout; host B is a machine without one. The transport between them is yours (no route accepts a shell or SSH command).
@@ -181,7 +195,7 @@ git -C /path/to/vault pull
 SB_LEDGER_TOKEN=sbd_... secondbrain skills sync --ack --server https://brain.example.com
 
 # host A: a bundle for host B, copied by you
-secondbrain skills pack --out skills-bundle.json --agents writer-1,ops-1
+SB_LEDGER_TOKEN=sbd_... secondbrain skills pack --out skills-bundle.json --agents writer-1,ops-1 --server https://brain.example.com
 scp skills-bundle.json host-b:
 
 # host B
@@ -219,6 +233,11 @@ The token decides the host; the body cannot name one (unknown keys are rejected)
 A Git push or merge never marks anything synced. Revocation reaches a machine only when it syncs.
 
 ## API
+
+`POST /api/skills/policy/approve` is behind the owner session and origin gate. Its strict JSON body carries `digest`, full Git `revision` and bounded `source`; optional `approvedBy` must equal the configured owner and cannot choose another identity. It writes only exact approval metadata after clean-Git validation.
+
+`POST /api/skills/authorize` is a raw device-token door: authentication precedes its 32 KB JSON parser. The request carries `policyDigest`, `fingerprint` and up to 64 unique `{agent,runtime}` selectors. The server resolves a fresh reviewed canonical plan, enforces combined capacity and returns only the matching digest and fingerprint. A device may verify a plan, never approve its policy.
+
 
 All under `/api/skills`, behind the login, except `/ack`:
 

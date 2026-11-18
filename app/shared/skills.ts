@@ -58,6 +58,8 @@ export type SkillRow = z.infer<typeof SkillRowSchema>;
 export const PolicyStatusSchema = z.object({
   file: z.string(), exists: z.boolean(), valid: z.boolean(), errors: z.array(z.string()), warnings: z.array(z.string()),
   digest: z.string().nullable(), revision: z.string().nullable(), dirty: z.boolean().nullable(),
+  reviewed: z.boolean().optional(), reviewError: z.string().nullable().optional(),
+  approval: z.object({ repo: z.string(), path: z.string(), revision: z.string(), digest: z.string(), source: z.string(), approvedBy: z.string() }).nullable().optional(),
 });
 export type PolicyStatus = z.infer<typeof PolicyStatusSchema>;
 

@@ -8,7 +8,7 @@ export default defineFeature({
   cli: [{ command: 'skills', entry: 'cli-skills.js', summary: 'skills: list | show | matrix | explain | draft | preview | propose | changes | apply | sync | pack | status | ack (skills help)' }],
   timers: [],
   wrappers: ['cli-skills'],
-  health: { label: 'the skills acknowledgement tables answer', tables: ['skill_view_acks', 'skill_ack_log'] },
+  health: { label: 'the skills acknowledgement and policy approval tables answer', tables: ['skill_view_acks', 'skill_ack_log', 'skill_policy_approvals'] },
   env: ['SB_LEDGER_TOKEN', 'SECONDBRAIN_SERVER'],
   settings: 'skills',
   docs: 'docs/skills.md',

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { relative, sep } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 /**
  * Read-only Git questions about package paths, with a fixed argv (no shell) and a timeout. Every answer
@@ -32,7 +32,7 @@ export interface RootGit {
   error: string | null;
 }
 
-/** One status and one ls-files per root, so each package's dirty/tracked answer is a prefix check. */
+/** One status and one ls-files per root; packages also account for each scanned member, including ignored files. */
 export async function rootGit(dir: string): Promise<RootGit | null> {
   const top = await gitTop(dir);
   if (!top) return null;
@@ -56,13 +56,20 @@ export async function rootGit(dir: string): Promise<RootGit | null> {
     error: [status === null ? 'Git status is unavailable; dirty state is unknown' : null, files === null ? 'Git tracked files are unavailable; tracked state is unknown' : null, head === null ? 'Git HEAD is unavailable; revision is unknown' : null].filter(Boolean).join('; ') || null };
 }
 
-export function pathState(g: RootGit, absPath: string): { rel: string; dirty: boolean | null; tracked: boolean | null } {
+export function pathState(g: RootGit, absPath: string, members?: readonly { path: string; abs: string }[]): { rel: string; dirty: boolean | null; tracked: boolean | null; untracked: string[] | null } {
   const rel = toPosix(relative(g.top, absPath));
   const prefix = `${rel}/`;
-  const dirty = g.dirty?.some((d) => d === rel || d.startsWith(prefix)) ?? null;
+  const changed = g.dirty?.some((d) => d === rel || d.startsWith(prefix)) ?? null;
+  // A package digest includes ignored helpers too. Status alone cannot establish that every byte
+  // belongs to Git. Check both the declared path and the resolved target of a supported file alias.
+  const untracked = g.tracked === null ? null : (members ?? []).filter(member =>
+    !g.tracked!.has(toPosix(relative(g.top, join(absPath, member.path)))) || !g.tracked!.has(toPosix(relative(g.top, member.abs))),
+  ).map(member => member.path);
   let tracked = g.tracked?.has(rel) ?? null;
-  if (tracked === false && g.tracked) for (const t of g.tracked) if (t.startsWith(prefix)) { tracked = true; break; }
-  return { rel, dirty, tracked };
+  if (members?.length && g.tracked) tracked = untracked!.length === 0;
+  else if (tracked === false && g.tracked) for (const t of g.tracked) if (t.startsWith(prefix)) { tracked = true; break; }
+  const dirty = changed === true || !!untracked?.length ? true : changed === null || g.tracked === null ? null : false;
+  return { rel, dirty, tracked, untracked };
 }
 
 export async function lastRevision(top: string, rel: string): Promise<string | null> {

@@ -7,9 +7,10 @@ import { settings } from './settings.js';
 import { readBuildInfo } from './version.js';
 
 // Lifecycle operations read authoritative deployment observations before removal. Offline
-// package inspection, draft editing and bundle reconciliation do not require a database.
+// package inspection and draft editing need no database. Pack/sync authorize online against
+// the canonical server; recording owner policy approval requires this process's DB privileges.
 const argv = process.argv.slice(2);
-const usesDb = ['machines', 'show', 'matrix', 'explain', 'preview', 'propose', 'apply', 'changes'].includes(argv[0] ?? '');
+const usesDb = ['machines', 'show', 'matrix', 'explain', 'preview', 'propose', 'apply', 'changes', 'approve-policy'].includes(argv[0] ?? '');
 const service = new SkillsService(config.vaultRoot, settings(config.vaultRoot).skills, { db: usesDb });
 let code = 1;
 try {
