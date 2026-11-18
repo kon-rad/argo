@@ -10,6 +10,30 @@ export function source(ref: string, raw: unknown, essential = true, limit: numbe
   return { ref, revision: digest(text), text: redacted.slice(0, limit), essential,
     missing: !text.trim(), truncated: text.length > limit, redacted:redacted !== text };
 }
+/** Keep both transport and database completeness signals when collecting board context. */
+export function boardSource(ref: string, raw: unknown): Source {
+  const collected = source(ref, raw);
+  const incomplete = Array.isArray(raw) && (raw.length > 100 || raw.some(row => row && typeof row === 'object' && row.truncated === true));
+  return { ...collected, truncated: collected.truncated || incomplete };
+}
+/** A complete prior-verdict collection may exceed one transport source. Redact before splitting. */
+export function boardSources(ref: string, raw: unknown): Source[] {
+  if (!ref.endsWith(':earlier_findings') || !Array.isArray(raw) || raw.length > 100) return [boardSource(ref, raw)];
+  const full = source(ref, raw, true, Number.MAX_SAFE_INTEGER);
+  const incomplete = raw.some(row => row && typeof row === 'object' && row.truncated === true);
+  const chunks: string[] = [];
+  for (let start = 0; start < full.text.length;) {
+    let end = Math.min(start + POLICY.sourceChars, full.text.length);
+    const last = full.text.charCodeAt(end - 1);
+    if (end < full.text.length && last >= 0xd800 && last <= 0xdbff) end--;
+    chunks.push(full.text.slice(start, end)); start = end;
+  }
+  const count = chunks.length;
+  return chunks.map((text, part) => {
+    return { ...full, ref: count === 1 ? ref : `${ref}:part-${part + 1}-of-${count}`, text,
+      revision: digest(`${full.revision}\0${part}\0${text}`), truncated: incomplete };
+  });
+}
 export function excluded(path: string, exclusions: string[]): boolean {
   const parts = path.split(/[\\/]/);
   return parts.some(p => p.startsWith('.') || /^(?:credentials?|secrets?|CURRENT)$/i.test(p) || /\.(?:pem|key)$/i.test(p)) ||

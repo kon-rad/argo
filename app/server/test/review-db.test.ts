@@ -1,4 +1,6 @@
 import pg from 'pg';
+import { boardSources } from '../src/review/context.js';
+import { POLICY } from '../src/review/policy.js';
 import { readFile } from 'node:fs/promises';
 import { beforeEach, afterAll, it, expect } from 'vitest';
 import { query } from '../src/db.js';
@@ -49,6 +51,10 @@ it.each([
   const context=(await as(workerName,'SELECT review_context($1) AS context',[current.id])).rows[0].context;
   expect(context.earlier_findings).toEqual([{round:0,pr:42,verdict:prior.text,truncated:false}]);
   expect(JSON.parse(context.earlier_findings[0].verdict)).toEqual(verdict);
+  const sources = boardSources(`board:${c.id}:earlier_findings`, context.earlier_findings);
+  expect(sources.every(s => !s.truncated && s.text.length <= POLICY.sourceChars)).toBe(true);
+  const collected = JSON.parse(sources.map(s => s.text).join(''));
+  expect(JSON.parse(collected[0].verdict)).toEqual(verdict);
   // Crossing the actual table byte limit still fails, including multibyte text.
   verdict.findings[0]!.fix+='x'.repeat(100001-bytes);
   await expect(query('UPDATE review_jobs SET verdict=$1 WHERE id=$2',[JSON.stringify(verdict),prior.id])).rejects.toThrow(/review_jobs_verdict_check/);
