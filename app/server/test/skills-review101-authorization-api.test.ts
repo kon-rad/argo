@@ -42,7 +42,7 @@ async function fixture() {
   const writes:PolicyProvenance[]=[];
   // A trusted test-only approval provider isolates HTTP authority from DB ACL tests.
   // Production uses the operational table; separate service tests exercise its role grants.
-  const service=new SkillsService(f.vault,SETTINGS,{engineSkills:f.engine,db:false,reviewReceipts:async()=>[],policyApprovals:{
+  const service=new SkillsService(f.vault,{...SETTINGS,authorityOrigin:ORIGIN},{engineSkills:f.engine,db:false,reviewReceipts:async()=>[],policyApprovals:{
     read:async()=>latest?[latest]:[],write:async receipt=>{latest=receipt;writes.push(receipt);},
   }});
   const state=await service.current();

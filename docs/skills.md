@@ -179,31 +179,63 @@ secondbrain skills approve-policy --digest "$POLICY_DIGEST" --revision "$POLICY_
 
 Use the committed digest and full Git revision shown by inspection. The approval is operational metadata linked to the owner's decision; it does not edit policy, package files or grants. Device tokens cannot create approval. HTTP approval records the configured authenticated owner's identity, while the privileged CLI explicitly records its operator assertion. Database grants withhold approval writes from bot roles.
 
-Pack and sync require `--server https://...` (or `SECONDBRAIN_SERVER`) and `--token-file` (mode 600) or `SB_LEDGER_TOKEN`. Authorization follows no redirects and accepts only a matching bounded response. It is short-lived and tied to the exact plan. An unreachable server, dirty policy, absent/revoked approval or tampered bundle leaves existing deployments unchanged; there is no skip or offline-approval flag. Already installed views remain available while offline. Bundle selections are filtered before authorization, and unselected package payloads are not deployed.
+### Provision the canonical authority on every machine
+
+An operator must independently set `skills.authorityOrigin` in that machine's local `secondbrain.json`. It defaults to `null`, which blocks `pack`, `sync` (including `--dry-run`) and `ack`. The pin must be an HTTPS origin, for example `https://brain.example.com`, without credentials, a path, query or fragment. Provision it through the operator's trusted configuration process, outside the bundle transport; never derive it from a bundle or an agent-supplied destination.
+
+These commands also require an explicit `--server` or `SECONDBRAIN_SERVER` target and a device token from `--token-file` (mode 600) or `SB_LEDGER_TOKEN`. The requested target must match the locally pinned authority. The CLI rejects missing or mismatched authority before reading the token file or transmitting a bearer token. A CLI flag or environment variable selects a target; neither establishes trust, and neither is a fallback for a missing pin.
+
+Authorization follows no redirects and accepts only a matching bounded response. It is short-lived and tied to the exact plan. An unreachable server, dirty policy, absent/revoked approval or tampered bundle leaves existing deployments unchanged; there is no skip or offline-approval flag. Already installed views remain available while offline. Bundle selections are filtered before authorization, and unselected package payloads are not deployed.
 
 ### Two hosts
 
-Host A has the vault checkout; host B is a machine without one. The transport between them is yours (no route accepts a shell or SSH command).
+Both hosts need the installed engine CLI. Host A has the vault checkout; host B can use a bundle without a full vault checkout. The operator provisions each host's authority configuration and device token separately. The bundle contains neither trust configuration nor credentials, and no API accepts a shell or SSH command.
 
-```
-# on the server: one device token per machine (shown once)
+On the canonical server, register one device token per host. Each token is shown once. Transfer each token securely to its own host and store it in `~/.config/secondbrain/skills-device-token` with mode 600 before using the commands below.
+
+```sh
 secondbrain ingest-device add host-a --display "Host A" --kind laptop
 secondbrain ingest-device add host-b --display "Host B" --kind server
-
-# host A: from its own up-to-date checkout
-git -C /path/to/vault pull
-SB_LEDGER_TOKEN=sbd_... secondbrain skills sync --ack --server https://brain.example.com
-
-# host A: a bundle for host B, copied by you
-SB_LEDGER_TOKEN=sbd_... secondbrain skills pack --out skills-bundle.json --agents writer-1,ops-1 --server https://brain.example.com
-scp skills-bundle.json host-b:
-
-# host B
-SB_LEDGER_TOKEN=sbd_... secondbrain skills sync --bundle skills-bundle.json --ack --server https://brain.example.com
-secondbrain skills status
 ```
 
-A host with a vault checkout can run `sync` itself instead of using a bundle. Bundles carry package files and digests only; packages cannot contain secret-like files.
+On A, the operator sets `skills.authorityOrigin` to `https://brain.example.com` in the vault's existing `secondbrain.json`, preserving its other settings and enabling the `skills` addon. This is the trusted local setting shown in [Configuration](#configuration).
+
+On B, an operator can initialize a minimal local configuration directory instead. This setup refuses to overwrite an existing configuration; edit an existing one deliberately and preserve its other fields.
+
+```sh
+SKILLS_CONFIG_ROOT="$HOME/.config/secondbrain-skills-client"
+python3 - "$SKILLS_CONFIG_ROOT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+root.mkdir(parents=True, exist_ok=True, mode=0o700)
+with (root / "secondbrain.json").open("x") as config:
+    json.dump({"addons": ["skills"], "skills": {"authorityOrigin": "https://brain.example.com"}}, config, indent=2)
+    config.write("\n")
+PY
+```
+
+On A, use its current checkout and its own registered token. Choose a fresh bundle filename; `pack` never overwrites an existing output.
+
+```sh
+SKILLS_VAULT_ROOT="/path/to/vault"
+git -C "$SKILLS_VAULT_ROOT" pull --ff-only
+VAULT_ROOT="$SKILLS_VAULT_ROOT" secondbrain skills sync --ack --server https://brain.example.com --token-file "$HOME/.config/secondbrain/skills-device-token"
+VAULT_ROOT="$SKILLS_VAULT_ROOT" secondbrain skills pack --out "$HOME/skills-bundle.json" --agents writer-1,ops-1 --server https://brain.example.com --token-file "$HOME/.config/secondbrain/skills-device-token"
+scp "$HOME/skills-bundle.json" host-b:skills-bundle.json
+```
+
+On B, point `VAULT_ROOT` at the operator-provisioned minimal config directory. The CLI reads its authority pin locally, then verifies the imported bundle with that authority before activating anything. No local policy, roster or package source checkout is required for this bundle path.
+
+```sh
+SKILLS_CONFIG_ROOT="$HOME/.config/secondbrain-skills-client"
+VAULT_ROOT="$SKILLS_CONFIG_ROOT" secondbrain skills sync --bundle "$HOME/skills-bundle.json" --ack --server https://brain.example.com --token-file "$HOME/.config/secondbrain/skills-device-token"
+VAULT_ROOT="$SKILLS_CONFIG_ROOT" secondbrain skills status
+```
+
+A host with a vault checkout can resolve packages directly instead of importing a bundle, but it still needs its own operator-provisioned authority pin and device token. Bundles carry package files and digests only; packages cannot contain secret-like files.
 
 ### The acknowledgement
 
@@ -239,29 +271,32 @@ A Git push or merge never marks anything synced. Revocation reaches a machine on
 `POST /api/skills/authorize` is a raw device-token door: authentication precedes its 32 KB JSON parser. The request carries `policyDigest`, `fingerprint` and up to 64 unique `{agent,runtime}` selectors. The server resolves a fresh reviewed canonical plan, enforces combined capacity and returns only the matching digest and fingerprint. A device may verify a plan, never approve its policy.
 
 
-All under `/api/skills`, behind the login, except `/ack`:
+Every route below is under `/api/skills`. Package content, policy inspection, assignments, drafts, lifecycle changes and policy approval require the owner session. The two exceptions are `/ack` and `/authorize`: both are raw device-token doors that authenticate a live bearer token **before** parsing their bounded JSON bodies. A device token alone never authorizes an owner-session route or creates policy approval.
 
-| Route | Returns |
-|---|---|
-| `GET /` (`?refresh=1`) | the library: roots, policy status, every skill with candidates and flags |
-| `GET /skill/:name` (`?id=`) | detail: candidates, instructions, files, history, agents, hosts, drafts, changes |
-| `GET /skill/:name/file?path=&id=` | one package file (text up to 512 KB, or "binary"); only files the scan listed |
-| `GET /matrix`, `GET /agents/:agent` | assignments with reasons |
-| `GET /machines` | desired vs acknowledged per host |
-| `GET/POST /drafts`, `GET/DELETE /drafts/:name`, `GET/PUT/DELETE /drafts/:name/file` | drafts |
-| `GET /changes`, `POST /changes/preview`, `POST /changes` | proposed changes (409 when blocked) |
-| `POST /ack` | device-token acknowledgement |
+| Route | Authentication | Returns or operation |
+|---|---|---|
+| `GET /` (`?refresh=1`) | Owner session | Library: roots, policy status, candidates and flags |
+| `GET /skill/:name` (`?id=`) | Owner session | Private detail, instructions, files, history, agents, hosts, drafts and changes |
+| `GET /skill/:name/file?path=&id=` | Owner session | One catalogued package file: text up to 512 KB, or binary metadata |
+| `GET /matrix`, `GET /agents/:agent` | Owner session | Assignments and their reasons |
+| `GET /machines` | Owner session | Desired versus acknowledged state per host |
+| `GET/POST /drafts`, `GET/DELETE /drafts/:name`, `GET/PUT/DELETE /drafts/:name/file` | Owner session; mutations also pass the origin gate | Inactive drafts and version-checked edits |
+| `GET /changes`, `POST /changes/preview`, `POST /changes` | Owner session; mutations also pass the origin gate | Proposed changes; 409 when blocked |
+| `POST /policy/approve` | Owner session and origin gate; approving identity comes from trusted owner configuration | Record exact policy approval metadata; device tokens cannot approve |
+| `POST /authorize` | Live device bearer token, before the 32 KB JSON parser | Verify the exact canonical reviewed plan; return only matching policy digest and fingerprint |
+| `POST /ack` | Live device bearer token, before the 256 KB JSON parser | Record bounded observations for the token's host; no policy approval or package content |
 
 Contracts: `app/shared/skills.ts` (`@secondbrain/contracts/skills`).
 
 ## Configuration
 
-`secondbrain.json`, all optional:
+`secondbrain.json`: fields are optional for inspection; `skills.authorityOrigin` defaults to `null` and must be provisioned locally before pack, sync, dry-run or acknowledgement:
 
 ```json
 {
   "addons": ["skills"],
   "skills": {
+    "authorityOrigin": "https://brain.example.com",
     "policyFile": ".agents/skills-policy.yaml",
     "privateRoot": ".agents/skills",
     "legacyRoot": ".hermes/skills",
@@ -274,7 +309,7 @@ Contracts: `app/shared/skills.ts` (`@secondbrain/contracts/skills`).
 }
 ```
 
-Environment, on a machine that acknowledges: `SB_LEDGER_TOKEN` (its device token; or `--token-file` with mode 600) and `SECONDBRAIN_SERVER` (or `--server`).
+On each machine, `SB_LEDGER_TOKEN` supplies its device credential, or use `--token-file` with mode 600. `SECONDBRAIN_SERVER` or `--server` supplies the requested target, which must match the operator-owned `skills.authorityOrigin` pin. Neither can establish authority; a missing pin blocks pack, sync, dry-run and acknowledgement before token transmission.
 
 ## Fixture startup (for checking the pages)
 

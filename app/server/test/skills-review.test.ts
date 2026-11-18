@@ -99,7 +99,7 @@ describe('Vera review: skills transport and lifecycle', () => {
     expect(first.views[0]!.missing[0]!.env).toContain('FIXTURE_CLIP_KEY');
     const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
     const io = { out: (_s: string) => {}, err: (_s: string) => {}, env: { PATH: '', SB_LEDGER_TOKEN: 'synthetic-token' }, fetch };
-    expect(await runSkillsCli(['ack', '--root', root, '--server', 'https://brain.example.com'], service, io)).toBe(0);
+    expect(await runSkillsCli(['ack', '--root', root, '--server', 'https://skills.test'], service, io)).toBe(0);
     const body = JSON.parse(fetch.mock.calls[0]![1].body);
     expect(body.views[0].missing[0].env).toContain('FIXTURE_CLIP_KEY');
     expect(inspectRoot(root, { PATH: '', FIXTURE_CLIP_KEY: 'synthetic' })[0]!.missing[0]!.env).toEqual([]);

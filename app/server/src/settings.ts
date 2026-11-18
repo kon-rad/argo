@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeAuthorityOrigin } from './addons/skills/authority.js';
 import { config } from './config.js';
 import { loadSettingsFile, settingsPath as resolveSettingsPath } from './settings-file.js';
 
@@ -488,6 +489,8 @@ const Settings = z.object({
    */
   skills: z
     .object({
+      /** Operator-owned canonical server origin. A flag, environment selector or transport bundle cannot establish trust. */
+      authorityOrigin: z.string().refine(value => normalizeAuthorityOrigin(value) !== null, { message: 'Expected an HTTPS origin without credentials, a path, query or fragment' }).transform(value => normalizeAuthorityOrigin(value)!).nullable().default(null),
       /** The Git-tracked assignment policy. Missing: legacy behaviour (every runtime keeps its own folders). */
       policyFile: z.string().min(1).default('.agents/skills-policy.yaml'),
       /** Shared private skills (the runtimes' first folder). */

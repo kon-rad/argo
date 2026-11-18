@@ -18,6 +18,6 @@ export const fixtureAuthorizationFetch: typeof fetch = async (input,init) => {
   return new Response(JSON.stringify({policyDigest:body.policyDigest,fingerprint:body.fingerprint}),{headers:{'content-type':'application/json'}});
 };
 export async function authorizeFixturePlan(plan: Plan): Promise<Plan> {
-  await authorizeRemotePlan(plan,'https://skills.test','fixture-token',async()=>new Response(JSON.stringify({policyDigest:plan.policyDigest,fingerprint:planFingerprint(plan)}),{headers:{'content-type':'application/json'}}));
+  await authorizeRemotePlan(plan,{authorityOrigin:'https://skills.test'},'https://skills.test','fixture-token',async()=>new Response(JSON.stringify({policyDigest:plan.policyDigest,fingerprint:planFingerprint(plan)}),{headers:{'content-type':'application/json'}}));
   return plan;
 }

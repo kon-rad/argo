@@ -78,6 +78,7 @@ export function skillsFixture(opts: { git?: boolean; base?: string } = {}): Skil
 }
 
 export const SETTINGS = {
+  authorityOrigin: 'https://skills.test',
   policyFile: '.agents/skills-policy.yaml', privateRoot: '.agents/skills', legacyRoot: '.hermes/skills', externalRoots: [],
   draftsDir: '.agents/skill-drafts', changesDir: '.agents/skill-changes', staleAfterHours: 24,
 };

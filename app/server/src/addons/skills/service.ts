@@ -25,6 +25,8 @@ import { acceptedPolicyReview, cleanTrackedRoster, markPolicyReviewed, matchesAp
  */
 
 export interface SkillsSettings {
+  /** Operator-owned trust anchor; flags, environment and bundles cannot supply it. */
+  authorityOrigin?: string | null;
   policyFile: string; privateRoot: string; legacyRoot: string | null; externalRoots: { id: string; path: string; label?: string }[];
   draftsDir: string; changesDir: string; managedRoot?: string; staleAfterHours: number;
 }

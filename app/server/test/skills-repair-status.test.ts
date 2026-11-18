@@ -58,7 +58,7 @@ it.each(['manifest removed','broken link','link removed','invalid manifest','vie
   const result=await recordAck({id:device.id,host:'broken-view-fixture'},payload);return new Response(JSON.stringify(result),{status:200});
  }};
  expect(await runSkillsCli(['status','--root',root],service,io)).toBe(2);expect(lines.join(' ')).toMatch(/failed/);
- expect(await runSkillsCli(['ack','--root',root,'--server','https://brain.example.com'],service,io)).toBe(0);
+ expect(await runSkillsCli(['ack','--root',root,'--server','https://skills.test'],service,io)).toBe(0);
  const observed=(await readAcks()).acks.find(a=>a.host==='broken-view-fixture')!;
  expect(observed.status).toBe('failed');expect(observed.skills).toEqual([]);
 });

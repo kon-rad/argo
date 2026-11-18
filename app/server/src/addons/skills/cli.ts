@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { ChangeKindSchema, ChangeRequestSchema, RuntimeSchema, type ChangePreview, type SkillRuntime } from '@secondbrain/contracts/skills';
 import { parseArgs } from '../../cli-args.js';
 import { LifecycleError } from './lifecycle.js';
-import { ackPayload, authorizeRemotePlan, inspectRoot, packBundle, planFromBundle, proposeViews, readCurrent, ReconcileError, sendAck, syncViews, type Plan, type SyncReport } from './reconcile.js';
+import { ackPayload, authorizeRemotePlan, canonicalAuthorityOrigin, inspectRoot, packBundle, planFromBundle, proposeViews, readCurrent, ReconcileError, sendAck, syncViews, type Plan, type SyncReport } from './reconcile.js';
 import { expandPath, type SkillsService } from './service.js';
 import { PolicyReviewError } from './policy-review.js';
 
@@ -44,8 +44,8 @@ Deploy to this machine
   ack --server <url> [--root <dir>] [--token-file <file>]   send this machine's state (device token: SB_LEDGER_TOKEN)
   view-path <agent> [--runtime <r>] [--root <dir>]   the folder to point a runtime at
 
-Pack and sync (including dry-run) require online authorization from the canonical server and a live device token.
-SECONDBRAIN_SERVER and SB_LEDGER_TOKEN may supply them. No offline approval or skip flag exists; already installed views remain available offline.
+Pack, sync (including dry-run), and ack require the operator-configured skills.authorityOrigin.
+--server or SECONDBRAIN_SERVER must match that HTTPS origin. Pack and sync require online authorization and a live device token (SB_LEDGER_TOKEN or --token-file). No offline approval or skip flag exists; already installed views remain available offline.
 `;
 
 export interface CliIo { out: (s: string) => void; err: (s: string) => void; env: NodeJS.ProcessEnv; fetch?: typeof fetch; engine?: string | null }
@@ -78,17 +78,25 @@ function token(io: CliIo, file: string | true | undefined): string {
   return t;
 }
 
-async function authorize(plan: Plan, io: CliIo, server: string | true | undefined, tokenFile: string | true | undefined): Promise<void> {
-  if (!plan.views.length) throw new ReconcileError('No agent/runtime views were selected; nothing packed or synchronized. Select an available agent and runtime.');
+function destination(authorityOrigin: string | null | undefined, io: CliIo, server: string | true | undefined): string {
+  // Check the configured trust anchor and every supplied selector before reading a token file.
+  canonicalAuthorityOrigin(authorityOrigin);
   if (server === true) throw new ReconcileError('--server requires an HTTPS origin');
-  const url = server ?? io.env['SECONDBRAIN_SERVER'];
-  if (!url) throw new ReconcileError('Pack and sync require --server <https-origin> (or SECONDBRAIN_SERVER) to verify accepted policy review before deployment.');
-  await authorizeRemotePlan(plan, url, token(io, tokenFile), io.fetch);
+  const environment = io.env['SECONDBRAIN_SERVER'];
+  if (environment !== undefined) canonicalAuthorityOrigin(authorityOrigin, environment);
+  const requested = server ?? environment;
+  if (!requested) throw new ReconcileError('--server <https-origin> (or SECONDBRAIN_SERVER) is required and must match skills.authorityOrigin');
+  return canonicalAuthorityOrigin(authorityOrigin, requested);
 }
 
-async function ack(io: CliIo, report: Pick<SyncReport, 'policyDigest' | 'views'>, server: string | true | undefined, tokenFile: string | true | undefined): Promise<boolean> {
-  const url = typeof server === 'string' ? server : io.env['SECONDBRAIN_SERVER'];
-  if (!url) throw new ReconcileError('--server <url> (or SECONDBRAIN_SERVER) is required to acknowledge');
+async function authorize(plan: Plan, authorityOrigin: string | null | undefined, io: CliIo, server: string | true | undefined, tokenFile: string | true | undefined): Promise<void> {
+  const url = destination(authorityOrigin, io, server);
+  if (!plan.views.length) throw new ReconcileError('No agent/runtime views were selected; nothing packed or synchronized. Select an available agent and runtime.');
+  await authorizeRemotePlan(plan, { authorityOrigin }, url, token(io, tokenFile), io.fetch);
+}
+
+async function ack(authorityOrigin: string | null | undefined, io: CliIo, report: Pick<SyncReport, 'policyDigest' | 'views'>, server: string | true | undefined, tokenFile: string | true | undefined): Promise<boolean> {
+  const url = destination(authorityOrigin, io, server);
   const r = await sendAck(url, token(io, tokenFile), ackPayload(report, io.engine ?? null), io.fetch);
   if (r.ok) io.out(`acknowledged to ${url}: ${r.body}`);
   else io.err(`acknowledgement refused (HTTP ${r.status}): ${r.body}. The deployment on this machine is unchanged; the server still shows the previous acknowledgement.`);
@@ -239,7 +247,7 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
         if (typeof opts['out'] !== 'string') break;
         const s = await service.current(true);
         const plan = proposeViews(s.catalog, s.policy, s.roster, { agents, runtime });
-        await authorize(plan, io, opts['server'], opts['token-file']);
+        await authorize(plan, service.settings.authorityOrigin, io, opts['server'], opts['token-file']);
         const bundle = packBundle(plan);
         try { writeFileSync(opts['out'], JSON.stringify(bundle), { mode: 0o600, flag: 'wx' }); }
         catch (err) {
@@ -261,7 +269,7 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
           const s = await service.current(true);
           plan = proposeViews(s.catalog, s.policy, s.roster, { agents, runtime });
         }
-        await authorize(plan, io, opts['server'], opts['token-file']);
+        await authorize(plan, service.settings.authorityOrigin, io, opts['server'], opts['token-file']);
         if (opts['dry-run']) {
           for (const v of plan.views) io.out(`${v.agent}/${v.runtime}: ${v.skills.map((x) => `${x.name}@${short(x.digest, 8)}`).join(' ') || '(none)'}${v.excluded.length ? `; excluded ${v.excluded.map((x) => x.name).join(', ')}` : ''}`);
           io.out('dry run: nothing deployed');
@@ -275,7 +283,7 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
           for (const m of v.missing) io.out(`  ${m.skill} needs ${[...m.bins.map((b) => `program ${b}`), ...m.env.map((e) => `env ${e}`)].join(', ')} (not installed by sync)`);
         }
         io.out(`managed root: ${root}`);
-        if (opts['ack']) { if (!(await ack(io, report, opts['server'], opts['token-file']))) return 3; }
+        if (opts['ack']) { if (!(await ack(service.settings.authorityOrigin, io, report, opts['server'], opts['token-file']))) return 3; }
         return failed ? 2 : 0;
       }
       case 'status': {
@@ -289,7 +297,7 @@ export async function runSkillsCli(argv: string[], service: SkillsService, io: C
       case 'ack': {
         let last: { policyDigest: string | null } = { policyDigest: null };
         try { last = JSON.parse(readFileSync(join(root, 'state.json'), 'utf8')); } catch { /* never synced */ }
-        return (await ack(io, { policyDigest: last.policyDigest, views: inspectRoot(root, io.env) }, opts['server'], opts['token-file'])) ? 0 : 3;
+        return (await ack(service.settings.authorityOrigin, io, { policyDigest: last.policyDigest, views: inspectRoot(root, io.env) }, opts['server'], opts['token-file'])) ? 0 : 3;
       }
       case 'view-path': {
         if (!args[0]) break;

@@ -39,6 +39,7 @@
   "projects": { "reportFile": "projects.md" },
   "areas": { "reviewDir": "Areas/weekly-review" },
   "skills": {
+    "authorityOrigin": null,
     "policyFile": ".agents/skills-policy.yaml",
     "externalRoots": [],
     "staleAfterHours": 24

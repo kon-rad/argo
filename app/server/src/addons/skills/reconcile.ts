@@ -7,6 +7,7 @@ import type { Catalog } from './catalog.js';
 import { isIgnoredName, isSecretLike, LIMITS, NAME_RE, readMeta, scanPackage } from './package.js';
 import { resolveAgent, selectedCandidate, supportFor, unresolvedAssignments, type LoadedPolicy } from './policy.js';
 import type { Roster } from './roster.js';
+import { normalizeAuthorityOrigin } from './authority.js';
 import { assertPolicyReviewed } from './policy-review.js';
 
 /**
@@ -55,17 +56,27 @@ function assertPlanAuthorized(plan: Plan): void {
     throw new ReconcileError('Managed plan has no current accepted policy review authorization, or was modified after authorization. Verify it with the server before packing or synchronizing; existing views are unchanged.');
 }
 
+/** The trust anchor comes only from operator-owned local settings, never a bundle, flag or environment selector. */
+export function canonicalAuthorityOrigin(authorityOrigin: string | null | undefined, requestedOrigin?: string): string {
+  if (!authorityOrigin) throw new ReconcileError('skills.authorityOrigin is not configured; an operator must configure the trusted canonical HTTPS origin before pack, sync or ack');
+  const canonical = normalizeAuthorityOrigin(authorityOrigin);
+  if (!canonical) throw new ReconcileError('skills.authorityOrigin must be an HTTPS origin without credentials, a path, query or fragment');
+  if (requestedOrigin !== undefined) {
+    const requested = normalizeAuthorityOrigin(requestedOrigin);
+    if (!requested) throw new ReconcileError('The requested skills server must be an HTTPS origin without credentials, a path, query or fragment');
+    if (requested !== canonical) throw new ReconcileError('The requested skills server does not match the configured skills.authorityOrigin; no device token was sent');
+  }
+  return canonical;
+}
+
 /** Authenticate an untrusted local proposal/bundle against the server's clean, reviewed canonical plan.
  * A device token can request verification but cannot approve a policy. No receipt in a bundle is trusted.
  * An offline/unreachable server fails closed; already installed views remain available.
  */
-export async function authorizeRemotePlan(plan: Plan, server: string, token: string, fetchFn: typeof fetch = fetch): Promise<void> {
+export async function authorizeRemotePlan(plan: Plan, authority: { authorityOrigin?: string | null }, server: string, token: string, fetchFn: typeof fetch = fetch): Promise<void> {
   authorizedPlans.delete(plan);
   planCapacity(plan);
-  let base: URL;
-  try { base = new URL(server); } catch { throw new ReconcileError('A valid HTTPS skills server is required for policy review authorization'); }
-  if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash || (base.pathname !== '/' && base.pathname !== ''))
-    throw new ReconcileError('Policy review authorization requires an HTTPS server origin without credentials, a path, query or fragment');
+  const base = new URL(canonicalAuthorityOrigin(authority?.authorityOrigin, server));
   if (!token || /[\r\n]/.test(token)) throw new ReconcileError('A live device token is required for policy review authorization');
   const fingerprint = planFingerprint(plan);
   let response: Response;

@@ -375,7 +375,7 @@ describe('skills reconciliation', () => {
     expect(await runSkillsCli(['propose', 'disable', 'video'], s, io)).toBe(0);
     expect(out.join('\n')).toMatch(/Exported for review as change .*Nothing is active yet/);
     // An acknowledgement without a token is refused locally, never sent.
-    expect(await runSkillsCli(['ack', '--server', 'http://127.0.0.1:9', '--root', root], s, { ...io, env: { PATH: '' } })).toBe(1);
+    expect(await runSkillsCli(['ack', '--server', 'https://skills.test', '--root', root], s, { ...io, env: { PATH: '' } })).toBe(1);
     expect(out.at(-1)).toMatch(/no device token/);
   });
 });
