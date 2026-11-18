@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +34,15 @@ export interface SkillsSettings {
 const here = dirname(fileURLToPath(import.meta.url));
 /** The engine checkout's `skills/` (app/server/{src,dist}/addons/skills -> engine root). */
 export const ENGINE_SKILLS = resolve(here, '..', '..', '..', '..', '..', 'skills');
+/** Source checkouts carry skills beside app/. App-only deployments use this vault's pinned engine. */
+export function defaultEngineSkills(vaultRoot: string, checkoutCandidate = ENGINE_SKILLS): string | null {
+  const regularDirectory = (path: string): boolean => {
+    try { const st = lstatSync(path); return st.isDirectory() && !st.isSymbolicLink(); } catch { return false; }
+  };
+  if (regularDirectory(checkoutCandidate)) return checkoutCandidate;
+  const root = resolve(vaultRoot), pinned = resolve(root, '.secondbrain'), skills = resolve(pinned, 'skills');
+  return [root, pinned, skills].every(regularDirectory) ? skills : null;
+}
 export const DEFAULT_MANAGED_ROOT = '~/.local/share/secondbrain/skills';
 
 export function expandPath(vaultRoot: string, p: string): string {
@@ -69,7 +78,7 @@ export class SkillsService {
   get managedRoot(): string { return expandPath(this.vaultRoot, this.settings.managedRoot ?? DEFAULT_MANAGED_ROOT); }
 
   private async load(): Promise<State> {
-    const engine = this.opts.engineSkills === undefined ? (existsSync(ENGINE_SKILLS) ? ENGINE_SKILLS : null) : this.opts.engineSkills;
+    const engine = this.opts.engineSkills === undefined ? defaultEngineSkills(this.vaultRoot) : this.opts.engineSkills;
     const specs = rootSpecs(this.vaultRoot, engine, this.settings, (p) => expandPath(this.vaultRoot, p));
     const catalog = await buildCatalog(specs, { git: this.opts.git ?? true });
     const policy = loadPolicyFile(this.policyPath);

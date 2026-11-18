@@ -28,6 +28,8 @@ It is not a sandbox. A catalog decides what an agent is *offered*; it does not s
 
 Home folders (`~/.claude/skills`, `~/.hermes/skills`) and plugin caches are never scanned unless you list them as external roots.
 
+A source checkout reads shared packages from its engine `skills/` directory. An app-only deployment instead uses the vault's pinned `.secondbrain/skills/` directory when the checkout directory is absent. Linked fallback vault, engine or skills directories are refused, and a missing root never invents available packages.
+
 Categorized roots may nest categories up to six levels. Hidden folders (including `.archive`), dependency/cache folders and linked category folders are not traversed. A root reports its limit or read error rather than silently claiming a complete inventory.
 
 Each candidate has a source-qualified id (`private:report`, `engine:report`, `legacy:media/report`, `external:<id>:report`). The effective package for a name is the highest-precedence candidate, matching the runtimes' "first folder wins". A private folder that is a `secondbrain-vault link-skills` link to the engine package is the same package (`linkOf`), not an override.
