@@ -127,3 +127,14 @@ describe('UsageSession', () => {
     await waitFor(() => expect(document.body.textContent).toContain('Verify tests: passed'));
   });
 });
+
+it('links to Observatory only when enabled and anchors the requested recorded part', async () => {
+  renderWith({ session: { ...SESSION, id: 12 }, runs: [], steps: STEPS, next: null }, '/usage/session/mac/s1?source=claude-code&part=3',
+    u => u === '/api/meta' ? { modules: ['usage', 'observatory'], timezone: 'UTC' } : null);
+  const link = await screen.findByRole('link', { name: 'Show activity' });
+  const href = link.getAttribute('href')!;
+  expect(href).toContain('/observatory?');
+  expect(new URLSearchParams(href.split('?')[1]).get('session')).toBe('12');
+  expect(new URLSearchParams(href.split('?')[1]).get('cursor')).toBe(String(Date.parse(SESSION.started_at)));
+  expect(document.getElementById('step-3')).toBeTruthy();
+});

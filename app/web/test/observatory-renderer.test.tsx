@@ -1,0 +1,33 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { cleanup, render } from '@testing-library/react';
+import Workspace from '../src/routes/observatory/Workspace.js';
+import { demoWindow } from '../src/routes/observatory/demo.js';
+import { sceneAt } from '../src/routes/observatory/model.js';
+const graph = vi.hoisted(() => {
+  const g: Record<string, ReturnType<typeof vi.fn>> = {};
+  for (const key of ['backgroundColor', 'showNavInfo', 'cooldownTicks', 'warmupTicks', 'enableNodeDrag', 'nodeLabel', 'onNodeClick', 'nodeThreeObject', 'linkColor', 'linkDirectionalArrowLength', 'cameraPosition', 'width', 'height', 'resumeAnimation', 'pauseAnimation', 'graphData', '_destructor']) g[key] = vi.fn(() => g);
+  return g;
+});
+vi.mock('3d-force-graph', () => ({ default: class { constructor() { return graph; } } }));
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
+it('pins layout, preserves renderer on seek, pauses when idle and destroys on unmount', () => {
+  vi.useFakeTimers();
+  const disconnect = vi.fn();
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect = disconnect; });
+  const first = sceneAt(demoWindow, demoWindow.from + 2000, {}), second = sceneAt(demoWindow, demoWindow.from + 7000, {});
+  const props = { onSelect: vi.fn(), nodes: first.nodes, links: first.links };
+  const view = render(<Workspace {...props} />);
+  expect(graph.cooldownTicks).toHaveBeenCalledWith(0);
+  expect(graph.warmupTicks).toHaveBeenCalledWith(0);
+  vi.advanceTimersByTime(1200);
+  expect(graph.pauseAnimation).toHaveBeenCalled();
+  view.rerender(<Workspace {...props} nodes={second.nodes} links={second.links} />);
+  expect(graph.cameraPosition).toHaveBeenCalledTimes(1);
+  expect(graph.graphData).toHaveBeenLastCalledWith({ nodes: [], links: [] });
+  view.unmount();
+  expect(graph._destructor).toHaveBeenCalledTimes(1);
+  expect(disconnect).toHaveBeenCalledTimes(1);
+  const pauses = graph.pauseAnimation!.mock.calls.length;
+  vi.advanceTimersByTime(2000);
+  expect(graph.pauseAnimation!.mock.calls.length).toBe(pauses);
+});

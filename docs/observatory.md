@@ -1,6 +1,6 @@
 # Observatory evidence API and replay
 
-Observatory 1 provides bounded, authorized evidence windows over existing usage, archive, board and org records, plus a pure replay contract. It has no scene or navigation entry yet. Enable `observatory` in `MODULES` or the vault's `secondbrain.json` `addons` list. It defaults off. There are no new collectors, tables, credentials, timers or model calls.
+Observatory 1 provides bounded, authorized evidence windows over existing usage, archive, board and org records, plus a pure replay contract. Observatory 2 adds an optional browser workspace and Usage navigation described below. Enable `observatory` in `MODULES` or the vault's `secondbrain.json` `addons` list. It defaults off. There are no new collectors, tables, credentials, timers or model calls.
 
 ## Authorization
 
@@ -47,4 +47,40 @@ Run `cd app && npm run build && npm test` against a disposable `SB_TEST_DB` endi
 
 For a keyless, database-free subset, run `cd app && npm run build:shared && npx vitest run --config observatory.vitest.config.ts`. This checks pure adapters/replay, request validation, source denial, immutable pagination, expiry and cache bounds. It does not validate PostgreSQL query syntax, RLS, query plans, HTTP session integration or production completeness.
 
-The coordinator can run [the read-only audit](audits/observatory.sql) against production under the same effective role as the app, and separately under restricted reader roles. Keep outputs private. Report role, exact revision, time, counts, join multiplicities, missing fields and query plans as separate evidence. No historical fixed count is an acceptance target. This slice adds no rendered UI, so browser/rendering budgets belong to a later scene implementation.
+The coordinator can run [the read-only audit](audits/observatory.sql) against production under the same effective role as the app, and separately under restricted reader roles. Keep outputs private. Report role, exact revision, time, counts, join multiplicities, missing fields and query plans as separate evidence. No historical fixed count is an acceptance target. The browser workspace has a separate synthetic scenario and unmeasured rendering budgets, described below.
+
+## Browser workspace (Observatory 2)
+
+With the addon enabled, open **Work > Observatory** at `/observatory`, or **Show activity** in a Usage session. The route and navigation remain absent when the module is off. The workspace uses pinned `three@0.186.1` and `3d-force-graph@1.80.1`, with zero warmup/cooldown physics ticks and deterministic machine/execution positions. Concurrent runs have independent markers. Session and attached edges disappear exactly at the recorded end; idle gaps have no execution marker. Current process liveness remains unsupported by slice 1. “Live history refresh” fetches a fresh recorded window every 15 seconds while the tab is visible, without extending open intervals or suggesting a process is running.
+
+The URL stores UTC epoch-millisecond `from`, `to`, `cursor`, host, numeric archive session, ticket, runtime, persona, model, origin and selected event. Browser back/forward restores these values. Ranges are limited to 24 hours. Seek, reverse playback and previous/next event use the pure shared reducer. Events at the same instant step together in recorded order. The slider supports keyboard arrows. Labels use the app timezone; the range form accepts UTC ISO instants. Server host/session filters restrict source reads; the other filters apply to the loaded window. Origin filters affect events, leaving recorded execution identity intact. A model label requires a usage observation at or before the cursor; it stays unknown beforehand.
+
+Amber diamonds identify evidenced human origin; cyan spheres identify agents; grey boxes identify automation and hollow grey octahedra identify unknown origin. The same glyphs and words appear in the HTML event list and inspector. A prompt role alone never makes a human. Synthetic demo provenance is explicitly synthetic and never mixed with recorded API results. Short tool-call/result markers last two seconds of replay time and point to explicit file targets where available. Return arrows identify results. Structured `read`, `read_file`, `Read`, `write_file`, `Write`, `edit_file` and `Edit` inputs can supply a bounded `path` or `file_path`; other arguments and file contents are discarded. Shell command text is never parsed for targets. Every target is an operation attempt, including when a tool reports success, rather than proof of changed bytes.
+
+The execution list, target list, timeline and inspector work without WebGL. Disable “Show 3D workspace” to use only HTML. Context loss or renderer construction failure gives the same fallback. Geometry/material resources, resize observers, interaction listeners and timers are released on unmount; range/cursor replacement disposes replaced objects and retains the camera. Rendering pauses after 1.2 seconds without scene/camera interaction, and when the document is hidden. No continuous force simulation or transcript bodies run in the overview.
+
+All immutable pages must arrive before replay. One current snapshot is kept in component memory, with no local storage or multi-window query cache. Loading aborts on range/filter changes and unmount. Event count is capped at 5,000; serialized page transfer accounting is capped at 32 MiB (including repeated boundaries), with explicit errors for incomplete, changed or oversized snapshots. This is a cache/transfer budget, not a measured browser heap ceiling. The display caps at 500 nodes and 1,500 edges and reports omissions; timeline HTML shows the latest 200 timed events through the cursor. Untimed counts and source diagnostics remain visible. Narrow the range for earlier detail.
+
+Source detail is fetched only after **Verify source detail**, rechecking the export and source authorization. Expired/evicted exports and denied sources show errors; restart explicitly. Successful verification offers the existing Usage session URL with the recorded part key. Usage loads up to 50 pages to locate that part, scrolls to its anchor and labels an unavailable part. This destination is the existing authorized source viewer, outside the overview. Thinking is availability metadata only here: no summaries, transcript bodies or hidden reasoning are loaded or reconstructed. The authorized source viewer may expose its already permitted records; summary availability is not inferred from a thinking marker.
+
+### Synthetic demo and coordinator browser scenario
+
+Click **Synthetic demo**, or open:
+
+```text
+/observatory?demo=1&from=1767225600000&to=1767225620000&cursor=1767225602000&event=call
+```
+
+The reproducible fixture is `app/web/src/routes/observatory/demo.ts`. It includes two concurrent sessions with the same persona, active-at-window-start execution, a tool call at +2s with result at +4s, exact ends at +5s/+7s, an idle gap until +12s, resumed execution, human/automation/unknown provenance and thinking availability. It contains no real source data. The synthetic source button deliberately does not link to a nonexistent recorded session.
+
+On a coordinator with loopback networking and a browser:
+
+```bash
+cd app
+npm run e2e:install -w web
+npm run e2e:observatory -w web
+```
+
+The Playwright scenario uses Vite and synthetic API responses, no database or production credentials. It requires a visible WebGL canvas, checks cursor restoration after reload, exact execution counts, idle gap, keyboard slider control, call/result cutoff and verified source-part URL. It saves a screenshot to ignored test output. A listed test is not a rendered pass. Separately check browser back/forward, origin filters/shapes, mobile HTML layout, denied detail, reduced-motion preference (use HTML mode), WebGL loss and idle rendering in browser developer tools. Run the dedicated test-database suite and read-only production audit separately; mocked endpoints do not establish RLS or live coverage.
+
+Performance targets remain **unmeasured**: 500 nodes/1,500 edges, 32 MiB cache accounting, p95 seek below 100 ms and 30 fps on an agreed baseline device. Record device, browser/GPU, exact revision, event/node/edge counts, response bytes, browser memory, seek samples, frame-rate samples and idle frame activity. The display limits and cleanup tests do not prove frame rate, memory use or seek latency.

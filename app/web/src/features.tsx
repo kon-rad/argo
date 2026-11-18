@@ -11,6 +11,7 @@ import LiveAgents from './routes/usage/LiveAgents.js';
 import Usage from './routes/usage/Usage.js';
 import UsageSession from './routes/usage/UsageSession.js';
 
+const Observatory = lazy(() => import('./routes/observatory/Observatory.js'));
 const Desk = lazy(() => import('./routes/Desk.js'));
 
 /**
@@ -39,5 +40,6 @@ export const FEATURE_ROUTES: Record<string, ReactElement[]> = {
     <Route key="usage-live" path="/usage/live" element={<LiveAgents />} />,
     <Route key="usage-session" path="/usage/session/:host/:externalId" element={<UsageSession />} />,
   ],
+  observatory: [<Route key="observatory" path="/observatory" element={<Suspense fallback={null}><Observatory /></Suspense>} />],
   desk: [<Route key="desk" path="/desk" element={<Suspense fallback={null}><Desk /></Suspense>} />],
 };

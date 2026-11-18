@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, type AgentSessionRun, type AgentStep } from '../../lib/api.js';
@@ -129,6 +129,8 @@ export default function UsageSession() {
   const source = params.get('source');
   const [show, setShowState] = useState<Show>(loadShow);
   const { tz } = useAppTimezone();
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta });
+  const requestedPart = params.get('part');
   const setShow = (patch: Partial<Show>) => { const next = { ...show, ...patch }; setShowState(next); saveShow(next); };
   const q = useInfiniteQuery({
     queryKey: ['agent-session', host, externalId, source],
@@ -136,6 +138,12 @@ export default function UsageSession() {
     initialPageParam: 0,
     getNextPageParam: (last) => last.next ?? undefined,
   });
+  useEffect(() => {
+    if (!requestedPart || !q.data) return;
+    const node = document.getElementById(`step-${requestedPart}`);
+    if (node) node.scrollIntoView?.({ block: 'center' });
+    else if (q.hasNextPage && !q.isFetchingNextPage && q.data.pages.length < 50) void q.fetchNextPage();
+  }, [requestedPart, q.data, q.hasNextPage, q.isFetchingNextPage]);
   if (q.isPending) return <div className="p-4 text-[var(--ink-dim)]">Loading…</div>;
   if (q.isError) return <div className="p-4">Could not load this session: {(q.error as Error).message}</div>;
   const first = q.data.pages[0]!;
@@ -145,9 +153,13 @@ export default function UsageSession() {
   const dur = span(s.started_at, s.ended_at);
   const persona = personaLabel(s);
   const ctx = contextLabel(s);
+  const activityStart = s.started_at ? Date.parse(s.started_at) : Date.now() - 3600000;
+  const activityLink = `/observatory?${new URLSearchParams({ from: String(activityStart), to: String(activityStart + 3600000), cursor: String(activityStart), session: String(s.id), host: s.host })}`;
   return (
     <div className="h-full overflow-auto break-words p-4">
       <Link to="/usage?view=sessions" className="text-xs underline">Back to Usage</Link>
+      {meta.data?.modules?.includes('observatory') && <Link className="ml-3 text-xs underline" to={activityLink}>Show activity</Link>}
+      {requestedPart && !steps.some(step => step.key === requestedPart) && !q.isFetchingNextPage && <p>Recorded part is unavailable in the loaded pages.</p>}
       <h1 className="mt-1 text-lg font-semibold">{sessionName(s, tz) ?? s.external_id}</h1>
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs sm:grid-cols-[auto_1fr_auto_1fr]" aria-label="Session summary">
         <dt className="text-[var(--ink-dim)]">Started</dt><dd className="tabular-nums">{s.started_at ? `${startedStamp(s.started_at, tz)} (${tz})` : 'unknown'}</dd>
@@ -189,10 +201,10 @@ export default function UsageSession() {
       <div className="mx-auto mt-4 max-w-5xl" aria-label="Session conversation">
         {turns.map((t, i) => (
           <div key={t.prompt?.key ?? `t${i}`} className="border-t border-[var(--rule)] py-2">
-            {t.prompt && <StepView step={t.prompt} show={show} />}
+            {t.prompt && <div id={`step-${t.prompt.key}`}><StepView step={t.prompt} show={show} /></div>}
             {t.items.map((it) => it.kind === 'tool'
-              ? <ToolCard key={it.pair.call.key} pair={it.pair} show={show} />
-              : <StepView key={it.step.key} step={it.step} show={show} />)}
+              ? <div key={it.pair.call.key}><span id={`step-${it.pair.call.key}`} />{it.pair.result && <span id={`step-${it.pair.result.key}`} />}<ToolCard pair={it.pair} show={show} /></div>
+              : <div key={it.step.key} id={`step-${it.step.key}`}><StepView step={it.step} show={show} /></div>)}
           </div>
         ))}
       </div>
