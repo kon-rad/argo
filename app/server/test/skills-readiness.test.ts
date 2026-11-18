@@ -1,5 +1,5 @@
 import {join} from 'node:path';
-import {beforeEach,it,expect} from 'vitest';
+import {beforeEach,afterEach,it,expect} from 'vitest';
 import {AckRequestSchema} from '@secondbrain/contracts/skills';
 import {query} from '../src/db.js';
 import {addDevice} from '../src/ingest/devices.js';
@@ -10,6 +10,10 @@ import {ackPayload,inspectRoot,planViews,readCurrent,syncViews} from '../src/add
 import {truncateAll} from './helpers.js';
 import {skillsFixture,SETTINGS,MANAGED_POLICY,skillMd,write} from './helpers/skills.js';
 beforeEach(truncateAll);
+afterEach(async()=>{
+ for(const table of ['skill_view_acks','skill_ack_log','ingest_devices']) await query(`DELETE FROM ${table} WHERE host=$1`,['readiness-fixture']);
+ await query('DELETE FROM usage_hosts WHERE slug=$1',['readiness-fixture']);
+});
 const metadata=[
  'metadata:\n  depends: report\n',
  'metadata:\n  requires:\n    bins: ffmpeg\n',
