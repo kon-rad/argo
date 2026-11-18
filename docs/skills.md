@@ -258,6 +258,8 @@ Environment, on a machine that acknowledges: `SB_LEDGER_TOKEN` (its device token
 
 ## Fixture startup (for checking the pages)
 
+Choose a fresh target directory. The helper refuses an existing directory and never deletes it. Its `--db` mode requires the configured database name to end in `_test`; use a dedicated scratch database, never production. The seeded Machines states are checked before the helper exits.
+
 ```
 cd app
 npx tsx server/test/helpers/skills-demo.ts /tmp/skills-demo --db    # DATABASE_URL pointing at a scratch database with migrations applied
@@ -288,3 +290,5 @@ The acknowledgement protocol accepts at most 64 views per request. A root with m
 Removal previews and proposals require authoritative deployment observations; unavailable operational state fails explicitly. Policy-selected pinned packages contribute dependencies. A failed sync retains unresolved assigned-package names and reasons in its report and acknowledgement and preserves the previous generation. Intentional denials and lifecycle revocations are omitted deliberately. Standalone acknowledgements preserve the last failed attempt until a successful sync.
 
 The app also binds every lifecycle export to a fingerprint of the inspected preview, including its source, policy and affected machines. If those inputs change, the owner must preview again before exporting.
+
+Repairs stage and verify replacements before moving dirty stores. If a later package or activation fails, replacements are rolled back and the previous view remains readable. Status and acknowledgement report broken links or missing/invalid manifests as failed, including previously deployed views whose active link was removed. Explicit non-null malformed Zen managed settings are configuration errors; they never silently enable legacy discovery.

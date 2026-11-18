@@ -9,13 +9,17 @@
  * <dir>/managed and records acknowledgements for three fake hosts: one current, one drifted and one
  * registered but never seen. All data is fake; nothing outside <dir> or the given database is touched.
  */
-import { mkdirSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { MANAGED_POLICY, SETTINGS, skillMd, skillsFixture, write } from './skills.js';
 
-const dir = resolve(process.argv[2] ?? 'skills-demo');
+const dir = resolve(process.argv.slice(2).find(a => !a.startsWith('--')) ?? 'skills-demo');
 const withDb = process.argv.includes('--db');
-rmSync(dir, { recursive: true, force: true });
+mkdirSync(dirname(dir), { recursive: true });
+try { mkdirSync(dir); } catch (err) {
+  if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('Fixture target already exists; choose a new directory. Nothing was removed.');
+  throw err;
+}
 mkdirSync(join(dir, 'full'), { recursive: true });
 mkdirSync(join(dir, 'broken'), { recursive: true });
 
@@ -44,8 +48,14 @@ write(join(broken.vault, '.agents', 'skills-policy.yaml'), 'version: 1\nmode: ma
 
 if (withDb) {
   const { query, pool } = await import('../../src/db.js');
+  const { config } = await import('../../src/config.js');
+  if (!/^[a-z_][a-z0-9_]*_test$/.test(new URL(config.databaseUrl).pathname.slice(1))) throw new Error('The demo --db option requires a scratch database ending in _test.');
+  try {
   const st = await service.current(true);
-  const report = syncViews(join(dir, 'managed'), planViews(st.catalog, st.policy, st.roster), { env: { PATH: '' } });
+  const report = syncViews(join(dir, 'managed'), planViews(st.catalog, st.policy, st.roster, { agents: ['alpha', 'beta'] }), { env: { PATH: '' } });
+  if (report.views.some(v => v.status !== 'current')) throw new Error('Demo views did not reconcile completely');
+  await query(`DELETE FROM skill_view_acks WHERE host = ANY($1)`, [['demo-current','demo-drift','demo-never']]);
+  await query(`DELETE FROM skill_ack_log WHERE host = ANY($1)`, [['demo-current','demo-drift','demo-never']]);
   for (const h of ['demo-current', 'demo-drift', 'demo-never']) {
     await query(`INSERT INTO usage_hosts (slug, display, kind) VALUES ($1, $1, 'server') ON CONFLICT DO NOTHING`, [h]);
   }
@@ -60,7 +70,13 @@ if (withDb) {
   };
   await ack('demo-current', report.views);
   await ack('demo-drift', report.views.map((v) => ({ ...v, skills: v.skills.map((s) => ({ ...s, digest: `sha256:${'0'.repeat(64)}` })) })));
-  await pool.end();
+  const live = new SkillsService(full.vault, { ...SETTINGS, externalRoots: [{ id: 'demo-engine', path: full.engine }] });
+  const states = Object.fromEntries((await live.machines()).hosts.map(h => [h.host, h.status]));
+  for (const [host, expected] of Object.entries({ 'demo-current': 'current', 'demo-drift': 'drift', 'demo-never': 'never' })) {
+    if (states[host] !== expected) throw new Error(`Demo host ${host}: expected ${expected}, got ${states[host]}`);
+  }
+  console.log('demo hosts: demo-current=current, demo-drift=drift, demo-never=never');
+  } finally { await pool.end(); }
 }
 
 console.log(`fixture vaults:\n  full:   ${full.vault}\n  empty:  ${empty}\n  broken: ${broken.vault}`);

@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { delimiter, join, relative, sep } from 'node:path';
+import { ACK_LIMITS } from '@secondbrain/contracts/skills';
 import type { AckRequest, AckView, Requirement, SkillRuntime } from '@secondbrain/contracts/skills';
 import type { Catalog } from './catalog.js';
 import { isIgnoredName, isSecretLike, LIMITS, NAME_RE, readMeta, scanPackage } from './package.js';
@@ -31,6 +32,7 @@ export interface Plan { policyDigest: string | null; views: ViewPlan[]; packages
 export class ReconcileError extends Error {}
 
 const hex = (digest: string) => digest.slice('sha256:'.length);
+const dirtyNames = (names: string[]) => [...new Set(names.filter(n => NAME_RE.test(n)))].slice(0, ACK_LIMITS.skillsPerView);
 
 export function viewDigest(skills: { name: string; digest: string }[]): string {
   const h = createHash('sha256');
@@ -145,8 +147,10 @@ function strictStoreFiles(dir: string): string[] {
 }
 
 function lockDown(dir: string): void {
+  if (lstatSync(dir).isSymbolicLink()) throw new ReconcileError('refusing to change permissions through a stored package link');
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, e.name);
+    if (lstatSync(p).isSymbolicLink()) throw new ReconcileError('refusing to change permissions through a stored package link');
     if (e.isDirectory()) lockDown(p);
     else chmodSync(p, (lstatSync(p).mode & 0o111) ? 0o555 : 0o444);
   }
@@ -154,7 +158,7 @@ function lockDown(dir: string): void {
 }
 
 function unlock(dir: string): void {
-  if (!existsSync(dir)) return;
+  if (!existsSync(dir) || lstatSync(dir).isSymbolicLink() || !lstatSync(dir).isDirectory()) return;
   chmodSync(dir, 0o755);
   for (const e of readdirSync(dir, { withFileTypes: true })) if (e.isDirectory()) unlock(join(dir, e.name));
 }
@@ -177,7 +181,23 @@ function storeOk(root: string, digest: string): boolean {
   } catch { return false; }
 }
 
-function stagePackage(root: string, digest: string, src: PackageSource, hooks: SyncHooks): void {
+interface StoreRepair { final: string; backup: string; mode: number | null }
+/** Moving a directory needs only its root writable; never traverse or chmod dirty contents. */
+function directoryMode(path: string): number | null {
+  const st = lstatSync(path);
+  return st.isDirectory() && !st.isSymbolicLink() ? st.mode & 0o777 : null;
+}
+function setDirectoryMode(path: string, mode: number | null): void {
+  const st = lstatSync(path);
+  if (mode !== null && st.isDirectory() && !st.isSymbolicLink()) chmodSync(path, mode);
+}
+function restoreRepair(repair: StoreRepair): void {
+  removeTree(repair.final);
+  setDirectoryMode(repair.backup, repair.mode === null ? null : 0o755);
+  renameSync(repair.backup, repair.final);
+  setDirectoryMode(repair.final, repair.mode);
+}
+function stagePackage(root: string, digest: string, src: PackageSource, hooks: SyncHooks, repairs?: StoreRepair[]): void {
   const expected = new Set<string>();
   for (const file of src.files) {
     safePkgPath(file.path);
@@ -188,10 +208,12 @@ function stagePackage(root: string, digest: string, src: PackageSource, hooks: S
   const final = join(root, 'store', hex(digest));
   if (existsSync(final)) {
     if (storeOk(root, digest)) return;
-    throw new ReconcileError(`store package ${hex(digest).slice(0, 12)} was modified on this machine (dirty); run with --repair to move it to quarantine and redeploy`);
+    if (!repairs) throw new ReconcileError(`store package ${hex(digest).slice(0, 12)} was modified on this machine (dirty); run with --repair to move it to quarantine and redeploy`);
   }
   const staging = join(root, '.staging', `${hex(digest).slice(0, 12)}-${randomBytes(4).toString('hex')}`);
   mkdirSync(staging, { recursive: true });
+  let backup: string | null = null, installed = false;
+  let mode: number | null = null;
   try {
     let bytes = 0;
     for (const f of src.files) {
@@ -211,10 +233,23 @@ function stagePackage(root: string, digest: string, src: PackageSource, hooks: S
     if (!scan.ok) throw new ReconcileError(`staged package ${hex(digest).slice(0, 12)}: ${scan.error}`);
     if (scan.digest !== digest) throw new ReconcileError(`staged package digest ${scan.digest.slice(0, 19)} does not match the approved ${digest.slice(0, 19)}; the source changed or was tampered with`);
     mkdirSync(join(root, 'store'), { recursive: true });
-    // Rename first (moving a read-only folder to a new parent needs write access to it on Linux), then lock.
-    renameSync(staging, final);
+    // A dirty entry stays readable until the complete replacement has been staged and verified.
+    if (existsSync(final)) {
+      if (storeOk(root, digest)) { removeTree(staging); return; }
+      if (!repairs) throw new ReconcileError('The destination store became dirty while staging; retry with --repair.');
+      mkdirSync(join(root, 'quarantine'), { recursive: true, mode: 0o700 });
+      const targetBackup = join(root, 'quarantine', `${hex(digest)}-${Date.now()}-${randomBytes(3).toString('hex')}`);
+      mode = directoryMode(final);
+      setDirectoryMode(final, mode === null ? null : 0o755);
+      renameSync(final, targetBackup); backup = targetBackup; setDirectoryMode(backup, mode);
+    }
+    renameSync(staging, final); installed = true;
     lockDown(final);
+    if (backup) repairs!.push({ final, backup, mode });
   } catch (err) {
+    if (installed) removeTree(final);
+    if (backup) { setDirectoryMode(backup, mode === null ? null : 0o755); renameSync(backup, final); setDirectoryMode(final, mode); }
+    else if (mode !== null && existsSync(final)) setDirectoryMode(final, mode);
     removeTree(staging);
     throw err;
   }
@@ -231,8 +266,22 @@ export function readCurrent(root: string, agent: string, runtime: string): { man
   let st;
   try { st = lstatSync(link); } catch { return { manifest: null, dir: null, unmanaged: false }; }
   if (!st.isSymbolicLink()) return { manifest: null, dir: null, unmanaged: true };
-  const dir = join(root, 'views', agent, readlinkSync(link));
-  try { return { manifest: JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as Manifest, dir, unmanaged: false }; } catch { return { manifest: null, dir, unmanaged: false }; }
+  const target = readlinkSync(link);
+  if (!target.startsWith(`${runtime}.`) || !/^[A-Za-z0-9._-]+$/.test(target)) return { manifest: null, dir: null, unmanaged: true };
+  const dir = join(root, 'views', agent, target);
+  try {
+    const ds = lstatSync(dir), file = join(dir, 'manifest.json'), fs = lstatSync(file);
+    if (!ds.isDirectory() || ds.isSymbolicLink() || !fs.isFile() || fs.isSymbolicLink() || fs.size > 2_000_000) throw new Error('invalid manifest location');
+    const m = JSON.parse(readFileSync(file, 'utf8')) as Manifest;
+    if (!m || m.format !== VIEW_FORMAT || m.mode !== 'managed' || m.agent !== agent || m.runtime !== runtime || !Array.isArray(m.skills) || m.skills.length > ACK_LIMITS.skillsPerView) throw new Error('invalid manifest identity');
+    const names = new Set<string>();
+    for (const pkg of m.skills) {
+      if (!pkg || typeof pkg.name !== 'string' || typeof pkg.path !== 'string' || typeof pkg.digest !== 'string' || !NAME_RE.test(pkg.name) || pkg.path !== pkg.name || names.has(pkg.name) || !/^sha256:[0-9a-f]{64}$/.test(pkg.digest) || typeof pkg.id !== 'string') throw new Error('invalid manifest package');
+      names.add(pkg.name);
+    }
+    if (m.viewDigest !== viewDigest(m.skills) || !Number.isFinite(Date.parse(m.generatedAt)) || new Date(m.generatedAt).toISOString() !== m.generatedAt || (m.policyDigest !== null && !/^sha256:[0-9a-f]{64}$/.test(m.policyDigest))) throw new Error('invalid manifest version');
+    return { manifest: m, dir, unmanaged: false };
+  } catch { return { manifest: null, dir, unmanaged: false }; }
 }
 
 /** Dirty names in an active view: a store package that no longer matches its digest, or a view entry that is not the manager's link. */
@@ -275,26 +324,19 @@ export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; ho
     const base = { agent: v.agent, runtime: v.runtime, excluded: v.excluded ?? [] } as const;
     const current = verifyView(root, v.agent, v.runtime);
     const missing = checkRequirements(v.skills, opts.env);
+    const repairs: StoreRepair[] = [];
+    let activated = false;
     try {
+      if (v.skills.length > ACK_LIMITS.skillsPerView) throw new ReconcileError(`A managed view supports at most ${ACK_LIMITS.skillsPerView} skills; narrow this agent's assignments before synchronizing.`);
       if (v.excluded?.length) throw new ReconcileError(`Unresolved assignments: ${v.excluded.map(e => `${e.name}: ${e.reason}`).join('; ')}`);
       if (current.unmanaged) throw new ReconcileError(`views/${v.agent}/${v.runtime} is not a manager-made link; refusing to replace it`);
       if (current.dirty.length && !opts.repair) {
         views.push({ ...base, viewDigest: current.manifest?.viewDigest ?? null, generatedAt: current.manifest?.generatedAt ?? null, status: 'dirty',
-          error: `deployed view was modified on this machine (${current.dirty.join(', ')}); left as is. Rerun with --repair to redeploy.`,
-          skills: (current.manifest?.skills ?? []).map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: current.dirty });
+          error: `deployed view was modified on this machine (${current.dirty.length} entries: ${current.dirty.join(', ')}); left as is. Rerun with --repair to redeploy.`.slice(0, 500),
+          skills: (current.manifest?.skills ?? []).map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: dirtyNames(current.dirty) });
         continue;
       }
-      if (opts.repair) {
-        for (const s of current.manifest?.skills ?? []) {
-          const dir = join(root, 'store', hex(s.digest));
-          if (existsSync(dir) && !storeOk(root, s.digest)) {
-            mkdirSync(join(root, 'quarantine'), { recursive: true });
-            unlock(dir);
-            renameSync(dir, join(root, 'quarantine', `${hex(s.digest)}-${Date.now()}`));
-          }
-        }
-      }
-      for (const s of v.skills) stagePackage(root, s.digest, plan.packages.get(s.digest) ?? (() => { throw new ReconcileError(`no source for ${s.name}`); })(), hooks);
+      for (const s of v.skills) stagePackage(root, s.digest, plan.packages.get(s.digest) ?? (() => { throw new ReconcileError(`no source for ${s.name}`); })(), hooks, opts.repair ? repairs : undefined);
       const generatedAt = new Date().toISOString();
       const gen = `${v.runtime}.${generatedAt.replace(/[-:.]/g, '').slice(0, 15)}-${randomBytes(3).toString('hex')}`;
       const agentDir = join(root, 'views', v.agent);
@@ -317,17 +359,18 @@ export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; ho
         hooks.beforeActivate?.(v);
         const tmp = join(agentDir, `.${v.runtime}.next-${randomBytes(3).toString('hex')}`);
         symlinkSync(gen, tmp);
-        renameSync(tmp, join(agentDir, v.runtime)); // atomic switch
+        renameSync(tmp, join(agentDir, v.runtime)); activated = true; // atomic switch
       } catch (err) {
         rmSync(genDir, { recursive: true, force: true });
         throw err;
       }
-      pruneGenerations(agentDir, v.runtime);
+      try { pruneGenerations(agentDir, v.runtime); } catch { /* A verified active generation must survive deferred old-generation cleanup. */ }
       views.push({ ...base, viewDigest: viewDigest(v.skills), generatedAt, status: 'current', error: null, skills: v.skills.map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: [] });
     } catch (err) {
+      if (!activated) for (const repair of repairs.reverse()) restoreRepair(repair);
       const prev = readCurrent(root, v.agent, v.runtime).manifest;
       views.push({ ...base, viewDigest: prev?.viewDigest ?? null, generatedAt: prev?.generatedAt ?? null, status: 'failed', error: (err as Error).message.slice(0, 500),
-        skills: (prev?.skills ?? []).map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: current.dirty });
+        skills: (prev?.skills ?? []).map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: dirtyNames(current.dirty) });
     }
   }
   rmSync(join(root, '.staging'), { recursive: true, force: true });
@@ -369,13 +412,17 @@ export function inspectRoot(root: string, env: NodeJS.ProcessEnv = process.env):
   let previous: SyncReport | null = null;
   try { previous = JSON.parse(readFileSync(join(root, 'state.json'), 'utf8')) as SyncReport; } catch { /* no previous sync */ }
   const viewsDir = join(root, 'views');
-  if (!existsSync(viewsDir)) return out;
+  if (!existsSync(viewsDir)) return (previous?.views ?? []).map(v => ({ ...v, status: 'failed', error: 'The managed views folder is missing; synchronize again.', skills: [] }));
   for (const agent of readdirSync(viewsDir).sort()) {
     if (!NAME_RE.test(agent)) continue;
     for (const runtime of ADAPTER_RUNTIMES) {
       const v = verifyView(root, agent, runtime);
-      if (!v.manifest) continue;
       const last = previous?.views?.find((r) => r.agent === agent && r.runtime === runtime);
+      if (!v.manifest) {
+        let active = false; try { lstatSync(join(viewsDir, agent, runtime)); active = true; } catch { /* absent */ }
+        if (active || last) out.push({ agent, runtime, status: 'failed', error: 'Active managed view or its manifest is missing or invalid; synchronize again.', viewDigest: null, generatedAt: last?.generatedAt ?? null, skills: [], missing: last?.missing ?? [], dirty: [], excluded: last?.excluded ?? [] });
+        continue;
+      }
       const unknown = new Set(v.dirty);
       const checked: PlannedSkill[] = [];
       for (const s of v.manifest.skills) {
@@ -390,11 +437,11 @@ export function inspectRoot(root: string, env: NodeJS.ProcessEnv = process.env):
       const oldPolicy = previous !== null && previous.policyDigest !== v.manifest.policyDigest;
       const failed = last?.status === 'failed';
       out.push({ agent, runtime, viewDigest: v.manifest.viewDigest, generatedAt: v.manifest.generatedAt, status: v.dirty.length ? 'dirty' : failed || oldPolicy ? 'failed' : 'current',
-        error: v.dirty.length ? `modified on this machine: ${v.dirty.join(', ')}` : failed ? last.error ?? 'The last synchronization failed; sync again.' : oldPolicy ? 'Active view uses an older policy than the last requested sync; sync it again.' : null,
-        skills: v.manifest.skills.map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: v.dirty, excluded: last?.excluded ?? [] });
+        error: v.dirty.length ? `modified on this machine (${v.dirty.length} entries): ${v.dirty.join(', ')}`.slice(0, 500) : failed ? last.error ?? 'The last synchronization failed; sync again.' : oldPolicy ? 'Active view uses an older policy than the last requested sync; sync it again.' : null,
+        skills: v.manifest.skills.map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: dirtyNames(v.dirty), excluded: last?.excluded ?? [] });
     }
   }
-  for (const last of previous?.views ?? []) if (last.status === 'failed' && !out.some(v => v.agent === last.agent && v.runtime === last.runtime)) out.push(last);
+  for (const last of previous?.views ?? []) if (!out.some(v => v.agent === last.agent && v.runtime === last.runtime)) out.push({ ...last, status: 'failed', error: 'Previously deployed managed view is missing; synchronize again.', skills: [] });
   return out;
 }
 

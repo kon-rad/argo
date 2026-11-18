@@ -32,7 +32,7 @@ export function skillsRouter(service: SkillsService): Router {
 
   r.get('/', wrap(async (req, res) => { res.json(await service.library(req.query['refresh'] === '1')); }));
   r.get('/matrix', wrap(async (_req, res) => { res.json(await service.matrix()); }));
-  r.get('/machines', wrap(async (_req, res) => { res.json(await service.machines()); }));
+  r.get('/machines', wrap(async (_req, res) => { res.json(await lifecycle(() => service.machines())); }));
   r.get('/agents/:agent', wrap(async (req, res) => {
     const agent = parseOr400(z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/), req.params['agent']);
     const out = await service.agent(agent);
@@ -41,13 +41,13 @@ export function skillsRouter(service: SkillsService): Router {
   }));
   r.get('/skill/:name', wrap(async (req, res) => {
     const id = req.query['id'] === undefined ? undefined : parseOr400(z.string().min(3).max(200), req.query['id']);
-    const out = await service.detail(nameParam(req), id);
+    const out = await lifecycle(() => service.detail(nameParam(req), id));
     if (!out) throw new HttpError(404, 'no such skill');
     res.json(out);
   }));
   r.get('/skill/:name/file', wrap(async (req, res) => {
     const q = parseOr400(z.object({ id: z.string().min(3).max(200).optional(), path: z.string().min(1).max(255) }).strict(), req.query);
-    const out = await service.file(nameParam(req), q.id, q.path);
+    const out = await lifecycle(() => service.file(nameParam(req), q.id, q.path));
     if (!out) throw new HttpError(404, 'no such file in the package');
     res.json(out);
   }));

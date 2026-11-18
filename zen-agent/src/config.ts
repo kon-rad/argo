@@ -153,6 +153,23 @@ function under(base: string, p: string): string {
   return isAbsolute(e) ? e : resolve(base, e);
 }
 
+/** An explicit managed catalog must never turn into legacy discovery after a typo. */
+function managedSkills(raw: unknown, vault: string): ZenConfig['managedSkills'] {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('zen config managedSkills: expected an object or null');
+  const value = raw as Record<string, unknown>;
+  if (typeof value.root !== 'string' || !value.root.trim()) throw new Error('zen config managedSkills.root: expected a nonempty path string');
+  if (value.enforce !== undefined && typeof value.enforce !== 'boolean') throw new Error('zen config managedSkills.enforce: expected a boolean');
+  if (value.snapshots !== undefined && value.snapshots !== null && (typeof value.snapshots !== 'string' || !value.snapshots.trim())) {
+    throw new Error('zen config managedSkills.snapshots: expected null or a nonempty path string');
+  }
+  return {
+    root: under(vault, value.root),
+    enforce: value.enforce === true,
+    snapshots: typeof value.snapshots === 'string' ? under(vault, value.snapshots) : null,
+  };
+}
+
 /** Deep merge for plain objects; arrays and scalars replace. */
 function merge<T>(base: T, over: unknown): T {
   if (!over || typeof over !== 'object' || Array.isArray(over)) return (over === undefined ? base : over) as T;
@@ -208,13 +225,7 @@ export function loadConfig(opts: LoadOptions = {}): ZenConfig {
     sessionsDir: under(vault, cfg.sessionsDir),
     rules: cfg.rules.map((p) => under(vault, p)),
     skills: cfg.skills.map((p) => under(vault, p)),
-    managedSkills: cfg.managedSkills && typeof cfg.managedSkills.root === 'string'
-      ? {
-          root: under(vault, cfg.managedSkills.root),
-          enforce: cfg.managedSkills.enforce === true,
-          snapshots: cfg.managedSkills.snapshots ? under(vault, cfg.managedSkills.snapshots) : null,
-        }
-      : null,
+    managedSkills: managedSkills(cfg.managedSkills, vault),
     persona: {
       org: under(vault, cfg.persona.org),
       definitions: under(vault, cfg.persona.definitions),

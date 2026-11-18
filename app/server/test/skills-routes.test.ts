@@ -9,7 +9,7 @@ import { planViews, syncViews } from '../src/addons/skills/reconcile.js';
 import { machineStates, readAcks } from '../src/addons/skills/machines.js';
 import { createApp } from '../src/app.js';
 import { query } from '../src/db.js';
-import { addDevice } from '../src/ingest/devices.js';
+import { addDevice, findDevice } from '../src/ingest/devices.js';
 import { errorHandler } from '../src/routes/http.js';
 import { MANAGED_POLICY, SETTINGS, skillsFixture, write } from './helpers/skills.js';
 
@@ -105,7 +105,9 @@ describe('skills acknowledgement protocol and machines', () => {
     expect(good.status).toBe(200);
     expect(good.body).toMatchObject({ host: 'skills-host-a', accepted: 2 });
     const big = { ...body, views: [{ ...body.views[0]!, error: 'x'.repeat(300 * 1024) }] };
-    expect((await request(app).post('/api/skills/ack').set('authorization', `Bearer ${token}`).send(big)).status).toBe(413);
+    expect(await findDevice(token)).not.toBeNull();
+    const oversized = await request(app).post('/api/skills/ack').set('authorization', `Bearer ${token}`).send(big);
+    expect(oversized.status, oversized.text.slice(0, 1000)).toBe(413);
     const dup = { ...body, views: [body.views[0]!, body.views[0]!] };
     expect((await request(app).post('/api/skills/ack').set('authorization', `Bearer ${token}`).send(dup)).status).toBe(422);
     const secretish = { ...body, views: [{ ...body.views[0]!, missing: [{ skill: 'clip', bins: [], env: ['TOKEN=abc'] }] }] };
