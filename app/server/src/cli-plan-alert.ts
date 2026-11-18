@@ -1,3 +1,4 @@
+import { exitFlushed } from './cli-exit.js';
 import { pool } from './db.js';
 import { hermesTelegram } from './livestream-x.js';
 import { checkPlanAlerts, currentReadings, pendingAlerts } from './usage/planAlert.js';
@@ -27,4 +28,4 @@ try {
 } finally {
   await pool.end();
 }
-process.exit(code);
+await exitFlushed(code);

@@ -1,0 +1,93 @@
+import { createModels, createProvider, envApiKeyAuth, type Model, type Models } from '@earendil-works/pi-ai';
+import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
+import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
+import { builtinProviders } from '@earendil-works/pi-ai/providers/all';
+import type { ProviderConfig, ZenConfig } from './config.js';
+
+/**
+ * The model catalogue: every provider pi-ai ships (keys resolve from the
+ * environment, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
+ * `TOGETHER_API_KEY`, ...) plus the endpoints zen.json adds under `providers`
+ * (Ollama, vLLM, a proxy: anything that speaks OpenAI chat completions or
+ * Anthropic messages). Changing provider or model is a string.
+ */
+export function buildModels(cfg: Pick<ZenConfig, 'providers'>): Models {
+  const models = createModels();
+  for (const p of builtinProviders()) models.setProvider(p);
+  for (const [id, p] of Object.entries(cfg.providers)) models.setProvider(customProvider(id, p));
+  return models;
+}
+
+// Runtime planning defaults must not become recorded facts about the endpoint.
+const configuredWindows = new WeakMap<object, Map<string, number | null>>();
+
+/** Capacity established by the provider catalogue/configuration, excluding runtime fallbacks. */
+export function recordedContextWindow(models: Models, model: Model<any>): number | null {
+  const window = model.contextWindow;
+  if (!Number.isFinite(window) || window <= 0) return null;
+  const provider = models.getProvider(model.provider);
+  const configured = provider && configuredWindows.get(provider);
+  return configured ? (configured.get(model.id) === window ? window : null) : window;
+}
+
+export function customProvider(id: string, p: ProviderConfig, capacityKnown = true) {
+  const name = p.name ?? id;
+  const auth = p.apiKeyEnv
+    ? { apiKey: envApiKeyAuth(`${name} API key`, [p.apiKeyEnv]) }
+    // A keyless local server (Ollama, vLLM) ignores the bearer value, but the agent loop refuses to call a provider that
+    // resolves no key at all ("No API key for provider"), so a placeholder stands in.
+    : { apiKey: { name, resolve: async () => ({ auth: { apiKey: 'not-needed' } }) } };
+  const list = p.models.map((m) => ({
+    id: m.id,
+    name: m.name ?? m.id,
+    api: p.api,
+    provider: id,
+    baseUrl: p.baseUrl,
+    reasoning: m.reasoning ?? false,
+    input: m.input ?? ['text'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: m.contextWindow ?? 128_000,
+    maxTokens: m.maxTokens ?? 16_000,
+  })) as Model<any>[];
+  const provider = createProvider({
+    id,
+    name,
+    baseUrl: p.baseUrl,
+    auth,
+    models: list,
+    api: p.api === 'anthropic-messages' ? anthropicMessagesApi() : openAICompletionsApi(),
+  } as Parameters<typeof createProvider>[0]);
+  configuredWindows.set(provider, new Map(p.models.map((m) => [m.id,
+    capacityKnown && Number.isFinite(m.contextWindow) && m.contextWindow! > 0 ? m.contextWindow! : null,
+  ])));
+  return provider;
+}
+
+/** `provider/model`, or a bare model id found in any provider (first match). */
+export function pickModel(models: Models, spec: string): Model<any> {
+  const slash = spec.indexOf('/');
+  if (slash > 0) {
+    const provider = spec.slice(0, slash);
+    const id = spec.slice(slash + 1);
+    const m = models.getModel(provider, id);
+    if (m) return m;
+    if (models.getProvider(provider)) throw new Error(`model ${id} is not in provider ${provider}'s catalogue`);
+    // An OpenRouter-style id ("openai/gpt-5") that belongs to a provider of its own.
+  }
+  const any = models.getModels().find((m) => m.id === spec);
+  if (any) return any;
+  throw new Error(`unknown model "${spec}"; use provider/model (zen-agent models lists them)`);
+}
+
+/** The configured providers whose key (or keyless auth) resolves right now. */
+export async function availableProviders(models: Models): Promise<string[]> {
+  const out: string[] = [];
+  for (const p of models.getProviders()) {
+    try {
+      if (await models.getAuth(p.id)) out.push(p.id);
+    } catch {
+      // A broken credential store entry is "not available", not a crash.
+    }
+  }
+  return out.sort();
+}

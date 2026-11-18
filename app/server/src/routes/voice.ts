@@ -28,7 +28,7 @@ export interface VoiceOptions {
 const SPEAKABLE = new Set(['.md', '.markdown', '.txt']);
 
 /**
- * Mac-only. Notes are spoken by a voice on this machine and nowhere else:
+ * Local install only. Notes are spoken by a voice on this machine and nowhere else:
  * if the local server is down the request fails rather than falling back to a
  * cloud voice, because notes can be private.
  */

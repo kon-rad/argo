@@ -47,7 +47,7 @@ Clear this one: 3f2a9c1d on mac. Write its Resume block, then /clear.
 
 ## Schema
 
-Migration `1756000014700_plan-alerts.sql`:
+Migration `1756000019200_plan-alerts.sql`:
 
 ```sql
 CREATE TABLE plan_alerts (

@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
-import { collectVaultRefs, remarkVaultPaths, splitVaultPaths } from '../src/lib/vaultRefs.js';
+import { collectVaultRefs, remarkMentions, remarkVaultPaths, splitMentions, splitVaultPaths } from '../src/lib/vaultRefs.js';
 import { remarkWikilink } from '../src/lib/wikilink.js';
 import { VaultMarkdown } from '../src/components/VaultMarkdown.js';
 
@@ -84,5 +84,72 @@ describe('VaultMarkdown', () => {
     expect(screen.getByText('Areas/argo/media/linkedin-posts/2026-10-19_how-secondbrain-works.md').closest('a')).toBeNull();
     expect(screen.getByText('ghost-note').className).toBe('wikilink-dead');
     expect(container.querySelector('a[href^="https://www.linkedin.com"]')).toBeTruthy();
+  });
+
+  it('opens a Preview modal for a resolved path and dismisses it with Esc, the close button and the backdrop', async () => {
+    const path = 'Research/ai/x-research.md';
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url);
+      const body = u.startsWith('/api/file/resolve')
+        ? { resolved: { [path]: path } }
+        : { file: { path, name: 'x-research.md', title: 'X research', ext: '.md', size_bytes: 5, mtime: '2026-10-21T00:00:00Z', is_markdown: true, body: 'Hello preview', parent_path: 'Research/ai' },
+            frontmatter: {}, tags: [], links: [], backlinks: [] };
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter><VaultMarkdown text={`Wrote ${path}.`} /></MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const button = await screen.findByRole('button', { name: 'Preview' });
+    fireEvent.click(button);
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+    expect(await screen.findByText('Hello preview')).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(button);
+    fireEvent.click(await screen.findByRole('button', { name: 'Close preview' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(button);
+    fireEvent.click(await screen.findByTestId('preview-backdrop'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
+describe('folders and mentions', () => {
+  it('finds folder refs of two or more segments and leaves URLs alone', () => {
+    expect(paths('kit at Areas/argo/media/kits/2026-10-27_usage-page/, notes in Areas/argo/x/.')).toEqual([
+      'Areas/argo/media/kits/2026-10-27_usage-page/',
+      'Areas/argo/x/',
+    ]);
+    expect(paths('see https://host.com/a/b/ and src/ and and/or')).toEqual([]);
+  });
+
+  it('links a known @agent and skips unknown names, emails and links', () => {
+    const known = new Set(['juno', 'sol']);
+    expect(splitMentions('ask @juno or @nobody, see a_b@juno', known)).toEqual([
+      { type: 'text', value: 'ask ' },
+      { type: 'mention', name: 'juno' },
+      { type: 'text', value: ' or @nobody, see a_b@juno' },
+    ]);
+    const out = unified().use(remarkParse).use(remarkMentions, known).use(remarkStringify).processSync('hi @sol and `@juno`').toString();
+    expect(out).toContain('[@sol](agent:sol)');
+    expect(out).not.toContain('agent:juno');
+  });
+
+  it('renders a mention as a link to the agent page', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(
+      JSON.stringify(String(url).includes('/org/chart') ? { teams: [], agents: [{ name: 'juno' }] } : { resolved: {} }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={qc}><MemoryRouter><VaultMarkdown text="over to @juno now" /></MemoryRouter></QueryClientProvider>);
+    const a = await screen.findByRole('link', { name: '@juno' });
+    expect(a.getAttribute('href')).toBe('/org/agents/juno');
   });
 });

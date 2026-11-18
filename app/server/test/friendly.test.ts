@@ -34,12 +34,26 @@ function fakeSpawn() {
   return { fn, calls };
 }
 
+/**
+ * A port nothing else will pick while the test runs. Not `listen(0)`: that hands out a port from
+ * the kernel's ephemeral range, and supertest binds a fresh ephemeral port for every `request(app)`,
+ * so the app itself could land on the port just released and the probe would find it "listening"
+ * (seen once in CI: 200 "running" where 202 "starting" was expected). Ports below that range are
+ * never auto-assigned, so only an explicit bind can take one, and nothing here does.
+ */
 async function freePort(): Promise<number> {
-  const srv = createServer();
-  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
-  const port = (srv.address() as { port: number }).port;
-  await new Promise<void>((r) => srv.close(() => r()));
-  return port;
+  for (let i = 0; i < 50; i++) {
+    const port = 20000 + Math.floor(Math.random() * 10000);
+    const srv = createServer();
+    const ok = await new Promise<boolean>((r) => {
+      srv.once('error', () => r(false));
+      srv.listen(port, '127.0.0.1', () => r(true));
+    });
+    if (!ok) continue;
+    await new Promise<void>((r) => srv.close(() => r()));
+    return port;
+  }
+  throw new Error('no free port between 20000 and 30000');
 }
 
 describe('/api/friendly', () => {

@@ -21,7 +21,7 @@ export default function setup(): void {
   }
 
   // Rebuild from zero every run: migrations are the only source of schema truth.
-  psql(TEST_DB, 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
+  psql(TEST_DB, 'DROP SCHEMA IF EXISTS data CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
 
   execFileSync(
     'npx',

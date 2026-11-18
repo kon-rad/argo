@@ -1,0 +1,10 @@
+[Unit]
+Description=Vault gardener, nightly before the morning routines
+
+[Timer]
+OnCalendar=*-*-* 04:30:00 Asia/Tokyo
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target

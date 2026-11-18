@@ -1,0 +1,10 @@
+[Unit]
+Description=Second Brain: nightly /clear for Claude Code on Telegram bot "@BOT_NAME@"
+
+[Timer]
+OnCalendar=*-*-* @CLEAR_AT@:00 UTC
+Persistent=false
+Unit=@CLEAR_UNIT@
+
+[Install]
+WantedBy=timers.target

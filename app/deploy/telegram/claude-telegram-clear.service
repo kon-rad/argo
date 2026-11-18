@@ -1,0 +1,13 @@
+[Unit]
+Description=Second Brain: nightly /clear for Claude Code on Telegram bot "@BOT_NAME@" (when idle)
+# One long interactive session compounds its context. This sends /clear into the tmux session once it is idle;
+# exit 75 means it stayed busy and nothing was sent (a clear mid-turn would drop the turn).
+
+[Service]
+Type=oneshot
+User=@BOT_USER@
+Group=@BOT_USER@
+Environment=HOME=@BOT_HOME@
+Environment=TG_SOCKET=@SOCKET@
+ExecStart=@CLEAR_SCRIPT@
+SuccessExitStatus=75
