@@ -360,6 +360,19 @@ const Settings = z.object({
   media: z.object({
     brands: z.array(z.object({ slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,47}$/), config: z.string().min(1) })).default([]),
   }).prefault({}),
+
+  roadmap: z.object({
+    file: z.string().default('roadmap-board.md'),
+    boards: z.array(z.string().min(1)).default([]),
+    themes: z.array(z.object({
+      id: z.string().min(1), title: z.string().min(1),
+      areas: z.array(z.string()).default([]),
+      projects: z.array(z.string()).default([]),
+      cards: z.array(z.string()).default([]),
+      keywords: z.array(z.string()).default([]),
+    })).default([]),
+  }).prefault({}),
+
   server: Server,
   /**
    * The owner's current time zone (IANA, e.g. `Asia/Singapore`): every time the web app shows and the Usage

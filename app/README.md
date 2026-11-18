@@ -283,3 +283,7 @@ These are enforced by tests and hold across the codebase.
 | `bin/secondbrain` | The CLI — the single implementation of all launcher logic |
 
 **Recorded tool outcomes.** Codex and Hermes tool results now decode structured output and recorded exit/outcome fields. Session detail distinguishes failure, success and unknown, and keeps recorded run failures separate. Existing archives can be rebuilt through scoped `secondbrain archive-steps --results --runtime codex|hermes` dry-run/replay without changing tokens. See [the replay and canary procedure](../docs/tool-result-replay.md).
+
+### Themed roadmap
+
+`secondbrain projects roadmap [path]` renders configured `roadmap.themes` from the master board and tracker into a markdown file. Themes select whole `areas`, individual `projects` as `area/project`, card IDs, or title keywords. Configure `roadmap.boards` with existing board slugs and `roadmap.file` with the output path. Unknown boards or a failed read stop without writing. Existing handwritten files are never replaced. The projects manifest installs the hourly roadmap timer.

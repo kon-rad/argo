@@ -10,6 +10,12 @@ export default defineFeature({
     { command: 'areas', entry: 'cli-areas.js', summary: 'areas: list | show | review | report | render | add | set | archive | unarchive | record | team | division | import (areas help)' },
   ],
   timers: [{
+    unit: 'secondbrain-roadmap-render',
+    summary: 'renders the themed roadmap every hour', calendar: 'hourly', command: 'projects roadmap',
+    description: 'Second Brain: render configured roadmap themes into the vault',
+    timerDescription: 'Second Brain themed roadmap render, hourly', persistent: true,
+    service: { after: ['postgresql.service'], requires: ['postgresql.service'], directives: ['TimeoutStartSec=120'] },
+  }, {
     unit: 'secondbrain-projects-render',
     summary: 'renders the markdown report every hour',
     calendar: 'hourly',
