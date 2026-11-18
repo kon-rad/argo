@@ -20,13 +20,13 @@ const card = (id: string, title: string, status: string, extra: Record<string, u
   created_at: '2026-10-24T08:00:00Z', started_at: null, completed_at: null, updated_at: '2026-10-24T08:00:00Z', ...extra,
 });
 const CARDS = [
-  card('t_00000001', 'Build the board', 'running', { kind: 'build', started_at: '2026-10-24T09:00:00Z' }),
+  card('t_00000001', 'Build the board', 'running', { kind: 'build', started_at: '2026-10-24T09:00:00Z', contract: { cybazaarJobId: 'job-42' } }),
   card('t_00000002', 'Review the board', 'todo', { kind: 'review', assignee: 'atlas' }),
   card('t_00000003', 'Think about it', 'ready', { assignee: null, area_slug: null, project_slug: null }),
   card('t_00000004', 'Stuck', 'blocked', { block_kind: 'needs-owner', block_reason: 'which repo?' }),
 ];
 const DETAIL = {
-  card: { ...CARDS[0]!, body: 'GET /api/board', contract: { objective: 'Ship the board', returns: ['a PR'], budget: { turns: 20 } } },
+  card: { ...CARDS[0]!, body: 'GET /api/board', contract: { objective: 'Ship the board', returns: ['a PR'], budget: { turns: 20 }, cybazaarJobId: 'job-42' } },
   comments: [{ id: 1, author: 'owner', body: 'go', created_at: '2026-10-24T08:10:00Z' }],
   events: [{ id: 1, kind: 'created', actor: 'owner', payload: null, at: '2026-10-24T08:00:00Z' }, { id: 2, kind: 'claimed', actor: 'rune', payload: null, at: '2026-10-24T09:00:00Z' }],
   depends_on: [],
@@ -102,6 +102,10 @@ describe('Board page', () => {
     await screen.findByText('Build the board');
     const running = screen.getByRole('region', { name: 'Running' });
     expect(within(running).getByText('Build the board')).toBeTruthy();
+    const sourced = within(running).getByText('Build the board').closest('li');
+    expect(sourced?.className).toContain('border-l-[#68DFFF]');
+    expect(within(sourced!).getByText('Cybazaar')).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'To do' })).queryByText('Cybazaar')).toBeNull();
     expect(within(running).getByText('build')).toBeTruthy();
     expect(within(screen.getByRole('region', { name: 'To do' })).getByText('Review the board')).toBeTruthy();
     expect(within(screen.getByRole('region', { name: 'Ready' })).getByText('unassigned')).toBeTruthy();
@@ -118,6 +122,8 @@ describe('Board page', () => {
     const panel = await screen.findByRole('complementary', { name: 'Card' });
     await within(panel).findByText('GET /api/board');
     expect(within(panel).getByText('Ship the board')).toBeTruthy();
+    expect(within(panel).getByRole('link', { name: 'Open Desk job' }).getAttribute('href')).toBe('/desk?job=job-42');
+    expect(within(panel).queryByText('cybazaarJobId')).toBeNull();
     expect(within(panel).getByText('a PR')).toBeTruthy();
     expect(within(panel).getByText('turns: 20')).toBeTruthy();
     expect(within(panel).getByRole('link', { name: 't_00000002 [todo]' }).getAttribute('href')).toBe('/board/t_00000002');

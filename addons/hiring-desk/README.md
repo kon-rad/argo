@@ -26,6 +26,10 @@ The single `vitest.config.ts` contains server, contracts and browser projects. P
 
 The engine host supplies database query and transaction adapters through the lifecycle hook. The package does not import engine source. Two forward-only engine migrations remain in the host because existing installations already record their migration history.
 
+## Private operator views
+
+The `/desk` page keeps the legacy Overview, Inbox, Jobs and Agents views. Active and Review filter the existing job list by execution status; they do not create another job state or change approval and release. A board card with `contract.cybazaarJobId` gets a Cybazaar source label and a link to `/desk?job=<id>`. The link opens that ID through the existing operator job API, so the marker must contain an operator job ID that API can resolve. Cards without the marker keep their standard appearance. The legacy release action still publishes its public destination; it is not a pay-to-unlock release.
+
 ## Cybazaar backend publication
 
 The production composition owns Arkiv and Swarm publication in the server process. `DESK_ARKIV_PRIVATE_KEY` is a master signer key held only by the service environment. It is never included in routes, unsigned wallet intents, worker capabilities, logs or audit details. The signer can publish only a `desk/v1` record whose frozen creator field equals its derived address. This supports signer-owned Cybazaar jobs and signer-owned reviewed responses without allowing the backend to impersonate another provider. Other provider records keep the existing browser wallet path.

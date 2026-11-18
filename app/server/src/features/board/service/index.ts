@@ -42,6 +42,8 @@ export interface Contract {
   budget?: { turns?: number; tokens?: number; minutes?: number; wakes?: number };
   scope?: string[];
   verification?: string;
+  /** Source job for a commission card. Present only when a Cybazaar job created this card. */
+  cybazaarJobId?: string;
 }
 
 export interface Card {
