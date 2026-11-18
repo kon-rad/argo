@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { runReview, evidence, digest, type GateIO, type Job, type Snapshot, type Source, type Verdict } from '../src/review/gate.js';
 import { mergeVerdicts, partition, reviewInPasses, splitDiff, PASS_CHARS, reviewTransportBytes, type InventoryPart, type InventoryIdentity } from '../src/review/passes.js';
 import { collectCode, type ChangedFile } from '../src/review/scope.js';
@@ -33,6 +34,55 @@ describe('PR size never rejects a review', () => {
     expect(chunks.map(c => c.path)).toEqual(['a.ts', 'dir/b c.ts', 'img.png']);
     expect(chunks.map(c => c.text).join('')).toBe(diff);
     expect(splitDiff('')).toEqual([]);
+  });
+
+  it('decodes real Git quoted paths and reconstructs oversized Unicode-file fragments with contiguous offsets', async () => {
+    const dir=await mkdtemp(join(tmpdir(),'review-git-paths-'));
+    const git=(...args:string[])=>execFileSync('git',['-C',dir,...args],{encoding:'utf8',maxBuffer:8*1024*1024});
+    const unicode='東京-😀.md', spaced='folder b/leaf file .txt', deleted='deleted b/file space.txt';
+    const controlled='tab\tline\nquote"back\\slash-\x07\b\f\r\v.txt';
+    const binary='binary b/payload file.bin', mode='空 mode b/名 space.txt';
+    const names=[unicode,spaced,deleted,controlled,binary,mode];
+    try {
+      git('init','-q');git('config','core.quotePath','true');git('config','core.filemode','true');
+      for(const name of names) {
+        const file=join(dir,name);await mkdir(dirname(file),{recursive:true});
+        await writeFile(file,name===binary?Buffer.from([0,1,2]):name===mode?'':'Old content\n');await chmod(file,0o644);
+      }
+      git('add','--','.');
+      const content='++ b/spoofed-path\n-- a/spoofed-path\n'+'x'.repeat(PASS_CHARS+50_000)+'\n';
+      await writeFile(join(dir,unicode),content);await writeFile(join(dir,spaced),'Changed spaces\n');
+      await writeFile(join(dir,controlled),'Changed controls\n');await writeFile(join(dir,binary),Buffer.from([0,4,5]));
+      await rm(join(dir,deleted));await chmod(join(dir,mode),0o755);
+      const diff=git('diff','--no-ext-diff','--no-textconv','--binary','--'), chunks=splitDiff(diff);
+      expect(chunks.map(x=>x.path).sort()).toEqual([...names].sort());
+      expect(chunks.map(x=>x.text).join('')).toBe(diff);
+      expect(chunks.find(x=>x.path===deleted)!.text).toContain('+++ /dev/null');
+      expect(chunks.find(x=>x.path===binary)!.text).toContain('GIT binary patch');
+      expect(chunks.find(x=>x.path===mode)!.text).toContain('new mode 100755');
+      const chunk=chunks.find(x=>x.path===unicode)!;
+      expect(chunk.text.split('\n',1)[0]).toMatch(/"a\/\\[0-7]{3}/);
+      expect(chunk.text).toContain('+++ b/spoofed-path');
+      const ref=`github:diff:${head}`, codeRef=`github:source:${head}:${unicode}`;
+      const snapshot:Snapshot={...large(0,0),sources:[src('ticket','Acceptance: complete quoted paths'),src(ref,chunk.text),src(codeRef,content)]};
+      const passes=partition(snapshot), delivered:{index:number;start:number;end:number;text:string}[]=[];
+      for(const pass of passes) {
+        expect(pass.files).not.toContain('');
+        const pieces=pass.snapshot.sources.filter(x=>x.ref===ref), parts=(pass.parts??[]).filter(x=>x.ref===ref);
+        expect(parts.length).toBe(pieces.length);
+        for(const [i,part] of parts.entries()) {
+          expect(part.path).toBe(unicode);
+          delivered.push({index:part.index,start:part.start,end:part.end,text:pieces[i]!.text});
+        }
+      }
+      expect(delivered.length).toBeGreaterThan(1);delivered.sort((a,b)=>a.index-b.index);
+      let offset=0;
+      for(const [i,part] of delivered.entries()) {
+        expect(part.index).toBe(i+1);expect(part.start).toBe(offset);
+        expect(chunk.text.slice(part.start,part.end)).toBe(part.text);offset=part.end;
+      }
+      expect(offset).toBe(chunk.text.length);expect(delivered.map(x=>x.text).join('')).toBe(chunk.text);
+    } finally { await rm(dir,{recursive:true,force:true}); }
   });
 
   it('leaves a snapshot that fits one reviewer call untouched', () => {

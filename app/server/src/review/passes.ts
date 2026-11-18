@@ -14,16 +14,70 @@ const isTicket = (s: Source) => s.ref === 'ticket' || /^board:[^:]+:ticket$/.tes
 const isHistory = (s: Source) => /^board:[^:]+:earlier_findings(?::part-\d+-of-\d+)?$/.test(s.ref);
 export const reviewTransportBytes = (s: Snapshot): number => bytes(s);
 
+/** Git quotes paths as C strings; octal escapes represent bytes, not Unicode code points. */
+function quotedPath(value: string): { path: string; end: number } {
+  const chunks: Buffer[] = []; let literal = '', i = 1;
+  const flush = () => { if (literal) { chunks.push(Buffer.from(literal)); literal = ''; } };
+  const escapes: Record<string, string> = { a: '\x07', b: '\b', t: '\t', n: '\n', v: '\v', f: '\f', r: '\r', '"': '"', '\\': '\\' };
+  while (i < value.length) {
+    const ch = value[i++]!;
+    if (ch === '"') { flush(); return { path: Buffer.concat(chunks).toString('utf8'), end: i }; }
+    if (ch !== '\\') { literal += ch; continue; }
+    flush(); const escaped = value[i++];
+    if (escaped && /[0-7]/.test(escaped)) {
+      let octal = escaped;
+      while (octal.length < 3 && i < value.length && /[0-7]/.test(value[i]!)) octal += value[i++];
+      const byte = parseInt(octal, 8);
+      if (byte > 255) throw new Error('Invalid octal byte in quoted Git path');
+      chunks.push(Buffer.from([byte]));
+    } else if (escaped !== undefined && escapes[escaped] !== undefined) chunks.push(Buffer.from(escapes[escaped]!));
+    else throw new Error('Invalid escape in quoted Git path');
+  }
+  throw new Error('Unterminated quoted Git path');
+}
+function pathValue(value: string, marker = false): string {
+  if (!value.startsWith('"')) return marker ? value.split('\t', 1)[0]! : value;
+  const parsed = quotedPath(value), tail = value.slice(parsed.end);
+  if (tail && !(marker && tail.startsWith('\t'))) throw new Error('Unexpected text after quoted Git path');
+  return parsed.path;
+}
+function prefixedPath(value: string, prefix: 'a/' | 'b/', marker = false): string {
+  const path = pathValue(value, marker);
+  if (!path.startsWith(prefix)) throw new Error('Missing canonical prefix in Git diff path');
+  return path.slice(prefix.length);
+}
+function diffPath(text: string): string {
+  const patch = text.slice(text.indexOf('diff --git '));
+  const hunk = patch.search(/^@@(?: |$)|^GIT binary patch$|^Binary files /m);
+  const lines = patch.slice(0, hunk < 0 ? patch.length : hunk).split('\n');
+  // Only inspect extended/file headers, never hunk content resembling +++ or --- paths.
+  const after = lines.find(line => line.startsWith('+++ '))?.slice(4);
+  if (after !== undefined && after !== '/dev/null') return prefixedPath(after, 'b/', true);
+  const before = lines.find(line => line.startsWith('--- '))?.slice(4);
+  if (before !== undefined && before !== '/dev/null') return prefixedPath(before, 'a/', true);
+  const moved = lines.find(line => /^(?:rename|copy) to /.test(line));
+  if (moved) return pathValue(moved.replace(/^(?:rename|copy) to /, ''));
+  const header = lines[0]!.slice('diff --git '.length);
+  if (header.startsWith('"')) {
+    const left = quotedPath(header), rest = header.slice(left.end);
+    if (!left.path.startsWith('a/') || !rest.startsWith(' ')) throw new Error('Invalid quoted Git diff header');
+    return prefixedPath(rest.slice(1), 'b/');
+  }
+  const quotedRight = header.indexOf(' "b/');
+  if (quotedRight >= 0) return prefixedPath(header.slice(quotedRight + 1), 'b/');
+  const separators = [...header.matchAll(/ b\//g)].map(match => match.index);
+  // Unquoted spaces are legal. Identical source/destination paths disambiguate literal " b/" segments.
+  const same = separators.find(split => header.startsWith('a/') && header.slice(2, split) === header.slice(split + 3));
+  if (same !== undefined) return header.slice(same + 3);
+  if (separators.length === 1) return header.slice(separators[0]! + 3);
+  throw new Error('Ambiguous unquoted Git diff path without file or rename headers');
+}
 /** The aggregate diff as one chunk per file, in Git's order. Joining the chunks returns the input. */
 export function splitDiff(diff: string): { path: string; text: string }[] {
   const starts = [...diff.matchAll(/^diff --git /gm)].map(m => m.index);
   if (!starts.length) return diff ? [{ path: '', text: diff }] : [];
   const chunks = starts.map((start, i) => diff.slice(i === 0 ? 0 : start, starts[i + 1] ?? diff.length));
-  return chunks.map(text => {
-    const header = text.slice(text.indexOf('diff --git ')).split('\n', 1)[0]!;
-    const split = header.lastIndexOf(' b/');
-    return { path: split < 0 ? '' : header.slice(split + 3).trim(), text };
-  });
+  return chunks.map(text => ({ path: diffPath(text), text }));
 }
 
 export type TransportPart = { ref: string; path?: string; index: number; total: number; start: number; end: number };

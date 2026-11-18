@@ -32,7 +32,7 @@ export function boardSources(ref: string, raw: unknown): Source[] {
   const count = chunks.length;
   return chunks.map((text, part) => {
     return { ...full, ref: count === 1 ? ref : `${ref}:part-${part + 1}-of-${count}`, text,
-      revision: digest(`${full.revision}\0${part}\0${text}`), truncated: incomplete };
+      revision: full.revision, truncated: incomplete };
   });
 }
 export function excluded(path: string, exclusions: string[]): boolean {
