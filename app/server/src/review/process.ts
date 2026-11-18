@@ -88,3 +88,26 @@ export async function command(exe: string, argv: string[], cwd: string, env: Nod
     });
   });
 }
+
+/** Binary-safe stdout for verification artifacts. It keeps the same bounded, detached execution policy as command(). */
+export async function commandBytes(exe: string, argv: string[], cwd: string, env: NodeJS.ProcessEnv, timeout = 120_000, maxBytes = 1_000_000): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(exe, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    const out: Buffer[] = [], err: Buffer[] = []; let bytes = 0, failed = false;
+    const stop = (message: string, kind: SafeFailureKind = 'identity') => {
+      if (failed) return; failed = true;
+      try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { /* process already exited */ }
+      reject(new SafeProcessError(kind, undefined, message));
+    };
+    const timer = setTimeout(() => stop('Adapter timed out', 'temporary'), timeout);
+    const collect = (part: Buffer, target: Buffer[]) => { bytes += part.length; if (bytes > maxBytes) stop('Adapter output truncated at byte limit'); else target.push(part); };
+    child.stdout!.on('data', (part: Buffer) => collect(part, out));
+    child.stderr!.on('data', (part: Buffer) => collect(part, err));
+    child.on('error', () => { clearTimeout(timer); stop('Adapter executable unavailable', 'identity'); });
+    child.on('close', code => {
+      clearTimeout(timer); if (failed) return;
+      if (code !== 0) { logFailure(`${exe} exit ${code}\n${Buffer.concat(err).toString()}\n${Buffer.concat(out).toString()}`); reject(new SafeProcessError(failureKind(Buffer.concat(err).toString()), `Adapter exited ${code}`)); }
+      else resolve(Buffer.concat(out));
+    });
+  });
+}
