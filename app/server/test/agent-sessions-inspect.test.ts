@@ -1,6 +1,7 @@
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
+import { attributeBots } from '../src/archive/bot.js';
 import { sha256 } from '../src/archive/clean.js';
 import * as archive from '../src/archive/store.js';
 import type { ParsedMessage, SessionInput } from '../src/archive/types.js';
@@ -67,7 +68,11 @@ async function seed(): Promise<void> {
       call({ sessionExternalId: 'card-run', entrypoint: 'sdk-cli', inputTokens: 7 }),
     ]);
   });
-  await query(`INSERT INTO org_agents (name, runtime, role, org_version) VALUES ('atlas', 'claude-code', 'Head', 'v') ON CONFLICT DO NOTHING`);
+  await query(`INSERT INTO org_agents (name, runtime, role, org_version) VALUES ('atlas', 'claude-code', 'Head', 'v'), ('rune','claude-code','Engineer','v'), ('sol','zen-agent','Writer','v') ON CONFLICT DO NOTHING`);
+  await withTransaction(async tx => {
+    const ss = await tx.query(`SELECT id FROM archive_sessions`);
+    await attributeBots(tx, ss.rows.map(r => r.id));
+  });
   await query(`INSERT INTO boards (slug, name) VALUES ('exo', 'Exo') ON CONFLICT DO NOTHING`);
   await query(`INSERT INTO cards (id, board_slug, title, assignee, created_by) VALUES ('t_abc123', 'exo', 'Usage sessions: Telegram inspection', 'atlas', 'atlas')`);
   await query(`INSERT INTO usage_runs (host, run_id, session_id, log_path, agent_name, runtime, task_id, started_at)
@@ -126,11 +131,11 @@ describe('session type', () => {
 });
 
 describe('persona', () => {
-  it('names the run agent, the zen persona or the Telegram bot; a terminal session has none, anything else says unknown', async () => {
+  it('names validated run and native personas, keeping the transport bot separate; a terminal session has none, anything else says unknown', async () => {
     const s = await byId();
     expect(s['card-run']!.persona).toBe('rune');
     expect(s['z-chat']!.persona).toBe('sol');
-    expect(s.tg!.persona).toBe('claude');
+    expect(s.tg!.persona).toBeNull(); // a transport bot name is not a roster persona
     expect(s.typed!.persona).toBeNull();
     expect(await ids({ persona: 'rune' })).toEqual(['card-run']);
     expect(await ids({ persona: 'sol' })).toEqual(['z-chat', 'z-old']);
@@ -143,8 +148,8 @@ describe('persona', () => {
     expect(Object.keys(r.body.facets).sort()).toEqual(['channel', 'harness', 'host', 'persona', 'profile', 'provider', 'tool', 'type']);
     expect(r.body.facets.type).toEqual([{ value: 'cli', n: 3 }, { value: 'headless', n: 3 }, { value: 'remote-control', n: 1 },
       { value: 'telegram', n: 1 }, { value: 'unknown', n: 1 }]);
-    expect(r.body.facets.persona).toEqual([{ value: 'unknown', n: 3 }, { value: 'none', n: 2 }, { value: 'sol', n: 2 },
-      { value: 'claude', n: 1 }, { value: 'rune', n: 1 }]);
+    expect(r.body.facets.persona).toEqual([{ value: 'unknown', n: 4 }, { value: 'none', n: 2 }, { value: 'sol', n: 2 },
+      { value: 'rune', n: 1 }]);
   });
 });
 
@@ -160,7 +165,7 @@ describe('context and duration', () => {
 
   it('the session page header carries the same fields', async () => {
     const r = await request(app).get('/api/usage/agent-sessions/droplet/tg').query({ source: 'claude-code' }).expect(200);
-    expect(r.body.session).toMatchObject({ session_type: 'telegram', persona: 'claude', channel_bot: 'claude', context_tokens: 30150,
+    expect(r.body.session).toMatchObject({ session_type: 'telegram', persona: null, channel_bot: 'claude', context_tokens: 30150,
       context_window: null, display_title: 'Board check', title_source: 'title', models: ['claude-opus-5-5'] });
   });
 });

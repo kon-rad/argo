@@ -69,6 +69,14 @@ export interface ZenConfig {
   rules: string[];
   /** Skill folders (Agent Skills layout: `<dir>/<name>/SKILL.md`); earlier dirs win on a name clash. */
   skills: string[];
+  /**
+   * Managed skills (the engine's skills manager): the root its reconcile step writes generated views into.
+   * When set, a persona's view `<root>/views/<persona>/zen-agent/` is the whole catalog, pinned per run into a
+   * read-only snapshot under `snapshots` (default: the sessions folder). An absent persona/view always gives no
+   * skills. `enforce` remains accepted for configuration compatibility; false does not enable legacy fallback.
+   * Null (the default): `skills` folders exactly as before.
+   */
+  managedSkills: { root: string; enforce: boolean; snapshots: string | null } | null;
   persona: { org: string; definitions: string; memory: string };
   /** Tool sets to load: fs, shell, skills, knowledge, kanban, org, subagent. */
   tools: string[];
@@ -115,6 +123,7 @@ export const DEFAULTS: ZenConfig = {
   sessionsDir: '.zen/sessions',
   rules: ['AGENTS.md'],
   skills: ['.agents/skills', '~/.zen/skills'],
+  managedSkills: null,
   persona: { org: '.agents/org/org.json', definitions: '.claude/agents', memory: '.agents/org/memory' },
   tools: ['fs', 'shell', 'skills', 'knowledge', 'kanban', 'org', 'subagent'],
   budget: { turns: 40, tokens: 400_000, minutes: 30 },
@@ -143,6 +152,23 @@ export function expandHome(p: string): string {
 function under(base: string, p: string): string {
   const e = expandHome(p);
   return isAbsolute(e) ? e : resolve(base, e);
+}
+
+/** An explicit managed catalog must never turn into legacy discovery after a typo. */
+function managedSkills(raw: unknown, vault: string): ZenConfig['managedSkills'] {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('zen config managedSkills: expected an object or null');
+  const value = raw as Record<string, unknown>;
+  if (typeof value.root !== 'string' || !value.root.trim()) throw new Error('zen config managedSkills.root: expected a nonempty path string');
+  if (value.enforce !== undefined && typeof value.enforce !== 'boolean') throw new Error('zen config managedSkills.enforce: expected a boolean');
+  if (value.snapshots !== undefined && value.snapshots !== null && (typeof value.snapshots !== 'string' || !value.snapshots.trim())) {
+    throw new Error('zen config managedSkills.snapshots: expected null or a nonempty path string');
+  }
+  return {
+    root: under(vault, value.root),
+    enforce: value.enforce === true,
+    snapshots: typeof value.snapshots === 'string' ? under(vault, value.snapshots) : null,
+  };
 }
 
 /** Deep merge for plain objects; arrays and scalars replace. */
@@ -200,6 +226,7 @@ export function loadConfig(opts: LoadOptions = {}): ZenConfig {
     sessionsDir: under(vault, cfg.sessionsDir),
     rules: cfg.rules.map((p) => under(vault, p)),
     skills: cfg.skills.map((p) => under(vault, p)),
+    managedSkills: managedSkills(cfg.managedSkills, vault),
     persona: {
       org: under(vault, cfg.persona.org),
       definitions: under(vault, cfg.persona.definitions),

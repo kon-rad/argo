@@ -47,3 +47,18 @@ describe('readHermes', () => {
     expect(readHermes(dbPath, 'mac').sessions[0]!.costUsd).toBeNull();
   });
 });
+
+it('decodes recorded terminal outcomes and text without changing source rows or counters', () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'hermes-result-')), 'state.db');
+  const db = new DatabaseSync(path);
+  db.exec(`CREATE TABLE sessions (id TEXT, started_at REAL, input_tokens INTEGER, output_tokens INTEGER);
+    CREATE TABLE messages (id INTEGER, session_id TEXT, role TEXT, content TEXT, timestamp REAL);
+    INSERT INTO sessions VALUES ('fake-session', 1790000000, 80, 20);`);
+  db.prepare('INSERT INTO messages VALUES (1, ?, ?, ?, 1790000001)').run('fake-session', 'tool', JSON.stringify({ output: 'denied', exit_code: 255 }));
+  db.close();
+  const parsed = readHermes(path, 'mac');
+  expect(parsed.messages[0]!.contentText).toBe('denied');
+  expect(parsed.messages[0]!.raw).toMatchObject({ content: '{"output":"denied","exit_code":255}' });
+  expect(parsed.sessions[0]).toMatchObject({ inputTokens: 80, outputTokens: 20 });
+  expect(readHermes(path, 'mac')).toEqual(parsed);
+});

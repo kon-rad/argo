@@ -106,6 +106,27 @@ export async function upsertRuns(tx: TxClient, runs: RunRecord[]): Promise<numbe
  * Calls and run logs sync separately, so this runs after both and only fills blanks.
  */
 export async function attachCallsToRuns(tx: TxClient, host: Host): Promise<number> {
+  // The dispatcher files a Codex run under its own host (or ORG_CODEX_HOST), but Codex may have executed on
+  // another machine. Once that machine's native calls for the run's session are in, the run belongs to it: move
+  // the run here and drop the one-row summary left on the other host, so the tokens are counted once.
+  const moved = await tx.query<{ old_host: string; run_id: string }>(
+    `WITH target AS (
+       SELECT r.host AS old_host, r.run_id FROM usage_runs r
+        WHERE r.runtime = 'codex' AND r.host <> $1 AND r.started_at IS NOT NULL
+          AND EXISTS (SELECT 1 FROM usage_calls n
+                       WHERE n.host = $1 AND n.source = 'codex' AND n.session_external_id = r.session_id
+                         AND n.call_id IS DISTINCT FROM n.run_id
+                         AND n.ts >= r.started_at - interval '2 minutes'
+                         AND n.ts <= COALESCE(r.ended_at, now()) + interval '2 minutes')
+          AND NOT EXISTS (SELECT 1 FROM usage_runs x WHERE x.host = $1 AND x.run_id = r.run_id)
+        FOR UPDATE OF r),
+     upd AS (
+       UPDATE usage_runs r SET host = $1 FROM target t WHERE r.host = t.old_host AND r.run_id = t.run_id)
+     SELECT old_host, run_id FROM target`, [host]);
+  for (const m of moved.rows) {
+    await tx.query(
+      `DELETE FROM usage_calls WHERE source = 'codex' AND host = $1 AND call_id = $2 AND run_id = $2`, [m.old_host, m.run_id]);
+  }
   const attached = await tx.query(
     `UPDATE usage_calls c SET run_id = r.run_id
        FROM usage_runs r

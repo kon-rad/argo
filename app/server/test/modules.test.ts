@@ -4,6 +4,7 @@ import { createApp } from '../src/app.js';
 import { parseModules } from '../src/config.js';
 
 describe('optional modules', () => {
+  it('supports the optional local model addon', () => expect([...parseModules('localai')]).toContain('localai'));
   it('parses a comma list and drops unknown names', () => {
     expect([...parseModules('ring, agents ,bogus,')]).toEqual(['ring', 'agents']);
     expect([...parseModules('tv,map,org,projects,usage,voice,livestream,media,social')]).toEqual(['projects', 'org', 'usage', 'map', 'tv', 'voice', 'livestream', 'media', 'social']);

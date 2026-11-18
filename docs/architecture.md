@@ -96,7 +96,7 @@ AI agents (Claude Code, Hermes, others) work *inside the vault*, not inside the 
 | Piece | What | Where |
 |---|---|---|
 | Rules | `AGENTS.md` = the engine's `AGENTS.base.md` + the vault's `AGENTS.local.md`, compiled by `secondbrain-vault rules`. `CLAUDE.md` imports it | `vault-template/AGENTS.base.md` |
-| Guard hook | Runs before every tool call; blocks reading secrets, force pushes, unsafe `rsync --delete`, and whatever the vault's `guard.local.json` adds | `harness/hooks/guard.py` |
+| Guard hook | Runs before every tool call; blocks reading secrets, keys written into command lines or sent over ssh, force pushes, unsafe `rsync --delete`, and whatever the vault's `guard.local.json` adds | `harness/hooks/guard.py` |
 | Dev-log gate | Runs when an agent tries to finish; sends it back once if it changed skills, scripts, hooks or config without writing a dev log today | `harness/hooks/devlog_gate.py` |
 | Skills | `SKILL.md` folders; the engine's shared ones are symlinked into `.agents/skills/` | `skills/` |
 | zen-agent | A headless runtime of our own for bot wakes: the same rules, skills, guard rules and hook scripts, run by a minimal loop (pi agent core) with the context assembled as code, a budget per run and a JSONL trace per run. Any provider; the board and the retrieval API are tools, and `zen-agent lane` claims cards from the board. The plan for moving the bots onto it is [zen-agent.md](zen-agent.md) | `zen-agent/` |
@@ -137,6 +137,8 @@ with stable host/session/counter IDs. The forward migration includes Codex in
 `usage_facts`; archives remain the transcript store. No provider pricing is
 inferred. Recent Codex sessions are observations with a 20-minute stale window.
 
+Verification sits between building and review ([verification](verification.md)). The repository declares capabilities and checks in `verification/contract.json`; `scripts/verify.mjs` is the one entry point, and it executes only on a disposable GitHub-hosted VM (the CI `app` job), never on a workstation, coordinator or self-hosted runner. There it is a supervisor: every repository check runs as a separate unprivileged user with loopback-only egress, dependencies arrive through a registry-only proxy with lifecycle scripts disabled, and an adversarial probe proves that boundary before any check starts. The trusted side, `app/server/src/verification/`, never imports that runner: `contract.ts` admits a contract against the owner's installation policy (every field of each required check pinned), `github.ts` checks that the verifier backend is usable before a builder launches and fetches the configured run, job and artifact itself, `zip.ts` reads that artifact in memory under member, type and size limits, and `evidence.ts` judges exact-commit evidence, recomputes test counts from the runner's report and types each failure (assertion, infrastructure, dependency, unknown, evidence, verifier-trust, contract, external-contract). When a repository's host policy has `verification`, the review gate verifies before independent review and before merge, returns typed assertions to the builder while retaining other blockers for their own routes, requires the deployment target to attest merge-disabled flags are off before merge and deploy, and keeps merge-disabled and activation-pending releases open after deployment and health.
+
 Laptop zen-agent traces travel the same wire as `zen` whole-file envelopes. Every
 ingest path (usage-sync, usage-import, the ledger's batches, agents-sync, the
 archive) ends by calling `archive/bot.ts`, which sets `archive_sessions.bot` (a
@@ -152,6 +154,48 @@ PR size is never a reason the gate rejects: the worker keeps the whole diff and 
 
 The optional social addon mounts an app-owned Unified Login connect page and a callback before SPA routing. A dedicated ten-minute Lax cookie bridges the cross-site return while the main auth cookie stays Strict. Hashed one-time state is tied to an existing auth session, intended account and fixed public callback; one atomic delete validates and consumes it before code exchange. Session revocation cascades to pending states. Typed encrypted metrics credentials separate Facebook USER and business-integration SYSTEM_USER tokens and their asset IDs from legacy Instagram Login tokens and publishing credentials. USER tokens prove the asset through a managed Page; SYSTEM_USER tokens through the asset ID in their granular-scope targets. Facebook collection uses asset-node endpoints and never legacy refresh. Other token types fail closed. See [social metrics](social-metrics.md#unified-login) for limitations and setup.
 
+## Skills management
+
+The optional `skills` addon (`app/server/src/addons/skills/`) is one service behind `/api/skills` and `secondbrain skills`. Package files and the assignment policy (`.agents/skills-policy.yaml`) are the authority and live in Git; the catalog is read from the configured roots on demand (no index), with a full-package digest, Git revision and dirty state per candidate. Postgres holds only operational machine acknowledgements (`skill_view_acks`, `skill_ack_log`), written through a device-token route whose token decides the host. Lifecycle writes go only to a drafts folder and a proposed-changes folder; `skills apply` commits a change on a review branch through a temporary worktree. `skills sync` deploys verified packages into a content-addressed store under a machine-local managed root and switches each agent's generated view atomically; zen-agent reads that view and pins a per-run snapshot. Legacy behaviour is the default until the policy enables management. See [Skills](skills.md).
+
 ## Observatory evidence and replay
 
 The optional `observatory` addon reads existing source tables through the owner-session boundary and effective database role. Bounded repeatable-read exports feed the pure versioned reducer in `app/shared/observatory.ts`. Archive steps supply tool evidence; usage rows remain usage measurements. Recorded execution intervals govern visibility, while missing lifecycle and sender provenance remain unknown. Five-minute per-session exports pin pagination and revalidate visibility. See [API and replay contract](observatory.md) and [coordinator audit queries](audits/observatory.sql). No new collectors or LLM processing are involved.
+
+### Launch provenance boundary
+
+`usage_launches` is a durable, versioned producer envelope keyed by host, native
+source, runtime and run ID, with a single nullable-to-native session binding.
+It exists independently of wake accounting and token identity. `usage_session_tasks`
+unites strict existing run evidence, validated launch task snapshots and the additive
+`archive_session_tasks` historical associations. Session list/detail and persona
+facets use the same attribution functions as `usage_facts`; unknown launch/native
+persona evidence is retained without later roster reassignment. The dispatcher writes
+before spawning and captures native identity before finalisation. Transport contracts,
+replay and rollback are in [Usage provenance](usage-provenance.md).
+### Recorded tool result derivation
+
+Codex and Hermes archives use `archive/toolResult.ts` for structured output and nullable success/failure, shared by import and detail expansion. `archive/store.ts` derives persisted fields and records a parser version independent of raw SHA. `archive/replayResults.ts` reuses that derivation for scoped dry-run/replay without rewriting raw, source identity, timestamps or token records. List counts and detail use the same invocation rendering predicate. Explicit run lifecycle failures remain separate from tool failures. See [operator replay](tool-result-replay.md).
+
+Collection health uses additive Postgres `collection_attempts` and
+`collection_streams`, keyed independently by host, collector instance, runtime and
+path. Device authentication supplies host. Attempt receipt does not update source
+activity. SSH v2 acknowledgements distinguish accepted positions from durable
+`usage_import_quarantine` entries; failed acknowledgements retain local source
+cursors. See [collection health](collection-health.md) for compatibility and bounds.
+
+
+### Collection supervision and source health
+
+Session collectors run synchronous scanning, Hermes snapshot/parsing and import in
+supervised child process groups. A parent deadline covers the whole attempt and
+owns temporary snapshot cleanup. Committed per-file cursors survive; in-flight
+transactions roll back on termination. A separate bounded child reports timeout
+health. Source event timestamps and explicit pending byte/record units travel to
+Postgres independently of receipt time. Inactive attempt expiry is globally bounded;
+quarantine has explicit supported-importer replay and no automatic deletion.
+See [collection health](collection-health.md) for compatibility and operator commands.
+
+### Local model usage addon
+
+The optional `localai` addon imports local gateway export pages transactionally with their cursors. Its manifest registers the protected read-only `/api/local-ai` API, five-minute pull timer and `secondbrain local-ai-pull` command. The Usage ledger renders its separate local-call summary only when enabled; cloud usage facts stay independent.

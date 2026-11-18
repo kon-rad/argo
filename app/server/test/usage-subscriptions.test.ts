@@ -166,7 +166,7 @@ describe('Codex quota reader and cache', () => {
 
 describe('usage manifest routes', () => {
   it('defaults to no providers, and defaults only an invalid usage section', async () => {
-    expect(parseSettings({}).usage).toEqual({ subscriptions: [], credits: [],
+    expect(parseSettings({}).usage).toEqual({ expectedStreams: [], subscriptions: [], credits: [],
       sections: ['running', 'ledger', 'sessions', 'summaries'] });
     const invalid = settingsReport({ usage: { subscriptions: ['other'] } });
     expect(invalid.settings.usage.subscriptions).toEqual([]);
@@ -175,7 +175,8 @@ describe('usage manifest routes', () => {
     writeFileSync(file, '{}');
     process.env.SECONDBRAIN_SETTINGS = file;
     const app = createApp({ modules: ALL_MODULES });
-    expect((await request(app).get('/api/usage/config')).body).toEqual(parseSettings({}).usage);
+    const { expectedStreams: _privateCollectionConfig, ...publicUsage } = parseSettings({}).usage;
+    expect((await request(app).get('/api/usage/config')).body).toEqual(publicUsage);
     expect((await request(app).get('/api/usage/subscriptions')).body).toEqual({ providers: [] });
     expect((await request(app).get('/api/usage/credits')).body).toEqual({ providers: [], history: [] });
   });

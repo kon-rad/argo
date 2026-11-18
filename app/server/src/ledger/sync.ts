@@ -26,7 +26,8 @@ export function backoffMs(fails: number): number {
 }
 
 export async function syncOnce(ledger: Ledger, cfg: LedgerConfig, deps: SyncDeps,
-  opts: { force?: boolean; maxBatches?: number } = {}): Promise<SyncResult> {
+  opts: { force?: boolean; maxBatches?: number; maxMs?: number } = {}): Promise<SyncResult> {
+  const deadline = Date.now() + (opts.maxMs ?? 120_000);
   const token = process.env.SB_LEDGER_TOKEN || cfg.token;
   const state = ledger.syncState();
   const result: SyncResult = { status: 'ok', sent: 0, batches: 0, quarantined: 0, ackedSeq: state.ackedSeq, error: null };
@@ -54,6 +55,7 @@ export async function syncOnce(ledger: Ledger, cfg: LedgerConfig, deps: SyncDeps
   const clean = (rows: WireRow[]): WireRow[] => rows.map((r) => (r.kind === 'blob' ? r : { ...r, data: red.deep(r.data) }));
 
   const post = async (rows: WireRow[]): Promise<Outcome> => {
+    if (Date.now() >= deadline) return { kind: 'retry', message: 'deadline' };
     const batch: WireBatch = { v: 1, ledgerId: ledger.ledgerId, bundle: deps.bundle, fromSeq: rows[0]!.seq, toSeq: rows.at(-1)!.seq, rows: clean(rows) };
     let res: Response;
     try {
@@ -61,7 +63,7 @@ export async function syncOnce(ledger: Ledger, cfg: LedgerConfig, deps: SyncDeps
         method: 'POST',
         headers: { 'content-type': 'application/json', 'content-encoding': 'gzip', authorization: `Bearer ${token}` },
         body: gzipSync(JSON.stringify(batch)),
-        signal: AbortSignal.timeout(180_000),
+        signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
       });
     } catch (err) {
       return { kind: 'retry', message: `server unreachable: ${(err as Error).message}` };
@@ -95,7 +97,7 @@ export async function syncOnce(ledger: Ledger, cfg: LedgerConfig, deps: SyncDeps
 
   let acked = state.ackedSeq;
   const maxBatches = opts.maxBatches ?? 500;
-  while (result.batches < maxBatches) {
+  while (result.batches < maxBatches && Date.now() < deadline) {
     const rows = ledger.pending(acked, cfg.batchBytes);
     if (!rows.length) break;
     const r = await deliver(rows);

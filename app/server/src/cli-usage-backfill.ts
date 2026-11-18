@@ -8,13 +8,21 @@
 //   --bots      label sessions already imported with the roster bot a person chose (archive_sessions.bot: Claude
 //               Code's agent-setting, a Codex or Hermes chat opened with the persona, a zen-agent persona), and take
 //               the agent off zen-agent runs no dispatcher started. Run on the server after migration 18800.
+import { replayProvenance } from './usage/provenance.js';
 import { backfillBots } from './archive/bot.js';
 import { pool, query, withTransaction } from './db.js';
 import { classifyAction } from './usage/actions.js';
 import { callsFromRecords } from './usage/claudeCalls.js';
 import { attachCallsToRuns } from './usage/store.js';
 
-if (process.argv.includes('--bots')) {
+if (process.argv.includes('--provenance')) {
+  const arg = process.argv.find(a => a.startsWith('--sessions='));
+  if (!arg || !/^--sessions=[0-9]+(?:,[0-9]+)*$/.test(arg)) throw new Error('--provenance requires --sessions=<archive IDs>');
+  const ids = arg.slice('--sessions='.length).split(',').map(Number);
+  if (ids.length > 500 || ids.some(id => !Number.isSafeInteger(id) || id < 1)) throw new Error('invalid archive ID scope (max 500)');
+  const result = await withTransaction(tx => replayProvenance(tx, ids, !process.argv.includes('--apply')));
+  console.log(JSON.stringify({ dryRun: !process.argv.includes('--apply'), ...result }));
+} else if (process.argv.includes('--bots')) {
   const r = await backfillBots();
   console.error(`usage-backfill: ${r.scanned} sessions read, ${r.labelled} labelled with a bot, ${r.zenRuns} zen-agent chats no longer counted as wakes`);
 } else if (process.argv.includes('--actions')) {

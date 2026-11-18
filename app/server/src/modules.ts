@@ -10,6 +10,7 @@ export const CORE_MODULES = ['projects', 'memory', 'org', 'board', 'usage', 'sum
 
 /** Non-core modules. Each has a manifest under `server/src/addons/<name>/` and is off until the vault lists it. */
 export const ADDON_MODULES = [
+  'localai',
   'ring',
   'agents',
   'map',
@@ -23,6 +24,7 @@ export const ADDON_MODULES = [
   'uploads',
   'garden',
   'warehouse',
+  'skills',
   // Pilots and proposals: each has a manifest and a docs-only Status line. Off unless listed.
   'routing',
   'classify',

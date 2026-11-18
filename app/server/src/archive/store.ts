@@ -1,6 +1,7 @@
 import { query, type TxClient } from '../db.js';
 import { clean, sha256 } from './clean.js';
 import { redactor } from './redact.js';
+import { RESULT_PARSER_VERSION, toolResult } from './toolResult.js';
 import { stepFields } from './steps.js';
 import type { Host, LogLine, ParsedMessage, SessionInput } from './types.js';
 
@@ -88,13 +89,17 @@ export async function upsertSession(tx: TxClient, s: SessionInput): Promise<{ id
   return { id: existing.rows[0]!.id, changed: false };
 }
 
+export function deriveMessage(raw: unknown, contentText: string) {
+  return { ...stepFields(raw), contentText: redactor().text(clean(toolResult(raw)?.text ?? contentText)), version: RESULT_PARSER_VERSION };
+}
+
 const MSG_BATCH = 200;
 
 export async function upsertMessages(tx: TxClient, sessionId: number, input: ParsedMessage[]): Promise<number> {
   // One INSERT cannot touch the same conflict key twice: dedupe by externalId, last one wins.
   const msgs = [...new Map(input.map((m) => [m.externalId, m])).values()];
   const red = redactor();
-  const COLS = 15;
+  const COLS = 16;
   let changed = 0;
   for (let i = 0; i < msgs.length; i += MSG_BATCH) {
     const batch = msgs.slice(i, i + MSG_BATCH);
@@ -105,21 +110,22 @@ export async function upsertMessages(tx: TxClient, sessionId: number, input: Par
       const ph = Array.from({ length: COLS }, (_, k) => `$${b + k + 1}${k === 8 ? '::jsonb' : k === 12 ? '::text[]' : ''}`);
       values.push(`(${ph.join(',')})`);
       // Classified from the original record; stored redacted. raw_sha stays the original's hash.
-      const f = stepFields(m.raw);
+      const f = deriveMessage(m.raw, m.contentText);
       params.push(sessionId, m.seq, m.externalId, m.parentExternalId, m.role, m.kind, m.ts,
-        red.text(clean(m.contentText)), JSON.stringify(red.deep(clean(m.raw))), m.rawSha, m.isSidechain,
-        f.step, f.toolNames.length ? f.toolNames : null, f.toolCallId, f.isError);
+        f.contentText, JSON.stringify(red.deep(clean(m.raw))), m.rawSha, m.isSidechain,
+        f.step, f.toolNames.length ? f.toolNames : null, f.toolCallId, f.isError, RESULT_PARSER_VERSION);
     });
     const r = await tx.query(
       `INSERT INTO archive_messages AS a (session_id, seq, external_id, parent_external_id, role, kind, ts, content_text, raw, raw_sha, is_sidechain,
-         step, tool_names, tool_call_id, is_error)
+         step, tool_names, tool_call_id, is_error, result_parser_version)
        VALUES ${values.join(',')}
        ON CONFLICT (session_id, external_id) DO UPDATE SET
          seq=EXCLUDED.seq, parent_external_id=EXCLUDED.parent_external_id, role=EXCLUDED.role, kind=EXCLUDED.kind,
          ts=EXCLUDED.ts, content_text=EXCLUDED.content_text, raw=EXCLUDED.raw, raw_sha=EXCLUDED.raw_sha,
          is_sidechain=EXCLUDED.is_sidechain, step=EXCLUDED.step, tool_names=EXCLUDED.tool_names,
-         tool_call_id=EXCLUDED.tool_call_id, is_error=EXCLUDED.is_error
-       WHERE a.raw_sha IS DISTINCT FROM EXCLUDED.raw_sha OR a.step IS NULL`, params);
+         tool_call_id=EXCLUDED.tool_call_id, is_error=EXCLUDED.is_error, result_parser_version=EXCLUDED.result_parser_version
+       WHERE a.raw_sha IS DISTINCT FROM EXCLUDED.raw_sha OR a.step IS NULL
+         OR a.result_parser_version IS DISTINCT FROM EXCLUDED.result_parser_version`, params);
     changed += r.rowCount ?? 0;
   }
   return changed;

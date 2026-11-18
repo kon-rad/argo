@@ -66,6 +66,7 @@ describe('env and unit generation (pure)', () => {
 
   it('renders every former deploy unit pair from manifests or the base table', () => {
     expect(ALL_GENERATED_UNITS.map((u) => u.unit)).toEqual([
+      'secondbrain-roadmap-render',
       'secondbrain-projects-render',
       'secondbrain-areas-review',
       'secondbrain-memory-capture',
@@ -73,6 +74,7 @@ describe('env and unit generation (pure)', () => {
       'secondbrain-usage-sync',
       'secondbrain-credits-sync',
       'secondbrain-summarize',
+      'secondbrain-localai-pull',
       'secondbrain-agents-sync',
       'secondbrain-map-build',
       'secondbrain-metrics',
@@ -149,7 +151,7 @@ describe('env and unit generation (pure)', () => {
   });
 
   it('the weekly review timer is one of the projects feature units, Sunday 20:00 in the vault time zone', () => {
-    expect(unitStems(new Set(['projects']))).toEqual(['secondbrain', 'secondbrain-projects-render', 'secondbrain-areas-review']);
+    expect(unitStems(new Set(['projects']))).toEqual(['secondbrain', 'secondbrain-roadmap-render', 'secondbrain-projects-render', 'secondbrain-areas-review']);
     const unit = ALL_GENERATED_UNITS.find((candidate) => candidate.unit === 'secondbrain-areas-review')!;
     for (const ext of ['service', 'timer'] as const) {
       expect(renderGeneratedUnit(unit, ext)).toBe(readFileSync(resolve(here, 'fixtures/deploy-units', `secondbrain-areas-review.${ext}`), 'utf8'));
@@ -165,6 +167,16 @@ describe('env and unit generation (pure)', () => {
     // No zone configured: UTC, never the zone of the machine and never a placeholder.
     expect(planned()).toContain('OnCalendar=Sun *-*-* 20:00:00 UTC\n');
     expect(planned(null)).not.toContain('@');
+  });
+
+  it('generates the hourly roadmap command only when projects is enabled', () => {
+    const plan = planDeploy({ ...io(memFs()), modules: new Set(['projects']), installed: [] });
+    expect(plan.files.find((f) => f.path === '/etc/systemd/system/secondbrain-roadmap-render.service')?.after).toContain(
+      'ExecStart=/usr/bin/node --no-warnings server/dist/cli-projects.js roadmap',
+    );
+    expect(plan.files.find((f) => f.path === '/etc/systemd/system/secondbrain-roadmap-render.timer')?.after).toContain('OnCalendar=hourly\n');
+    const withoutProjects = planDeploy({ ...io(memFs()), modules: new Set(['board']), installed: [] });
+    expect(withoutProjects.files.some((f) => f.path.includes('secondbrain-roadmap-render'))).toBe(false);
   });
 
   it('apply writes the plan, then a second plan is all unchanged', () => {

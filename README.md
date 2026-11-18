@@ -123,6 +123,7 @@ The six core features (`projects`, `memory`, `org`, `board`, `usage`, `summaries
 | `agents` | Agent chats and cron history |
 | `usage` | What your agents cost, by bot, task and project |
 | `observatory` | Optional evidence coverage/window/detail API and pure deterministic replay; [contract](docs/observatory.md) |
+| `skills` | Which skills exist, which agent gets which, what each machine installed, and a reviewed way to change them; [guide](docs/skills.md) |
 | `summaries` | One model-written summary per finished agent session, with the facts it proposes for memory |
 | `chat` | Ask your notes: answers built from retrieved passages with citations, any provider's model, your org's agents as personas |
 | `map` | A 3D brain map of your notes, projects and goals, with metrics |
@@ -257,3 +258,5 @@ Report vulnerabilities privately through GitHub's Security tab, never in a publi
 ## License
 
 [MIT](LICENSE). Built by [Konrad Gnat](https://github.com/kon-rad) and contributors. <!-- public-ok -->
+
+The optional `localai` addon shows calls from a local model logging gateway on Usage. See [modules](docs/modules.md#localai).

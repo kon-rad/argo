@@ -11,6 +11,63 @@ export type { BoardCard, BoardCardDetail, BoardCardFilter, BoardContract, BoardI
 export { STAGES } from '@secondbrain/contracts/projects';
 export type { AreaStatus, Stage, TrackerArea, TrackerGoal, TrackerItem, TrackerProject, TrackerReport, TrackerRollup, TrackerVerification } from '@secondbrain/contracts/projects';
 
+/** The media schedule page (server/src/media-schedule.ts). */
+export interface MediaChannel {
+  id: string;
+  network: string;
+  handle?: string;
+  url: string | null;
+  urlUnconfirmed: boolean;
+  posting: 'buffer' | 'direct' | 'manual';
+  account_id?: number;
+  style_guide?: string;
+  styleGuideMissing: boolean;
+  note?: string;
+  role?: string;
+  files?: string;
+  account: { state: 'connected' | 'disconnected' | 'missing'; tokenExpiresInDays: number | null; provider: string | null; transport: string | null } | null;
+  counts: { draft: number; queued: number; posted: number; failed: number };
+}
+
+export type MediaBrandResult =
+  | {
+      ok: true;
+      slug: string;
+      name: string;
+      config: string;
+      trackerProjects: string[];
+      styleGuides: { path: string; missing: boolean }[];
+      channels: MediaChannel[];
+      warnings: string[];
+    }
+  | { ok: false; slug: string; config: string; error: { file: string; line: number | null; message: string } };
+
+export interface MediaPost {
+  id: number;
+  account_id: number;
+  channelId: string;
+  network: string;
+  body: string;
+  options: Record<string, unknown>;
+  status: 'draft' | 'queued' | 'publishing' | 'posted' | 'failed' | 'canceled';
+  scheduled_for: string;
+  posted_at: string | null;
+  remote_url: string | null;
+  last_error: string | null;
+  card_id: string | null;
+  source_path: string | null;
+  hasMedia: boolean;
+  mediaCount: number;
+}
+
+export interface MediaCalendar {
+  brand: string;
+  from: string;
+  to: string;
+  posts: MediaPost[];
+  channels: MediaChannel[];
+}
+
 export interface TreeDir {
   name: string;
   path: string;
@@ -197,7 +254,7 @@ export interface FeatureNav {
 }
 
 export interface AppMeta {
-  modules: ('ring' | 'agents' | 'projects' | 'org' | 'board' | 'usage' | 'summaries' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat' | 'uploads' | 'warehouse')[];
+  modules: ('ring' | 'agents' | 'projects' | 'org' | 'board' | 'usage' | 'summaries' | 'map' | 'tv' | 'voice' | 'livestream' | 'media' | 'fund' | 'social' | 'chat' | 'uploads' | 'warehouse' | 'skills' | 'localai')[];
   /** The header links of the core features that are on. */
   nav?: FeatureNav[];
   owner: string;
@@ -452,12 +509,12 @@ export interface UsageCredits {
 }
 export interface UsageSeriesRow { bucket: string; key: string; input: number; cache_write: number; cache_read: number; output: number; calls: number }
 /** The labels every call carries (usage_facts); a filter is `dimension=a,b` and a group is one dimension. */
-export const USAGE_DIMENSIONS = ['agent', 'team', 'reason', 'action', 'work_type', 'area', 'project', 'task', 'host', 'headless', 'surface', 'lane', 'model', 'provider', 'source'] as const;
+export const USAGE_DIMENSIONS = ['agent', 'team', 'reason', 'action', 'work_type', 'area', 'project', 'task', 'host', 'headless', 'surface', 'lane', 'model', 'provider', 'source', 'job'] as const;
 export type UsageDimension = (typeof USAGE_DIMENSIONS)[number];
 export type UsageFilters = Partial<Record<UsageDimension, string[]>>;
 export const USAGE_DIMENSION_LABELS: Record<UsageDimension, string> = {
   agent: 'bot', team: 'team', reason: 'woken by', action: 'action', work_type: 'work', area: 'area', project: 'project', task: 'card',
-  host: 'host', headless: 'headless', surface: 'surface', lane: 'lane', model: 'model', provider: 'provider', source: 'runtime',
+  host: 'host', headless: 'headless', surface: 'surface', lane: 'lane', model: 'model', provider: 'provider', source: 'runtime', job: 'Hermes job or chat',
 };
 export function usageFilterParams(f: UsageFilters): Record<string, string> {
   return Object.fromEntries(USAGE_DIMENSIONS.filter((d) => f[d]?.length).map((d) => [d, f[d]!.join(',')]));
@@ -507,6 +564,23 @@ export interface LiveAgent {
 }
 export interface LiveMachine { slug: string; display: string; kind: string | null; agents: LiveAgent[] }
 export interface LiveNow { at: string; serverMachine: string; total: number; machines: LiveMachine[] }
+export interface LocalAiAgg {
+  runs: number; errors: number; prompt: number; cached: number; output: number;
+  avg_output_tps: number | null; avg_ttft_ms: number | null; energy_wh: number; audio_seconds: number;
+}
+export interface LocalAiSummary {
+  bucket: 'hour' | 'day'; tz: string; total: LocalAiAgg;
+  models: (LocalAiAgg & { host: string; model: string; service: string })[];
+  callers: (LocalAiAgg & { caller: string })[];
+  series: { bucket: string; key: string; prompt: number; output: number; runs: number }[];
+  hosts: { host: string; display: string; last_ok_at: string | null; last_try_at: string | null; error: string | null; last_run_at: string | null }[];
+}
+export interface LocalAiRun {
+  host: string; id: string; started_at: string; ended_at: string | null; state: string; service: string; route: string; model: string; caller: string;
+  tool_names: string[] | null; message_count: number | null; prompt_tokens: number | null; cached_tokens: number | null; output_tokens: number | null;
+  ttft_ms: number | null; total_ms: number | null; output_tps: number | null; cold_start: boolean | null; done_reason: string | null;
+  audio_seconds: number | null; voice: string | null; energy_j: number | null; error: string | null;
+}
 export interface UsageHost { slug: string; display: string; kind: 'laptop' | 'server' | 'pi'; chip: string | null; notes: string | null }
 /** One summary of a finished agent session (`secondbrain summarize`). touched and metrics are computed, the rest is model-written. */
 export interface AgentSummary {
@@ -532,13 +606,20 @@ export interface SummaryFact {
 /** One row of /usage/agent-sessions: a session from any harness and host. `cost_usd` only for non-Claude harnesses (Hermes's own estimate). */
 export interface AgentSessionRow {
   task_ids?: string[];
+  task_associations?: Array<{ task_id: string; evidence_id: string; provenance: string; confidence: string; reason: string }>;
+  task_unresolved_reason?: string | null;
+  runtime_entrypoint?: string | null;
+  outer_trigger?: string | null;
+  persona_status?: 'known' | 'unknown' | 'absent';
+  launches?: Array<{ v: 1; runId: string; sessionId: string | null; entrypoint: string | null; trigger: string | null; channel: string | null; persona: string | null; personaOrigin: string | null; taskIds: string[]; personaStatus: string }>;
+
   id: number; source: string; harness: string; profile: string | null; provider: string | null; host: string;
   external_id: string; parent_external_id: string | null; project: string | null; title: string | null; first_prompt: string | null;
   /** Where the prompts came from when not a keyboard: 'telegram', 'web', 'remote-control'; the bot's configured name. */
   channel: string | null; channel_bot: string | null;
   /** 'telegram', 'cli', 'headless', another channel's own name ('web', 'remote-control'), or 'unknown' when nothing recorded it. */
   session_type?: string | null;
-  /** The persona that ran it (run agent, zen persona, bot's persona, else the bot); null: none recorded. */
+  /** Validated launch, run or native persona; nullable with separate absent/unknown status. */
   persona?: string | null;
   /** One line under 100 characters, and where it came from; null when nothing usable was found. */
   display_title?: string | null; title_source?: 'task' | 'skill' | 'title' | 'prompt' | null;
@@ -546,9 +627,15 @@ export interface AgentSessionRow {
   context_tokens?: number | null; context_at?: string | null;
   /** The context window recorded with the session; null: unknown (never guessed from the model name). */
   context_window?: number | null;
-  started_at: string | null; ended_at: string | null; steps: number; tool_calls: number; errors: number; subagents: number;
+  started_at: string | null; ended_at: string | null; steps: number; tool_calls: number; errors: number; unknown_outcomes?: number; run_failures?: number; subagents: number;
   models: string[]; calls: number; input: number; cache_write: number; cache_read: number; output: number; reasoning: number;
   cost_usd?: number | null;
+}
+export interface PortableSessionInfo {
+  version: 1;
+  source: { host: string; harness: string; external_id: string; archive_id: number };
+  turns: { role: 'user' | 'assistant' | 'tool'; text: string }[];
+  omitted: { metadata: number; thinking: number; empty: number };
 }
 export type AgentStepKind = 'prompt' | 'response' | 'thinking' | 'tool_call' | 'tool_result' | 'system' | 'meta';
 export interface AgentStep {
@@ -914,6 +1001,13 @@ export interface MemoryCandidate {
 }
 
 export const api = {
+  localAiSummary: (from: string, to: string, bucket: 'hour' | 'day', tz: string) => request<LocalAiSummary>('/local-ai/summary', { from, to, bucket, tz }),
+  localAiRuns: (from: string, to: string, caller?: string) => request<{ runs: LocalAiRun[] }>('/local-ai/runs', { from, to, caller, limit: 50 }),
+  mediaBrands: () => request<{ brands: MediaBrandResult[] }>('/media/brands'),
+  mediaCalendar: (slug: string, from: string, to: string) => request<MediaCalendar>(`/media/brands/${slug}/calendar`, { from, to }),
+  approvePost: (id: number) => request<{ post: MediaPost }>(`/social/posts/${id}/approve`, undefined, json('POST', {})),
+  cancelPost: (id: number) => request<{ canceled: boolean }>(`/social/posts/${id}`, undefined, { method: 'DELETE' }),
+
   search: searchApi.search,
   globalSearch: searchApi.globalSearch,
   projectsReport: projectsApi.report,
@@ -1061,6 +1155,8 @@ export const api = {
       undefined,
       json('PUT', { path, content, base_hash: baseHash }),
     ),
+  usageHealth: () => request<{ streams: Array<{ host: string; collector_instance: string; runtime: string; path: string; state: string;
+    ended_at?: string | null; received_at?: string | null; last_success_at?: string | null; backlog?: number | null; backlog_unit?: 'bytes' | 'records' | null; observed_at?: string | null; imported_at?: string | null; oldest_pending_at?: string | null; rejected?: number | null; quarantined?: number | null; reason?: string | null }> }>('/usage/health'),
   usageConfig: () => request<UsageConfig>('/usage/config'),
   usageSubscriptions: () => request<UsageSubscriptions>('/usage/subscriptions'),
   usagePlan: (from?: string, to?: string) => request<UsagePlan>('/usage/plan', { from, to }),
@@ -1085,6 +1181,8 @@ export const api = {
   agentSession: (host: string, externalId: string, source: string | null, offset = 0) =>
     request<{ session: AgentSessionRow; runs: AgentSessionRun[]; steps: AgentStep[]; next: number | null }>(
       `/usage/agent-sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}`, { source: source ?? undefined, offset, meta: '1' }),
+  portableSession: (host: string, externalId: string, source: string) =>
+    request<PortableSessionInfo>(`/usage/agent-sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}/portable`, { source }),
   usageRuns: (from: string, to: string, f: UsageFilters = {}) => request<{ runs: UsageRun[] }>('/usage/runs', { from, to, ...usageFilterParams(f) }),
   usageRunning: () => request<RunningNow>('/usage/running'),
   usageLive: () => request<LiveNow>('/usage/live'),

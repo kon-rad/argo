@@ -466,6 +466,9 @@ function AgentPage() {
   // The agent's cards on the engine's board (board module); without it the section says so.
   const board = useQuery({ queryKey: ['board', 'cards', { assignee: name }], queryFn: () => api.boardCards({ assignee: name, done_days: 30 }), retry: false, staleTime: 30_000 });
   const areas = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, retry: false });
+  // The skills addon's page for this agent, linked only when the module is on.
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity, retry: false });
+  const skillsOn = (meta.data?.modules ?? []).includes('skills');
   const [dmText, setDmText] = useState('');
   const [cardTitle, setCardTitle] = useState('');
   const [cardArea, setCardArea] = useState('');
@@ -510,6 +513,9 @@ function AgentPage() {
           {p.agent.reports_to && ` · reports to `}
           {p.agent.reports_to && <Link className="text-[var(--accent)]" to={`/org/agents/${p.agent.reports_to}`}>{p.agent.reports_to}</Link>}
         </span>
+        {skillsOn && p.agent.runtime !== 'human' && (
+          <Link className="text-sm text-[var(--accent)]" to={`/skills/agents/${encodeURIComponent(p.agent.name)}`}>Skills</Link>
+        )}
         {p.caps && (
           <span className="text-xs text-[var(--ink-faint)]">
             {p.caps.wakes_per_day} wakes/day · {p.caps.cooldown_minutes} min cooldown · {p.caps.max_runtime_minutes} min max

@@ -40,7 +40,7 @@ For a fresh instance, follow [Set up your vault](onboarding/02-set-up-your-vault
 | `B2STORE_CRYPT_PASSWORD`, `B2STORE_CRYPT_PASSWORD2` | unset | uploads: the rclone-crypt passwords when the vault part of the bucket is encrypted (the same rclone-crypt passwords the object-storage tooling uses) |
 | `UPLOADS_MAX_GB` | `50` | uploads: the largest single file the page accepts |
 | `UPLOADS_PULL_TOKEN` | unset | uploads: bearer token (16+ characters) the second machine's puller sends |
-| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `summaries`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`, `uploads`, `garden`, `warehouse`, `observatory`. Observatory is off by default and adds only an evidence API (see [contract](observatory.md)). Unknown names are ignored |
+| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `summaries`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`, `uploads`, `garden`, `warehouse`, `skills`, `observatory`. Observatory is off by default and adds only an evidence API (see [contract](observatory.md)). Unknown names are ignored |
 | `OWNER_NAME` | `owner` | Your name in the authenticator app and as a comment author |
 | `DEV_LOG_PATH`, `DOCS_PATH` | unset | Vault-relative notes the nav bar links to; unset hides the link |
 | `SCAN_INTERVAL_MINUTES` | `0` | Rescan and re-embed every N minutes; `0` means only when asked |
@@ -139,7 +139,8 @@ The engine supplies a real JSON-RPC reader, the explicitly selected settlement a
 | `ZEN_AGENT_URL`, `ZEN_AGENT_TOKEN` | `agents` | unset | The `zen-agent serve` process behind `/api/zen` (the zen-agent chat page). The token is the serve process's `ZEN_SERVE_TOKEN`. Unset: the page says so |
 | `HERMES_HOME` | `agents`, archive | `~/.hermes` | Hermes's home on this machine |
 | `ARCHIVE_SSH_HOST`, `REMOTE_HERMES_HOME`, `REMOTE_HERMES_USER` | archive | unset | Pull a server's Hermes history over ssh; unset skips the pull |
-| `SB_LEDGER_DIR`, `SB_LEDGER_TOKEN` | agent ledger (on each machine, not the server) | the OS data folder, the token in `ledger.json` | Where a machine's agent ledger keeps `ledger.db` and `ledger.json`, and a token that overrides the stored one. See the app README, "Agent ledger" |
+| `SB_LEDGER_DIR`, `SB_LEDGER_TOKEN` | agent ledger (on each machine, not the server) | the OS data folder, the token in `ledger.json` | Where a machine's agent ledger keeps `ledger.db` and `ledger.json`, and a token that overrides the stored one. See the app README, "Agent ledger". `secondbrain skills sync --ack` and `skills ack` send the same device token |
+| `SECONDBRAIN_SERVER` | `skills` (on each machine) | unset | The app URL `secondbrain skills ack` reports to when `--server` is not given |
 | `PROJECTS_FEED_TOKEN` | `projects` | unset | Read-only bearer token for `GET /api/feed/projects` (a kiosk panel: the areas and their projects in flight). Unset: the route doesn't exist. `deploy.sh` generates one |
 | `KNOWLEDGE_TOKEN` | any | unset | Read-only bearer token for an agent on the same machine (zen-agent's `search_notes` and `read_note`). Opens `GET /api/search`, `/api/search/global` and `/api/file/source` and nothing else, only from loopback and never through a proxy (a request with a forwarding header, or a Host that is not `127.0.0.1`, `localhost` or `[::1]`, is refused). At least 32 characters; `openssl rand -hex 24`. Unset: the token does nothing |
 | `ORG_OWNER` | `org` | `owner` | Your handle on the agent board (lowercase, `a-z0-9-`) |
@@ -278,6 +279,12 @@ The reference below lists shipped settings. It is not a generic registry for arb
 | `dispatch.tools` | `org` | Per wake reason: zen-agent tool sets (`fs`, `shell`, `skills`, `knowledge`, `kanban`, `org`, `subagent`) |
 | `dispatch.fallback` | `org` | What runs when a connected computer's model is down: `{ "model", "thinking"?, "retryOnError"? }`. Unset: no fallback. See "Model fallback" below |
 | `memory.capture` | `memory` | The capture loop: `{ "enabled", "trigger", "everyMinutes", "maxWakesPerRun", "minTurns", "outcomes", "maxAgeHours", "maxFactsPerWake", "dedupe", "dedupeSimilarity", "scope", "chain", "promptFile", "systemPrompt" }`. Off by default; see [memory.md](memory.md#the-capture-loop-how-a-bots-own-memory-gets-written) |
+| `skills.policyFile` | `skills` | The Git-tracked assignment policy (default `.agents/skills-policy.yaml`). Missing, or `mode: legacy`: every runtime keeps its own skill folders. See [skills.md](skills.md#the-policy) |
+| `skills.privateRoot`, `skills.legacyRoot` | `skills` | The private skill folder (`.agents/skills`) and the older categorized tree (`.hermes/skills`; `null` leaves it out) |
+| `skills.externalRoots` | `skills` | Extra roots to catalogue, `[{ "id", "path", "label"? }]`, lowest precedence. Empty: home folders and plugin caches are never scanned |
+| `skills.draftsDir`, `skills.changesDir` | `skills` | Where drafts are edited (`.agents/skill-drafts`) and proposed changes exported (`.agents/skill-changes`); outside every skill root |
+| `skills.managedRoot` | `skills` | The machine-local folder `secondbrain skills sync` deploys into (default `~/.local/share/secondbrain/skills`) |
+| `skills.staleAfterHours` | `skills` | Hours after which a machine's last acknowledgement is shown as stale (24) |
 | `warehouse.dir` | `warehouse` | The vault folder holding `migrations/`, `connectors/` and `dashboards/` (default `warehouse`). See [warehouse.md](warehouse.md) |
 | `warehouse.rawDir` | `warehouse` | Where connectors keep raw files (default `<app>/data/warehouse-raw`) |
 | `garden.roots` | `garden` | Folders whose immediate subfolders are shelves (default `Projects`, `Areas`, `Research`) |
@@ -403,3 +410,21 @@ Replace the example path with the selected `CODEX_HOME`, keep its ownership with
 ### Review scope CLI configuration
 
 The standalone `review scope` commands take an optional owner-controlled JSON configuration, separate from app env and worker host configuration. Defaults are `softTarget: 24` and `exclude: []`; the soft target accepts 1 through the unchanged hard limit of 30. There are no configurable hard-cap increases. Copy [review-scope.example.json](https://github.com/kon-rad/argo/blob/main/app/deploy/review-scope.example.json), keep private exclusion prefixes outside public source, and supply the same exclusions to the reviewer host. See [scope checkpoints](automatic-review.md#scope-checkpoints-before-building-and-submitting) for the versioned plan, request schema, exit codes and module-off direct Node command.
+
+Session collection liveness is configured separately from Vault sync. See
+[collection health](collection-health.md) for the schema, acknowledgement protocol
+and operator runbook.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `usage.expectedStreams` in secondbrain.json | `[]` | Expected host, collectorInstance, runtime, path, intervalSec (120), state (enabled/paused/retired). Missing enabled streams stay unknown |
+| `USAGE_PUSH_TICK_MS` | `30000` | Collection elapsed budget checked between files, at most 120000 |
+| `USAGE_PUSH_DEADLINE_MS` | `180000` | Overall normal SSH subprocess deadline, at most 600000 |
+| `USAGE_PUSH_BACKFILL_MS` | `600000` | First-attempt SSH deadline, at most 1800000 |
+
+### Local model usage
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LOCAL_AI_EXPORT_URL` | unset | Base URL of the local model gateway; no pull when unset |
+| `LOCAL_AI_HOST` | `local` | Registered `usage_hosts` slug for collected rows |

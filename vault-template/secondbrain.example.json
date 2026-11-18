@@ -3,6 +3,7 @@
   "usage": {
     "subscriptions": [],
     "credits": [],
+    "expectedStreams": [],
     "sections": ["running", "ledger", "sessions", "summaries"]
   },
   "goalsFile": "Areas/goals.md",
@@ -37,6 +38,11 @@
   "livestream": { "youtube": "example" },
   "projects": { "reportFile": "projects.md" },
   "areas": { "reviewDir": "Areas/weekly-review" },
+  "skills": {
+    "policyFile": ".agents/skills-policy.yaml",
+    "externalRoots": [],
+    "staleAfterHours": 24
+  },
   "sync": {
     "remote": "origin",
     "branch": "main",

@@ -242,6 +242,17 @@ describe('ticket numbers and project tags', () => {
   const app = () => createApp({ modules: ALL_MODULES, board: { owner: 'owner' } });
   const ids = (cs: { id: string }[]): string[] => cs.map((c) => c.id);
 
+  it('keeps the optional Cybazaar job source through the create and read API', async () => {
+    const made = await request(app()).post('/api/board/cards').send({ title: 'Client reel', contract: { objective: 'Make reel', cybazaarJobId: 'market-job-42', deskJobRef: 'arkiv:test/job-42' } }).expect(201);
+    expect(made.body.card.contract.cybazaarJobId).toBe('market-job-42');
+    expect(made.body.card.contract.deskJobRef).toBe('arkiv:test/job-42');
+    const detail = await request(app()).get(`/api/board/cards/${made.body.card.id}`).expect(200);
+    expect(detail.body.card.contract.cybazaarJobId).toBe('market-job-42');
+    expect(detail.body.card.contract.deskJobRef).toBe('arkiv:test/job-42');
+    const plain = await request(app()).post('/api/board/cards').send({ title: 'Internal card', contract: { objective: 'Work' } }).expect(201);
+    expect(plain.body.card.contract.cybazaarJobId).toBeUndefined();
+  });
+
   it('q finds a card by its ticket number: t_<id>, a bare 8-hex id, #<prefix>, and the exact id comes first', async () => {
     const a = await createCard('owner', { id: 't_1d4c0eff', title: 'Search by ticket number' });
     const b = await createCard('owner', { id: 't_1d4c0eff99', title: 'A longer id with the same prefix' });

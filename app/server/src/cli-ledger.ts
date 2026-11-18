@@ -1,3 +1,4 @@
+import { superviseSelf } from './usage/supervise.js';
 // `ledger`: this machine's agent ledger. Built into one file by bin/build-ledger.sh and run by the
 // OS scheduler, outside the app: it imports node builtins and pure parsers only (see ledger/types.ts).
 //   ledger run                 collect, then sync (what the scheduler runs)
@@ -26,8 +27,13 @@ import {
 import { buildRedactor, type Redactor } from './archive/redact.js';
 import { captureQueue, HEALTH_PATH, recordExchange, redactCaptures, startProxy } from './ledger/proxy.js';
 import { Ledger } from './ledger/store.js';
+import { reportLedgerHealth } from './ledger/health.js';
 import { syncOnce } from './ledger/sync.js';
 import type { LedgerConfig } from './ledger/types.js';
+
+const supervisorCode = ['run', 'collect'].includes(process.argv[2] ?? '')
+  ? await superviseSelf(fileURLToPath(import.meta.url), 600_000, true) : null;
+if (supervisorCode !== null) process.exit(supervisorCode);
 
 declare const LEDGER_BUNDLE: string | undefined; // set by esbuild --define
 const BUNDLE = typeof LEDGER_BUNDLE === 'string' ? LEDGER_BUNDLE : 'dev';
@@ -235,16 +241,19 @@ try {
     const route = cmd === 'proxy-on' ? routeThroughProxy(cfg.proxy.port) : routeDirect(cfg.proxy.port);
     console.log(`Claude Code route for new sessions: ${route}`);
   }
-  else if (['run', 'collect', 'sync', 'status', 'requeue', 'redact-captures'].includes(cmd)) {
+  else if (['run', 'collect', 'sync', 'status', 'doctor', 'requeue', 'redact-captures'].includes(cmd)) {
     const cfg = loadConfig(dir);
-    const release = cmd === 'status' ? () => {} : acquireLock();
+    const release = ['status', 'doctor'].includes(cmd) ? () => {} : acquireLock();
     if (!release) { log('another run is active; exiting'); process.exit(0); }
-    const ledger = new Ledger(join(dir, 'ledger.db'));
+    const ledger = new Ledger(join(dir, 'ledger.db'), { readOnly: ['status', 'doctor'].includes(cmd), busyTimeoutMs: 1000 });
     try {
+      const startedAt = new Date().toISOString();
       const out: Record<string, unknown> = { at: new Date().toISOString(), bundle: BUNDLE };
-      if (cmd === 'run' || cmd === 'collect') {
+      if (!flag('health-timeout') && (cmd === 'run' || cmd === 'collect')) {
+        log('stage=collect-start');
         const c = await collect(ledger, cfg);
         out.collect = c;
+        log('stage=collect-end');
         if (c.claude.errors.length || c.hermes.errors.length) code = 2;
       }
       if (cmd === 'requeue') out.requeued = ledger.requeue();
@@ -252,9 +261,13 @@ try {
         if (!(cfg.redactEnvFiles ?? []).length) throw new Error('set --redact-env first (ledger install --redact-env <file>)');
         out.redacted = redactCaptures(ledger, buildRedactor({ env: process.env, files: cfg.redactEnvFiles ?? [] }));
       }
-      if (cmd === 'run') out.requeued = ledger.requeue({ olderThanMs: 86_400_000, maxAttempts: 7 });
-      if (cmd === 'run' || cmd === 'sync' || cmd === 'requeue') {
+      if (cmd === 'run' && !flag('health-timeout')) out.requeued = ledger.requeue({ olderThanMs: 86_400_000, maxAttempts: 7 });
+      if (!flag('health-timeout') && (cmd === 'run' || cmd === 'sync' || cmd === 'requeue')) {
+        log('stage=sync-start');
         out.sync = await syncOnce(ledger, cfg, { fetch, now: () => new Date(), bundle: BUNDLE, log }, { force: flag('force') || cmd === 'sync' || cmd === 'requeue' });
+        const synced = out.sync as { status: string };
+        if (synced.status !== 'ok') code = 2;
+        log(`stage=sync-end reason=${synced.status}`);
         if (cfg.retainDays) out.pruned = ledger.prune(cfg.retainDays);
         if (cfg.proxy.enabled) {
           const w = await watchProxy(cfg.proxy.port, Number(ledger.meta('proxy_failures') ?? 0));
@@ -263,7 +276,9 @@ try {
           out.proxy = w;
         }
       }
-      if (cmd === 'status') out.status = { dir, server: cfg.server, host: cfg.host, hermesHomes: cfg.hermesHomes, redactEnvFiles: cfg.redactEnvFiles ?? [], ...ledger.stats() };
+      if (['run', 'collect', 'sync'].includes(cmd)) await reportLedgerHealth(ledger, cfg, BUNDLE, startedAt, code !== 0 || flag('health-timeout'), log, flag('health-timeout') ? 'deadline' : 'collection');
+      if (['status', 'doctor'].includes(cmd)) out.status = { dir, server: cfg.server, host: cfg.host, hermesHomes: cfg.hermesHomes, redactEnvFiles: cfg.redactEnvFiles ?? [], ...ledger.stats() };
+      if (flag('health-timeout')) code = 1;
       console.log(JSON.stringify(out, null, cmd === 'status' ? 2 : 0));
     } finally {
       ledger.close();

@@ -6,6 +6,7 @@
   "sessionsDir": ".zen/sessions",
   "rules": ["AGENTS.md"],
   "skills": [".agents/skills", "~/.zen/skills"],
+  "managedSkills": null,
   "persona": { "org": ".agents/org/org.json", "definitions": ".claude/agents", "memory": ".agents/org/memory" },
   "tools": ["fs", "shell", "skills", "knowledge", "kanban", "org", "subagent"],
   "budget": { "turns": 40, "tokens": 400000, "minutes": 30 },

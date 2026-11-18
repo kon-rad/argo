@@ -1,3 +1,5 @@
+import { hermesMeasurement } from '../usage/hermesHealth.js';
+import { producerHealth } from '../usage/producerHealth.js';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,7 +15,7 @@ import { readHermesCounters } from '../usage/hermesCounters.js';
 import { findHomes, hermesTimezone, type HermesHome } from './homes.js';
 import { hermesChannel } from '../archive/channel.js';
 import { channelMeta } from '../archive/channelMeta.js';
-import { readHermesCalls } from '../usage/hermesCalls.js';
+import { readHermesCalls, hermesCallFiles, hermesCallFromLine } from '../usage/hermesCalls.js';
 import { recordHermesCounters, upsertCalls } from '../usage/store.js';
 
 /**
@@ -74,8 +76,13 @@ const sha = (s: string): string => createHash('sha256').update(s).digest('hex');
 const CALL_WINDOW_MS = 14 * 86400_000;
 
 async function syncSessions(home: HermesHome, host: Host, tz: string | null, tmp: string, c: SyncCounts): Promise<void> {
+  const startedAt = new Date().toISOString();
   const src = join(home.dir, 'state.db');
-  if (!existsSync(src)) return;
+  if (!existsSync(src)) {
+    await producerHealth(host, 'agents-sync', 'hermes', home.dir, startedAt, null, true, 'unsupported');
+    return;
+  }
+  await producerHealth(host, 'agents-sync', 'hermes', home.dir, startedAt, null, true);
   const copy = join(tmp, `${home.profile}-state.db`);
   await snapshotSqlite(src, copy);
   const { sessions, messages } = readHermes(copy, host);
@@ -85,34 +92,61 @@ async function syncSessions(home: HermesHome, host: Host, tz: string | null, tmp
   // The plugin's day files from the last two weeks (re-reading is a no-op; a timer that was down catches up).
   // Read first and on their own: a problem there must not stop the chats from syncing.
   let calls: ReturnType<typeof readHermesCalls> = [];
-  try { calls = readHermesCalls(home.dir, source, host, Date.now() - CALL_WINDOW_MS); }
-  catch (err) { c.errors.push(`${home.profile} hermes calls: ${(err as Error).message}`); }
-  await withTransaction(async (tx) => {
-    const ids = new Map<string, number>();
-    const changed: number[] = [];
-    for (const s of sessions) {
-      const r = await store.upsertSession(tx, {
-        ...s, source, meta: { ...s.meta, profile: home.profile, timezone: tz, ...channelMeta(hermesChannel(s.meta.source), 'hermes', home.profile) },
-      });
-      ids.set(s.externalId, r.id);
-      if (r.changed) { c.sessions++; changed.push(r.id); }
+  let rejected = 0;
+  const errorCount = c.errors.length;
+  try {
+    calls = readHermesCalls(home.dir, source, host, Date.now() - CALL_WINDOW_MS);
+    const { importLines } = await import('../usage/importer.js');
+    for (const path of hermesCallFiles(home.dir, Date.now() - CALL_WINDOW_MS)) {
+      const text = readFileSync(path, 'utf8');
+      const complete = text.slice(0, text.lastIndexOf('\n') + 1).split('\n').slice(0, -1);
+      const poison = complete.flatMap((line, index) => line.trim() && !hermesCallFromLine(line, source, host)
+        ? [JSON.stringify({ t: 'quarantine', path, sourceLine: index, text: line })] : []);
+      rejected += poison.length;
+      if (poison.length) await importLines(poison, host, { quarantine: true });
     }
-    const bySession = new Map<string, typeof messages>();
-    for (const m of messages) {
-      if (!ids.has(m.sessionExternalId)) continue;
-      (bySession.get(m.sessionExternalId) ?? bySession.set(m.sessionExternalId, []).get(m.sessionExternalId)!).push(m);
-    }
-    // Only sessions that changed are read for their bot: the whole state.db comes through every run.
-    const touched = new Set(changed);
-    for (const [sid, msgs] of bySession) {
-      const n = await store.upsertMessages(tx, ids.get(sid)!, msgs);
-      c.messages += n;
-      if (n) touched.add(ids.get(sid)!);
-    }
-    await attributeBots(tx, [...touched]);
-    c.usage += await recordHermesCounters(tx, counters, new Date());
-    c.calls += await upsertCalls(tx, calls);
-  });
+  } catch (err) { c.errors.push(`${home.profile} hermes calls: ${(err as Error).message}`); }
+  const measurement = async () => {
+    const m = await hermesMeasurement(host, source, home.profile, { sessions, messages }, counters, calls);
+    m.rejected = rejected;
+    const q = await query(`SELECT count(*) n FROM usage_import_quarantine WHERE host=$1
+      AND left(origin_path,length($2)+1)=$2||'/'`, [host, home.dir]);
+    m.quarantined = Number(q.rows[0]!.n);
+    return m;
+  };
+  await producerHealth(host, 'agents-sync', 'hermes', home.dir, startedAt, await measurement(), true);
+  try {
+    await withTransaction(async (tx) => {
+      const ids = new Map<string, number>();
+      const changed: number[] = [];
+      for (const s of sessions) {
+        const r = await store.upsertSession(tx, {
+          ...s, source, meta: { ...s.meta, profile: home.profile, timezone: tz, ...channelMeta(hermesChannel(s.meta.source), 'hermes', home.profile) },
+        });
+        ids.set(s.externalId, r.id);
+        if (r.changed) { c.sessions++; changed.push(r.id); }
+      }
+      const bySession = new Map<string, typeof messages>();
+      for (const m of messages) {
+        if (!ids.has(m.sessionExternalId)) continue;
+        (bySession.get(m.sessionExternalId) ?? bySession.set(m.sessionExternalId, []).get(m.sessionExternalId)!).push(m);
+      }
+      // Only sessions that changed are read for their bot: the whole state.db comes through every run.
+      const touched = new Set(changed);
+      for (const [sid, msgs] of bySession) {
+        const n = await store.upsertMessages(tx, ids.get(sid)!, msgs);
+        c.messages += n;
+        if (n) touched.add(ids.get(sid)!);
+      }
+      await attributeBots(tx, [...touched]);
+      c.usage += await recordHermesCounters(tx, counters, new Date());
+      c.calls += await upsertCalls(tx, calls);
+    });
+  } catch (err) {
+    await producerHealth(host, 'agents-sync', 'hermes', home.dir, startedAt, await measurement(), true);
+    throw err;
+  }
+  await producerHealth(host, 'agents-sync', 'hermes', home.dir, startedAt, await measurement(), c.errors.length > errorCount);
 }
 
 async function syncCron(home: HermesHome, tz: string | null, tmp: string, c: SyncCounts): Promise<void> {
@@ -216,6 +250,8 @@ export async function syncAgents(root: string, host: Host): Promise<SyncCounts> 
         await syncSessions(home, host, tz, tmp, counts);
       } catch (err) {
         counts.errors.push(`${home.profile} sessions: ${err instanceof Error ? err.message : String(err)}`);
+        await producerHealth(host, 'agents-sync', 'hermes', home.dir, new Date().toISOString(), null, true,
+          /busy|locked/i.test(err instanceof Error ? err.message : '') ? 'sqlite-busy' : 'collection');
       }
       try {
         await syncCron(home, tz, tmp, counts);

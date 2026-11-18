@@ -51,6 +51,34 @@ function completeApprovalForm() {
 }
 
 describe('private hiring Desk', () => {
+  it('opens an existing operator job from the board job query', async () => {
+    window.history.replaceState({}, '', '/desk?job=job-42');
+    try {
+      const fake = fakeApi();
+      render(<Desk operatorApi={fake.api} />);
+      await waitFor(() => expect(fake.api.job).toHaveBeenCalledWith('job-42'));
+      await screen.findByText('Client-accepted terms');
+      expect(screen.getByRole('button', { name: 'Jobs' }).getAttribute('aria-current')).toBe('page');
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+  });
+
+  it('separates active and review jobs using the current execution status', async () => {
+    const fake = fakeApi();
+    vi.mocked(fake.api.jobs).mockResolvedValue({ kind: 'ok', value: [makeJob({ id: 'active-job', execution: 'running' }), makeJob({ id: 'review-job', execution: 'review' })] });
+    render(<Desk operatorApi={fake.api} />);
+    await screen.findByText('Hiring Desk');
+    fireEvent.click(screen.getByRole('button', { name: 'Active' }));
+    expect(await screen.findByRole('button', { name: /Running/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Ready for review/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    expect(await screen.findByRole('button', { name: /Ready for review/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Running/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Jobs' }));
+    expect(await screen.findByRole('button', { name: /Running/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Ready for review/ })).toBeTruthy();
+  });
   it('keeps client acceptance separate from operator approval and sends current revision plus idempotency key', async () => {
     const fake = fakeApi();
     const approved = makeJob({ revision: 5, execution: 'approved', approval: {

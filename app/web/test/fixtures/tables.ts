@@ -426,6 +426,7 @@ const facet = (value: string, calls: number, tokens: number, output: number): Us
 const facets: Record<UsageDimension, UsageFacetValue[]> = {
   agent: [facet('ada', 212, 4_810_000, 96_400), facet('brook', 148, 3_120_500, 71_250), facet('cyd', 61, 902_300, 18_900), facet('dell', 12, 88_000, 3_100), facet('unlabelled', 44, 1_250_000, 30_500)],
   team: [facet('product', 421, 8_832_800, 186_550), facet('growth', 12, 88_000, 3_100)],
+  job: [facet('morning-briefing', 14, 310_000, 6_200), facet('unlabelled', 419, 8_610_800, 183_450)],
   reason: [facet('task', 260, 6_100_000, 120_000), facet('routine', 90, 1_400_000, 30_000), facet('mention', 50, 900_000, 20_000), facet('dm', 33, 520_800, 19_650)],
   action: [facet('edit', 180, 3_900_000, 80_000), facet('read', 150, 3_000_000, 40_000), facet('post', 60, 700_000, 30_000)],
   work_type: [facet('build', 240, 5_600_000, 110_000), facet('research', 61, 902_300, 18_900), facet('design', 40, 800_000, 20_000), facet('fix', 22, 410_000, 9_000)],

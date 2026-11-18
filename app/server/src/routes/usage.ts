@@ -1,3 +1,4 @@
+import { collectionHealth } from '../usage/health.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { creditHistory, latestCredits } from '../credits.js';
@@ -44,7 +45,7 @@ function stripCost(v: unknown): unknown {
 export const DIMENSIONS = {
   host: 'host', source: 'source', provider: 'provider', surface: 'surface', headless: 'headless', model: 'model',
   agent: 'agent_name', team: 'team_slug', reason: 'reason', action: 'action', work_type: 'work_type',
-  area: 'area_slug', project: 'project_slug', task: 'task_id', lane: 'lane',
+  area: 'area_slug', project: 'project_slug', task: 'task_id', lane: 'lane', job: 'job',
 } as const;
 export type Dimension = keyof typeof DIMENSIONS;
 export const DIMENSION_NAMES = Object.keys(DIMENSIONS) as Dimension[];
@@ -91,41 +92,64 @@ function pickFilters(q: Record<string, unknown>): Filters {
   return f;
 }
 
-// One union of labelled Claude calls and Hermes deltas. $1 and $2 are the range; filters follow.
+// One union of labelled calls (Claude Code, Codex, zen-agent: usage_facts), Hermes per-request calls, and Hermes
+// counter deltas. A Hermes session's tokens come from its per-request rows (the usage-ledger plugin) when it has
+// any; the session counters undercount long gateway sessions and report almost nothing for a job that ran inside
+// a Codex thread, so they supply tokens only for a session with neither, and otherwise only its dollar cost.
+// $1 and $2 are the range; filters follow.
 function eventsSql(filters: Filters, params: unknown[]): string {
   const where = filterSql(filters, params);
   return `
   WITH claude AS (
     SELECT f.ts, f.model, f.provider, f.host, f.sid, f.source, f.surface, f.headless, f.agent_name, f.team_slug, f.reason, f.action,
-      f.work_type, f.area_slug, f.project_slug, f.task_id, f.lane, f.run_id,
+      f.work_type, f.area_slug, f.project_slug, f.task_id, f.lane, f.job, f.run_id,
       f.input, f.cache_write, f.cache_read, f.output, 1 AS calls, f.cost_usd
-    FROM (SELECT uf.*, 'anthropic'::text AS provider FROM usage_facts uf) f
+    FROM usage_facts f
     WHERE f.ts >= $1 AND f.ts < $2${where}),
+  hermes_bots AS (
+    -- One row per Hermes session that has a bot (few; archive_sessions_bot_idx), so a join keeps one row per event.
+    SELECT s.host, s.external_id, min(usage_session_persona(s.id)) AS bot, min(o.team_slug) AS team_slug
+      FROM archive_sessions s JOIN org_agents o ON o.name = usage_session_persona(s.id)
+     WHERE usage_session_persona(s.id) IS NOT NULL AND s.harness = 'hermes' GROUP BY 1, 2),
+  hermes_calls AS (
+    SELECT c.ts, c.model, nullif(c.provider, '') AS provider, c.host, c.session_external_id AS sid, 'hermes' AS source,
+      CASE WHEN hb.bot IS NOT NULL THEN 'owner-chat' ELSE 'hermes' END AS surface, true AS headless,
+      coalesce(hb.bot, CASE WHEN position(':' in c.source) > 0 THEN split_part(c.source, ':', 2) ELSE 'main' END) AS agent_name,
+      hb.team_slug, NULL::text AS reason, NULL::text AS action, NULL::text AS work_type,
+      NULL::text AS area_slug, NULL::text AS project_slug, NULL::text AS task_id, NULL::text AS lane, NULL::text AS job, NULL::text AS run_id,
+      c.input_tokens AS input, c.cache_write_tokens AS cache_write, c.cache_read_tokens AS cache_read, c.output_tokens AS output,
+      1 AS calls, c.cost_usd
+    FROM usage_calls c
+    LEFT JOIN hermes_bots hb ON hb.host = c.host AND hb.external_id = c.session_external_id
+    WHERE (c.source = 'hermes' OR c.source LIKE 'hermes:%') AND c.ts >= $1 AND c.ts < $2),
   hermes_all AS (
     SELECT h.observed_at AS ts, h.model, nullif(h.billing_provider, '') AS provider, h.host, h.session_id AS sid, 'hermes' AS source,
       -- A chat a person opened with a bot's persona (archive_sessions.bot) is that bot's owner chat, not the profile's.
       CASE WHEN hb.bot IS NOT NULL THEN 'owner-chat' ELSE 'hermes' END AS surface, true AS headless,
       coalesce(hb.bot, h.profile) AS agent_name, hb.team_slug, NULL::text AS reason, NULL::text AS action, NULL::text AS work_type,
-      NULL::text AS area_slug, NULL::text AS project_slug, NULL::text AS task_id, NULL::text AS lane, NULL::text AS run_id,
-      GREATEST(h.input_tokens - COALESCE(lag(h.input_tokens) OVER w, 0), 0) AS input,
-      GREATEST(h.cache_write_tokens - COALESCE(lag(h.cache_write_tokens) OVER w, 0), 0) AS cache_write,
-      GREATEST(h.cache_read_tokens - COALESCE(lag(h.cache_read_tokens) OVER w, 0), 0) AS cache_read,
-      GREATEST(h.output_tokens - COALESCE(lag(h.output_tokens) OVER w, 0), 0) AS output,
-      GREATEST(h.api_calls - COALESCE(lag(h.api_calls) OVER w, 0), 0) AS calls,
+      NULL::text AS area_slug, NULL::text AS project_slug, NULL::text AS task_id, NULL::text AS lane, NULL::text AS job, NULL::text AS run_id,
+      CASE WHEN hm.measured THEN 0 ELSE GREATEST(h.input_tokens - COALESCE(lag(h.input_tokens) OVER w, 0), 0) END AS input,
+      CASE WHEN hm.measured THEN 0 ELSE GREATEST(h.cache_write_tokens - COALESCE(lag(h.cache_write_tokens) OVER w, 0), 0) END AS cache_write,
+      CASE WHEN hm.measured THEN 0 ELSE GREATEST(h.cache_read_tokens - COALESCE(lag(h.cache_read_tokens) OVER w, 0), 0) END AS cache_read,
+      CASE WHEN hm.measured THEN 0 ELSE GREATEST(h.output_tokens - COALESCE(lag(h.output_tokens) OVER w, 0), 0) END AS output,
+      CASE WHEN hm.measured THEN 0 ELSE GREATEST(h.api_calls - COALESCE(lag(h.api_calls) OVER w, 0), 0) END AS calls,
       -- first snapshot: its whole cost; later with an unknown cost on either side: unknown (NULL, never 0),
       -- so a session with no known cost sums to NULL instead of a made-up $0.00
       CASE WHEN row_number() OVER w = 1 THEN h.cost_usd
            WHEN h.cost_usd IS NULL OR lag(h.cost_usd) OVER w IS NULL THEN NULL
            ELSE GREATEST(h.cost_usd - lag(h.cost_usd) OVER w, 0) END AS cost_usd
     FROM hermes_usage_snapshots h
-    -- One row per Hermes session that has a bot (few; archive_sessions_bot_idx), so the join keeps one row per snapshot.
-    LEFT JOIN (SELECT s.host, s.external_id, min(s.bot) AS bot, min(o.team_slug) AS team_slug
-                 FROM archive_sessions s JOIN org_agents o ON o.name = s.bot
-                WHERE s.bot IS NOT NULL AND s.harness = 'hermes' GROUP BY 1, 2) hb
-      ON hb.host = h.host AND hb.external_id = h.session_id
+    LEFT JOIN hermes_bots hb ON hb.host = h.host AND hb.external_id = h.session_id
+    -- Measured elsewhere: the session has per-request rows, or it ran inside a Codex thread (counted on Codex).
+    CROSS JOIN LATERAL (SELECT (
+        EXISTS (SELECT 1 FROM usage_calls c WHERE c.host = h.host AND c.session_external_id = h.session_id
+                   AND (c.source = 'hermes' OR c.source LIKE 'hermes:%'))
+        OR EXISTS (SELECT 1 FROM archive_sessions p WHERE p.host = h.host AND p.external_id = h.session_id
+                      AND p.harness = 'hermes' AND p.codex_thread_id IS NOT NULL)) AS measured) hm
     WINDOW w AS (PARTITION BY h.host, h.profile, h.session_id ORDER BY h.observed_at)),
   events AS (
     SELECT * FROM claude
+    UNION ALL SELECT * FROM hermes_calls WHERE true${where}
     UNION ALL SELECT * FROM hermes_all WHERE ts >= $1 AND ts < $2${where})`;
 }
 
@@ -169,6 +193,7 @@ const RUNS_CTE = `
            tl.area_slug, tl.project_slug, tl.title AS card_title,
            CASE WHEN r.agent_name IS NOT NULL THEN 'bot' WHEN s.bot IS NOT NULL THEN 'owner-chat' ELSE 'cc-lane' END AS surface,
            r.runtime AS source, r.runtime, r.tier, r.outcome, r.compactions, r.blocked, true AS headless,
+           CASE r.runtime WHEN 'claude-code' THEN 'anthropic' WHEN 'codex' THEN 'openai' END AS provider, NULL::text AS job,
            -- Real dollars only where the runtime priced them; the subscription's API-equivalent figure is never shown.
            CASE WHEN r.runtime = 'claude-code' THEN NULL ELSE r.total_cost_usd END AS cost_usd
     FROM usage_runs r
@@ -199,6 +224,7 @@ function runsFilterSql(f: Filters, params: unknown[]): string {
 
 export function usageRouter(): Router {
   const router = Router();
+  router.get('/health', wrap(async (_req, res) => { res.json(await collectionHealth(settings().usage.expectedStreams)); }));
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
   router.get('/config', wrap(async (_req, res) => {

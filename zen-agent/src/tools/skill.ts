@@ -13,7 +13,7 @@ export function skillTools(ctx: ToolContext): AgentTool<any>[] {
     execute: async (a) => {
       const s = ctx.skills.find((k) => k.name === a.name);
       if (!s) throw new Error(`no skill "${a.name}"; the system prompt lists the available ones`);
-      return text(`Skill folder: ${s.dir}\n\n${clipOutput(skillBody(s), 40_000)}`, { name: s.name, dir: s.dir });
+      return text(`Skill folder: ${s.dir}\n\n${clipOutput(skillBody(s), 40_000)}`, { name: s.name, dir: s.dir, ...(s.digest ? { id: s.id, digest: s.digest, revision: s.revision ?? null } : {}) });
     },
   });
   return [read_skill];

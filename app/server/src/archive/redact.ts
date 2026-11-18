@@ -87,11 +87,30 @@ export function buildRedactor(opts: { env: Record<string, string | undefined>; f
     return out;
   };
   // Each JSON string literal is decoded, redacted and re-encoded; numbers and structure are left byte for byte.
-  const jsonText = (s: string): string => s.replace(/"(?:[^"\\]|\\.)*"/g, (tok) => {
-    const v = JSON.parse(tok) as string;
-    const t = text(v);
-    return t === v ? tok : JSON.stringify(t);
-  });
+  const jsonText = (s: string): string => {
+    // V8's repeated-character regex can exhaust its stack on a supported large
+    // JSON string. Find string boundaries iteratively, retaining numbers verbatim.
+    const parts: string[] = [];
+    let at = 0;
+    while (at < s.length) {
+      const start = s.indexOf('"', at);
+      if (start < 0) { parts.push(s.slice(at)); break; }
+      let end = start;
+      while (true) {
+        end = s.indexOf('"', end + 1);
+        if (end < 0) throw new SyntaxError('unterminated JSON string');
+        let slashes = 0;
+        for (let j = end - 1; j > start && s[j] === '\\'; j--) slashes++;
+        if (slashes % 2 === 0) break;
+      }
+      const tok = s.slice(start, end + 1);
+      const v = JSON.parse(tok) as string;
+      const t = text(v);
+      parts.push(s.slice(at, start), t === v ? tok : JSON.stringify(t));
+      at = end + 1;
+    }
+    return parts.join('');
+  };
 
   const deep = <T>(v: T): T => {
     if (typeof v === 'string') return text(v) as T;

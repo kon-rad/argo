@@ -74,6 +74,7 @@ nav:
       - Configuration: configuration.md
       - Vault sync: sync.md
       - Modules: modules.md
+      - Skills: skills.md
       - Social metrics: social-metrics.md
       - Addons: addons.md
       - Warehouse guide: warehouse-guide.md
@@ -85,5 +86,6 @@ nav:
       - The agent company: agent-company.md
       - org.yaml and wake rules: org-yaml.md
       - Deployment: deployment.md
+      - Capability-aware verification: verification.md
       - Privacy (engine): privacy.md
       - zen-agent, the minimal agent harness: zen-agent.md
