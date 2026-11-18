@@ -16,6 +16,11 @@ import pytest
 
 SRC = Path(__file__).resolve().parent / "guard.py"
 
+# Fake keys, assembled at runtime so leak scanners don't flag this file.
+FAKE_ANT = "sk-ant-api03-" + "x" * 24
+FAKE_OPENAI = "sk-proj-" + "x" * 32
+FAKE_GH = "ghp_" + "x" * 36
+
 SHELL = [
     ("cat .env", True),
     ("cat ~/.hermes/.env | head", True),
@@ -42,6 +47,33 @@ SHELL = [
     ("rsync -az --exclude=.env --filter='protect .env.production' ./ srv:/app/", False),
     ("rsync -az --exclude node_modules .env.local srv:/app/", True),
     ("rsync -az --exclude '.env.local' ./.env srv:/app/", True),
+    # A key value in a command line lands in the process list and in agent logs.
+    ("curl -H 'Authorization: Bearer " + FAKE_ANT + "' https://example.com", True),
+    ("export OPENAI_API_KEY=" + FAKE_OPENAI, True),
+    ("git clone https://" + FAKE_GH + "@github.com/a/b", True),
+    ("AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE aws s3 ls", True),
+    ("FOO_TOKEN='" + "a1b2c3d4" * 4 + "' ./run.sh", True),
+    ("TOKEN=$(cat ~/.config/x/token) ./run.sh", False),
+    ("python3 gen.py --model sk-like-name", False),
+    ("grep -n API_KEY= docs/configuration.md", False),
+    ("python3 run.py --name task-runner-for-the-nightly-backups", False),
+    ("DEPLOY_SSH_KEY=/home/agent/.ssh/deploy_key_ed25519 ./deploy.sh", False),
+    ("DEPLOY_SSH_KEY=~/.ssh/deploy_key ./deploy.sh", False),
+    ("TOKEN_FILE=nightly_backup_token_location ./run.sh", False),
+    # A key sent to another machine travels in its argv and its shell history.
+    ("set -a; . ./.env; set +a; ssh host \"export TOGETHER_API_KEY='$TOGETHER_API_KEY' && python3 x.py\"", True),
+    ("set -a; . ./.env; set +a; K=\"$TOGETHER_API_KEY\" ssh host \"run --key $K\"", True),
+    ("echo \"$HF_TOKEN\" | ssh host 'cat > ~/.hf_token'", True),
+    ("ssh host \"curl -H \\\"x: ${OPENAI_API_KEY}\\\" https://example.com\"", True),
+    ("ssh host 'set -a; . ~/.config/x/env; set +a; curl -H \"x: $OPENAI_API_KEY\" https://example.com'", False),
+    ("ssh host \"echo \\$HF_TOKEN | wc -c\"", False),
+    ("ssh host uptime", False),
+    # Printing a key puts it in the transcript.
+    ("echo $OPENAI_API_KEY", True),
+    ("printf '%s' \"${GITHUB_TOKEN}\"", True),
+    ("printenv TELEGRAM_BOT_TOKEN", True),
+    ("set -a; . ./.env; set +a; [ -n \"$SOME_KEY\" ] && echo set", False),
+    ("echo $HOME $PATH", False),
 ]
 
 FILES = [

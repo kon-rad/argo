@@ -96,7 +96,7 @@ AI agents (Claude Code, Hermes, others) work *inside the vault*, not inside the 
 | Piece | What | Where |
 |---|---|---|
 | Rules | `AGENTS.md` = the engine's `AGENTS.base.md` + the vault's `AGENTS.local.md`, compiled by `secondbrain-vault rules`. `CLAUDE.md` imports it | `vault-template/AGENTS.base.md` |
-| Guard hook | Runs before every tool call; blocks reading secrets, force pushes, unsafe `rsync --delete`, and whatever the vault's `guard.local.json` adds | `harness/hooks/guard.py` |
+| Guard hook | Runs before every tool call; blocks reading secrets, keys written into command lines or sent over ssh, force pushes, unsafe `rsync --delete`, and whatever the vault's `guard.local.json` adds | `harness/hooks/guard.py` |
 | Dev-log gate | Runs when an agent tries to finish; sends it back once if it changed skills, scripts, hooks or config without writing a dev log today | `harness/hooks/devlog_gate.py` |
 | Skills | `SKILL.md` folders; the engine's shared ones are symlinked into `.agents/skills/` | `skills/` |
 | zen-agent | A headless runtime of our own for bot wakes: the same rules, skills, guard rules and hook scripts, run by a minimal loop (pi agent core) with the context assembled as code, a budget per run and a JSONL trace per run. Any provider; the board and the retrieval API are tools, and `zen-agent lane` claims cards from the board. The plan for moving the bots onto it is [zen-agent.md](zen-agent.md) | `zen-agent/` |
