@@ -5,7 +5,7 @@ import * as queue from './queue.js';
 import { createRun, runConnector, type SourceRow } from './runner.js';
 
 /**
- * Periodic rescan + re-embed. On the Mac a rescan is a button; on the server
+ * Periodic rescan + re-embed. On a local install a rescan is a button; on the server
  * the vault is rewritten underneath the app every 30 minutes by the git
  * auto-sync and the Hermes agent, and nobody is there to press it. Both
  * connectors are incremental, so an idle cycle costs a directory walk.

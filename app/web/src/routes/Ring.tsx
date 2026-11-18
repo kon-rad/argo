@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type RingDay, type RingNight } from '../lib/api.js';
+import DataTable from '../components/DataTable.js';
 
 /**
  * Ring data (sleep, heart rate) as a ring-ingest client pushes it to the server.
- * On the server this reads the pushed tables directly; on the Mac it reads a
+ * On the server this reads the pushed tables directly; on a client it reads a
  * mirror that "Pull from server" (or `secondbrain ring-pull`) refreshes.
  */
 
@@ -291,7 +292,7 @@ function DaysTable({ days, onSelect }: { days: RingDay[]; onSelect: (day: string
   return (
     <section className="mt-8">
       <h2 className="text-sm font-medium text-[var(--ink-dim)]">Every day</h2>
-      <table className="mt-2 w-full text-sm tabular-nums">
+      <DataTable label="Every day" phone="scroll" className="mt-2 w-full text-sm tabular-nums">
         <thead className="text-left text-xs text-[var(--ink-dim)]">
           <tr>
             {['Day', 'Score', 'Asleep', 'Deep', 'REM', 'HRV', 'Resting HR', 'Steps', 'Recovery'].map((h) => (
@@ -304,9 +305,12 @@ function DaysTable({ days, onSelect }: { days: RingDay[]; onSelect: (day: string
             <tr
               key={d.day}
               className="cursor-pointer border-t border-[var(--rule)] hover:bg-[var(--paper-sunk)]"
-              onClick={() => d.sleep_score != null && onSelect(d.day)}
+              // The whole row is the pointer target; the day is the button a keyboard or a screen reader lands on.
+              onClick={(e) => { if (d.sleep_score != null && !(e.target as HTMLElement).closest('button')) onSelect(d.day); }}
             >
-              <td className="py-1 pr-3">{d.day}</td>
+              <td className="py-1 pr-3">
+                {d.sleep_score != null ? <button type="button" className="cursor-pointer text-left" onClick={() => onSelect(d.day)}>{d.day}</button> : d.day}
+              </td>
               <td className="pr-3">{num(d.sleep_score)}</td>
               <td className="pr-3">{hm(d.total_sleep_min)}</td>
               <td className="pr-3">{hm(d.deep_min)}</td>
@@ -318,7 +322,7 @@ function DaysTable({ days, onSelect }: { days: RingDay[]; onSelect: (day: string
             </tr>
           ))}
         </tbody>
-      </table>
+      </DataTable>
     </section>
   );
 }

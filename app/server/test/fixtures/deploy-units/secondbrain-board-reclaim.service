@@ -1,0 +1,15 @@
+[Unit]
+Description=Second Brain: the board's sweep (lost card leases back to ready, due schedules to ready)
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=/etc/secondbrain/env
+ExecStart=/usr/bin/node --no-warnings server/dist/cli-board.js reclaim
+TimeoutStartSec=60
+PrivateTmp=true
+NoNewPrivileges=true

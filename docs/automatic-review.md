@@ -1,0 +1,284 @@
+# Automatic contextual review and shipping
+
+This owner-managed board feature is **disabled by default**. The migration inserts a disabled policy. No timer is installed automatically. It implements catalog card `t_420cc80c`: builder completion becomes submission, and only reviewed, merged, deployed and healthy work becomes done.
+
+`finish --done`, a coding card's direct `move done`, and a runner's `move review` all enqueue the same durable database job. The database trigger changes the requested status to review in the same transaction. An archive request cannot release dependencies around the gate. Non-code cards and disabled installations retain their previous behavior. Already submitted work remains gated when policy is disabled. Disabling pauses the worker; it does not accept work.
+
+The database marks in-scope code work persistently, so later self-assignment or classification changes cannot escape review. Assignment remains possible before submission; after submission, the original builder, repository and classification are retained. Historical completed cards are not resubmitted by metadata edits. Explicit review-only cards in existing work graphs are not recursively submitted to code review; persistent enforcement still prevents a builder from converting an already in-scope build into an escape route. Rejection posts findings to the PR, then atomically records a ticket comment, increments the round, returns the original card to ready and wakes the original builder. Ready is required by existing lane claim semantics. Resubmission creates another durable round and retains the previous PR binding. Escalation never approves work.
+
+## Local fixture
+
+From `app/`:
+
+```sh
+npm ci
+npm run build
+node server/dist/cli-review.js fixture
+npx vitest run --config vitest.review.config.ts
+```
+
+The fixture runs both rejection and exact-head merge, deployment and health paths using adapters with no production writes, network or credentials. The unit suite also executes the concrete target bridge against temporary local programs, tests uncertain-effect reconciliation, context exclusions, full verdict parsing and Git push arguments.
+
+Real SQL tests use the normal application test harness. Use a new PostgreSQL cluster with pgvector and an isolated database, never a production endpoint or a retired local database:
+
+```sh
+PGHOST=/tmp/review-test-socket PGPORT=55432 SB_TEST_DB=sb_review_gate_test npm test -- --project server review-db.test.ts board.test.ts
+```
+
+The harness rebuilds only that test database. It requires a PostgreSQL role able to create test roles. SQL authorization is verified only when this command actually passes against PostgreSQL, not by inspecting migration text.
+
+## Owner setup
+
+Apply migrations using the normal owner-controlled migration process. The migration creates the group role `sb_review_worker` if absent. On a host where the migration role cannot create roles, the database owner must create that NOLOGIN role first. Do not grant it to `sb_org`, a builder login, or a shared application login.
+
+Create a dedicated LOGIN with a private authentication mechanism, grant it `sb_review_worker`, and register that exact login and the roster's reviewer. These are owner-only SQL writes:
+
+```sql
+CREATE ROLE review_service LOGIN;
+GRANT sb_review_worker TO review_service;
+UPDATE review_policy SET reviewer='auditor', worker_login='review_service', enabled=false, shipping_enabled=false;
+```
+
+The reviewer must be an independent roster agent. The worker verifies its configured identity against the structured verdict. Database functions authorize the actual `session_user` and role membership, not the caller's `org.agent` setting. Builders have no grants on review state, attempts, policy or decisions. The legacy `ship check` refuses gated cards even if they have a ship-now approval. Other approvals keep their existing rules.
+
+Create an owner-owned host policy file, mode 0600. All paths and identities are host configuration, never PR or model output:
+
+```json
+{
+  "repositories": {
+    "engine": {
+      "github": "example/engine",
+      "gitDir": "/srv/review/engine.git",
+      "base": "main",
+      "target": "application",
+      "checks": ["tests", "build"],
+      "notes": ["Projects/example/design.md"]
+    }
+  },
+  "targets": {
+    "application": {
+      "argv": ["/usr/bin/node", "/srv/engine/app/server/dist/review/target.js", "/etc/secondbrain/review-target.json"],
+      "cwd": "/srv/review"
+    }
+  },
+  "notesRoot": "/srv/vault",
+  "exclude": ["CURRENT", "Areas/Finance", "private"],
+  "evidenceRoot": "/srv/review/evidence",
+  "home": "/srv/review/service-home",
+  "gh": "/usr/bin/gh",
+  "git": "/usr/bin/git",
+  "reviewer": {
+    "argv": ["/usr/local/bin/isolated-codex-reviewer"],
+    "model": "configured-subscription-model",
+    "home": "/srv/review/reviewer-home",
+    "cwd": "/srv/review/empty"
+  }
+}
+```
+
+Use a dedicated, trusted bare repository (`git init --bare /srv/review/engine.git`). Do not point `gitDir` at a builder-controlled repository or allow builders to modify host policy, target programs, the worker executable, its HOME or its state directory. Give only the trusted orchestrator GitHub write access. `GH_TOKEN` is passed only to git/GitHub children. The worker supplies an ephemeral GitHub authentication header to its Git subprocesses. Global and system Git configuration and repository hooks are disabled by the adapter.
+
+Run the review model outside the trusted worker account. A fixed transport may forward only bounded prompt text and the verdict schema to a subscription-authenticated model on another host. It must provide an empty working directory, disable shell, unified execution, subagents and web search, ignore user configuration, and expose no MCP or shipping tools. It must support `login status` and the schema-bound `exec` protocol. Never send the worker HOME, environment, credentials or configurable commands to that endpoint. The adapter strips ambient environment variables, requests read-only sandboxing, disables the shell tool, ignores user configuration, selects the exact configured model, uses the JSON output schema and parses the **full** final message. The 600-character dispatcher display text is never a verdict. A read-only filesystem sandbox alone does not establish credential isolation. Verify the fixed endpoint and a real no-tool review before enabling shipping. The engine does not provision accounts or subscription authentication.
+
+## Runner handoff and evidence
+
+Before submitting, the runner must create or retain a single same-repository PR whose branch includes the full card id as a complete identifier, such as `card/t_123abc-fix` or the historical `bot/builder/t_123abc-fix` form. Prefixes and suffixes remain supported, but body-only mentions and card-id prefix or suffix collisions do not bind a PR. The worker verifies every broad GitHub search hit and fails closed on unknown, truncated or multiple valid bindings. Fork PRs are unsupported and blocked. The existing runner's `move review` is the handoff; it needs no shipping power.
+
+The owner host integration must stage immutable, scrubbed builder evidence at:
+
+```text
+<evidenceRoot>/<card-id>/RESULT.md
+<evidenceRoot>/<card-id>/run.log
+```
+
+Both files are essential. Freeze them before handoff, keep them inaccessible to later builder processes, and replace them only for a new submission round. No runner-supplied absolute path is followed. A nonempty ticket body and explicit acceptance checks are essential; checks may be in a structured completion contract or a Done when, Acceptance or Verify section of the body. The worker collects comments, dependencies, task-linked org conversation threads, run metadata, previous verdicts, project and feature metadata, registered design notes, PR metadata, the patch and current CI checks. Ticket wikilinks resolve only to registered notes or unambiguous Markdown beneath owner-selected noteRoots; unavailable or ambiguous links block. Conversation links use `org-thread:<id>` and must belong to the card's task-linked threads; inaccessible or unrelated threads block. Empty comments, conversations or dependency collections are explicit, valid evidence of absence.
+
+Files are restricted to explicit registered notes within `notesRoot`. Dot paths, credential names, key files, path traversal, escaping symlinks and owner exclusions are denied. Secret-like literals are redacted before model access. The source explicitly records redaction, so the reviewer can distinguish missing semantic context from a clearly labeled test fixture without seeing secret values. PRs touching excluded secret files block before diff collection. Sources carry content hashes and provenance. Individual sources, collection counts, total context and subprocess output are bounded. Essential truncation blocks review; it is never treated as a pass. PR text and logs are untrusted evidence and cannot select commands, URLs or authority.
+
+Prior verdicts in database review context retain the full 100,000-byte capacity supported by `review_jobs`, as JSON text with a per-verdict truncation indicator. History remains ordered by round and limited to 101 entries, including the overflow sentinel for the worker's 100-entry completeness check. Source and combined-context budgets still apply; retaining a complete stored verdict does not bypass those checks.
+
+Model review does not lock chat or project edits. The worker acquires its per-card advisory content lock only for shipping, then re-reads all approval evidence; changed evidence invalidates approval. Database evidence writers contend on that lock during shipping. The worker checks evidence again before merging and final completion. Host evidence files must be immutable while that lock is held; the database cannot lock filesystem files. A late evidence change keeps the actual merge/deployment receipts and blocks completion for owner reconciliation.
+
+## Worker service
+
+Give only the worker service `REVIEW_DB_URL`, using its dedicated login. This standalone CLI intentionally does not load the application's vault `.env`. Supply host policy explicitly:
+
+```sh
+node /srv/engine/app/server/dist/cli-review.js tick /etc/secondbrain/review-host.json
+```
+
+Run one tick periodically using an owner-installed supervisor or timer. Each tick processes at most one job. Queued work takes priority, oldest retries rotate fairly, and blocked jobs wait at least five minutes before retry. After max_rounds correction runs (default two), repeated rejection blocks for escalation and never implies acceptance. Multiple workers use PostgreSQL session advisory locks for the job, evidence and target. Durable checkpoints and append-only attempts survive worker crashes. Loss of the lock connection terminates the worker. The target bridge independently serializes real effects. Inspect `review_jobs`, `review_attempts` and ticket `review-blocked` events for errors and actual merged/deployed revisions. No model-supplied command or URL reaches a shipping adapter.
+
+GitHub check rollups retain every check name and truthful outcome: success is `pass`, optional `SKIPPED` is `skipped`, `NEUTRAL` is `neutral`, genuine terminal failures remain `fail` while their exact GitHub conclusion remains in the raw source, and unfinished or unknown checks stay `pending` or `unknown`. Legacy commit statuses retain their context names. A skipped optional deployment is not reported as a failed deployment. The collector includes optional `requiredChecks` metadata from the registered repository configuration to explain which checks govern readiness; older snapshots without it remain valid. This metadata grants no authority: the trusted configured check list still controls the gate. A configured required check must be present and `pass`; skipped, neutral, failed, pending and unknown outcomes never satisfy it, and snapshot metadata cannot replace or weaken the configured list.
+
+On acceptance, all named CI checks must have successful evidence for the current PR head. The adapter uses GitHub's normal PR merge operation with `--match-head-commit`. It requires server-side strict status checks covering the registered checks and disabled force pushes. A worker authenticated as an administrator also requires administrator enforcement; a non-administrator worker can use protected checks while the owner's existing publishing flow retains its own authority. Normal GitHub merging is not an exact base-SHA compare-and-swap in every ancestry case. The worker durably records the actual merge, then separately verifies its first parent against the reviewed base and its second parent against the reviewed head before allowing deployment. A differing base blocks deployment for reconciliation while preserving the actual merge receipt. An uncertain response is reconciled by the PR's confirmed merge receipt. Every resumed deployment revalidates approval evidence and confirms merge parents before any external write; stale unmerged approvals are cleared before readiness checks so fresh head-bound evidence can be staged. It never force-pushes, bypasses branch rules or deletes a source branch. Draft PRs, unresolved review threads, active changes-requested reviews and failed required checks produce actionable rejections. Pending checks wait for retry.
+
+A retry verifies merge parents and recovers a previously successful push before attempting anything else. A changed PR head invalidates approval. Review authorization binds repository, PR, base, head, ticket/source revisions, independent reviewer and target. Health must attest the exact merge commit, not the pre-merge head or a generic HTTP 200.
+
+## Registered target bridge
+
+The included `review/target.js` bridge accepts an owner-owned JSON configuration:
+
+```json
+{
+  "stateDir": "/srv/review/target-state/application",
+  "cwd": "/srv/review",
+  "home": "/srv/review/target-home",
+  "deployArgv": ["/usr/local/libexec/deploy-registered-app"],
+  "healthArgv": ["/usr/local/libexec/health-registered-app"]
+}
+```
+
+Both programs receive only `revision` and numeric `idempotency-key` appended to their fixed argv. The deploy program must apply that exact revision. The health program must print strict JSON `{"revision":"<40 hex characters>","healthy":true}` only after verifying the running release and health. Scripts and their destinations are owner-installed. A target receives no ambient database, API or GitHub credentials; credentials it needs must be isolated behind its registered program or service account.
+
+The bridge writes an in-flight barrier before running deployment, serializes the target with a filesystem lock and records per-key receipts. A repeat key checks health and never runs deployment again. An unresolved prior effect blocks every different key. Nonzero exits, timeout, malformed receipts, health failure and wrong revision remain open. No automatic replay follows an ambiguous result. After a host crash, the owner must confirm no deployment child remains, remove the stale lock directory, then retry the same job to reconcile exact-revision health. Do not delete the in-flight barrier to skip reconciliation. Run the bridge on a single registered host per target with persistent local storage. Cross-host filesystem lock recovery and remote target provisioning are outside this bridge's contract.
+
+## Rollout
+
+Keep policy disabled until the real PostgreSQL completion and authorization tests pass, inspect the host adapters and worker isolation, then verify a non-shipping queue and rejection round trip. Enable only after required checks, normal PR merge permissions and strict branch checks, immutable runner evidence, registered target programs and exact-revision health are verified:
+
+```sql
+-- First: a smoke board, registered repos only, and no shipping.
+UPDATE review_policy SET enabled=true, boards=ARRAY['review-smoke'], repositories=ARRAY['engine'], shipping_enabled=false;
+-- Only after the queue/rejection and target receipt smoke passes:
+UPDATE review_policy SET boards=NULL, shipping_enabled=true;
+```
+
+No deployment or production configuration is performed by the implementation card. A passing local fixture does not establish live shipping readiness.
+
+## Immutable host handoff
+
+The trusted host sends bounded JSON on stdin to `cli-review stage /absolute/owner-policy.json`:
+
+```json
+{"card":"t_123abc","head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","result":"Actual completion evidence","log":"Execution index with the full log hash and explicit omissions"}
+```
+
+The importer uses the same per-card content lock, stamps both sources with the actual builder revision, sanitizes secret literals and atomically writes private files. It accepts identical retries and refuses replacement after review or merge. The worker requires both stamps to match the PR head. `cli-review retries /absolute/owner-policy.json` returns only claimable correction rounds for the trusted launching host. A host can relaunch the original coder with the same card, branch, PR, persona and runtime; findings remain acceptance constraints and never grant merge or deploy authority. Worker subprocess errors are kept in the private `review-adapters.log` beneath its configured HOME; board errors contain no raw stderr or credentials.
+
+### Stable context and historical shipping receipts
+
+Approval fingerprints normalize snapshots through the strict schema, so PostgreSQL JSONB key ordering does not invalidate equivalent evidence. For exact board project/feature sources only, unredacted top-level `updated_at` and `updated_by` audit stamps do not change the fingerprint. Raw sources remain in the audit snapshot; title, owner, stage and every other content field stay significant. Redacted or malformed sources keep their original revisions and conservative invalidation behavior.
+
+Completion attests that the accepted merge was deployed and passed exact-revision health, not that it is still the currently active release. If final bookkeeping fails after both matching deployment and health receipts were durably recorded, a retry revalidates accepted context and merge identity and completes without replaying those effects. Missing or mismatched health receipts still require a successful live check. A newer release does not erase an older release's verified history.
+
+Behind or conflicting open PRs are readiness rejections, not endless tool-error retries. Findings instruct the original builder to update the same branch and rerun checks. These flags are false for merged PRs; legacy snapshots normalize absent flags to false. A branch falling behind invalidates a paused approval before merge.
+
+## PR size is never a finding
+
+The gate does not reject a PR for its size. No count of changed files, gathered sources, source characters or diff characters produces a finding, and the reviewer is never handed silently truncated text: the worker keeps the whole aggregate diff and every changed source with its immediate imports in the snapshot.
+
+One reviewer call holds at most 500,000 UTF-8 bytes of serialized input. `review/passes.ts` measures complete serialized snapshots and reserves room for adapter instructions, identity and file-list metadata; the adapter checks the final prompt before invoking the reviewer. When a snapshot is larger, it is reviewed in several bounded passes:
+
+| Part of the snapshot | Where it goes |
+|---|---|
+| Complete ticket within the bounded shared-core allowance | Every pass; it remains actual ticket evidence, never a generated authority summary |
+| Notes, builder evidence, comments, conversations, PR threads and oversized tickets | Complete ordered sources across passes; oversized sources use explicit transport parts |
+| Prior findings | Ordered transport parts, reviewed exactly once across passes; concatenation in pass order reconstructs the complete collection |
+| A file's diff and its source | Together when they fit; files are packed in path order |
+| A file or diff larger than a whole pass | Unicode-safe parts with original source refs/revisions and explicit part numbers, file paths and UTF-16 character offsets; diff offsets are relative to the named file chunk, while other offsets are relative to their original source; concatenation restores every character |
+
+Each pass is told which files and transport parts it holds, the ordered inventory of source refs, files and prior-finding parts, and returns a verdict bound to the same reviewer, repository, PR, head, base and evidence hash as the whole snapshot. The verdicts are merged into one: any rejecting pass rejects the PR, findings are kept most severe first (30 at most, with a note when more exist), and each category's rationale is labelled by pass. A pass that fails, or answers for another revision, fails the review as a whole, so nothing is accepted half-read. A snapshot that fits one call is reviewed in one call, as before. An aggregate of individually complete context sources never becomes a capacity rejection: complete notes, builder evidence and conversations are distributed instead of being copied into every call. A ticket larger than the shared-core allowance is also transported completely in ordered parts. If the inventories themselves become large, each call carries a stable inventory digest and counts while ordered inventory parts carry the complete JSON lists across calls. Concatenating those parts reconstructs the full original inventory. Metadata-only inventory calls retain actual original source evidence; if no bounded shared ticket exists, an unchanged original unit is repeated and explicitly marked `repeatedEvidence`, rather than inventing an authority summary. No generated summary grants authority, and no evidence is silently omitted or marked complete after truncation.
+
+Up to three passes run at a time. A very large PR costs more reviewer calls and takes longer; that is the trade for not sending builders back to split work that has to land together. A single Git read is bounded at 64 MB as a memory guard, which is not a review limit.
+
+## Operator recovery: a PR merged outside the gate
+
+The gate only completes a gated card when its own worker merged, deployed and health-checked the reviewed revision. If the owner merges a card's PR by hand, the job blocks with `Unknown prior merge, owner reconciliation required` or `Merged revision has no accepted review; reconciliation required`, and a card with no assignee is refused with `review: original builder required`. None of these can reach done on their own. The owner verb closes them:
+
+```sh
+REVIEW_DB_URL=postgres://<owner-login>@/<db> \
+node /srv/engine/app/server/dist/cli-review.js reconcile-owner-merge /etc/secondbrain/review-host.json \
+  t_0123abcd --pr 42 --merge <40-char merge commit sha> --reason "Owner merged #42 by hand after manual review"
+```
+
+- **Who may run it.** Only the database owner: a superuser, the database owner or the owner of `review_jobs`. The review worker login is refused (it has no execute grant), because the database cannot check GitHub itself and only the owner, who can already bypass every trigger, may vouch for the GitHub facts. A connection that carries an `org.agent` identity (every bot, builder and model door) is refused even on an owner login, and `sb_org` has no execute grant. Run it as root on the review host with `REVIEW_DB_URL` pointing at the owner login, not the worker's.
+- **Which cards it recovers.** Only the two stuck states the gate leaves, and nothing else:
+  1. The latest review job is `blocked` with exactly `Unknown prior merge, owner reconciliation required` or `Merged revision has no accepted review; reconciliation required`, and the worker recorded the merge commit it saw on GitHub (`review_jobs.merged`). The request must name that same merge commit, and the job's PR if it recorded one.
+  2. The card has no review job and no assignee, so every done write is refused with `review: original builder required`.
+
+  A queued, reviewing, approved or rejected job, a job blocked for any other reason, an assigned card with no job yet, an ungated card and a done or archived card are all refused. A card in `review` whose job is still queued needs one worker tick first (`cli-review tick`): the worker sees the merged PR and blocks the job with `Unknown prior merge`, recording the merge commit.
+- **What it checks on GitHub.** With the host policy's `gh` and `git`, the PR must be in the registered repository (never one the caller names), not a cross-repository PR, target the registered base, come from a branch that names the card, be `MERGED` with exactly that merge commit, and the merge commit must be an ancestor of the base's current tip. An open or closed PR, another sha, another PR, another base, another repository or a branch that does not name the card is refused and nothing is written.
+- **What it writes.** One immutable row in `review_owner_merges` (card, job, repository, PR, merge commit, PR head, reason, `reconciled_by`, `reconciled_at` and the GitHub facts it checked). The job moves to `done` with `merged` set; its verdict, `deployed` and `health` stay as they were, so nothing claims a reviewer accepted it or that the gate deployed it. Active correction runs for the card are cancelled, open card runs are closed as `partial`, the card moves to `done` and its dependants are released. The card event is `owner-reconciled`, never `review-shipped`.
+- **Idempotent and one-shot.** Running the same command again prints the same receipt. The receipt only lets its own transaction past the gate: a card reopened later goes through the gate like any other closed job.
+- **Locks.** It takes the job's and the card's review locks and refuses while the worker holds them; retry after the tick finishes.
+
+Deployment of a hand-merged revision is the owner's responsibility; the receipt records the merge, not a deployment.
+
+## Telling the owner about a rejection or a block
+
+When the host policy has a `notify` program, the worker calls it once with one argument, a short plain-text line, when a review ends in `rejected` (changes requested, with the PR, the round, up to five findings and who holds the card) or enters `blocked` (with the error and whether the PR was already merged). A blocked job that is retried and blocks again on the same error sends nothing further; a different error sends a new line. Waiting for CI and a paused shipping switch are not blocks and send nothing.
+
+```json
+"notify": { "argv": ["/usr/local/bin/your-notifier"], "cwd": "/" }
+```
+
+The program is owner-registered like a deploy target: an absolute path from the root-owned host policy, never from a PR, ticket or model output. It receives no credentials from the worker and runs with the worker's minimal child environment, so it must find its own token (for Telegram, a wrapper around `app/deploy/org-notify.sh` works). A missing program or a failing one never changes the review: the result is already on the card and the PR. Without `notify`, behaviour is unchanged.
+
+## Scope checkpoints before building and submitting
+
+The public `review scope` contract implements catalog card `t_45a48733`. A coordinator can use it before launching a builder and after committing the complete intended change. It shares file selection and immediate import resolution with the review adapter. Its budgets are planning advice: `decompose` means the review will take more than one reviewer pass, never that the gate will reject the PR (see [PR size is never a finding](#pr-size-is-never-a-finding)). It does not launch agents, execute plan commands, register jobs, grant approval or install anything.
+
+After `cd app && npm ci && npm run build`, these commands work in a standalone checkout:
+
+```sh
+node server/dist/cli-review.js scope policy
+node server/dist/cli-review.js scope schema
+node server/dist/cli-review.js scope forecast /tmp/request.json /tmp/owner-scope.json
+node server/dist/cli-review.js scope actual /tmp/request.json /tmp/owner-scope.json
+```
+
+When the board module is enabled, `secondbrain review scope ...` reaches the same entry point. With `MODULES` empty or board off, that launcher command is unavailable and no board routes, navigation or timers are enabled. The direct Node commands remain available offline without a database, host policy, GitHub credentials or vault settings. They read explicit JSON and local Git objects only, with hooks, external diff/text conversion, inherited Git configuration and filesystem monitoring disabled. They never fetch, check out a revision or write repository files.
+
+Copy [review-scope.example.json](https://github.com/kon-rad/argo/blob/main/app/deploy/review-scope.example.json) to an owner-controlled location. Omit the optional config argument to use `{"softTarget":24,"exclude":[]}`. `exclude` is an owner-maintained list of repository-relative private path prefixes, shared with the host review policy's exclusions. The coordinator must supply the same exclusions at both checkpoints and to the registered reviewer. Keep this configuration outside planner control. Only `softTarget` (1 through 30) and `exclude` are configurable; plans cannot supply hard caps or override policy. Scope config is separate from application environment settings and the privileged worker host policy.
+
+The planning budgets are 100 changed files, 30 changed reviewable files, 80 gathered code sources including immediate local imports, 80,000 characters per source, 250,000 diff characters and 500,000 combined evidence characters. Equality passes. Forecasts also use the default soft target of 24 changed reviewable files, leaving six files below the reviewer hard limit. Tests, docs, fixtures, configuration and deletions count by the existing reviewer extension rules. A rename counts once under its destination; both paths are validated. Lock files and binary files count toward 100 and contribute to diff size, but are not selected as code sources. Imports are deduplicated, resolved against tracked head paths, and collected one level from changed head sources. Deletions use base contents without collecting their imports.
+
+Live review and actual preflight both measure the final aggregate with `git diff --no-ext-diff --no-textconv --binary <base> <head> --` against full commit IDs. The live adapter fetches those immutable objects into its trusted repository, validates changed paths before reading the diff, and rechecks the PR base/head after source collection. Revision drift blocks collection for a fresh attempt. Correction commits do not multiply the diff input: interim lines that were reverted or removed are absent from the final aggregate. Commit-series `gh pr diff --patch` is not used. Earlier reviewer findings, card comments, PR review threads and exact-revision changed sources/imports remain review evidence. Full-history gitleaks and all required CI, merge, deployment and health checks still apply.
+
+`scope policy` returns the policy version, SHA-256 policy hash, hard/default limits and default scope configuration. `scope schema` returns the authoritative JSON Schema for the strict version 1 plan. Pin both version and hash; regenerate a plan when policy changes. Request JSON has this envelope:
+
+```json
+{
+  "repository": "/srv/engine",
+  "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "contextSources": [{"ref":"ticket-and-evidence","chars":2000}],
+  "plan": {
+    "version": 1,
+    "policyHash": "COPY_FROM_SCOPE_POLICY",
+    "card": "example-task",
+    "repository": "example/engine",
+    "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requirements": [{"id":"r1","description":"A testable acceptance requirement","tasks":["t1"],"tests":["check"]}],
+    "tasks": [{"id":"t1","requirements":["r1"],"paths":["src/example.ts","test/example.test.ts"],"tests":["check"],"dependencies":[]}],
+    "tests": [{"id":"check","requirements":["r1"],"paths":["test/example.test.ts"],"command":"npm test"}],
+    "dependencies": [],
+    "files": [
+      {"path":"src/example.ts","status":"modified","sourceChars":3000,"imports":[]},
+      {"path":"test/example.test.ts","status":"added","sourceChars":2000,"imports":[]}
+    ],
+    "diffChars": 5000,
+    "otherContextChars": 2000,
+    "contextSources": [{"ref":"ticket-and-evidence","chars":2000}],
+    "confidence": "medium",
+    "uncertainty": {"reviewableFiles":2,"sourceChars":2000,"diffChars":2000,"combinedChars":5000,"unknowns":["New local imports may be required"]},
+    "verification": ["npm test","npm run build"],
+    "decomposition": []
+  }
+}
+```
+
+This is an illustrative envelope: replace revisions, repository, hash, paths and estimates. No sample hash grants admission. Plans list all expected source/test/doc/migration/config paths with Git status and, for a rename/copy, `previousPath`. Map every requirement to declared tasks and tests in both directions, every changed path to a task, and every task to tests covering its requirements. External dependencies declare `id`, full `revision` and `verification`; task dependencies reference task or external dependency IDs and must form an acyclic graph. Verification strings are evidence for the coordinator, never commands the validator executes.
+
+A forecast checks paths and existing contents/imports at the declared base without reading working-tree source files. For renames/copies, content is read from `previousPath` at base and relative imports resolve from the planned destination. If a destination import cannot resolve, forecast returns `invalid` with `unresolved-import`; declare the future destination dependency and its size in `imports` before retrying. Newly introduced imports must be forecast in each file's `imports` list (`path`, `sourceChars`). Existing sources and immediate imports establish minimum size estimates. Listed tests must exist at base or be planned additions. Include future content estimates for every reviewable path. The optional plan `contextSources` list forecasts individual non-code sources (default empty); its sum establishes a minimum for `otherContextChars`, and individual sizes participate in the per-source limit. The coordinator remains responsible for forecasting complete evidence. Low/medium confidence or declared unknowns require positive quantified file, source, diff and combined margins. Observations are conservative upper bounds: the file reserve increases changed/reviewable/source counts; the source reserve increases the largest source; combined evidence includes the diff/source reserves plus the aggregate reserve. A forecast is an estimate, not evidence of actual verification.
+
+An actual check requires full existing base/head commit IDs, base ancestry, current HEAD matching the supplied head, and a clean worktree including untracked files. Commit a checkpoint before invoking it; keep request/config files outside the worktree. It measures complete Git name/status and patch evidence, base contents of deletions and exact head source/import contents. `contextSources` is mandatory in actual requests, including an explicit empty list when appropriate. The trusted coordinator supplies current character counts of every non-code evidence source it will submit (ticket, conversations, notes, logs and receipts); these are included in combined and per-source checks. The CLI cannot attest external evidence that it has not gathered. The reviewer independently evaluates its own gathered evidence with the same policy. Never reuse forecast context estimates as actual measurements.
+
+Every result has `status` (`pass`, `decompose`, `invalid`), `phase`, policy version/hash, effective limits, observations, actionable reasons and base/head/plan-hash binding. Exit codes are respectively 0, 2 and 1. Missing or malformed request/plan/config is structured `invalid`, never pass. Traversal, absolute scope paths, private/secret paths and excluded imports are refused before their contents are read; public env examples are allowed. No context is silently truncated to obtain a pass. A hard collection boundary stops further reads and reports `collection-stopped`; remaining source sizes are explicitly unmeasured. If actual paths/statuses differ from the admitted plan or a planned path is missing, revise the complete plan and repeat both checkpoints. A prior forecast pass cannot authorize an oversized actual diff.
+
+For decomposition, retain every original requirement and planned path in proposed slices. Each slice declares `id`, `requirements`, `paths`, full `base`, `dependencies`, `diffChars`, `otherContextChars` and nonempty `verification`. The validator checks coverage, dependency references/cycles and estimated slice capacities. This is a proposal: admit each child with its own complete plan, margins and independent checks, preserve migration order, then verify parent integration acceptance. Do not remove tests/docs or narrow acceptance to fit a cap.
+
+Private coordinator integration, runtime installation, scheduled repair, correction feedback/state changes and reusable lessons are separate phases. Passing scope tests proves none of those are installed or running. Existing independent exact-revision review and registered shipping authority remain required.
+
+Prior-findings transport redacts the complete collection before splitting it into ordered sources within the per-source budget. Concatenating those parts retains the full verdict JSON, including a supported 100,000-byte stored verdict. Database truncation flags and history overflow still block, as do incomplete generic transport sources. The worker does not discard a transport truncation flag when adding database completeness signals.

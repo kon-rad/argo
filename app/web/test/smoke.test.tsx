@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import App from '../src/App.js';
@@ -107,6 +107,27 @@ afterEach(() => {
 });
 
 describe('nav follows /api/meta', () => {
+  it('keeps agent controls and their polling out of desktop and mobile headers', async () => {
+    META = { ...META, modules: ['agents', 'usage'] };
+    renderAt('/');
+    await screen.findByLabelText('Search the vault');
+    expect(screen.queryByRole('radiogroup', { name: 'Default agent' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Menu' }));
+    expect(screen.queryByRole('radiogroup', { name: 'Default agent' })).toBeNull();
+    expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.some((call) => String(call[0]).includes('/telegram'))).toBe(false);
+  });
+
+  it('keeps Usage navigation without fetching a header quota meter', async () => {
+    META = { modules: ['usage'], owner: 'owner', devLogPath: null, docsPath: null, robot: false,
+      nav: [{ section: 'Work', label: 'Usage', path: '/usage' }] };
+    renderAt('/');
+    await screen.findByLabelText('Search the vault');
+    fireEvent.click(await screen.findByRole('button', { name: /Work/ }));
+    expect(screen.getByRole('menuitem', { name: 'Usage' })).toBeTruthy();
+    expect(document.body.textContent).not.toContain('5h');
+    expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.some((call) => String(call[0]).includes('/usage/plan'))).toBe(false);
+  });
+
   it('hides optional pages and note links when nothing is enabled', async () => {
     renderAt('/');
     await screen.findByLabelText('Search the vault');
@@ -118,7 +139,19 @@ describe('nav follows /api/meta', () => {
   });
 
   it('shows enabled modules and configured note links', async () => {
-    META = { modules: ['ring', 'agents'], owner: 'owner', devLogPath: 'Projects/dev-log.md', docsPath: null, robot: false };
+    META = {
+      modules: ['ring', 'agents'],
+      // Each page link comes from its server manifest now, delivered as /api/meta's nav.
+      nav: [
+        { section: 'Work', label: 'Agents', path: '/agents' },
+        { section: 'Work', label: 'Cron', path: '/cron' },
+        { section: 'Life', label: 'Ring', path: '/ring' },
+      ],
+      owner: 'owner',
+      devLogPath: 'Projects/dev-log.md',
+      docsPath: null,
+      robot: false,
+    };
     renderAt('/');
     fireEvent.click(await screen.findByRole('button', { name: /Life/ }));
     expect(screen.getByRole('menuitem', { name: 'Ring' })).toBeDefined();
@@ -129,6 +162,78 @@ describe('nav follows /api/meta', () => {
     fireEvent.click(screen.getByRole('button', { name: /Docs/ }));
     expect(screen.getByRole('menuitem', { name: 'Devlog' }).getAttribute('href')).toBe('/file/Projects/dev-log.md');
     expect(screen.queryByRole('menuitem', { name: 'Docs' })).toBeNull();
+  });
+
+  it('module pages are not routed when their module is off', async () => {
+    for (const path of ['/ring', '/cron', '/agents/chat']) {
+      renderAt(path);
+      expect((await screen.findByText(/No such page/)).textContent).toContain(path);
+      cleanup();
+    }
+  });
+
+  it('old /agents/board card links still reach the board with the agents module off', async () => {
+    renderAt('/agents/board/t_1');
+    // The board feature is off here too, so the redirect lands on its 404, which names the new path.
+    expect((await screen.findByText(/No such page/)).textContent).toContain('/board/t_1');
+  });
+
+  it('module pages are routed when their module is on', async () => {
+    META = { modules: ['agents'], owner: 'owner', devLogPath: null, docsPath: null, robot: false };
+    renderAt('/cron');
+    expect(await screen.findByRole('heading', { name: 'Cron jobs' })).toBeDefined();
+    expect(screen.queryByText(/No such page/)).toBeNull();
+  });
+
+  it('with the chat module on, the header button and the Vault menu entry open the chat panel', async () => {
+    META = { modules: ['chat'], owner: 'owner', devLogPath: null, docsPath: null, robot: false };
+    renderAt('/');
+    const button = await screen.findByRole('button', { name: 'Ask your second brain' });
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: /Vault/ }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Ask your second brain' }));
+    expect(await screen.findByRole('dialog', { name: 'Ask your second brain' })).toBeDefined();
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('without the chat module, neither the button nor the menu entry exists', async () => {
+    renderAt('/');
+    await screen.findByLabelText('Search the vault');
+    expect(screen.queryByRole('button', { name: 'Ask your second brain' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Vault/ }));
+    expect(screen.queryByRole('menuitem', { name: 'Ask your second brain' })).toBeNull();
+  });
+});
+
+describe('phone shell', () => {
+  it('names the current page in the header, beside the menu button', async () => {
+    renderAt('/sources');
+    const banner = await screen.findByRole('banner');
+    expect(within(banner).getByText('Sources')).toBeDefined();
+    expect(within(banner).getByRole('button', { name: 'Menu' }).getAttribute('aria-haspopup')).toBe('dialog');
+    fireEvent.click(within(banner).getByRole('button', { name: 'Menu' }));
+    const menu = screen.getByRole('dialog', { name: 'Menu' });
+    expect(within(menu).getByRole('link', { name: 'Sources' }).getAttribute('aria-current')).toBe('page');
+    expect(within(menu).getByRole('link', { name: 'Browse' }).getAttribute('aria-current')).toBeNull();
+  });
+
+  it('a note is on Browse; a page with no menu entry names nothing', async () => {
+    renderAt('/file/CLAUDE.md');
+    const banner = await screen.findByRole('banner');
+    expect(within(banner).getByText('Browse')).toBeDefined();
+    cleanup();
+    renderAt('/search?q=x');
+    const again = await screen.findByRole('banner');
+    expect(within(again).queryByText('Browse')).toBeNull();
+  });
+
+  it('search scope and mode switches say which one is on', async () => {
+    renderAt('/search?q=x');
+    const scope = await screen.findByRole('group', { name: 'Search in' });
+    const on = within(scope).getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') === 'true');
+    expect(on.length).toBe(2); // one scope, one mode
+    const mode = within(scope).getByRole('group', { name: 'Search mode' });
+    expect(within(mode).getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') === 'true').length).toBe(1);
   });
 });
 

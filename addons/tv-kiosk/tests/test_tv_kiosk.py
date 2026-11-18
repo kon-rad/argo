@@ -1,4 +1,4 @@
-"""Tests for the TV kiosk add-on: flash.sh --render output and sb-tv page parsing."""
+"""Tests for the TV kiosk add-on: flash.sh --render output and sb-tv's one page."""
 import os
 import subprocess
 from pathlib import Path
@@ -17,7 +17,7 @@ def env(tmp_path, **over):
         "TV_PASSWORD": "s3cret pass",
         "WIFI_SSID": "Cafe O'Brien",
         "WIFI_PASSWORD": "wifi-pass-123",
-        "TV_PAGES": "https://example.com/ 60; https://example.com/projects 30;",
+        "TV_PAGE": "https://example.com/tv?kiosk=1",
         "TV_SSH_PUBKEY": str(key),
     }
     e.update(over)
@@ -58,10 +58,15 @@ def test_password_never_in_plain_text(tmp_path):
             assert "s3cret pass" not in f.read_text()
 
 
-def test_pages_split(tmp_path):
+def test_page_written(tmp_path):
     r, out = render(tmp_path)
-    assert (out / "tv-kiosk" / "pages").read_text() == \
-        "https://example.com/ 60\nhttps://example.com/projects 30\n"
+    assert (out / "tv-kiosk" / "pages").read_text() == "https://example.com/tv?kiosk=1\n"
+
+
+def test_old_pages_list_uses_its_first_entry(tmp_path):
+    r, out = render(tmp_path, TV_PAGE="", TV_PAGES="https://example.com/ 60; https://example.com/projects 30;")
+    assert r.returncode == 0, r.stderr
+    assert (out / "tv-kiosk" / "pages").read_text() == "https://example.com/\n"
 
 
 def test_authkey_only_when_set(tmp_path):
@@ -82,14 +87,21 @@ def test_bad_hostname_rejected(tmp_path):
     assert r.returncode != 0
 
 
-def test_sb_tv_pages_parsing(tmp_path):
+def test_sb_tv_page_is_the_first_url(tmp_path):
     conf = tmp_path / "conf"
     conf.mkdir()
+    # An old rotation file: only its first page is shown, and its time is ignored.
     (conf / "pages").write_text("# comment\n\nhttps://a.example/ 45\nhttps://b.example/\n")
-    r = subprocess.run(["bash", str(SBTV), "pages"], env={"PATH": os.environ["PATH"],
-                       "HOME": str(tmp_path), "SB_TV_CONF": str(conf), "SB_TV_SECONDS": "20"},
+    r = subprocess.run(["bash", str(SBTV), "page"], env={"PATH": os.environ["PATH"],
+                       "HOME": str(tmp_path), "SB_TV_CONF": str(conf)},
                        capture_output=True, text=True, check=True)
-    assert r.stdout == "https://a.example/\t45\nhttps://b.example/\t20\n"
+    assert r.stdout == "https://a.example/\n"
+
+
+def test_sb_tv_never_switches_or_reloads_pages():
+    text = SBTV.read_text()
+    for gone in ("_rotate", "wtype", "F5", "Tab"):
+        assert gone not in text, gone
 
 
 def bash4():
@@ -103,7 +115,7 @@ def bash4():
 
 
 def sbtv(tmp_path, conf, *args):
-    # A stub nohup keeps the test from launching Chromium or the rotator loop.
+    # A stub nohup keeps the test from launching Chromium.
     stubs = tmp_path / "stubs"
     stubs.mkdir(exist_ok=True)
     (stubs / "nohup").write_text("#!/bin/sh\nexit 0\n")
@@ -113,37 +125,22 @@ def sbtv(tmp_path, conf, *args):
                           capture_output=True, text=True)
 
 
-def test_tv_mode_keeps_and_restores_the_rotation(tmp_path):
+def test_url_sets_the_one_page(tmp_path):
     conf = tmp_path / "conf"
     conf.mkdir()
-    rotation = "https://a.example/ 45\nhttps://b.example/ 30\n"
-    (conf / "pages").write_text(rotation)
-    assert sbtv(tmp_path, conf, "tv", "https://a.example/tv?kiosk=1").returncode == 0
-    assert (conf / "pages").read_text() == "https://a.example/tv?kiosk=1 0\n"
-    assert (conf / "pages.dashboard").read_text() == rotation
-    # A second tv call must not overwrite the saved rotation with the tv page.
-    assert sbtv(tmp_path, conf, "tv", "https://a.example/other").returncode == 0
-    assert (conf / "pages.dashboard").read_text() == rotation
-    assert "mode: tv" in sbtv(tmp_path, conf, "status").stdout
-    assert sbtv(tmp_path, conf, "dashboard").returncode == 0
-    assert (conf / "pages").read_text() == rotation
-    assert not (conf / "pages.dashboard").exists()
-    assert "mode: dashboard" in sbtv(tmp_path, conf, "status").stdout
+    (conf / "pages").write_text("https://a.example/ 45\nhttps://b.example/ 30\n")
+    assert sbtv(tmp_path, conf, "url", "https://a.example/tv?kiosk=1").returncode == 0
+    assert (conf / "pages").read_text() == "https://a.example/tv?kiosk=1\n"
+    out = sbtv(tmp_path, conf, "status").stdout
+    assert "mode: kiosk" in out and "page: https://a.example/tv?kiosk=1" in out
 
 
-def test_zero_seconds_means_stay(tmp_path):
+def test_url_needs_one_url(tmp_path):
     conf = tmp_path / "conf"
     conf.mkdir()
-    (conf / "pages").write_text("https://a.example/tv 0\n")
-    r = sbtv(tmp_path, conf, "pages")
-    assert r.stdout == "https://a.example/tv\t0\n"
-
-
-def test_tv_needs_a_url(tmp_path):
-    conf = tmp_path / "conf"
-    conf.mkdir()
-    r = sbtv(tmp_path, conf, "tv")
-    assert r.returncode == 1 and "usage" in r.stdout
+    for args in (("url",), ("url", "https://a.example/", "https://b.example/")):
+        r = sbtv(tmp_path, conf, *args)
+        assert r.returncode == 1 and "usage" in r.stdout
 
 
 def test_install_writes_a_valid_toggle_keybind():
@@ -161,12 +158,12 @@ def test_install_writes_a_valid_toggle_keybind():
 def test_browse_toggles_and_drops_kiosk_param(tmp_path):
     conf = tmp_path / "conf"
     conf.mkdir()
-    (conf / "pages").write_text("https://a.example/argo-tv?kiosk=1 0\n")
+    (conf / "pages").write_text("https://a.example/tv?kiosk=1\n")
     assert sbtv(tmp_path, conf, "browse").returncode == 0
     assert (conf / "browse").exists()
     assert "mode: browse" in sbtv(tmp_path, conf, "status").stdout
     # The pages file is untouched, so the second press restores the same kiosk.
-    assert (conf / "pages").read_text() == "https://a.example/argo-tv?kiosk=1 0\n"
+    assert (conf / "pages").read_text() == "https://a.example/tv?kiosk=1\n"
     assert sbtv(tmp_path, conf, "browse").returncode == 0
     assert not (conf / "browse").exists()
 

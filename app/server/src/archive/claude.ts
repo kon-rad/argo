@@ -1,3 +1,4 @@
+import { type ChannelTag, parseChannelTag, stripChannelTag } from './channel.js';
 import { clean, sha256 } from './clean.js';
 import type { ParsedMessage } from './types.js';
 
@@ -7,13 +8,17 @@ export interface ClaudeChunk {
   linesConsumed: number;
   title: string | null;
   model: string | null;
+  /** The channel the prompts came through (a Telegram bot), from the first tagged prompt; null when typed. */
+  channel: ChannelTag | null;
+  /** How Claude Code was started (`cli` at a terminal, `sdk-cli` for `claude -p`, ...), from the first record that says; null when none does. */
+  entrypoint: string | null;
 }
 
 function blockText(b: any): string {
   if (typeof b === 'string') return b;
   if (!b || typeof b !== 'object') return '';
   switch (b.type) {
-    case 'text': return b.text ?? '';
+    case 'text': return stripChannelTag(b.text ?? '');
     case 'thinking': return `[thinking] ${b.thinking ?? ''}`;
     case 'tool_use': return `[tool_use ${b.name}] ${JSON.stringify(b.input ?? {})}`;
     case 'tool_result':
@@ -26,10 +31,18 @@ function blockText(b: any): string {
 /** Plain text of one transcript record, for full-text search. */
 export function claudeText(rec: any): string {
   const content = rec?.message?.content;
-  if (typeof content === 'string') return content;
+  if (typeof content === 'string') return stripChannelTag(content);
   if (Array.isArray(content)) return content.map(blockText).filter(Boolean).join('\n');
   if (rec?.type === 'ai-title') return rec.aiTitle ?? '';
   if (rec?.type === 'system' && typeof rec.content === 'string') return rec.content;
+  return '';
+}
+
+/** A user record's own text (string content or its first text block), before any stripping. */
+function userText(rec: any): string {
+  const c = rec?.message?.content;
+  if (typeof c === 'string') return c;
+  if (Array.isArray(c)) { const t = c.find((b: any) => b && b.type === 'text'); return typeof t?.text === 'string' ? t.text : ''; }
   return '';
 }
 
@@ -48,6 +61,8 @@ export function parseClaudeJsonl(buf: Buffer, startLine: number): ClaudeChunk {
   const messages: ParsedMessage[] = [];
   let title: string | null = null;
   let model: string | null = null;
+  let channel: ChannelTag | null = null;
+  let entrypoint: string | null = null;
 
   lines.forEach((line, i) => {
     const seq = startLine + i + 1;
@@ -62,6 +77,8 @@ export function parseClaudeJsonl(buf: Buffer, startLine: number): ClaudeChunk {
     }
     if (rec?.type === 'ai-title' && rec.aiTitle) title = rec.aiTitle;
     if (rec?.type === 'assistant' && rec.message?.model) model = rec.message.model;
+    if (channel === null && rec?.type === 'user') channel = parseChannelTag(userText(rec));
+    if (entrypoint === null && typeof rec?.entrypoint === 'string' && rec.entrypoint) entrypoint = rec.entrypoint;
     const ts = typeof rec?.timestamp === 'string' && !Number.isNaN(Date.parse(rec.timestamp)) ? new Date(rec.timestamp) : null;
     messages.push({
       seq,
@@ -77,5 +94,5 @@ export function parseClaudeJsonl(buf: Buffer, startLine: number): ClaudeChunk {
     });
   });
 
-  return { messages, consumedBytes, linesConsumed: lines.length, title, model };
+  return { messages, consumedBytes, linesConsumed: lines.length, title, model, channel, entrypoint };
 }

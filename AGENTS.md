@@ -8,7 +8,7 @@ Everything here must work for a stranger. Before you write a value, ask: would i
 
 | Kind of value | Where it goes |
 |---|---|
-| Secrets (keys, tokens, password hashes) | The user's vault `.env`, or `/etc/secondbrain/env` on a server. Add the variable name to `app/deploy/env.example` or `vault-template/.env.example` |
+| Secrets (keys, tokens, password hashes) | The user's vault `.env`, or `/etc/secondbrain/env` on a server. Add the variable name to `app/deploy/env.example` or `vault-template/env.example` (copied into vaults as `.env.example`) |
 | Personal settings (hosts, origins, names, paths, enabled modules) | Same env files, read in `app/server/src/config.ts` with a default that works for a stranger, or the feature off |
 | Personal rules for agents | The vault's `AGENTS.local.md` (never `vault-template/AGENTS.base.md`) |
 | Personal guard rules | The vault's `.agents/guard.local.json` |
@@ -26,7 +26,8 @@ Never add: real names, hostnames, IP addresses (other than `127.0.0.1` and the R
 | `harness/` | Hooks shared by Claude Code and Hermes: `hooks/guard.py` (blocks dangerous tool calls), `hooks/devlog_gate.py` (asks for a dev log before finishing), Claude settings and the fact-checker agent |
 | `skills/` | Generic skills in `SKILL.md` format, linked into a vault's `.agents/skills/` by `secondbrain-vault link-skills` |
 | `tools/`, `bin/secondbrain-vault` | The vault CLI: `init`, `rules`, `link-skills` |
-| `addons/` | Optional extras that run outside the app, each with its own README and tests. `tv-kiosk/`: a Raspberry Pi that shows the app full screen on a TV |
+| `zen-agent/` | A standalone agent harness on the pi agent core (its own `package.json`, tests and README; imports nothing from `app/`): personas from the org roster, skills, swappable providers, kanban and knowledge tools, budgets, traces, the guard in process. Extractable to its own repo with `git subtree split` |
+| `addons/` | Optional extras that run outside the app, each with its own README and tests. `tv-kiosk/`: a Raspberry Pi that shows the app full screen on a TV. `agent-dock/`: a macOS app and CLI that opens an org agent in a terminal |
 | `scripts/check-public.sh` | The leak check |
 | `docs/` | Architecture docs |
 
@@ -37,6 +38,7 @@ Never add: real names, hostnames, IP addresses (other than `127.0.0.1` and the R
 | App tests (needs a local Postgres) | `cd app && npm ci && npm test` |
 | App typecheck and build | `cd app && npm run build` |
 | Python tests (harness, CLI, add-ons) | `python3 -m pytest harness tools addons` |
+| zen-agent build and tests (no network, no keys) | `cd zen-agent && npm ci && npm test` |
 | Leak check | `scripts/check-public.sh` (add your own private denylist at `~/.config/secondbrain/denylist.txt`) |
 
 Run all of them before you open a PR. Say in the PR which ones you ran and what they printed.
@@ -53,10 +55,10 @@ Run all of them before you open a PR. Say in the PR which ones you ran and what 
 
 ## Modules
 
-Optional features sit behind `MODULES` (comma list in env). A module that is off must not mount its API routes or show its nav link, and `deploy.sh` installs a module's timers only when it is on. Today: `ring`, `agents`, `projects`, `org`, `usage`, `map`, `tv`, `voice`, `livestream` (see `app/README.md`). A new optional feature is a new module, off by default.
+Optional features sit behind `MODULES` (comma list in env). A module that is off must not mount its API routes or show its nav link, and `deploy.sh` installs a module's timers only when it is on. Today: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `summaries`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`, `uploads`, `garden` (see `app/README.md`). The core features (`projects`, `org`, `board`, `usage`, `summaries`) are wired by a manifest in `app/server/src/features/<name>/` and nowhere else: add to the manifest, never to `app.ts`, the launcher or `deploy.sh` (see `CONTRIBUTING.md`, "Adding a feature"). A new optional feature is a new module, off by default.
 
 Structured personal settings (which accounts to track, folder-to-division maps, show names, channel handles) go in the vault's `secondbrain.json`, read through `app/server/src/settings.ts`, with an empty default. Never a list of someone's accounts in code.
 
 ## Docs
 
-User-facing behaviour changes update `README.md` or `docs/`. Architecture changes update `docs/architecture.md`.
+User-facing behaviour changes update `README.md` or the matching page in `docs/` (the table in `CONTRIBUTING.md`, "Docs", says which). Architecture changes update `docs/architecture.md`.

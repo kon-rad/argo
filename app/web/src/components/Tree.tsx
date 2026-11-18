@@ -97,7 +97,8 @@ function Dir({ path, depth, selectedPath, defaultOpen = false }: DirProps) {
               key={file.path}
               to={fileHref(file.path)}
               style={{ paddingLeft: `${(depth + 1) * 12 + 16}px` }}
-              className={`block truncate rounded py-0.5 pr-1 hover:bg-[var(--paper-sunk)] ${
+              aria-current={file.path === selectedPath ? 'page' : undefined}
+              className={`block truncate rounded py-0.5 pr-1 hover:bg-[var(--paper-sunk)] max-md:py-3 ${
                 file.path === selectedPath
                   ? 'bg-[var(--paper-sunk)] font-medium text-[var(--ink)]'
                   : 'text-[var(--ink-dim)]'

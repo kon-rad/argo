@@ -1,30 +1,35 @@
-import { NavLink, Navigate, Route, Routes, useParams } from 'react-router-dom';
-import Board from './Board.js';
+import { Link, NavLink, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import Chat from './Chat.js';
 import History from './History.js';
+import ZenChat from './ZenChat.js';
 
 /**
- * Agents: the shared kanban board (Hermes profiles + Claude Code lanes), chats with Claude Code on the droplet, and
- * the history of every Hermes conversation.
+ * Agents: chats with Claude Code or zen-agent on the
+ * server (the Chat tab, with a harness switch), and the history of every Hermes conversation.
  */
 const tab = ({ isActive }: { isActive: boolean }): string =>
-  `px-3 py-1.5 text-sm border-b-2 ${isActive ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
+  `px-3 py-1.5 text-sm border-b-2 max-md:inline-flex max-md:min-h-11 max-md:items-center ${isActive ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
 
 export default function Agents() {
+  const location = useLocation();
+  // The Chat tab covers both harnesses: /agents/chat and /agents/zen.
+  const onChat = /^\/agents\/(chat|zen)(\/|$)/.test(location.pathname);
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <nav className="flex shrink-0 gap-1 border-b border-[var(--rule)] px-3" aria-label="Agents">
-        <NavLink to="/agents/board" className={tab}>Board</NavLink>
-        <NavLink to="/agents/chat" className={tab}>Chat</NavLink>
+      <nav className="flex shrink-0 gap-1 overflow-x-auto whitespace-nowrap border-b border-[var(--rule)] px-3" aria-label="Agents">
+        <Link to="/agents/chat" aria-current={onChat ? 'page' : undefined} className={tab({ isActive: onChat })}>Chat</Link>
         <NavLink to="/agents/history" className={tab}>History</NavLink>
       </nav>
       <div className="min-h-0 flex-1">
         <Routes>
-          <Route index element={<Navigate to="board" replace />} />
-          <Route path="board" element={<Board />} />
-          <Route path="board/:taskId" element={<Board />} />
+          <Route index element={<Navigate to="chat" replace />} />
+          {/* Old links to the Hermes kanban page land on the board. */}
+          <Route path="board" element={<Navigate to="/board" replace />} />
+          <Route path="board/:taskId" element={<OldCardLink />} />
           <Route path="chat" element={<Chat />} />
           <Route path="chat/:chatId" element={<Chat />} />
+          <Route path="zen" element={<ZenChat />} />
+          <Route path="zen/:chatId" element={<ZenChat />} />
           <Route path="history" element={<History />} />
           <Route path="history/:id" element={<History />} />
           {/* Old links (/agents/123) to a Hermes conversation. */}
@@ -33,6 +38,11 @@ export default function Agents() {
       </div>
     </div>
   );
+}
+
+export function OldCardLink() {
+  const { taskId } = useParams();
+  return <Navigate to={`/board/${taskId}`} replace />;
 }
 
 function OldHistoryLink() {

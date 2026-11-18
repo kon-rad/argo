@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 dist/
 app/data/
 .env
@@ -11,3 +11,8 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 *.icns
+# Output of the Playwright run (web/e2e): screenshots of a real vault never belong here.
+app/web/e2e/shots/
+app/web/test-results/
+app/web/e2e/test-results/
+app/web/e2e/baseline/

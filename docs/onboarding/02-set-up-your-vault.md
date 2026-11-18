@@ -1,0 +1,210 @@
+# Set up your vault
+
+Status: **works** - the setup that takes an empty folder to a private vault with the app and search, plus the starter org (`init` writes a minimal company roster); ships today.
+
+From nothing to a private vault you can browse and search. Each step ends with a check, so you know it worked before moving on. This page is the whole first-run path; the reference for every setting is [configuration.md](../configuration.md).
+
+Rather than run this by hand, hand it to an agent: load the [`setup-vault`](https://github.com/kon-rad/argo/blob/main/skills/setup-vault/SKILL.md) skill and it asks four questions, then runs the steps below with a check after each.
+
+## Step 1. Install the prerequisites
+
+The one-command path installs git, Node 22+, Python 3.9+ and PostgreSQL 15+ with pgvector on macOS or Debian/Ubuntu, and touches nothing else:
+
+```bash
+curl -fsSL https://kon-rad.github.io/argo/install.sh | sh
+```
+
+Or install them yourself:
+
+| Tool | Version | Why |
+|---|---|---|
+| git | any recent | The vault is a git repo and the engine is a submodule |
+| Python | 3.9+ | The vault CLI and the agent hooks (standard library only) |
+| Node.js | 22+ | The app |
+| PostgreSQL | 15+ | The search index |
+| pgvector | 0.8+ | Semantic search. It must be built for the same Postgres the app uses |
+
+macOS with Homebrew:
+
+```bash
+brew install git node@22 python postgresql@15
+brew services start postgresql@15
+git clone --branch v0.8.1 https://github.com/pgvector/pgvector.git /tmp/pgvector
+make -C /tmp/pgvector PG_CONFIG=$(brew --prefix postgresql@15)/bin/pg_config
+make -C /tmp/pgvector install PG_CONFIG=$(brew --prefix postgresql@15)/bin/pg_config
+```
+
+Ubuntu or Debian:
+
+```bash
+sudo apt install git python3 postgresql postgresql-contrib
+sudo apt install postgresql-16-pgvector        # match your Postgres major version
+sudo -u postgres createuser --superuser "$USER"
+# Node 22: nvm, fnm or the NodeSource packages
+```
+
+**Check:** `psql -c 'select 1'` answers, and `node --version` prints 22 or later.
+
+## Step 2. Create the vault
+
+A vault is an empty folder that becomes a private git repo, with the engine inside it.
+
+```bash
+mkdir my-vault && cd my-vault && git init
+git submodule add https://github.com/kon-rad/argo.git .secondbrain
+.secondbrain/bin/secondbrain-vault init .
+cp .env.example .env
+printf '{}\n' > secondbrain.json
+git add -A && git commit -m "new vault"
+```
+
+What `init` created, and what each file is for:
+
+| Path | What |
+|---|---|
+| `Projects/`, `Areas/`, `Research/`, `Archives/` | The PARA folders, each with a README. `PARA Guide.md` explains how to choose |
+| `AGENTS.local.md` | Your rules for agents. Starts nearly empty |
+| `AGENTS.md` | Generated: the shared rules plus yours. Never edit it by hand |
+| `CLAUDE.md` | One line, `@AGENTS.md`, so Claude Code reads the same rules |
+| `.claude/settings.json`, `.claude/agents/`, `.claude/skills` | Claude Code wired to the hooks, the fact-checker subagent, a link to the shared skills folder |
+| `.agents/skills/`, `.agents/guard.local.json` | Your skills (plus links to the engine's), and your extra guard rules |
+| `.agents/org.json` | The **starter org**: owner, one lead, one coder, one reviewer, two teams. Edit it, then `secondbrain org plan` / `apply` ([From zero](00-from-zero.md) stage 7) |
+| `.env.example`, `secondbrain.example.json`, `.gitignore` | Templates and ignore rules copied by `init`; `.env` is gitignored |
+| `.env`, `secondbrain.json` | Created by the two commands after `init`: machine settings/secrets and an empty active instance configuration |
+| `~/.local/bin/cli-board`, `cli-org`, `cli-projects`, ... | Outside the vault: the agent CLIs, so an agent told to run `cli-board` finds it. `cli-board` reaches a server's board over HTTPS once `BOARD_URL` and `BOARD_TOKEN` are in `.env`; the rest say they are server-only. The `cli-board` bundle is built from `.secondbrain/app` once its dependencies are installed (the first run in Step 3 does that); until then `cli-board` says so. Step 3 re-runs the install; it is safe any time. `init --no-clis` skips this ([details](06-connect-machines.md#the-agent-clis-on-the-laptop-and-every-other-machine)) |
+
+### Configure this instance
+
+`secondbrain.json` is your **instance configuration**, shared through your private vault. The `printf` command above creates the smallest valid file, `{}`. The app also works when the file is absent, using defaults.
+
+`init` copies `secondbrain.example.json` but does not create `secondbrain.json`. Read the example and add the sections you need to the active file. If you prefer to copy the whole example, use `cp secondbrain.example.json secondbrain.json` only in a new vault without an active file, then remove unwanted sections and replace all example values. The example is a reference, not an automatic onboarding preset.
+
+For example, to enable the map addon, the active file can contain:
+
+```json
+{ "addons": ["map"] }
+```
+
+Put API keys in `.env` and complete native CLI logins separately. Listing a subscription in instance configuration enables its Usage panel; it does not sign in or purchase a subscription. The engine's **feature manifests** register features in code; you do not edit them to configure this vault. Read [Configuration and secrets](08-config-and-secrets.md) and the [instance configuration reference](../configuration.md#secondbrainjson) for the supported settings and file distinction.
+
+The app reads the active configuration at startup. After later edits, run `secondbrain restart` (once the launcher is on your PATH).
+
+**Check:** `python3 -m json.tool secondbrain.json` parses the active file, `git status` is clean after your commit, and `cat AGENTS.md | head -3` shows the generated header.
+
+Two rules from here on. Never make the vault repo public. And never commit inside `.secondbrain/`; it is a pinned copy of the engine.
+
+## Step 3. Run the app
+
+```bash
+.secondbrain/app/bin/secondbrain
+```
+
+The first run installs dependencies, creates the `secondbrain` database, runs the migrations, builds the server and the web UI, starts the server on `http://127.0.0.1:5123` and opens your browser (on macOS or a Linux desktop; a headless machine prints the URL). Later runs just start it.
+
+Put the launcher on your PATH so the rest of these docs read naturally:
+
+```bash
+ln -s "$PWD/.secondbrain/app/bin/secondbrain" ~/.local/bin/secondbrain
+```
+
+Now that the app's dependencies are installed, finish the agent CLIs `init` put on PATH (it builds the one-file `cli-board` client; re-running changes nothing else):
+
+```bash
+.secondbrain/bin/secondbrain-vault clis install
+```
+
+| Command | Does |
+|---|---|
+| `secondbrain` | Start (if needed) and open the browser |
+| `secondbrain stop` / `restart` / `status` / `logs` | Manage the server |
+| `secondbrain scan` | Re-index the vault now |
+| `secondbrain embed` | Embed new and changed notes for semantic search |
+| `secondbrain dev` | Server and web UI in watch mode, for development |
+| `secondbrain doctor` | Health checks: Node, Postgres, pgvector, migrations, modules, and each agent CLI (installed, server-only or missing) |
+| `secondbrain help` | Every subcommand, including the feature commands |
+
+The launcher reads `<vault>/.env`. It finds the vault by walking up from `.secondbrain/app/bin/`; set `VAULT_ROOT` to point it elsewhere.
+
+**Check:** the browser shows the app, and `secondbrain status` says it is running.
+
+## Step 4. Put notes in and build the index
+
+Write a few notes, or move an existing folder of markdown into `Projects/`, `Areas/` or `Research/`. Then:
+
+```bash
+secondbrain scan
+```
+
+On a laptop, scans only run when you ask (or press the rescan button in the nav bar). The scanner skips credential-shaped files (`.env*`, `*.pem`, `*.key` and the like), so they are never indexed and never served.
+
+**Check:** keyword search finds a word from one of your notes, and opening the note shows its backlinks.
+
+Already have an Obsidian vault? `init` refuses a folder that has content, so create the vault empty as above and then move your notes into it. PARA is a convention, not a requirement: the app indexes every markdown file under the vault, whatever the folders are called. Obsidian ignores dot-folders, so `.secondbrain/` never shows up in its search.
+
+## Step 5. Turn on semantic search (optional)
+
+Keyword search needs no keys. For semantic and hybrid search, pick one:
+
+| Option | Where the text goes | Setup |
+|---|---|---|
+| Together AI | Note chunks are sent to Together's embedding API | Add `TOGETHER_API_KEY=` to `.env` |
+| Ollama | Nothing leaves your machine | Run Ollama with `nomic-embed-text` or `bge-m3`, and set the embeddings source's provider to `ollama` on the Sources page |
+
+Then `secondbrain embed`. Re-run it when notes change; a server does it on a timer.
+
+**Check:** search in `semantic` mode finds a note by meaning, with different words than the note uses.
+
+## Step 6. Turn on the company modules (optional)
+
+Everything beyond browse, search and the database page is a module, and all of them are off by default. The company is five of them:
+
+```
+MODULES=projects,board,org,usage,summaries
+```
+
+Then `secondbrain restart`. What each one does and needs: [modules.md](../modules.md).
+
+## Step 7. Back it up and keep it private
+
+Push the vault to a **private** remote. That is your backup, and it is how a server or a second computer gets a copy later.
+
+```bash
+git remote add origin <your private remote>
+git push -u origin main
+```
+
+Before the first push, set your commit email for the vault to something you are happy to see in its history, and confirm `.env` is not tracked:
+
+```bash
+git check-ignore .env        # prints .env
+```
+
+**Check:** the remote is private, and `git ls-files | grep -c '^.env$'` prints 0.
+
+## What you have now
+
+- A private git repo of markdown with the engine pinned inside it.
+- The app on `http://127.0.0.1:5123`, bound to loopback with no login, because on a laptop loopback is the boundary.
+- Keyword search, and semantic search if you turned it on.
+- A starter org in `.agents/org.json`, ready for [From zero](00-from-zero.md) stage 7.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| `extension "vector" is not available` during migrations | pgvector was built for a different Postgres. Rebuild it with that server's `pg_config` |
+| `postgres did not come up on localhost:5432` | Postgres is not running, or not on 5432. Start it (`brew services start postgresql@15`, `sudo systemctl start postgresql`) or set `DATABASE_URL` |
+| Semantic search returns 503 | No embedding provider: add `TOGETHER_API_KEY` or run Ollama |
+| A module's page is missing | The module is not in `MODULES`, or the server was not restarted |
+| `init` says the folder already has content | `init` only starts new vaults. Use an empty folder |
+
+## Next
+
+- [Connect Claude Code](03-claude-code.md): five minutes, because `init` already wired it.
+- Turn on more modules when you want them, each described in [modules.md](../modules.md).
+- The whole path, stage by stage with a check after each: [From zero to an agent company](00-from-zero.md).
+
+For optional Codex Desktop/CLI conversation history on multiple Macs, use the
+[one-command usage collector setup](../modules.md#native-codex-conversation-usage)
+on each host, then run its `doctor` command. Conversation ingestion and subscription
+quota panels are configured separately.
