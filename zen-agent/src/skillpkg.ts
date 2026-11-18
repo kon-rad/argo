@@ -30,10 +30,11 @@ export function isIgnoredName(name: string): boolean {
 
 export function isSecretName(name: string): boolean {
   const n = name.toLowerCase();
-  if (n === '.env.example') return false;
+  if (n === '.env.example' || n === '.env.sample') return false;
   return (
     n === '.env' || n.startsWith('.env.') || n.endsWith('.pem') || n.endsWith('.key') || n.startsWith('id_rsa') ||
-    n.startsWith('id_ed25519') || n === 'credentials.json' || n.endsWith('.p12') || n === '.npmrc' || n === '.netrc'
+    n.startsWith('id_ed25519') || n.startsWith('id_ecdsa') || n === 'credentials.json' || n === '.credentials.json' || n === 'auth.json' ||
+    n.endsWith('.p12') || n.endsWith('.pfx') || n === '.npmrc' || n === '.netrc' || n === '.pypirc'
   );
 }
 
@@ -68,10 +69,13 @@ export function packageDigest(dir: string): PackageResult {
           throw new Invalid(`dangling symlink: ${rel}`);
         }
         if (!inside(root, target)) throw new Invalid(`symlink escapes package: ${rel}`);
+        if (relative(root, target).split(sep).some((part) => isSecretName(part) || isIgnoredName(part))) {
+          throw new Invalid(`symlink targets a credential or ignored path: ${rel}`);
+        }
         const tst = statSync(target);
         if (tst.isDirectory()) throw new Invalid(`directory symlink not supported: ${rel}`);
         if (!tst.isFile()) throw new Invalid(`not a regular file: ${rel}`);
-        found.push({ rel, abs: path });
+        found.push({ rel, abs: target });
       } else if (st.isDirectory()) {
         walk(path, depth + 1);
       } else if (st.isFile()) {

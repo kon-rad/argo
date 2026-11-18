@@ -114,6 +114,7 @@ export const SUPPORT: Record<string, { level: SupportLevel; note: string }> = {
   'zen-agent': { level: 'catalog-filtered', note: 'Catalog and read_skill are filtered to the managed snapshot; file and shell tools can still read other folders.' },
   'claude-code': { level: 'catalog-only', note: 'A generated skills folder to point the runtime at; global and project skill folders stay visible and files stay readable.' },
   hermes: { level: 'catalog-only', note: 'A generated folder for skills.external_dirs; profile-local skills stay visible and files stay readable.' },
+  codex: { level: 'catalog-only', note: 'A generated folder for a workspace .agents/skills; other project and user skill folders stay visible and files stay readable. Native Codex loading is not isolated by this manager.' },
 };
 export function supportFor(runtime: string): { level: SupportLevel; note: string } {
   return SUPPORT[runtime] ?? { level: 'none', note: 'No skills adapter for this runtime: it sees whatever its own configuration loads.' };

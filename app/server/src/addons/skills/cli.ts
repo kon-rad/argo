@@ -33,7 +33,7 @@ Change (writes only drafts and proposals; nothing becomes active here)
   apply <change-id>                         commit it on branch skills/<id> (temporary worktree; your checkout is untouched)
 
 Deploy to this machine
-  sync [--agents a,b] [--runtime zen-agent|claude-code|hermes] [--root <dir>] [--bundle <file>] [--repair]
+  sync [--agents a,b] [--runtime zen-agent|claude-code|hermes|codex] [--root <dir>] [--bundle <file>] [--repair]
        [--ack --server <url> [--token-file <file>]]
   pack --out <file> [--agents a,b] [--runtime <r>]   a bundle for a host with no vault checkout (copy it yourself)
   status [--root <dir>] [--json]                     verify deployed views against their digests

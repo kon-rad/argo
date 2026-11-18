@@ -21,7 +21,7 @@ import type { Roster } from './roster.js';
  */
 
 export const VIEW_FORMAT = 'secondbrain-skills-view/1';
-export const ADAPTER_RUNTIMES: SkillRuntime[] = ['zen-agent', 'claude-code', 'hermes'];
+export const ADAPTER_RUNTIMES: SkillRuntime[] = ['zen-agent', 'claude-code', 'hermes', 'codex'];
 
 export interface PlannedSkill { name: string; id: string; digest: string; revision: string | null; dirty: boolean; description: string; requires: { bins: string[]; env: string[] } }
 export interface PackageSource { files: { path: string; exec: boolean; read: () => Buffer }[] }

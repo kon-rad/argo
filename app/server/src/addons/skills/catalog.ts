@@ -126,13 +126,14 @@ export async function buildCatalog(specs: RootSpec[], opts: { git?: boolean } = 
       let meta = readMeta('', f.folder);
       let scan: ReturnType<typeof scanPackage> | null = null;
       if (!errors.length) {
-        const md = join(dir, 'SKILL.md');
-        try {
-          if (lstatSync(md).isSymbolicLink() && !inside(dir, realpathSync(md))) errors.push('SKILL.md is a symlink out of the package');
-          else meta = readMeta(readFileSync(md, 'utf8').slice(0, 256 * 1024), f.folder);
-        } catch { errors.push('SKILL.md unreadable'); }
         scan = scanPackage(dir);
         if (!scan.ok) errors.push(scan.error);
+        else {
+          // Validate the entire package before parsing metadata: SKILL.md can itself be an alias.
+          const md = scan.files.find((file) => file.path === 'SKILL.md')!;
+          try { meta = readMeta(readFileSync(md.abs, 'utf8').slice(0, 256 * 1024), f.folder); }
+          catch { errors.push('SKILL.md unreadable'); }
+        }
       }
       errors.push(...meta.errors);
       warnings.push(...meta.warnings);

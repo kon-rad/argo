@@ -107,9 +107,14 @@ The app never shows "loaded" without one of those records.
 | zen-agent | catalog-filtered | With `managedSkills` in `zen.json`, a run reads its persona's view, verifies every package digest, copies the packages into an immutable per-run snapshot, and lists and loads (`read_skill`) only those. The trace's meta line records `skills_packages` (name, id, digest, revision). Legacy folders are not also read. File and shell tools can still read other folders. See [zen-agent](zen-agent.md#37-managed-skills). |
 | Claude Code | catalog-only | `secondbrain skills view-path <agent> --runtime claude-code` prints a generated folder of that agent's skills to point a project's `.claude/skills` at. Global and project skill folders stay visible and files stay readable. |
 | Hermes | catalog-only | Point `skills.external_dirs` at `secondbrain skills view-path <agent> --runtime hermes`. Profile-local skills stay visible. |
+| Codex | catalog-only | `secondbrain skills view-path <agent> --runtime codex` prints a verified folder to link as `.agents/skills` in a separate workspace. Existing project and user folders remain visible; the manager does not enforce native Codex isolation. |
 | Others | none | No adapter; the runtime loads what its own configuration says. |
 
 Old callers keep working: nothing moves or rewrites `.agents/skills`, `link-skills` or the runtimes' own folders. Scripts that call a skill's files directly bypass any catalog.
+
+For a Codex catalog, create a separate workspace with `.agents/skills` pointing to the printed view path, and start the runtime there. Add the code checkout separately if needed. Do not replace the vault's existing `.agents/skills`: it is an authored package source. This adapter generates and verifies packages; it does not automatically configure or restart native sessions, suppress their global skills, or claim that a session loaded a package without telemetry.
+
+Package validation rejects credential filenames (including `auth.json` and `.credentials.json`) before reading their contents. Resolved aliases may not target ignored directories or credential paths. The detail and file APIs apply the same path checks at read time, so a rejected package or a file replaced by a link is not an alternative route to its contents.
 
 ## Changing skills
 

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
   AgentInfo, AgentSkillsResponse, AssignmentCell, Change, ChangePreview, ChangeRequest, Draft, FileResponse, LibraryResponse, MachinesResponse,
@@ -11,7 +11,7 @@ import { buildCatalog, distinctPackages, publicCandidate, rootSpecs, type Candid
 import { git, gitTop, history, lastRevision, toPosix } from './git.js';
 import * as life from './lifecycle.js';
 import { loadedEvidence, machineStates, readAcks } from './machines.js';
-import { isText, splitFrontmatter } from './package.js';
+import { isText, LIMITS, packageFileAllowed, splitFrontmatter } from './package.js';
 import { dependentsOf, lifecycleOf, loadPolicyFile, policyWarnings, resolveAgent, selectedCandidate, supportFor, type LoadedPolicy } from './policy.js';
 import { loadRoster, type Roster } from './roster.js';
 
@@ -178,12 +178,12 @@ export class SkillsService {
     const sel = this.candidate(s, name, id);
     if (id && !sel) return null;
     let instructions = '';
-    if (sel) { try { instructions = splitFrontmatter(readFileSync(sel.packageFiles.find((f) => f.path === 'SKILL.md')?.abs ?? `${sel.dir}/SKILL.md`, 'utf8').slice(0, 200_000)).body; } catch { instructions = ''; } }
-    const files = sel ? sel.packageFiles.map((f) => {
-      let kind: 'text' | 'binary' = 'binary';
-      try { kind = isText(readFileSync(f.abs).subarray(0, 8192)) ? 'text' : 'binary'; } catch { /* binary */ }
-      return { path: f.path, size: f.size, exec: f.exec, sha256: f.sha256, kind };
-    }) : [];
+    const md = sel ? await this.file(name, sel.id, 'SKILL.md') : null;
+    if (md?.kind === 'text') instructions = splitFrontmatter(md.content ?? '').body;
+    const files = sel ? await Promise.all(sel.packageFiles.map(async (f) => {
+      const inspected = await this.file(name, sel.id, f.path);
+      return { path: f.path, size: f.size, exec: f.exec, sha256: f.sha256, kind: inspected?.kind ?? 'binary' as const };
+    })) : [];
     const hist = sel?.gitTop && sel.gitRel ? await history(sel.gitTop, sel.gitRel) : [];
     const cells = this.cellsFor(s);
     const loaded = await this.loaded();
@@ -223,8 +223,13 @@ export class SkillsService {
     // Re-check at read time: a file swapped for a link since the scan must still resolve inside the package.
     let real: string;
     try { real = realpathSync(f.abs); } catch { this.invalidate(); return null; }
-    if (!real.startsWith(c.dir.endsWith(sep) ? c.dir : c.dir + sep)) { this.invalidate(); return null; }
-    const buf = readFileSync(real);
+    if (!packageFileAllowed(c.dir, real)) { this.invalidate(); return null; }
+    let buf: Buffer;
+    try {
+      const st = statSync(real);
+      if (!st.isFile() || st.size > LIMITS.fileBytes) { this.invalidate(); return null; }
+      buf = readFileSync(real);
+    } catch { this.invalidate(); return null; }
     if (createHash('sha256').update(buf).digest('hex') !== f.sha256) this.invalidate(); // changed on disk since the scan; serve what is there now
     const text = isText(buf);
     return { id: c.id, path, size: buf.length, kind: text ? 'text' : 'binary', content: text ? buf.subarray(0, MAX_FILE_BYTES).toString('utf8') : null, truncated: text && buf.length > MAX_FILE_BYTES };

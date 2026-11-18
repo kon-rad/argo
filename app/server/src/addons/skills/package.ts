@@ -19,13 +19,17 @@ export const LIMITS = { files: 1000, fileBytes: 10 * 1024 * 1024, totalBytes: 50
 const IGNORED = new Set(['.git', '.DS_Store', '__pycache__', 'node_modules']);
 const IGNORED_SUFFIX = ['.pyc'];
 
+export function isIgnoredName(name: string): boolean {
+  return IGNORED.has(name) || IGNORED_SUFFIX.some((s) => name.endsWith(s));
+}
+
 /** Files a package must not carry. The catalog refuses the package without reading them. */
 export function isSecretLike(name: string): boolean {
   const n = name.toLowerCase();
   if (n === '.env.example' || n === '.env.sample') return false;
   return n === '.env' || n.startsWith('.env.') || n.endsWith('.pem') || n.endsWith('.key') || n.endsWith('.p12') || n.endsWith('.pfx')
     || n.startsWith('id_rsa') || n.startsWith('id_ed25519') || n.startsWith('id_ecdsa') || n === 'credentials.json'
-    || n === '.npmrc' || n === '.netrc' || n === '.pypirc';
+    || n === 'auth.json' || n === '.credentials.json' || n === '.npmrc' || n === '.netrc' || n === '.pypirc';
 }
 
 export interface PackageFile { path: string; size: number; exec: boolean; sha256: string; abs: string }
@@ -43,6 +47,12 @@ export function digestOf(files: Pick<PackageFile, 'path' | 'size' | 'exec' | 'sh
 
 function inside(root: string, p: string): boolean {
   return p === root || p.startsWith(root.endsWith(sep) ? root : root + sep);
+}
+
+/** Check resolved targets too: an innocent alias must not import ignored files or credentials. */
+export function packageFileAllowed(root: string, path: string): boolean {
+  return path !== root && inside(root, path)
+    && !relative(root, path).split(sep).some((part) => isSecretLike(part) || isIgnoredName(part));
 }
 
 /**
@@ -64,7 +74,7 @@ export function scanPackage(dir: string): PackageScan {
     let entries: string[];
     try { entries = readdirSync(abs).sort(); } catch { return `unreadable folder ${relative(root, abs) || '.'}`; }
     for (const name of entries) {
-      if (IGNORED.has(name) || IGNORED_SUFFIX.some((s) => name.endsWith(s))) continue;
+      if (isIgnoredName(name)) continue;
       const p = join(abs, name);
       const rel = relative(root, p).split(sep).join('/');
       if (rel.length > LIMITS.pathLength) return `path too long: ${rel.slice(0, 60)}...`;
@@ -74,6 +84,7 @@ export function scanPackage(dir: string): PackageScan {
       if (st.isSymbolicLink()) {
         try { real = realpathSync(p); } catch { return `dangling symlink ${rel}`; }
         if (!inside(root, real)) return `symlink escapes package: ${rel}`;
+        if (!packageFileAllowed(root, real)) return `symlink targets a credential or ignored path: ${rel}`;
         st = statSync(real);
         if (st.isDirectory()) return `directory symlink not supported: ${rel}`;
       }
