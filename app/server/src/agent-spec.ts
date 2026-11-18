@@ -4,8 +4,8 @@
  * ravi shipped as zen-agent with model `sonnet`, which zen-agent cannot route (it needs provider/model).
  */
 
-/** Runtimes a dispatcher can start today. `codex` is in the roster schema but has no adapter. */
-export const ADAPTER_RUNTIMES: ReadonlySet<string> = new Set(['claude-code', 'zen-agent', 'hermes']);
+/** Runtimes with a dispatch adapter. */
+export const ADAPTER_RUNTIMES: ReadonlySet<string> = new Set(['claude-code', 'zen-agent', 'hermes', 'codex']);
 
 /** Runtimes nothing claims for: the owner and the vault session. They carry no model rule. */
 const UNCLAIMED_RUNTIMES: ReadonlySet<string> = new Set(['human', 'session']);
@@ -27,12 +27,15 @@ export function agentSpecProblem(s: AgentSpec): string | null {
     return `runtime "${s.runtime}" has no adapter; the dispatchers run ${[...ADAPTER_RUNTIMES].sort().join(', ')}`;
   }
   if (s.effort != null && !EFFORTS.includes(s.effort)) return `effort "${s.effort}" is not one of ${EFFORTS.join(', ')}`;
-  if (!s.model) return null;
+  if (!s.model) return s.runtime === 'codex' ? 'codex needs an exact Codex CLI model id' : null;
   if (s.runtime === 'claude-code' && !ANTHROPIC_ALIAS.test(s.model)) {
     return `claude-code needs an Anthropic alias (opus, sonnet, haiku or a claude-* id), not "${s.model}"; for another provider use runtime zen-agent`;
   }
   if (s.runtime === 'zen-agent' && !PROVIDER_MODEL.test(s.model)) {
     return `zen-agent needs a provider/model such as openrouter/deepseek/deepseek-v4.1-flash, not "${s.model}"`;
+  }
+  if (s.runtime === 'codex' && (!/^[a-z0-9][a-z0-9.-]*$/i.test(s.model) || s.model.includes('/'))) {
+    return `codex needs an exact Codex CLI model id, not "${s.model}"`;
   }
   return null;
 }

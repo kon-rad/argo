@@ -1,14 +1,16 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import { claimCard, commentCard, getCard, heartbeat, moveCard } from '../../board.js';
 import type { ClassifyInput, ClassifyResult } from '../classify/types.js';
 import type { OllamaMachine } from '../../config.js';
 import { discoverMachineModels } from '../../llm/registry.js';
-import { addWakeup, claimWakeups, finishWakeups, type Wakeup } from '../../org.js';
+import { addWakeup, claimWakeups, dm, finishWakeups, getAgent, post, type Wakeup } from '../../org.js';
 import type { DispatchSettings } from '../../settings.js';
 import { classifyCard, loadCard } from '../classify/org-classify.js';
 import { decide, recordDecision, recordOutcome, routeSpend, TIERS, type RoutingConfig, type Tier } from '../routing/org-router.js';
 import * as store from './store.js';
+import { codexCommand, codexPersona, codexPreamble, codexPreflight, parseCodexResult, subscriptionEnv } from './codex.js';
 import type { MessageRow, Routine, ZenAgentRow } from './store.js';
 
 /**
@@ -18,7 +20,7 @@ import type { MessageRow, Routine, ZenAgentRow } from './store.js';
  * run `zen-agent` once for everything the bot was woken for. Every effect goes through an injected
  * runner, classifier and clock, so the tests never spawn a process or call a provider.
  */
-export interface RunnerResult { code: number; stdout: string; stderr: string }
+export interface RunnerResult { code: number; stdout: string; stderr: string; timedOut?: boolean; cancelled?: boolean }
 export type Runner = (cmd: string, args: string[], env: NodeJS.ProcessEnv, cwd: string, timeoutMs: number) => Promise<RunnerResult>;
 export type Classifier = (input: ClassifyInput) => Promise<ClassifyResult>;
 
@@ -28,7 +30,11 @@ export interface DispatchConfig {
   orgDispatchDailyTokens: number;
   orgDispatchParallel: number;
   orgZenCommand: string;
+  orgCodexCommand?: string;
+  orgCodexHost?: string | null;
   vaultRoot: string;
+  /** ORG_TASK_WAKE_RETRIES: re-wakes a ready card gets before it waits for a person (default 2). */
+  orgTaskWakeRetries?: number;
   /** The connected computers (OLLAMA_MACHINES); a model on one of them may fall back (settings.fallback). */
   machines?: OllamaMachine[];
 }
@@ -116,6 +122,12 @@ export const DEFAULT_BUDGETS: Record<Reason | 'task-lead', Budget> = {
 export interface TickResult {
   routines: number;
   released: number;
+  /** Cards whose dependencies had all closed, moved to ready by this tick. */
+  promoted: number;
+  /** Ready cards given back the task wakeup they were owed. */
+  woken: number;
+  /** Open task wakeups whose card was done or archived, closed by this tick ("card closed"). */
+  closed: number;
   /** Why no run was started this tick, when none was. */
   held: 'quiet' | 'budget' | null;
   agents: number;
@@ -181,10 +193,21 @@ function renderMessage(m: MessageRow): string {
 
 interface Kept { w: Wakeup; message: MessageRow | null; routine: Routine | null }
 
+/** One bot's turn in a tick. `skip` says why a bot the tick selected started no run; the tick logs it once. */
+export interface AgentOutcome { ran: boolean; acks: number; gated: number; skip?: string }
+
+/** Why a bot that started no run and threw nothing was left alone, when its lane gave no reason of its own. */
+function skipReason(r: AgentOutcome): string {
+  if (r.skip) return r.skip;
+  const parts = [r.acks ? `${r.acks} ack(s)` : '', r.gated ? `${r.gated} gated by the wake gate` : ''].filter(Boolean);
+  return parts.length ? `${parts.join(', ')}; nothing left to run` : 'no reason recorded';
+}
+
 export class Dispatcher {
   private readonly now: () => Date;
   private readonly env: NodeJS.ProcessEnv;
   private readonly log: (line: string) => void;
+  private readonly codexPreflights = new Map<string, Promise<string | null>>();
 
   constructor(private readonly deps: Deps) {
     this.now = deps.now ?? (() => new Date());
@@ -206,22 +229,33 @@ export class Dispatcher {
   }
 
   async tick(): Promise<TickResult> {
-    const res: TickResult = { routines: 0, released: 0, held: null, agents: 0, runs: 0, acks: 0, gated: 0, errors: [] };
+    const res: TickResult = { routines: 0, released: 0, promoted: 0, woken: 0, closed: 0, held: null, agents: 0, runs: 0, acks: 0, gated: 0, errors: [] };
     res.routines = await this.routines();
     const longest = Math.max(30, ...Object.values(this.deps.settings.budgets).map((b) => b.minutes), ...Object.values(DEFAULT_BUDGETS).map((b) => b.minutes));
     res.released = await store.releaseStale(longest + 5);
+    // A reconcile failure is reported, never a reason to skip the runs.
+    try {
+      Object.assign(res, await this.reconcile());
+    } catch (err) {
+      res.errors.push(`reconcile: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     const t = localTime(this.now(), this.deps.config.orgTz);
-    if (inQuietHours(this.deps.config.orgDispatchQuiet, t.hour)) {
-      res.held = 'quiet';
-      this.log(`quiet hours (${this.deps.config.orgDispatchQuiet}, local ${t.hhmm}): no runs`);
+    // A held tick still names every bot it leaves waiting, one line each, so a quiet log is never a silent one.
+    const holdAll = async (held: 'quiet' | 'budget', why: string): Promise<TickResult> => {
+      res.held = held;
+      this.log(`held: ${why}: no runs`);
+      const waiting = await store.zenAgentsWithOpenWakeups();
+      res.agents = waiting.length;
+      for (const a of waiting) this.log(`${a.name}: not run: held by ${why}`);
       return res;
+    };
+    if (inQuietHours(this.deps.config.orgDispatchQuiet, t.hour)) {
+      return holdAll('quiet', `quiet hours (${this.deps.config.orgDispatchQuiet}, local ${t.hhmm})`);
     }
     const cap = this.deps.config.orgDispatchDailyTokens;
     if (cap > 0 && (await store.tokensToday(this.deps.config.orgTz)) >= cap) {
-      res.held = 'budget';
-      this.log(`held: budget (${cap} tokens today)`);
-      return res;
+      return holdAll('budget', `budget (${cap} tokens today)`);
     }
 
     const agents = await store.zenAgentsWithOpenWakeups();
@@ -230,10 +264,12 @@ export class Dispatcher {
     for (let i = 0; i < agents.length; i += parallel) {
       await Promise.all(agents.slice(i, i + parallel).map(async (a) => {
         try {
-          const r = await this.runAgent(a);
+          const r = a.runtime === 'codex' ? await this.runCodexAgent(a) : await this.runAgent(a);
           res.runs += r.ran ? 1 : 0;
           res.acks += r.acks;
           res.gated += r.gated;
+          // A thrown error is the bot's line (res.errors, printed by the CLI); a quiet return gets this one.
+          if (!r.ran) this.log(`${a.name}: not run: ${skipReason(r)}`);
         } catch (err) {
           res.errors.push(`${a.name}: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -242,13 +278,155 @@ export class Dispatcher {
     return res;
   }
 
-  /** One bot: claim, apply the rules, gate, then one run for whatever is left. */
-  async runAgent(agent: ZenAgentRow): Promise<{ ran: boolean; acks: number; gated: number }> {
+  /**
+   * The wakes the board owes (docs/board-design.md, 3.3). The triggers wake a card only when it changes state, so a
+   * card can sit ready with nothing to wake its bot: its run ended without finishing it, or its dependencies closed
+   * while it was not waiting on them. Idempotent: an open wakeup or an unfinished run means nothing is owed, and
+   * addWakeup keeps the backoff and the hold. Bots of every lane get the wakeup; each dispatcher claims its own.
+   */
+  async reconcile(): Promise<{ promoted: number; woken: number; closed: number }> {
+    const out = { promoted: 0, woken: 0, closed: 0 };
+    // Wakeups that outlived their card first, so a closed card's wake never selects its bot below.
+    const closed = await store.closeWakeupsOnClosedCards();
+    out.closed = closed.length;
+    for (const c of closed) this.log(`${c.agent}: task wakeup ${c.id} on ${c.card} closed: card closed`);
+    for (const card of await store.waitingCardsWithClosedDeps()) {
+      try {
+        if (await store.promoteCard(card)) out.promoted++;
+      } catch (err) {
+        this.log(`promote ${card}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    for (const { card, agent } of await store.readyCardsOwedAWake(this.deps.config.orgTaskWakeRetries ?? 2)) {
+      if ((await addWakeup(agent, 'task', card)) === null) continue;
+      out.woken++;
+      this.log(`${agent}: ready card ${card} had no wakeup; woken`);
+    }
+    return out;
+  }
+
+  /** The Codex lane claims only Codex roster rows. A preflight failure leaves the card unclaimed and visible. */
+  async runCodexAgent(agent: ZenAgentRow): Promise<AgentOutcome> {
+    const out: AgentOutcome = { ran: false, acks: 0, gated: 0 };
+    const model = agent.model;
+    if (!model) throw new Error('Codex agent has no exact model id');
+    const command = this.deps.config.orgCodexCommand ?? 'codex';
+    const env = subscriptionEnv({ ...this.env, ORG_AGENT: agent.name });
+    let preflight = this.codexPreflights.get(model);
+    if (!preflight) {
+      preflight = codexPreflight(this.deps.runner, command, model, this.deps.config.vaultRoot, env);
+      this.codexPreflights.set(model, preflight);
+    }
+    const problem = await preflight;
+    if (problem) {
+      for (const task of await store.pendingTaskCards(agent.name)) {
+        await moveCard(agent.name, task.card, 'blocked', problem, { blockKind: 'tool-error' });
+        await finishWakeups([task.wakeupId], { result: problem });
+      }
+      throw new Error(problem);
+    }
     const startedAt = this.now();
     const runId = runIdFor(agent.name, startedAt);
     const wakeups = await claimWakeups(agent.name, runId);
-    const out = { ran: false, acks: 0, gated: 0 };
-    if (!wakeups.length) return out;
+    if (!wakeups.length) return { ...out, skip: 'its open wakeups were claimed by another run first' };
+    // One card per run: the first task wakeup whose card is ready. Before, the first task wakeup won whatever its card's
+    // state; when that card could not be claimed every wakeup was unclaimed and the tick moved on without a word, so one
+    // stale wake (a blocked, done or archived card) held the bot's whole queue. Other task wakeups wait for the next tick.
+    const allTasks = wakeups.filter((w) => w.reason === 'task');
+    const statuses = await store.cardStatuses(allTasks.map((w) => w.ref ?? '').filter(Boolean));
+    const pick = allTasks.find((w) => w.ref && statuses.get(w.ref) === 'ready');
+    const later = allTasks.filter((w) => w !== pick);
+    await store.unclaim(later.map((w) => w.id));
+    const selected = wakeups.filter((w) => !later.includes(w));
+    const tasks = pick ? [pick] : [];
+    const card = pick?.ref ?? null;
+    if (!selected.length) {
+      const seen = later.slice(0, 5).map((w) => `${w.ref} ${w.ref ? statuses.get(w.ref) ?? 'missing' : 'no card'}`).join(', ');
+      return { ...out, skip: `no ready card among ${later.length} task wakeup(s) (${seen}${later.length > 5 ? ', ...' : ''})` };
+    }
+    const budget = this.deps.settings.budgets[card ? 'task' : primaryReason(selected)] ?? DEFAULT_BUDGETS[card ? 'task' : primaryReason(selected)];
+    let claimed = false;
+    try {
+      let prompt = this.taskText(agent, selected.map((w) => ({ w, message: null, routine: null })), card);
+      if (card) {
+        const detail = await getCard(card);
+        if (detail.card.assignee !== agent.name) throw new Error(`card ${card} is assigned to another agent`);
+        if (detail.card.repo) {
+          const why = `card ${card} names repo ${detail.card.repo}; use an isolated card runner`;
+          await moveCard(agent.name, card, 'blocked', why, { blockKind: 'tool-error' });
+          await store.unclaim(selected.filter((w) => w.reason !== 'task').map((w) => w.id));
+          await finishWakeups([tasks[0]!.id], { run: runId, exit: 1, result: why });
+          return { ...out, skip: `${why} (routed to the isolated card runner)` };
+        }
+        const taken = await claimCard(null, { runtime: 'codex', agent: agent.name, taskId: card,
+          leaseMinutes: Math.max(5, budget.minutes + 5), wakeup: tasks[0]?.id });
+        if (!taken) {
+          await store.unclaim(selected.map((w) => w.id));
+          return { ...out, skip: `card ${card} could not be claimed (board dispatch off, or another run holds it)` };
+        }
+        claimed = true;
+        prompt += `\nCard ${card}: ${detail.card.title}\n${detail.card.body ?? ''}\n`;
+        if (detail.comments.length) prompt += `\nComments:\n${detail.comments.map((c) => `${c.author}: ${c.body}`).join('\n')}\n`;
+        prompt += '\nWork within the card scope. A human reviews the result before completion. State the checks you actually ran.\n';
+      } else {
+        for (const w of selected) {
+          if (!w.ref || !/^\d+$/.test(w.ref)) continue;
+          const m = await store.messageById(Number(w.ref));
+          if (m) prompt += `\n${renderMessage(m)}\n`;
+        }
+      }
+      const resume = card ? await store.lastCodexSession(agent.name, card) : null;
+      // A fresh session learns who it is and whether it can write; a resumed one already holds that.
+      if (!resume) prompt = codexPreamble(codexPersona(this.deps.config.vaultRoot, agent.name), Boolean(card)) + prompt;
+      const args = codexCommand(model, this.deps.config.vaultRoot, prompt, resume, Boolean(card));
+      const result = parseCodexResult(await this.deps.runner(command, args, { ...env, ORG_RUN: runId, CC_CARD: card ?? '' },
+        this.deps.config.vaultRoot, (budget.minutes + 2) * 60_000));
+      out.ran = true;
+      const summary = result.text || `Codex ${result.state} (exit ${result.code})`;
+      await store.recordCodexRun({ runId, sessionId: result.sessionId ?? resume, agent: agent.name, model, card,
+        startedAt, endedAt: this.now(), state: result.state, text: summary, inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens, wakeupIds: selected.map((w) => w.id), codexHost: this.deps.config.orgCodexHost });
+      if (card && !(await store.cardHasLiveRun(card))) {
+        // The bot closed its own card during the run (cli-board finish): no live run, the card in done, review or
+        // blocked. A heartbeat would throw "no live run" and the cleanup would turn a done card into a blocked one
+        // (t_cba3a8b6 and nine others, 2026-11-15). The run is recorded above; add the comment and leave the card.
+        await commentCard(agent.name, card, `${result.state}: ${summary}`.slice(0, 8000));
+      } else if (card) {
+        await heartbeat(agent.name, card, { tokens: result.inputTokens + result.outputTokens });
+        await commentCard(agent.name, card, `${result.state}: ${summary}`.slice(0, 8000));
+        await moveCard(agent.name, card, result.state === 'done' ? 'review' : 'blocked', summary.slice(0, 600),
+          result.state === 'done' ? {} : { blockKind: result.state === 'timeout' ? 'budget' : 'tool-error' });
+      } else if (result.state === 'done' && result.text.trim()) {
+        const author = await getAgent(agent.name);
+        for (const w of selected) {
+          if (!w.ref || !/^\d+$/.test(w.ref)) continue;
+          const m = await store.messageById(Number(w.ref));
+          if (!m) continue;
+          if (w.reason === 'dm' && !m.author_human) await dm(author, m.author, result.text, { kind: 'reply', thread: m.thread_id ?? m.id });
+          else if (w.reason === 'mention' || w.reason === 'handoff') await post(author, m.channel_slug, result.text,
+            { kind: 'reply', thread: m.thread_id ?? m.id });
+        }
+      }
+      await finishWakeups(selected.map((w) => w.id), { run: runId, exit: result.code, result: summary.slice(0, 600) });
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      // Only a card this run still holds is blocked: one the bot already finished (done, review, blocked) or a person
+      // archived stays as it is. Never move a card without a live run.
+      const live = claimed && card ? await store.cardHasLiveRun(card).catch(() => false) : false;
+      if (live && card) await moveCard(agent.name, card, 'blocked', why.slice(0, 600), { blockKind: 'tool-error' });
+      await finishWakeups(selected.map((w) => w.id), { run: runId, exit: 1, result: why.slice(0, 600) });
+      throw err;
+    }
+    return out;
+  }
+
+  /** One bot: claim, apply the rules, gate, then one run for whatever is left. */
+  async runAgent(agent: ZenAgentRow): Promise<AgentOutcome> {
+    const startedAt = this.now();
+    const runId = runIdFor(agent.name, startedAt);
+    const wakeups = await claimWakeups(agent.name, runId);
+    const out: AgentOutcome = { ran: false, acks: 0, gated: 0 };
+    if (!wakeups.length) return { ...out, skip: 'its open wakeups were claimed by another run first' };
 
     const kept: Kept[] = [];
     for (const w of wakeups) {
@@ -307,7 +485,12 @@ export class Dispatcher {
       }
       kept.push({ w, message: m, routine: null });
     }
-    if (!kept.length) return out;
+    if (!kept.length) {
+      const dropped = wakeups.length - out.acks - out.gated;
+      const parts = [out.acks ? `${out.acks} ack(s)` : '', out.gated ? `${out.gated} gated by the wake gate` : '',
+        dropped ? `${dropped} routine wakeup(s) finished unrun (see their result)` : ''].filter(Boolean);
+      return { ...out, skip: `${parts.join(', ')}; nothing left to run` };
+    }
 
     // One card, one run: a second card waits for the next tick.
     const tasks = kept.filter((k) => k.w.reason === 'task');
@@ -368,7 +551,7 @@ export class Dispatcher {
           if (router.mode === 'on') {
             if (d.action !== 'run') {
               await finishWakeups(run.map((k) => k.w.id), { run: runId, exit: 0, result: `routed ${d.action}: ${d.reason}`.slice(0, 600) });
-              return out;
+              return { ...out, skip: `routed ${d.action}: ${d.reason}`.slice(0, 600) };
             }
             modelFlags.splice(0, modelFlags.length, '--model', d.model);
             budgetNow = { ...budget, turns: d.turns, tokens: d.tokens ?? budget.tokens };

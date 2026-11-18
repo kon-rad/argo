@@ -82,7 +82,7 @@ function messageTexts(path: string): string {
     .join('\n');
 }
 
-test('two wakes of one persona on unrelated cards are two sessions with nothing in common', async () => {
+test('two wakes of one persona on unrelated cards are two sessions with nothing in common', async (t) => {
   const { cfg, faux, models } = setup();
   const kb = fakeBoard([
     card('t_aaaaaa', 'Fix the login redirect', 'Project: app/login\n## Objective\nRedirect after login.'),
@@ -103,9 +103,13 @@ test('two wakes of one persona on unrelated cards are two sessions with nothing 
   assert.match(m2, /t_bbbbbb/);
   assert.doesNotMatch(m2, /t_aaaaaa|login redirect/);
   for (const r of [first, second]) {
-    const meta = lines(r.sessionPath)[0] as { resumed: string | null; persona: string; fetchers: { on: boolean }[] };
+    const meta = lines(r.sessionPath)[0] as { resumed: string | null; persona: string; fetchers: { on: boolean }[]; entrypoint: string; context_window: number; model: string };
     assert.equal(meta.resumed, null, 'a wake never resumes');
     assert.equal(meta.persona, 'bolt');
+    assert.equal(meta.entrypoint, 'wake');
+    assert.equal(meta.model, 'faux/faux-1');
+    assert.equal(meta.context_window, models.getModel('faux', 'faux-1')!.contextWindow);
+    t.diagnostic(JSON.stringify({ producer: 'runWake', entrypoint: meta.entrypoint, model: meta.model, context_window: meta.context_window }));
     assert.ok(meta.fetchers.every((f) => !f.on), 'no fetcher is on unless configured');
     assert.equal(lines(r.sessionPath).filter((l) => l.type === 'message' && l.message.role === 'user').length, 1, 'one user turn: the card');
   }
@@ -168,12 +172,15 @@ test('the thread part is cut at its cap and the cut is recorded', async () => {
   assert.ok(ctx.fetchers.find((f) => f.name === 'thread')!.chars > stat.chars, 'the stat keeps what was fetched; the part keeps what entered');
 });
 
-test('cardMeta reads the project, feature, repo, branch, PR and work type off a card', () => {
-  const c = card('t_c0ffee', 'Ship it', 'Project: app/login\nAssigned by atlas. Repo: acme/app. Round 2.\nBranch: feat/login-redirect\n## Scope\nSee https://github.com/acme/app/pull/12 for the draft.', { work_type: 'coding' });
-  assert.deepEqual(cardMeta(c), { project: 'app', feature: 'login', repo: 'acme/app', branch: 'feat/login-redirect', pr: 'https://github.com/acme/app/pull/12', workType: 'coding' });
-  const vault = card('t_c0ffe1', 'Notes', 'Project: brain\nAssigned by atlas. Repo: vault. Worked by a Claude Code session.\ntype: research');
-  assert.deepEqual(cardMeta(vault), { project: 'brain', feature: null, repo: null, branch: null, pr: null, workType: 'research' });
-  assert.deepEqual(cardMeta(null), { project: null, feature: null, repo: null, branch: null, pr: null, workType: null });
+test('cardMeta reads the area, project, repo, branch, PR and work type off a card', () => {
+  const c = card('t_c0ffee', 'Ship it', 'Area: app/login\nAssigned by atlas. Repo: acme/app. Round 2.\nBranch: feat/login-redirect\n## Scope\nSee https://github.com/acme/app/pull/12 for the draft.', { work_type: 'coding' });
+  assert.deepEqual(cardMeta(c), { area: 'app', project: 'login', repo: 'acme/app', branch: 'feat/login-redirect', pr: 'https://github.com/acme/app/pull/12', workType: 'coding' });
+  const vault = card('t_c0ffe1', 'Notes', 'Area: brain\nAssigned by atlas. Repo: vault. Worked by a Claude Code session.\ntype: research');
+  assert.deepEqual(cardMeta(vault), { area: 'brain', project: null, repo: null, branch: null, pr: null, workType: 'research' });
+  assert.deepEqual(cardMeta(null), { area: null, project: null, repo: null, branch: null, pr: null, workType: null });
+  // A card written before the PARA rename says `Project: a/p`: the same pair.
+  const old = card('t_c0ffe1', 'Ship it', 'Project: app/login\nAssigned by atlas.', {});
+  assert.deepEqual([cardMeta(old).area, cardMeta(old).project], ['app', 'login']);
 });
 
 test('fetchersFor unites default, team and work-type lists and rejects an unknown name', () => {
@@ -190,20 +197,20 @@ test('fetchersFor unites default, team and work-type lists and rejects an unknow
 });
 
 const TRACKER_LIST = [
-  'app [building] division=product team=eng',
+  'app [active] division=product team=eng',
   '  app/login [building 3d] verified=pass  Login redirect',
   '  app/billing [designing 9d]  Billing page',
-  'site [live] team=growth',
+  'site [active] team=growth',
   '  site/pricing [testing 1d]  Pricing page',
 ].join('\n');
 
-test('tracker: on for the card type, the project row enters the prompt; off, the part is empty and the trace says so', async () => {
+test('tracker: on for the card type, the area row enters the prompt; off, the part is empty and the trace says so', async () => {
   const on = setup({ context: { cap: 0.6, keepTurns: 6, parts: { tracker: 1500 }, fetchers: { coding: ['tracker'] } } });
   const kb = fakeBoard([card('t_aaaaaa', 'Fix the login redirect', 'Project: app/login\n## Objective\nRedirect after login.', { work_type: 'coding' })]);
-  const { exec, calls } = fakeExec({ 'cli-projects list': TRACKER_LIST });
+  const { exec, calls } = fakeExec({ 'cli-areas list': TRACKER_LIST });
   on.faux.setResponses([fauxAssistantMessage([fauxText('done')])]);
   const r = await runWake({ cfg: on.cfg, kb, cardId: 't_aaaaaa', persona: 'bolt', models: on.models, env: {}, exec });
-  assert.deepEqual(calls.map((c) => [c.command, c.args]), [['cli-projects', ['list']]]);
+  assert.deepEqual(calls.map((c) => [c.command, c.args]), [['cli-areas', ['list']]]);
   const meta = lines(r.sessionPath)[0] as { parts: { name: string; tokens: number }[]; fetchers: { name: string; on: boolean; chars: number }[] };
   const part = meta.parts.find((p) => p.name === 'tracker');
   assert.ok(part && part.tokens > 0, 'the tracker part is in the trace');
@@ -212,12 +219,12 @@ test('tracker: on for the card type, the project row enters the prompt; off, the
   const system = (lines(r.sessionPath).find((l) => l.type === 'message')!.message as { content: unknown }).content; // the first message is the user turn
   assert.ok(system, 'has messages');
   const ctx = await wakeContext({ cfg: on.cfg, card: await kb.show('t_aaaaaa'), persona: loadPersona(on.cfg, 'bolt'), env: {}, exec });
-  assert.equal(ctx.parts[0]!.text, 'Tracker row for app/login (cli-projects list):\napp [building] division=product team=eng\n  app/login [building 3d] verified=pass  Login redirect');
+  assert.equal(ctx.parts[0]!.text, 'Tracker row for app/login (cli-areas list):\napp [active] division=product team=eng\n  app/login [building 3d] verified=pass  Login redirect');
   assert.doesNotMatch(ctx.parts[0]!.text, /billing|pricing/);
 
   // Off: the same card, no fetcher configured for its type.
   const off = setup({ context: { cap: 0.6, keepTurns: 6, parts: { tracker: 1500 }, fetchers: { research: ['tracker'] } } });
-  const { exec: exec2, calls: calls2 } = fakeExec({ 'cli-projects list': TRACKER_LIST });
+  const { exec: exec2, calls: calls2 } = fakeExec({ 'cli-areas list': TRACKER_LIST });
   off.faux.setResponses([fauxAssistantMessage([fauxText('done')])]);
   const r2 = await runWake({ cfg: off.cfg, kb, cardId: 't_aaaaaa', persona: 'bolt', models: off.models, env: {}, exec: exec2 });
   assert.equal(calls2.length, 0);
@@ -232,14 +239,14 @@ test('tracker: on for the card type, the project row enters the prompt; off, the
   assert.deepEqual(none.parts, []);
 });
 
-test('tracker: a card without a project brings nothing; a project the tracker lacks says so', async () => {
+test('tracker: a card without a area brings nothing; a area the tracker lacks says so', async () => {
   const { cfg } = setup();
-  const { exec, calls } = fakeExec({ 'cli-projects list': TRACKER_LIST });
+  const { exec, calls } = fakeExec({ 'cli-areas list': TRACKER_LIST });
   const r = await fetchParts(['tracker'], { cfg, card: card('t_1', 'x', 'no header'), persona: null, env: {}, exec });
   assert.deepEqual(r.parts, []);
   assert.equal(calls.length, 0);
   const r2 = await fetchParts(['tracker'], { cfg, card: card('t_1', 'x', 'Project: ghost'), persona: null, env: {}, exec });
-  assert.equal(r2.parts[0]!.text, 'Tracker row for ghost (cli-projects list):\nnot in the tracker.');
+  assert.equal(r2.parts[0]!.text, 'Tracker row for ghost (cli-areas list):\nnot in the tracker.');
 });
 
 test('github: PR and CI status for the card\'s branch when it names a repo; nothing when it does not', async () => {
@@ -281,7 +288,7 @@ test('github: PR and CI status for the card\'s branch when it names a repo; noth
   assert.equal(c4.length, 0);
 });
 
-test('recall: the card title is the query, as the persona, scoped to the project; a failing fetcher leaves its part empty', async () => {
+test('recall: the card title is the query, as the persona, scoped to the area; a failing fetcher leaves its part empty', async () => {
   const { cfg } = setup();
   const hits = [
     { source: 'fact', ref: '#f12', title: 'login', text: 'The staging login uses the test IdP.', score: 1 },
@@ -290,7 +297,7 @@ test('recall: the card title is the query, as the persona, scoped to the project
   const { exec, calls } = fakeExec({ 'cli-org recall': JSON.stringify(hits) });
   const persona = loadPersona(cfg, 'bolt');
   const r = await fetchParts(['recall'], { cfg, card: card('t_1', 'Fix the login redirect', 'Project: app/login'), persona, env: {}, exec });
-  assert.deepEqual(calls[0]!.args, ['recall', 'Fix the login redirect', '--limit', '6', '--project', 'app', '--json']);
+  assert.deepEqual(calls[0]!.args, ['recall', 'Fix the login redirect', '--limit', '6', '--area', 'app', '--json']);
   assert.equal(calls[0]!.env['ORG_AGENT'], 'bolt');
   assert.equal(
     r.parts[0]!.text,

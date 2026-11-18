@@ -14,7 +14,7 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 
 | Module | Page | One line |
 |---|---|---|
-| [`projects`](#projects) | `/projects` | A project tracker: divisions, teams, projects, features, verifications |
+| [`projects`](#projects) | `/areas`, `/projects` | A tracker of areas (what you run) and projects (what you finish): divisions, teams, stages, verifications, archive |
 | [`memory`](memory.md) | `/memory` | The shared memory: sourced claims every agent recalls, and the capture loop that writes each bot's own lessons from its finished wakes |
 | [`org`](#org) | `/org` | A message board for a company of named AI agents, with you as the human member |
 | [`board`](#board) | `/board` | The kanban board: cards for people and agents, claimed and finished by lanes, with per-device tokens |
@@ -30,8 +30,15 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 | [`social`](#social) | (connect + queue, no page UI yet) | Schedule and publish posts with images to LinkedIn (more platforms planned) |
 | [`chat`](#chat) | (a button in the header) | Ask your notes: conversations with an assistant that answers from retrieved passages, with citations, on the provider and model you pick |
 | [`desk`](#desk) | `/desk` | Hiring desk operator console under Work; requires production service wiring for operations |
+| [`observatory`](#observatory) | API only | Authorized evidence windows, coverage and deterministic replay |
+
+## observatory
+
+Off by default. Enable `observatory` through `MODULES` or the vault addons list for the authenticated evidence API. No UI, nav link or timer in this slice. Source modules retain their authorization. See [Observatory API and replay](observatory.md).
 
 ## desk
+
+The hiring desk is an external addon, not part of the engine build. Install `@secondbrain/hiring-desk` in `app` and rebuild before enabling `desk`; the server loader otherwise reports the missing package and points to `secondbrain doctor`.
 
 Status: **public integration and fail-closed boot available; concrete host runtime still required**. The addon remains off by default. Enable it through `MODULES` or the vault's `addons` list. Disabled mode mounts no public or private desk routes, adds no desk navigation or timers, and requires no payment settings.
 
@@ -43,17 +50,116 @@ For activation checks, troubleshooting and rollback, use [Hiring desk rollout](d
 
 ## projects
 
-A tracker where each project has a stage (`idea`, `designing`, `building`, `testing`, `live`, `parked`, `done`), features with their own stages, and **verifications**: a feature goes `live` or `done` only after a passing check is recorded.
+A tracker of **areas** and **projects**, the two words PARA uses ([vault.md](vault.md#areas-and-projects)). An area is what you run: it has no end, so it has a status (`active` or `parked`) and no due date. A project is what you finish: an `outcome`, inside one area, with a stage (`idea`, `designing`, `building`, `testing`, `live`, `parked`, `done`) and **verifications**: a project goes `live` or `done` only after a passing check is recorded.
 
 | | |
 |---|---|
-| Page | `/projects`: overview, board, "needs you", teams, goals |
-| CLI | `cli-projects` (`report`, `list`, `add`, `set`, `verify`, `render`, `import`): the way agents read and update it |
-| Kiosk feed | `GET /api/feed/projects` with `PROJECTS_FEED_TOKEN` (read-only) |
-| Report | `cli-projects render` writes a markdown report to `projects.reportFile` |
-| Settings | `goalsFile` in `secondbrain.json` (goals table) |
-| Timers (server) | `projects-render` |
+| Pages | `/areas`: the active areas by division, with open project count, owner and KPI health; parked and archived areas behind toggles. `/areas/<area>`: the area's home page (below). `/projects`: projects across areas, filtered by area, stage and due date (`?area=&stage=&due=overdue\|week\|month\|none&archived=1`); its other tabs are the overview, the board (areas with their projects by stage), "needs you", teams and goals. `/projects/<area>/<project>`: outcome, stage history, verifications, next action, the start of its README. An old `/projects/<area>` link redirects to `/areas/<area>` |
+| Keys | `g` then `a` opens `/areas`, `g` then `p` opens `/projects` (no modifier, not while typing in a field) |
+| CLI, areas | `cli-areas` (`list`, `show`, `review`, `report`, `render`, `add`, `set`, `archive`, `unarchive`, `record`, `team`, `division`, `import`) |
+| CLI, projects | `cli-projects` (`list --area --stage --due-before`, `add <area>/<project> --outcome`, `set`, `verify`, `archive`, `unarchive`, `report`): the way agents read and update it |
+| API | `/api/areas` (the board; `?view=index` is the list behind `/areas`), `/api/areas/report`, `/api/areas/:area` (`GET` is the area page: the row, the home note's links, style, goals and KPIs with readings, the roadmap, 14 days of history; `PATCH` sets fields), `/api/areas/:area/projects`, `GET /api/areas/:area/context` (the context pack, `?project=`), `POST /api/areas/:area/kpis` (one KPI reading: `{ key, value, at?, note? }`), `/api/projects` (across areas; `?area=`, `?stage=`, `?due_before=`, `?archived=1`), `/api/projects/:area/:project` (`GET` is the project page; `PATCH` sets fields), `.../verifications`, `.../archive`, `.../unarchive` |
+| Kiosk feed | `GET /api/feed/projects` with `PROJECTS_FEED_TOKEN` (read-only). Its path and keys are the ones a kiosk already reads: `projects` lists the areas |
+| Report | `cli-areas render` writes a markdown report to `projects.reportFile` |
+| Project folders | `cli-projects add` creates `<area home>/projects/<project>/README.md` when the area has a home (`cli-areas set <area> --home <path>`), and never overwrites one |
+| Archive | `cli-areas archive <area>`, `cli-projects archive <area>/<project>`: hidden from active views, nothing deleted; `--archived` lists them; `archive --purge --yes` deletes for good |
+| Settings | `goalsFile` in `secondbrain.json` (goals table), `projects.reportFile`, `areas.reviewDir` |
+| Timers (server) | `projects-render` (hourly), `areas-review` (Sunday 20:00 in the vault's `timezone`) |
 | Skill | `company-report` |
+| Change history | `tracker_events`: every change to an area or a project, frontmatter changes of home notes, KPI readings (below) |
+| KPIs | `cli-areas record <area> <kpi> <value> [--at D] [--note "why"]`; the keys are the `kpis:` frontmatter of the area's home note |
+| Context pack | `cli-areas show <area> [--project P] [--format text\|json]`: what an agent reads before it works on an area (below) |
+| Weekly review | `cli-areas review [--week YYYY-Www]` writes `<areas.reviewDir>/<week>.md` (below) |
+
+### Context pack
+
+`cli-areas show <area>` prints what an agent with a ticket on an area needs before it starts, and `GET /api/areas/:area/context` returns the same thing as JSON (`--format json` on the CLI).
+
+| Section | From |
+|---|---|
+| What it is | The home note's `description` and the first section of its body |
+| Links | The home note's `links:` frontmatter, as written |
+| Style and assets | The home note's `style:` frontmatter: paths, listed |
+| Goals and KPIs | `goals:` and `kpis:` of the home note, each KPI with its latest reading and its target. An area that defines no KPIs has no `kpis` key and no KPI section |
+| Roadmap | The open projects (`idea` to `testing`), by due date: outcome, stage, due, next action |
+| Recent | The last 14 days: rows of the change history, cards finished, files changed under the area's home (from the vault index) |
+| Project | With `--project <slug>` (or `show <area>/<project>`, or `?project=` on the API): the project's row, the first section of its README, its newest verifications |
+
+The pack names paths and never inlines a file, so an agent opens only what its ticket needs. The text form stays under about 8,000 characters (about 2,000 tokens): each list is cut with a count of what was left out (`... and 12 more`), and a busy area is rendered with shorter lists until it fits. The JSON carries up to 30 rows of a list with its `*_total` next to it. An unknown area or project is a 404 (exit 1 on the CLI).
+
+### Weekly review
+
+`cli-areas review` writes one markdown file per ISO week, `<areas.reviewDir>/2026-W46.md` (default folder `Areas/weekly-review`). The week runs Monday to Sunday in the vault's [`timezone`](timezone.md) (UTC when unset). `--week 2026-W46` picks a week; `--week ending` is the week that is ending or just ended, which is what the timer asks for.
+
+For each area where something happened:
+
+| Section | From |
+|---|---|
+| Shipped | Projects that reached `live` or `done` |
+| Moved | Every other stage change, and a status change of the area |
+| Slipped | A `due` moved to a later date during the week; and a `due` that fell in the week and passed while the project was still open (not shipped, parked or archived at the end of the week) |
+| New and dropped | Projects created, archived, unarchived |
+| KPIs | The reading the week started with (the last one before it, else the first one in it) and ended with, the change, and the distance to the target |
+| Changed facts | Frontmatter changes of the home notes, and tracker fields other than a stage (an owner, a next action, a due date set or moved earlier) |
+| Work | Cards finished for the area, and notes changed under its home |
+
+Active areas where nothing happened are one `Quiet:` line. Cards finished that name no area are one `Unfiled work:` line: a card needs neither an area nor a project.
+
+The generated part sits between `<!-- review:start -->` and `<!-- review:end -->`. A new file gets a title and an empty `## Reflection` section above the block, which is yours. A re-run rewrites the block and nothing else: every character outside the markers is kept, and a file whose block would not change is not written at all. If you wrote the file before the first run, the block is added at its end.
+
+On a server the `secondbrain-areas-review` timer runs `cli-areas review --week ending` on Sunday at 20:00 in the vault's `timezone`. The zone is written into the timer when its unit is generated (`deploy.sh`, `secondbrain apply`), so after `secondbrain timezone set` the timer moves on the next deploy. A week that has passed can be written again at any time; "notes changed" is then read from the vault index as it is now, which keeps only the last change of a file.
+
+### The area page
+
+`/areas/<area>` joins the tracker row with the area's home note ([vault.md](vault.md#areas-and-projects)). Areas differ, so every section below the header is drawn only when the area has it.
+
+| Section | From |
+|---|---|
+| Header | The row: title, status, health, division, team and its members; the owner is the team's lead. The description is the home note's `description:` |
+| About | The first section of the home note's body |
+| Links | `links:` as given. A URL opens outside, a path opens the note, `owner/name` under `repos` is read as a GitHub repository, anything else is text |
+| Style and assets | `style.guide` rendered as markdown, the images in `style.assets` shown inline (up to 48), other `style:` keys listed. Both are read from the index, so a path the scanner does not index shows nothing |
+| Goals | `goals:` of the home note, then the goal codes on the row with their text from `goalsFile` |
+| KPIs | `kpis:` with the latest reading, the target and a small trend of the last 30 readings. Hidden when the area defines none |
+| Roadmap | The open projects (`idea` to `testing`) by due date: outcome, stage, due, next action |
+| Recent activity | The last 14 days of `tracker_events` for the area and its projects |
+| Archive | Asks for a note, which goes into the change history; an archived area shows Unarchive |
+
+"Active projects" on `/areas` counts the same open stages. "At target" compares a KPI's latest reading with its `target`; add `direction: down` to a KPI where lower is better.
+
+### Change history
+
+`tracker_events` is one append-only log of how areas and projects change. Triggers on the two tables write it, so a change made by a CLI, the web page, a bot through the board or plain SQL is logged the same way.
+
+| Column | Meaning |
+|---|---|
+| `id`, `at` | Order and time |
+| `actor` | Who made the change (`--by`, the signed-in owner, the board caller); `unknown` when the writer did not say |
+| `source` | `cli`, `api`, `board`, `scanner`, `kpi`, `migration` (rows copied from the old stage history), or `unknown` |
+| `area_slug`, `project_id` | What changed; `project_id` is empty for the area itself |
+| `kind` | `created`, `changed`, `stage`, `archived`, `unarchived`, `frontmatter`, `kpi_reading` |
+| `field`, `from_value`, `to_value` | One row per changed column (or frontmatter key, or KPI key), with both values as JSON. `updated_at` and `updated_by` are not logged. A `created` row holds the whole new row in `to_value` |
+| `note` | The `--note` of the command that made the change |
+
+- **Who and how.** A writer names itself for its transaction with `set_config('app.actor', ..., true)` and `set_config('app.source', ..., true)`; `app.note` carries the note. The CLIs and the API do this on every write. Code that writes to `areas` or `projects` without it is still logged, as `unknown`.
+- **Append-only.** An `UPDATE` or `DELETE` on `tracker_events` is refused for every role, the app's own included. The agents' role (`sb_org`) can read it and nothing else. `archive --purge` still takes the history of what it deletes.
+- **`stage_changes` is a view** over the log with the columns it always had (stage moves, the first stage of a new row, archive and unarchive), so the report and anything else that reads it keep working. Rows from before the log were copied in with their ids.
+- **Frontmatter.** The vault scanner adds a `frontmatter` row per changed top-level key of a home note ([vault.md](vault.md#areas-and-projects)); `note` holds the file's path.
+- **KPI readings** live in `kpi_readings` (`area_slug`, `kpi_key`, `value`, `at`, `source`, `actor`, `note`), and each one also appears in the log as `kpi_reading` with the reading before it as `from_value`. `--at` takes a date or a time; a bare date is midnight in the database's time zone.
+
+**Renamed in one step.** Until this release the tracker called an area a project and a project a feature. The tables, the API and the CLIs changed together, and a caller that still writes the old way fails instead of writing the wrong row: a card or a message can carry a project only with its area, and only a pair that exists. The old spellings keep working until 2026-12-01, each with a warning that names the new one; from that day they print the new command and exit 2.
+
+| Old | New |
+|---|---|
+| `cli-projects add-project <p>` | `cli-areas add <area>` |
+| `cli-projects remove-project <p>` | `cli-areas archive <area>` (deletes nothing; `--purge --yes` does) |
+| `cli-projects set <p>` (no slash) | `cli-areas set <area>`; `--stage` becomes `--status active\|parked` |
+| `cli-projects render`, `team`, `division`, `import` | the same verbs on `cli-areas` |
+| `cli-projects add <p>/<f> --title T` | `cli-projects add <area>/<project> --outcome O` (without `--outcome` it defaults to the title, with a warning) |
+| `--project <p> [--feature <f>]` on `cli-board`, `cli-org`, `secondbrain memory` | `--area <a> [--project <p>]` |
+| `GET /api/projects/report` | `GET /api/areas/report` (the old path answers 308 to it) |
+
+`cli-projects report` is not an alias: it stays for good. An import file in the old shape (`projects` with `features`) is still read.
 
 ## memory
 
@@ -121,14 +227,28 @@ Without an agent-hub or a `zen-agent serve`, the live tabs say so and the rest s
 
 ## usage
 
-A ledger of Claude Code, zen-agent and Hermes usage: tokens per run, which bot, why it woke, which card and project, the work type, runtime and host; plus plan percentages and API credit balances. zen-agent runs come from their traces (`ZEN_SESSIONS_DIR`, default `<vault>/.zen/sessions`) with the size of every system-prompt part and a real dollar cost, which the page shows; Claude Code runs on a subscription never show dollars. The Summaries tab shows one model-written summary per finished session with counted metrics, and holds the facts a session proposes until you approve them ([summaries.md](summaries.md)).
+A ledger of Claude Code, Codex, zen-agent and Hermes usage: tokens per run, which bot, why it woke, which card and project, the work type, runtime and host; plus plan percentages and API credit balances. zen-agent runs come from their traces (`ZEN_SESSIONS_DIR`, default `<vault>/.zen/sessions`) with the size of every system-prompt part and a real dollar cost, which the page shows; Claude Code and Codex subscription runs never show API-equivalent dollars. The Summaries tab shows one model-written summary per finished session with counted metrics, and holds the facts a session proposes until you approve them ([summaries.md](summaries.md)).
 
 | | |
 |---|---|
 | Page | `/usage`, with filters in the URL |
+| Settings | `usage.subscriptions`, `usage.credits` and `usage.sections` in `secondbrain.json`; [provider configuration](configuration.md#usage-page-providers-and-sections) |
 | CLI | `secondbrain usage-sync`, `usage-push`, `usage-backfill`, `credits`, `ingest-device`, `ledger` |
 | Timers (server) | `usage-sync`, `credits-sync`, and the usage importer |
 | Summaries | The Summaries tab, `summarize` and the summarize timer are the `summaries` module ([summaries.md](summaries.md)) |
+
+**Chats you start with a bot.** A session you open yourself with a roster bot, on any machine, is counted under that bot as an *owner chat* (surface `owner-chat`), not as a wake. The bot is read at import time from what the harness recorded, and only a name in the roster (`org_agents`, not the human owner) is ever stored:
+
+| Harness | Where the bot comes from |
+|---|---|
+| Claude Code | `claude --agent <name>`: the transcript's `agent-setting` record |
+| Codex | the first prompt you sent (after Codex's own environment and AGENTS.md messages) opens with the compiled persona, `You are **<name>**` (Agent Dock, the Codex dispatcher's preamble) |
+| Hermes | the first user message opens with the compiled persona; a cron session never counts |
+| zen-agent | the trace's `persona`, when no dispatcher labelled the run |
+
+A subagent (and a Hermes compression continuation) takes its parent's bot. Nothing is guessed from a folder name or a title; a session with none of these stays unattributed. Owner chats appear in the agent filter, the sessions list and the by-bot totals; the wake panel (`/org-wakes`), the wake counts and the bots' daily token cap (`ORG_DISPATCH_DAILY_TOKENS`) count dispatcher wakes only. A zen-agent trace with no dispatcher labels is a chat: its run carries no agent, and when it comes from a laptop the server stores no run for it. `usage-push` sends a laptop's zen-agent traces (`ZEN_SESSIONS_DIR`, gitignored in a vault, so this is the only way they reach the server), each one whole when it changes, with the same cursor rules as Codex. For sessions imported before this, run `secondbrain usage-backfill --bots` once on the server; it is safe to run again.
+
+Subscription quotas and prepaid balances are shown only for configured providers. Codex quota windows come from its subscription-authenticated CLI app-server, including five-hour and weekly limits when reported by the account. Header quota meters are consolidated here. Missing CLI/login or a failed refresh is visible in the provider panel; there is no API billing fallback.
 
 ## map
 
@@ -138,8 +258,10 @@ A 3D graph of the vault: notes, projects, divisions and goals, drawn from wikili
 |---|---|
 | Page | `/map` |
 | CLI | `secondbrain map-build`, `secondbrain metrics`, `secondbrain backlinks` |
-| Settings | `map.divisionFolders`, `map.missionFolders`, `metrics[]`, `goalsFile`, `missionFile` in `secondbrain.json` |
-| Timers (server) | `map-build` (hourly), `metrics` (daily) |
+| Settings | `map.divisionFolders`, `map.missionFolders`, `metrics[]`, `socialMetrics`, `goalsFile`, `missionFile` in `secondbrain.json`; `YOUTUBE_API_KEY`, `SOCIAL_TOKEN_ENC_KEY` for social metrics |
+| Timers (server) | `map-build` (hourly), `metrics` (daily), `metrics-checkpoints` (hourly: per-post readings at 24 h, 72 h and 7 d) |
+
+The daily `metrics` run also collects **social metrics** when `socialMetrics` lists accounts: follower counts and per-post views, likes and comments for YouTube, Instagram and X, plus LinkedIn numbers entered by hand, with `secondbrain metrics social` for the weekly report. See [social-metrics.md](social-metrics.md).
 
 `secondbrain backlinks` writes a "related" block at the end of notes from their links. It is a dry run unless you pass `--write`.
 
@@ -227,6 +349,8 @@ A standard LinkedIn app gets a 60-day access token and **no refresh token** (Lin
 
 **Setting up Buffer.** Connect each account in Buffer once (the free plan has 3 channels and a lifetime limit on new connections, so don't connect test accounts). Instagram must be a Business or Creator account for automatic publishing. Put `BUFFER_API_KEY` in the server's env, then run `cli-social connect-buffer`: it adds one account per Instagram, YouTube and X channel and skips the rest.
 
+Instagram metrics can also use the social addon's authenticated [Unified Login connect page](social-metrics.md#unified-login) at `/socials/ig/auth`. It is experimental, accepts only verified expiring Facebook USER tokens for Page-linked assets, and requires private Facebook env configuration. The existing map timer collects its typed credentials; publishing providers are independent.
+
 ## uploads
 
 `MODULES=uploads`. Send files of 1 GB to 50 GB from any browser on `/uploads`, with a folder and a description, straight into the Backblaze B2 bucket your vault already uses. Design, setup (CORS rule, keys) and failure handling: [uploads.md](uploads.md).
@@ -254,3 +378,66 @@ Semantic search is not required: without an embeddings provider the chat retriev
 ## garden
 
 `MODULES=garden`. A nightly command, `secondbrain garden`, that treats every top-level folder under `Projects/`, `Areas/` and `Research/` as a shelf with a small frontmatter header, archives project shelves that are done or untouched for 90 days, proposes stale areas, normalises folder names, regenerates a wiki block in each shelf note and a catalog, and writes a report. Shadow mode by default; the timer moves nothing until `garden.apply` is true. Design, modes, caps and how to revert a night: [garden.md](garden.md).
+
+### Native Codex conversation usage
+
+The usage collector imports Codex Desktop, CLI and `codex exec` sessions from
+`$CODEX_HOME/sessions` (default `~/.codex/sessions`), including dated directories
+and nested agents. This is separate from the Codex subscription quota panel.
+Conversation import needs no API key and never opens Codex authentication files.
+Only locally available messages and token counters can be imported; missing usage
+stays unknown and subscription sessions have no USD cost.
+
+On each Mac, from an engine checkout with app dependencies installed, opt in with
+one command. Choose a different host slug on each machine and use your existing
+SSH upload destination, where the engine usage importer is installed:
+
+```bash
+USAGE_HOST=laptop-a USAGE_PUSH_HOST=my-server app/bin/install-usage-push-mac.sh
+```
+
+Repeat on another host with `USAGE_HOST=laptop-b`. For a custom Codex home, prefix
+the same command with `CODEX_HOME=/path/to/codex-home`. The installer persists the
+host, destination and directory settings and safely escapes service values.
+Rerunning replaces the same LaunchAgent. New installs push every 60 seconds.
+No hand-edited service file or SQL host registration is needed. The existing SSH
+identity authorizes upload; this does not create another authentication channel.
+The server must have the usage feature enabled and the new migration applied.
+
+Verify local discovery with:
+
+```bash
+app/bin/install-usage-push-mac.sh doctor
+```
+
+Doctor reports missing or empty sessions directories without reading transcript
+content. Start a Codex conversation and retry if there are no files. It checks
+saved local configuration, not remote connectivity. After an upload, open Usage,
+Sessions and filter harness to `codex`, then host to your chosen slug. Open a
+session to inspect messages, tool calls/results and token totals. Check
+`~/Library/Logs/usage-push.log` for the upload count if it does not appear.
+The first upload includes existing history. A failed SSH/import retains the
+cursor for retry. The live page treats a Codex session with activity in the last
+3 minutes as a recent observation, not proof a process is still running.
+
+Disable or uninstall the schedule with either command below; both preserve the
+cursor and already imported history. Reinstall to enable it again:
+
+```bash
+app/bin/install-usage-push-mac.sh disable
+app/bin/install-usage-push-mac.sh uninstall
+```
+
+Codex files are replayed from their complete prefix when that prefix changes,
+so cumulative counters retain context across pushes and partial tails wait for
+a newline. Stable host/session/event IDs deduplicate retries. Rewrites do not
+erase historical messages or calls already imported. A changed session can exceed
+`USAGE_PUSH_MAX_BYTES` so a large session still makes progress; this budget is
+soft for Codex. Large histories increase local scan and upload work.
+Redaction runs before transcript content leaves the host and again in archive
+storage. It covers recognized tokens, credential assignments and connection
+passwords, including truncated errors; it is not a guarantee against arbitrary
+secrets embedded in prose. The collector never reads `.env` or authentication
+files. Server-local `secondbrain usage-sync` also discovers the same Codex home.
+
+The Running now tab lists all machines with observations in the last three minutes. The collector and server importer run every 60 seconds. Installing the collector preserves and wraps an existing Claude command status line to record quota observations; disable restores it if it has not been edited since. Unchanged quota readings refresh at least once per minute while Claude emits status updates.

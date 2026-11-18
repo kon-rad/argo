@@ -89,10 +89,13 @@ mkdir my-vault && cd my-vault && git init
 git submodule add https://github.com/kon-rad/argo.git .secondbrain
 .secondbrain/bin/secondbrain-vault init .
 cp .env.example .env
+printf '{}\n' > secondbrain.json
 git add -A && git commit -m "new vault"
 ```
 
 `init` writes the PARA folders (`Projects/`, `Areas/`, `Research/`, `Archives/`, each with a README and a `PARA Guide.md`), `AGENTS.local.md` for your rules, the generated `AGENTS.md`, a one-line `CLAUDE.md` that imports it, `.claude/settings.json` wired to the hooks, `.claude/agents/fact-checker.md`, `.agents/skills/` with links to the engine's shared skills, `.agents/guard.local.json`, `.agents/org.json` (a starter company: owner, one lead, one coder, one reviewer, two teams), `secondbrain.example.json`, and a `.gitignore` that already excludes `.env`.
+
+The command after `cp .env.example .env` creates an empty **instance configuration**, `secondbrain.json`. `init` itself only copies `secondbrain.example.json`; use that as a reference and add the supported sections you need. The engine's **feature manifests** are separate registration code. See [Configuration and secrets](08-config-and-secrets.md#instance-configuration-is-not-a-feature-manifest) for the distinction. Keys and subscription logins are configured separately, never stored in the instance configuration.
 
 Make the repo private before you push it anywhere. The vault will hold your notes, your agents' memory and the board.
 
@@ -168,7 +171,7 @@ then `secondbrain restart`. The next start runs their migrations and adds their 
 
 | Module | Adds | Door |
 |---|---|---|
-| `projects` | The tracker: projects, features, stages (`idea`, `designing`, `building`, `testing`, `live`, `parked`, `done`), verifications. A feature goes `live` only after a passing check | `/projects`, `secondbrain projects` (`cli-projects` on a server) |
+| `projects` | The tracker: areas (what you run) and their projects (what you finish), stages (`idea`, `designing`, `building`, `testing`, `live`, `parked`, `done`), verifications. A project goes `live` only after a passing check | `/projects`, `secondbrain areas` and `secondbrain projects` (`cli-areas` and `cli-projects` on a server) |
 | `board` | Cards with comments, dependencies, claims and leases; per-device tokens | `/board`, `secondbrain board` |
 | `org` | Teams, agents, channels, DMs, wakeups, the ship gate, shared facts | `/org`, `secondbrain org` (`cli-org` on a server) |
 | `usage` | Every run's tokens by bot, reason, card, project and host; live agents; every session as steps | `/usage` |
@@ -315,7 +318,7 @@ Deeper: [Orchestrate agents](09-orchestrate-agents.md) layer 3, [zen-agent](../z
 **A card is one task for one bot.**
 
 ```bash
-ORG_AGENT=owner secondbrain org task create bolt "Add a health route" --project platform --type code --repo my-app
+ORG_AGENT=owner secondbrain org task create bolt "Add a health route" --area platform --type code --repo my-app
 ```
 
 It is refused if the bot lacks the capability the card type needs. The card wakes the bot; the bot claims it, works, comments with evidence, moves it. Columns, claims, leases and the per-device tokens: [Kanban board](../kanban-board.md).

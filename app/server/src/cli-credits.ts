@@ -1,4 +1,5 @@
 import { exitFlushed } from './cli-exit.js';
+import { config } from './config.js';
 import { pool } from './db.js';
 import { collect, latestCredits, PROVIDERS, readKeys, saveReading, type Provider } from './credits.js';
 
@@ -20,7 +21,10 @@ const money = (v: number | null, cur: string): string => (v === null ? '-' : `${
 let code = 0;
 try {
   if (cmd === 'sync') {
-    const readings = await collect(readKeys(process.env, process.env.CREDITS_KEYS_FILE));
+    const readings = await collect(readKeys({
+      OPENROUTER_API_KEY: config.env.OPENROUTER_API_KEY,
+      FAL_BILLING_KEY: config.env.FAL_BILLING_KEY,
+    }, config.env.CREDITS_KEYS_FILE));
     for (const r of readings) {
       const stored = await saveReading(r);
       console.log(`credits ${r.provider}: ${r.status === 'ok' ? money(r.balance, r.currency) : `${r.status} (${r.error})`}` +

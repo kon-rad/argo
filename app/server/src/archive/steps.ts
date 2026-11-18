@@ -97,9 +97,20 @@ function resultText(content: unknown): string {
   return '';
 }
 
+function codexFields(raw: Obj): StepFields {
+  const p = isObj(raw.payload) ? raw.payload : {};
+  const type = p.type;
+  const step: Step = ['function_call', 'custom_tool_call'].includes(type) ? 'tool_call'
+    : ['function_call_output', 'custom_tool_call_output'].includes(type) ? 'tool_result'
+    : type === 'reasoning' ? 'thinking' : p.role === 'user' || type === 'user_message' ? 'prompt'
+    : p.role === 'assistant' || type === 'agent_message' ? 'response' : 'meta';
+  return { step, toolNames: str(p.name) ? [p.name] : [], toolCallId: str(p.call_id), isError: p.is_error === true ? true : null };
+}
+
 export function stepFields(raw: unknown): StepFields {
   const none: StepFields = { step: 'meta', toolNames: [], toolCallId: null, isError: null };
   if (!isObj(raw)) return none;
+  if (raw.harness === 'codex') return codexFields(raw);
   if (isZen(raw)) return zenFields(raw);
   if (isHermes(raw)) {
     const role = raw.role as string;
@@ -134,6 +145,10 @@ export function expandSteps(row: StepRow): StepPart[] {
   const raw = row.raw;
   const base = { toolName: null, toolCallId: null, isError: null };
   const k = String(row.id);
+  if (isObj(raw) && raw.harness === 'codex') {
+    const f = codexFields(raw);
+    return [{ key: k, step: f.step, text: row.text, toolName: f.toolNames[0] ?? null, toolCallId: f.toolCallId, isError: f.isError }];
+  }
   if (isObj(raw) && isZen(raw)) {
     if (raw.type !== 'message' || !isObj(raw.message)) return [{ key: k, step: zenFields(raw).step, text: row.text, ...base }];
     const m = raw.message;

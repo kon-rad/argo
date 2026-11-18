@@ -1,6 +1,6 @@
 # `dispatch` addon
 
-Status: **pilot** - The engine's zen-agent dispatcher: one run per bot with open wakeups. Stays a pilot addon; the timer installs only when the module is on and `ORG_DISPATCH=on`. Its code (`index.ts`, `store.ts`, `cli.ts`) lives in this folder.
+Status: **pilot** - The engine's zen-agent and Codex dispatcher: one run per bot with open wakeups. Stays a pilot addon; the timer installs only when the module is on and `ORG_DISPATCH=on`. Its code (`index.ts`, `store.ts`, `codex.ts`, `cli.ts`) lives in this folder.
 
 List it in the vault's `secondbrain.json` `addons` (or `MODULES` in `.env`) to turn it on. It is off in a fresh vault.
 
@@ -9,7 +9,27 @@ List it in the vault's `secondbrain.json` `addons` (or `MODULES` in `.env`) to t
 | Module | `dispatch` |
 | CLI | `secondbrain dispatch` |
 | Timers (server) | `secondbrain-dispatch` |
-| Env | `ORG_DISPATCH`, `ORG_DISPATCH_TICK_SECONDS`, `ORG_DISPATCH_PARALLEL`, `ORG_DISPATCH_QUIET`, `ORG_DISPATCH_DAILY_TOKENS` |
+| Env | `ORG_DISPATCH`, `ORG_DISPATCH_TICK_SECONDS`, `ORG_DISPATCH_PARALLEL`, `ORG_DISPATCH_QUIET`, `ORG_DISPATCH_DAILY_TOKENS`, `ORG_CODEX_COMMAND`, `ORG_CODEX_HOST` |
 | Docs | `docs/addons.md` |
 
+## What a tick logs
+
+Each tick first reconciles the board: it promotes waiting cards whose dependencies closed, wakes ready cards nothing woke, and closes open, unclaimed task wakeups whose card is `done` or `archived` (result `card closed`; idempotent). The summary line counts them (`N closed`). Every bot the tick selects with open wakeups and then does not run gets exactly one stderr line, `<bot>: not run: <reason>` (held by quiet hours or the token budget, no ready card among its task wakeups, card routed to the isolated runner, card could not be claimed, routed park, only acks or gated messages, wakeups claimed by another run first). A bot whose turn throws (a failed Codex preflight, for one) is reported once as `  ! <bot>: <error>` instead.
+
 The manifest beside this file (`manifest.ts`) is the one place the addon is wired: its CLI, timers, wrappers, env and doc page. `deploy.sh`, `secondbrain features`, `doctor` and `secondbrain plan|apply` all read it. See `docs/addons.md`.
+
+## Codex subscription lane
+
+Set an agent's roster runtime to `codex` and its model to the exact Codex CLI model id. The dispatcher removes API-key and endpoint overrides, checks `codex login status` for ChatGPT login, then makes an ephemeral read-only request against that exact model before claiming any wakeup. If the binary, login or model is unavailable, ready task cards move to `blocked` with the reason and the tick reports an error. It never substitutes another model or an API key. `ORG_CODEX_COMMAND` selects the binary path; default is `codex`.
+
+When that command transports execution to another registered machine, set `ORG_CODEX_HOST` to that machine's `usage_hosts.slug`. The run, its fallback summary and native Codex calls then share a host and can be reconciled. Leave it unset when Codex executes on the dispatcher itself. An unregistered slug stops recording with a clear configuration error.
+
+For a task wake, the dispatcher takes the first task wakeup whose card is `ready` (wakeups on cards in any other state stay open for later), claims that card once, passes its body and comments in the prompt, and runs `codex exec --json` in the vault root with `workspace-write`. A card naming a repository is blocked before launch and goes to the isolated card runner. It records the JSONL thread id and token counts, then comments and moves a successful card to `review`. Error, cancellation and timeout move it to `blocked`. The dispatcher heartbeats or moves a card only while it still has a live run (status `running` with an open `card_runs` row): a card the bot closed itself during the run (`cli-board finish`), or one a person archived, gets the comment and the usage row and is otherwise left as it is, on success and in the error handler alike. A human may return a blocked card to `ready`; the next wake resumes its recorded Codex session id. Non-card wakes run read-only. Existing zen-agent and Claude Code runs are unaffected; the dispatcher selects only roster rows whose effective runtime is `zen-agent` or `codex`.
+
+The separate local card runner can call the same interface without changing this dispatcher's board owner: `codexCommand(model, cwd, prompt, sessionId?, writable)`, `subscriptionEnv(env)`, `codexPreflight(runner, command, model, cwd, env)` and `parseCodexResult(processResult)`. The runner must create its own isolated worktree, enforce its permission policy, persist JSONL logs and thread id, and leave push/PR/board review to its trusted outer process. Codex CLI does not expose zen-agent's per-tool allowlist, so task runs rely on `workspace-write`, repo rules and the runner's worktree boundary.
+
+The CLI flags and login mode were checked against the installed `codex exec --help`, `codex exec resume --help` and `codex login status`. OpenAI documents [ChatGPT authentication](https://learn.chatgpt.com/docs/auth?surface=cli) and [structured `codex exec --json` events](https://developers.openai.com/blog/eval-skills).
+
+Codex executions receive `ORG_AGENT` (persona), `ORG_RUN` (dispatch run) and `CC_CARD` (ticket ID, empty for message wakes). Remote transports must forward all three to the execution host so process monitors can attribute work without reading prompts. Preflight probes have no ticket.
+
+A fresh Codex session starts with a preamble (`codexPreamble`): the agent's compiled persona from `.claude/agents/<name>.md` without its frontmatter (`codexPersona`; skipped when the vault has no such file), a pointer to `.agents/skills/org-member/SKILL.md`, and one line saying whether the run can write. A message wake is read-only and says so, so the bot does not spend the run finding out. A resumed session gets no preamble: it already holds it.

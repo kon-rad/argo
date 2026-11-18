@@ -4,13 +4,15 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ChatInput } from '../../components/ChatInput.js';
 import EventFeed from '../../components/EventFeed.js';
 import { VaultMarkdown } from '../../components/VaultMarkdown.js';
-import { api, BOARD_STATUSES, type BoardCard, type BoardCardDetail, type BoardStatus, type OrgChart } from '../../lib/api.js';
+import { api, type OrgChart } from '../../lib/api.js';
+import { projectsApi, type TrackerArea } from '../Projects.api.js';
+import { boardApi, BOARD_STATUSES, type BoardCard, type BoardCardDetail, type BoardStatus } from './api.js';
 import { useEventLog } from '../../lib/useEventLog.js';
 import { CardNotes, useCardNotesFor } from '../../components/CardNotes.js';
 
 /**
  * The board module's page: the kanban record in the engine (docs/board-design.md). Columns over the card statuses,
- * filters by board, project, assignee and kind, a card panel with its contract, comments, dependencies and runs. Live
+ * filters by board, area, assignee and kind, a card panel with its contract, comments, dependencies and runs. Live
  * through the server's SSE feed (pg_notify), so nothing polls. Writes act as the owner.
  */
 
@@ -70,6 +72,20 @@ export function AgentChip({ name, chart }: { name: string | null; chart?: OrgCha
   );
 }
 
+/** The tracker's areas a card can be tagged with: the active ones, by slug, each with its projects. */
+function useTrackerAreas(): TrackerArea[] {
+  const report = useQuery({ queryKey: ['projects', 'report'], queryFn: projectsApi.report, staleTime: 60_000, retry: false });
+  return useMemo(() => (report.data?.areas ?? []).filter((a) => a.status === 'active').sort((a, b) => a.slug.localeCompare(b.slug)), [report.data]);
+}
+
+export function ProjectChip({ area, project, to }: { area: string; project: string | null; to: string }) {
+  return (
+    <Link to={to} title={`Cards in ${area}`} className="truncate rounded bg-[var(--paper-sunk)] px-1.5 py-0.5 font-medium text-[var(--accent)] hover:underline">
+      {area}{project ? `/${project}` : ''}
+    </Link>
+  );
+}
+
 /** The live feed: one invalidation per board event, scoped to the card it names. */
 function useBoardLive(board: string | undefined) {
   const qc = useQueryClient();
@@ -100,10 +116,12 @@ export default function Board() {
   const { cardId } = useParams();
   const [params, setParams] = useSearchParams();
   const board = params.get('board') ?? undefined;
-  const project = params.get('project') ?? undefined;
+  // `?project=<area>` is the link shape from before the PARA rename; old bookmarks keep working.
+  const area = params.get('area') ?? params.get('project') ?? undefined;
   const assignee = params.get('assignee') ?? undefined;
   const kind = params.get('kind') ?? undefined;
   const q = params.get('q') ?? '';
+  const ids = params.get('id') ?? undefined;
   const sort = params.get('sort') ?? 'newest';
   const set = (k: string, v: string): void => {
     const next = new URLSearchParams(params);
@@ -113,19 +131,27 @@ export default function Board() {
   };
   const [showNew, setShowNew] = useState(false);
   const live = useBoardLive(board);
-  const boards = useQuery({ queryKey: ['board', 'boards'], queryFn: api.boardBoards, staleTime: 60_000 });
+  const boards = useQuery({ queryKey: ['board', 'boards'], queryFn: boardApi.boards, staleTime: 60_000 });
   const chart = useQuery({ queryKey: ['org', 'chart'], queryFn: api.orgChart, staleTime: 60_000, retry: false });
   const cards = useQuery({
-    queryKey: ['board', 'cards', { board, project, assignee, kind, q }],
-    queryFn: () => api.boardCards({ board, project, assignee, kind, q: q || undefined }),
+    queryKey: ['board', 'cards', { board, area, assignee, kind, q, ids }],
+    queryFn: () => boardApi.cards({ board, area, assignee, kind, q: q.trim() || undefined, id: ids }),
     refetchInterval: live ? false : 15_000,
   });
   const list = cards.data?.cards ?? [];
   const notes = useCardNotesFor(list.map((c) => ({ id: c.id, text: [c.title, c.body, c.result].filter(Boolean).join('\n\n') })));
-  const projects = useMemo(() => [...new Set(list.map((c) => c.project_slug).filter((p): p is string => !!p))].sort(), [list]);
+  const tracker = useTrackerAreas();
+  // The tracker's live areas, plus any slug a loaded card still carries (a parked area's card stays filterable).
+  const areas = useMemo(
+    () => [...new Set([...tracker.map((p) => p.slug), ...list.map((c) => c.area_slug).filter((p): p is string => !!p)])].sort(),
+    [tracker, list],
+  );
+  const projectHref = (slug: string): string => `/board?${new URLSearchParams({ area: slug }).toString()}`;
   const assignees = useMemo(() => [...new Set(list.map((c) => c.assignee ?? 'none'))].sort(), [list]);
 
   if (cards.isError) return <p className="p-4 text-sm text-[var(--warn)]">⚠ {cards.error.message}</p>;
+
+  const columns = COLUMNS.map((col) => ({ ...col, rows: sortCards(list.filter((c) => col.statuses.includes(c.status)), sort) }));
 
   const select = (label: string, value: string | undefined, options: { value: string; label: string }[], onChange: (v: string) => void) => (
     <select value={value ?? ''} onChange={(e) => onChange(e.target.value)} aria-label={label} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
@@ -136,28 +162,44 @@ export default function Board() {
 
   return (
     <div className="flex h-full min-h-0">
-      <div className="flex min-w-0 flex-1 flex-col">
+      {/* Phone: the filters wrap to several rows, so this column scrolls and the lanes keep a usable height. */}
+      <div className="flex min-w-0 flex-1 flex-col max-md:overflow-y-auto">
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--rule)] px-3 py-2 text-sm">
           {select('All boards', board, (boards.data?.boards ?? []).map((b) => ({ value: b.slug, label: `${b.name} (${b.open})` })), (v) => set('board', v))}
-          {select('Any project', project, projects.map((p) => ({ value: p, label: p })), (v) => set('project', v))}
+          {select('Any area', area, areas.map((p) => ({ value: p, label: p })), (v) => set('area', v))}
           {select('Anyone', assignee, assignees.map((a) => ({ value: a, label: a })), (v) => set('assignee', v))}
           {select('Any kind', kind, KINDS.map((k) => ({ value: k, label: k })), (v) => set('kind', v))}
           <select value={sort} onChange={(e) => set('sort', e.target.value === 'newest' ? '' : e.target.value)} aria-label="Sort by" className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
             {SORTS.map((o) => <option key={o.key} value={o.key}>Sort: {o.label}</option>)}
           </select>
-          <input value={q} onChange={(e) => set('q', e.target.value)} placeholder="Search cards" aria-label="Search cards"
-            className="w-36 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs" />
+          <input value={q} onChange={(e) => set('q', e.target.value)} placeholder="Search or t_1d4c…" aria-label="Search cards"
+            title="Words search the text; a ticket number (t_1d4c0eff, #1d4c or 1d4c0eff) finds the card by id"
+            className="w-40 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs max-md:w-full" />
+          {ids && (
+            <span className="flex items-center gap-1 rounded bg-[var(--paper-sunk)] px-2 py-0.5 text-xs">
+              Only {ids.split(',').join(', ')}
+              <button type="button" onClick={() => set('id', '')} aria-label="Show all cards" className="text-[var(--ink-dim)] hover:text-[var(--ink)]">✕</button>
+            </span>
+          )}
           <span className="text-xs text-[var(--ink-faint)]">{list.length} cards · {live ? 'live' : 'refreshes every 15 s'}</span>
           <button type="button" onClick={() => setShowNew((v) => !v)} className="ml-auto rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white">
             {showNew ? 'Close' : 'New card'}
           </button>
         </div>
         {showNew && <NewCard board={board} chart={chart.data ?? null} onCreated={(id) => { setShowNew(false); navigate(`/board/${id}${location.search}`); }} />}
-        <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3">
-          {COLUMNS.map((col) => {
-            const rows = sortCards(list.filter((c) => col.statuses.includes(c.status)), sort);
+        {/* Phone width: one column fills most of the screen and the next one shows at the edge; this goes straight to any of them. */}
+        <label className="flex items-center gap-2 border-b border-[var(--rule)] px-3 py-1 text-xs text-[var(--ink-dim)] md:hidden">
+          Column
+          <select aria-label="Jump to column" value="" className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1"
+            onChange={(e) => document.getElementById(`board-col-${e.target.value}`)?.scrollIntoView?.({ inline: 'start', block: 'nearest', behavior: 'smooth' })}>
+            <option value="" disabled>{columns.length} columns, swipe sideways or pick one</option>
+            {columns.map((col) => <option key={col.key} value={col.key}>{col.label} ({col.rows.length})</option>)}
+          </select>
+        </label>
+        <div data-scroll-scope="board columns" className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3 max-md:min-h-96 max-md:snap-x max-md:snap-mandatory max-md:scroll-px-3">
+          {columns.map(({ rows, ...col }) => {
             return (
-              <section key={col.key} className="flex w-64 shrink-0 flex-col" aria-label={col.label}>
+              <section key={col.key} id={`board-col-${col.key}`} className="flex w-64 shrink-0 flex-col max-md:w-[82vw] max-md:snap-start" aria-label={col.label}>
                 <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--ink-dim)]">
                   {col.label} <span className="font-normal text-[var(--ink-faint)]">{rows.length}</span>
                   {col.key === 'done' && <span className="font-normal normal-case text-[var(--ink-faint)]"> · last 7 days</span>}
@@ -174,11 +216,12 @@ export default function Board() {
                           {c.block_kind && <span title={c.block_reason ?? ''}>⛔ {c.block_kind}</span>}
                           <span className="ml-auto tabular-nums">{age(c.completed_at ?? c.started_at ?? c.created_at)}</span>
                         </div>
-                        <div className="mt-0.5 flex items-center gap-1 text-[0.65rem] text-[var(--ink-faint)]">
-                          <span className="tabular-nums" title={c.id}>#{c.id.replace(/^t_/, '')}</span>
-                          {c.project_slug && <span className="truncate">· {c.project_slug}{c.feature_slug ? `/${c.feature_slug}` : ''}</span>}
-                        </div>
                       </button>
+                      {/* Outside the button so the id selects like text and the chip is a real link. */}
+                      <div className="flex min-w-0 items-center gap-1.5 px-2 pb-1.5 text-[0.65rem] text-[var(--ink-faint)]">
+                        <span className="select-all font-mono">{c.id}</span>
+                        {c.area_slug && <ProjectChip area={c.area_slug} project={c.project_slug} to={projectHref(c.area_slug)} />}
+                      </div>
                       <CardNotes refs={notes.refsByTask.get(c.id) ?? []} resolved={notes.resolved} />
                     </li>
                   ))}
@@ -198,17 +241,17 @@ function NewCard({ board, chart, onCreated }: { board: string | undefined; chart
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [assignee, setAssignee] = useState('');
+  const [area, setArea] = useState('');
   const [project, setProject] = useState('');
-  const [feature, setFeature] = useState('');
   const [kind, setKind] = useState('work');
   const [priority, setPriority] = useState(3);
-  const projects = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, retry: false });
-  const features = projects.data?.projects.find((p) => p.slug === project)?.features ?? [];
+  const areas = useTrackerAreas();
+  const projects = areas.find((p) => p.slug === area)?.projects ?? [];
   const bots = (chart?.agents ?? []).filter((a) => a.runtime !== 'human');
   const byRuntime = new Map<string, typeof bots>();
   for (const b of bots) byRuntime.set(b.runtime, [...(byRuntime.get(b.runtime) ?? []), b]);
   const create = useMutation({
-    mutationFn: () => api.boardCreate({ board, title, body: body || undefined, assignee: assignee || null, project: project || undefined, feature: feature || undefined, kind, priority }),
+    mutationFn: () => boardApi.create({ board, title, body: body || undefined, assignee: assignee || null, area: area || undefined, project: project || undefined, kind, priority }),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ['board'] });
       onCreated(r.card.id);
@@ -227,13 +270,13 @@ function NewCard({ board, chart, onCreated }: { board: string | undefined; chart
             <optgroup key={rt} label={rt}>{list.map((a) => <option key={a.name} value={a.name}>{a.name}{a.team_slug ? ` · ${a.team_slug}` : ''} — {a.role.slice(0, 40)}</option>)}</optgroup>
           ))}
         </select>
-        <select aria-label="Project" value={project} onChange={(e) => { setProject(e.target.value); setFeature(''); }} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
-          <option value="">project (optional)</option>
-          {(projects.data?.projects ?? []).map((p) => <option key={p.slug} value={p.slug}>{p.slug}</option>)}
+        <select aria-label="Area" value={area} onChange={(e) => { setArea(e.target.value); setProject(''); }} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
+          <option value="">area (optional)</option>
+          {areas.map((p) => <option key={p.slug} value={p.slug}>{p.slug}</option>)}
         </select>
-        <select aria-label="Feature" value={feature} onChange={(e) => setFeature(e.target.value)} disabled={!project} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
-          <option value="">feature (optional)</option>
-          {features.map((f) => <option key={f.slug} value={f.slug}>{f.slug}</option>)}
+        <select aria-label="Project" value={project} onChange={(e) => setProject(e.target.value)} disabled={!area} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
+          <option value="">project (optional)</option>
+          {projects.map((f) => <option key={f.slug} value={f.slug}>{f.slug}</option>)}
         </select>
         <select aria-label="Kind" value={kind} onChange={(e) => setKind(e.target.value)} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs">
           {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
@@ -273,29 +316,42 @@ function Contract({ c }: { c: BoardCard['contract'] }) {
 
 function CardPanel({ id, chart, onClose }: { id: string; chart: OrgChart | null; onClose: () => void }) {
   const qc = useQueryClient();
-  const detail = useQuery({ queryKey: ['board', 'card', id], queryFn: () => api.boardCard(id) });
+  const detail = useQuery({ queryKey: ['board', 'card', id], queryFn: () => boardApi.card(id) });
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
   const d: BoardCardDetail | undefined = detail.data;
   const c = d?.card;
   const isClaude = runtimeOf(chart, c?.assignee ?? null) === 'claude-code' && (meta.data?.modules ?? []).includes('agents');
-  const log = useEventLog(isClaude && c ? `card:${id}` : null, (off) => api.boardLog(id, off), c?.status === 'running');
+  const log = useEventLog(isClaude && c ? `card:${id}` : null, (off) => boardApi.log(id, off), c?.status === 'running');
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['board', 'card', id] });
     void qc.invalidateQueries({ queryKey: ['board', 'cards'] });
   };
   const [comment, setComment] = useState('');
   const [assignee, setAssignee] = useState<string | null>(null);
-  const send = useMutation({ mutationFn: () => api.boardComment(id, comment), onSuccess: () => { setComment(''); refresh(); } });
-  const move = useMutation({ mutationFn: (status: BoardStatus) => api.boardMove(id, status), onSuccess: refresh });
-  const finish = useMutation({ mutationFn: (outcome: 'done' | 'partial') => api.boardFinish(id, { outcome }), onSuccess: refresh });
-  const assign = useMutation({ mutationFn: (to: string | null) => api.boardAssign(id, { assignee: to }), onSuccess: () => { setAssignee(null); refresh(); } });
-  const flag = useMutation({ mutationFn: (ship_now: boolean) => api.boardFlags(id, { ship_now }), onSuccess: refresh });
-  const err = [send, move, finish, assign, flag].find((m) => m.isError)?.error;
+  const send = useMutation({ mutationFn: () => boardApi.comment(id, comment), onSuccess: () => { setComment(''); refresh(); } });
+  const move = useMutation({ mutationFn: (status: BoardStatus) => boardApi.move(id, status), onSuccess: refresh });
+  const finish = useMutation({ mutationFn: (outcome: 'done' | 'partial') => boardApi.finish(id, { outcome }), onSuccess: refresh });
+  const assign = useMutation({ mutationFn: (to: string | null) => boardApi.assign(id, { assignee: to }), onSuccess: () => { setAssignee(null); refresh(); } });
+  const flag = useMutation({ mutationFn: (ship_now: boolean) => boardApi.flags(id, { ship_now }), onSuccess: refresh });
+  const tag = useMutation({ mutationFn: (t: { area: string | null; project: string | null }) => boardApi.tag(id, t), onSuccess: refresh });
+  const err = [send, move, finish, assign, flag, tag].find((m) => m.isError)?.error;
   const bots = (chart?.agents ?? []).filter((a) => a.runtime !== 'human');
+  const tracker = useTrackerAreas();
+  const [copied, setCopied] = useState(false);
+  const copy = (): void => {
+    void navigator.clipboard?.writeText(id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => undefined);
+  };
+  // The card's own area stays in the list even when the tracker parked it, so the select shows the truth.
+  const areaOptions = c?.area_slug && !tracker.some((p) => p.slug === c.area_slug) ? [c.area_slug, ...tracker.map((p) => p.slug)] : tracker.map((p) => p.slug);
+  const projectOptions = tracker.find((p) => p.slug === c?.area_slug)?.projects.map((f) => f.slug) ?? [];
+  if (c?.project_slug && !projectOptions.includes(c.project_slug)) projectOptions.unshift(c.project_slug);
   return (
     <aside className="flex w-full max-w-xl shrink-0 flex-col border-l border-[var(--rule)] max-md:fixed max-md:inset-0 max-md:z-20 max-md:max-w-none max-md:bg-[var(--paper)]" aria-label="Card">
       <div className="flex items-center gap-2 border-b border-[var(--rule)] px-3 py-2">
-        <code className="text-xs text-[var(--ink-faint)]">{id}</code>
+        <span className="select-all font-mono text-xs text-[var(--ink-dim)]">{id}</span>
+        <button type="button" onClick={copy} aria-label={`Copy ${id}`} title="Copy the ticket number" className="rounded border border-[var(--rule)] px-1.5 text-[0.65rem] text-[var(--ink-dim)] hover:text-[var(--ink)]">
+          {copied ? 'copied' : 'copy'}
+        </button>
         {c && <AgentChip name={c.assignee} chart={chart} />}
         {c && <span className="text-xs text-[var(--ink-dim)]">{c.status}{c.block_kind ? ` · ${c.block_kind}` : ''}</span>}
         <button type="button" onClick={onClose} className="ml-auto text-sm text-[var(--ink-dim)] hover:text-[var(--ink)]" aria-label="Close">✕</button>
@@ -307,9 +363,24 @@ function CardPanel({ id, chart, onClose }: { id: string; chart: OrgChart | null;
             <h2 className="text-base font-semibold">{c.ship_now && <span title="ship-now">🚀 </span>}{c.title}</h2>
             <p className="text-xs text-[var(--ink-dim)]">
               {c.board_slug} · {c.kind}{c.work_type ? ` · ${c.work_type}` : ''}{c.needs ? ` · needs ${c.needs}` : ''} · p{c.priority} · by {c.created_by} {age(c.created_at)} ago
-              {c.project_slug && <> · <Link className="text-[var(--accent)]" to={`/projects?view=board`}>{c.project_slug}{c.feature_slug ? `/${c.feature_slug}` : ''}</Link></>}
+              {c.area_slug && <> · <Link className="text-[var(--accent)]" to={`/projects?view=board`}>{c.area_slug}{c.project_slug ? `/${c.project_slug}` : ''}</Link></>}
               {c.repo && <> · repo {c.repo}</>}{c.graph && <> · {c.graph}/{c.node}</>}{c.rounds ? <> · round {c.rounds}</> : null}
             </p>
+            <div className="flex flex-wrap items-center gap-2 text-xs" aria-label="Area">
+              <span className="text-[var(--ink-dim)]">Area</span>
+              <select aria-label="Card area" value={c.area_slug ?? ''}
+                onChange={(e) => tag.mutate({ area: e.target.value || null, project: null })}
+                className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1">
+                <option value="">none</option>
+                {areaOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <select aria-label="Card project" value={c.project_slug ?? ''} disabled={!c.area_slug}
+                onChange={(e) => tag.mutate({ area: c.area_slug, project: e.target.value || null })}
+                className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1">
+                <option value="">no project</option>
+                {projectOptions.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
             {c.block_reason && <p className="rounded border border-[var(--warn)] p-2 text-sm">⛔ {c.block_kind}: {c.block_reason}</p>}
             {c.body && <VaultMarkdown text={c.body} />}
             <Contract c={c.contract} />

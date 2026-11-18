@@ -37,9 +37,9 @@ test('BoardKanban speaks the engine\'s /api/board with a board token: every verb
   assert.match(d.task.body!, /do it[\s\S]*## Objective\nShip it[\s\S]*## Returns\n- a PR[\s\S]*## Budget\nturns: 20/);
   assert.deepEqual(d.parents, ['t_000001']);
   assert.equal(d.comments[0]!.author, 'owner');
-  const created = await kb.create({ title: 'New', body: 'b', assignee: 'rune', project: 'p' });
+  const created = await kb.create({ title: 'New', body: 'b', assignee: 'rune', area: 'p' });
   assert.equal(created.id, 't_new00001');
-  assert.deepEqual(JSON.parse(calls[2]!.init!.body as string), { title: 'New', body: 'b', assignee: 'rune', board: 'exo', project: 'p' });
+  assert.deepEqual(JSON.parse(calls[2]!.init!.body as string), { title: 'New', body: 'b', assignee: 'rune', board: 'exo', area: 'p' });
   await kb.comment('t_a1b2c3d4', 'hi');
   assert.deepEqual(JSON.parse(calls[3]!.init!.body as string), { body: 'hi' });
   await kb.complete('t_a1b2c3d4', 'PR 12');

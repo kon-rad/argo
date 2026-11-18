@@ -27,7 +27,7 @@ Never add: real names, hostnames, IP addresses (other than `127.0.0.1` and the R
 | `skills/` | Generic skills in `SKILL.md` format, linked into a vault's `.agents/skills/` by `secondbrain-vault link-skills` |
 | `tools/`, `bin/secondbrain-vault` | The vault CLI: `init`, `rules`, `link-skills` |
 | `zen-agent/` | A standalone agent harness on the pi agent core (its own `package.json`, tests and README; imports nothing from `app/`): personas from the org roster, skills, swappable providers, kanban and knowledge tools, budgets, traces, the guard in process. Extractable to its own repo with `git subtree split` |
-| `addons/` | Optional extras that run outside the app, each with its own README and tests. `tv-kiosk/`: a Raspberry Pi that shows the app full screen on a TV |
+| `addons/` | Optional extras that run outside the app, each with its own README and tests. `tv-kiosk/`: a Raspberry Pi that shows the app full screen on a TV. `agent-dock/`: a macOS app and CLI that opens an org agent in a terminal |
 | `scripts/check-public.sh` | The leak check |
 | `docs/` | Architecture docs |
 

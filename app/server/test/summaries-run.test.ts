@@ -70,9 +70,9 @@ describe('runSummaries', () => {
     expect(s.touched.cards).toEqual(['t_ab12cd34']);
     expect(s.metrics).toMatchObject({ prompts: 2, tool_calls: 1, error_steps: 0, calls: 1, input_tokens: 10, output_tokens: 50, models: ['claude-opus-5-5'] });
     const { rows: facts } = await query(`SELECT subject, status FROM agent_summary_facts WHERE summary_id = $1`, [s.id]);
-    expect(facts).toEqual([{ subject: 'invoice discounts', status: 'proposed' }]);
-    // A candidate is not memory until promoted.
-    expect((await query(`SELECT 1 FROM memory_facts`)).rowCount).toBe(0);
+    expect(facts).toEqual([{ subject: 'invoice discounts', status: 'promoted' }]);
+    // The summary transaction also saves memory, without a human decision.
+    expect((await query(`SELECT 1 FROM memory_facts`)).rowCount).toBe(1);
   });
 
   it('is idempotent, and re-summarizes only when the session changed', async () => {
@@ -91,6 +91,7 @@ describe('runSummaries', () => {
     expect(third.written).toBe(1);
     expect(calls).toHaveLength(2);
     expect((await query(`SELECT 1 FROM agent_summaries`)).rowCount).toBe(1);
+    expect((await query(`SELECT 1 FROM memory_facts`)).rowCount).toBe(1);
   });
 
   it('keeps rejected candidates when a summary is rewritten, and does not propose the same claim again', async () => {

@@ -53,6 +53,12 @@ beforeEach(() => {
 afterEach(() => ledger.close());
 
 describe('ledger store', () => {
+  it('keeps the Ollama listener off by default with the standard local upstream', () => {
+    expect(defaultConfig(root).ollamaProxy).toEqual({
+      enabled: false, listen: 'http://127.0.0.1:11435', upstream: 'http://127.0.0.1:11434',
+    });
+  });
+
   it('gives a row a new seq only when its JSON changes', () => {
     expect(ledger.put('session', 'a', { x: 1 })).toBe(true);
     expect(ledger.put('session', 'a', { x: 1 })).toBe(false);
@@ -332,6 +338,21 @@ describe('sync to the server', () => {
     await syncOnce(ledger, cfg, deps, { force: true });
     const r = await query(`SELECT host FROM archive_sessions WHERE external_id='spoof'`);
     expect(r.rows).toEqual([{ host: 'test-box' }]);
+  });
+
+  it('ingests an Ollama exchange for the token\'s host', async () => {
+    ledger.put('exchange', 'ollama|local-1', {
+      ts: '2026-11-15T01:02:03.000Z', provider: 'ollama', method: 'POST', path: '/api/chat', status: 200,
+      durationMs: 42, requestId: null, sessionExternalId: null, model: 'qwen3:8b', params: { stream: false },
+      system: null, tools: null, messages: [], response: { message: { role: 'assistant', content: 'hello' }, done: true },
+      usage: { prompt_eval_count: 7, eval_count: 3 }, error: null,
+    });
+    expect(await syncOnce(ledger, cfg, deps, { force: true })).toMatchObject({ status: 'ok', quarantined: 0 });
+    const r = await query(`SELECT host, provider, model, status, duration_ms, usage FROM llm_exchanges WHERE exchange_key='ollama|local-1'`);
+    expect(r.rows).toEqual([{
+      host: 'test-box', provider: 'ollama', model: 'qwen3:8b', status: 200, duration_ms: 42,
+      usage: { prompt_eval_count: 7, eval_count: 3 },
+    }]);
   });
 
   it('accepts messages that arrive before their session row', async () => {

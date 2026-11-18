@@ -123,10 +123,9 @@ async function store(
        RETURNING id`,
       [...base, s.request, s.done, s.learned, s.open_items, s.outcome, provider, model, JSON.stringify(attempts), inTok, outTok]);
     const id = rows[0]!.id;
-    // The bot the session belonged to, when the roster still knows it: tagged on every candidate so an approved fact
-    // becomes that bot's own memory (memory_facts.agent), not another company-wide claim.
+    // Preserve the session agent on automatically saved memory.
     const agent = await activeAgent(client, session.agent);
-    // Candidates the owner has not decided on are replaced; promoted and rejected ones stay as history.
+    // The database saves facts automatically and keeps promoted/rejected history for rerun idempotency.
     await client.query(`DELETE FROM agent_summary_facts WHERE summary_id = $1 AND status = 'proposed'`, [id]);
     for (const f of s.facts) {
       const dup = await client.query(`SELECT 1 FROM agent_summary_facts WHERE summary_id = $1 AND claim = $2`, [id, f.claim]);

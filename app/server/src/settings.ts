@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { config } from './config.js';
+import { loadSettingsFile, settingsPath as resolveSettingsPath } from './settings-file.js';
 
 /**
  * Structured, non-secret settings that don't fit one env line: which numbers
@@ -43,6 +42,70 @@ const Metric = z.object({
   sum: z.array(z.string()).optional(),
   derived: z.literal('livestream-hours-30d').optional(),
 });
+
+/**
+ * Social accounts the metrics timer reads through official APIs (docs/social-metrics.md).
+ * Every list is empty by default: nothing is collected until the owner names their accounts.
+ * `key` is the metric_samples prefix (`<key>.followers`); it defaults from the handle, so a
+ * corrected handle gets a new key and the old account's history is left as it was.
+ */
+const MetricKeyPrefix = z.string().regex(/^[a-z0-9_.-]+$/);
+const SocialAccountBase = {
+  key: MetricKeyPrefix.optional(),
+  label: z.string().min(1).optional(),
+  /** Hours after which a reading counts as stale in reports and totals; default `socialMetrics.staleHours`. */
+  staleHours: z.number().positive().optional(),
+};
+const SocialMetrics = z
+  .object({
+    /** A reading older than this many hours is stale: reports flag it and leave it out of totals. */
+    staleHours: z.number().positive().default(36),
+    /** Per-post numbers are collected for posts published in the last this many days. */
+    postDays: z.number().int().positive().default(90),
+    /** Upper bound on posts read per account per run. */
+    maxPosts: z.number().int().positive().default(500),
+    /** Graph API version for Instagram calls. */
+    instagramApiVersion: z.string().regex(/^v\d+\.\d+$/).default('v23.0'),
+    /** YouTube Data API v3 (YOUTUBE_API_KEY): channel subscribers, views, video count, and per-video stats. */
+    youtube: z
+      .array(z.object({ ...SocialAccountBase, channelId: z.string().regex(/^UC[A-Za-z0-9_-]{22}$/), posts: z.boolean().default(true) }))
+      .default([]),
+    /** Instagram API with Instagram Login (a Professional account): followers and per-post insights. */
+    instagram: z
+      .array(
+        z.object({
+          ...SocialAccountBase,
+          /** The account's username; checked against the token's account before anything is written. */
+          username: z.string().regex(/^[A-Za-z0-9_.]{1,30}$/),
+          /** Defaults to Instagram Login; Unified credentials use a different endpoint and never legacy refresh. */
+          login: z.enum(['instagram', 'unified']).default('instagram'),
+          /** Intended Instagram Professional account ID, required to connect Unified Login. */
+          assetId: z.string().regex(/^[0-9]+$/).optional(),
+          /** Legacy Instagram Login env token, used only to seed its encrypted store. */
+          tokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),
+          posts: z.boolean().default(true),
+        }),
+      )
+      .default([]),
+    /** X through fxtwitter (public, no key): followers, and per-post numbers for known post ids only. */
+    x: z
+      .array(
+        z.object({
+          ...SocialAccountBase,
+          handle: z.string().regex(/^[A-Za-z0-9_]{1,15}$/),
+          followers: z.boolean().default(true),
+          posts: z.boolean().default(true),
+          /** Vault-relative text file of post ids or URLs, one per line (`#` comments), for posts not published by the social module. */
+          postIdsFile: z.string().min(1).optional(),
+        }),
+      )
+      .default([]),
+    /** LinkedIn has no self-service analytics API: these accounts take manual entries only (`metrics social linkedin`). */
+    linkedin: z
+      .array(z.object({ ...SocialAccountBase, account: z.string().regex(/^[a-z0-9_.-]+$/) }))
+      .default([]),
+  })
+  .prefault({});
 
 /** `chat.providers.<id>`: extra models for a preset provider, or another default or base URL. */
 const ChatProviderOverride = z.object({
@@ -213,7 +276,7 @@ const TelegramBot = z.object({
   agent: z.enum(['claude-code', 'hermes', 'zen-agent']),
   /** The bot's Telegram username, without @ (informational) */
   username: z.string().optional(),
-  /** Hermes: the profile whose gateway polls this bot ('main' for ~/.hermes). Unset: any profile */
+  /** Hermes: the profile whose gateway polls this bot. 'main' or unset means the main Hermes home. */
   profile: z.string().optional(),
   /** zen-agent: the persona the bridge runs */
   persona: z.string().optional(),
@@ -275,8 +338,37 @@ const Server = z
   })
   .prefault({});
 
+/** Shared CLI/settings rule: a geographic IANA name or UTC, never a legacy abbreviation/fixed-offset alias. */
+export function isIanaTimeZone(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  if (value.toUpperCase() !== 'UTC' && (
+    !/^[A-Za-z][A-Za-z0-9_+-]*(?:\/[A-Za-z0-9_+-]+)+$/.test(value) || /^(?:Etc|SystemV)\//i.test(value)
+  )) return false;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: value }); return true; }
+  catch { return false; }
+}
+
+/** Invalid timezone values are dropped without discarding the rest of the settings. */
+const TimeZone = z
+  .string()
+  .refine(isIanaTimeZone)
+  .optional()
+  .catch(undefined);
+
 const Settings = z.object({
   server: Server,
+  /**
+   * The owner's current time zone (IANA, e.g. `Asia/Singapore`): every time the web app shows and the Usage
+   * buckets use it. Unset: each browser's own zone. Change it when travelling: `secondbrain timezone set <zone>`.
+   */
+  timezone: TimeZone,
+  /** Providers and panels shown on the Usage page. Empty provider lists do no polling. */
+  usage: z.object({
+    subscriptions: z.array(z.enum(['codex', 'claude-code'])).default([]),
+    credits: z.array(z.enum(['openrouter', 'fal', 'gemini'])).default([]),
+    sections: z.array(z.enum(['running', 'ledger', 'sessions', 'summaries']))
+      .default(['running', 'ledger', 'sessions', 'summaries']),
+  }).prefault({}),
   /**
    * The addons this vault turns on, e.g. `["map", "voice"]`. The core features are
    * always on and are never listed here. Read at runtime by `config.readAddonList` (which
@@ -304,6 +396,7 @@ const Settings = z.object({
     })
     .prefault({}),
   metrics: z.array(Metric).default([]),
+  socialMetrics: SocialMetrics,
   tv: z
     .object({
       /** Vault-relative folder of episodes, one subfolder each with an episode.md. */
@@ -347,8 +440,23 @@ const Settings = z.object({
     .prefault({}),
   projects: z
     .object({
-      /** Vault-relative file `cli-projects render` writes the report to. */
+      /** Vault-relative file `cli-areas render` writes the report to. The key and its default kept their names through the PARA rename. */
       reportFile: z.string().default('projects.md'),
+    })
+    .prefault({}),
+  areas: z
+    .object({
+      /** Vault-relative folder `cli-areas review` writes the weekly review to, one file per ISO week (`<reviewDir>/2026-W46.md`). */
+      reviewDir: z.string().min(1).default('Areas/weekly-review'),
+    })
+    .prefault({}),
+  /** The warehouse addon (docs/warehouse.md): where the vault keeps its migrations, connectors and dashboards. */
+  warehouse: z
+    .object({
+      /** Vault-relative folder holding `migrations/`, `connectors/` and `dashboards/`. */
+      dir: z.string().min(1).default('warehouse'),
+      /** Where connectors may keep raw files; absolute, or relative to the vault. Default: `<app data dir>/warehouse-raw`. */
+      rawDir: z.string().min(1).optional(),
     })
     .prefault({}),
   /** `secondbrain garden`: the nightly vault gardener (docs/garden.md). */
@@ -383,37 +491,71 @@ const Settings = z.object({
 export type SecondBrainSettings = z.infer<typeof Settings>;
 export type ServerSettings = SecondBrainSettings['server'];
 export type GardenSettings = SecondBrainSettings['garden'];
+export type WarehouseSettings = SecondBrainSettings['warehouse'];
 export type ChatSettingsOverrides = z.infer<typeof Chat>;
 export type ClassifySettings = z.infer<typeof Classify>;
 export type DispatchSettings = z.infer<typeof Dispatch>;
 export type MetricSetting = z.infer<typeof Metric>;
+export type SocialMetricsSettings = z.infer<typeof SocialMetrics>;
 export type TelegramBotSetting = z.infer<typeof TelegramBot>;
 
+export interface SettingsSectionError {
+  section: string;
+  path: PropertyKey[];
+  message: string;
+}
+
+export interface SettingsReport {
+  settings: SecondBrainSettings;
+  errors: SettingsSectionError[];
+}
+
+/** Validate each top-level section independently so one typo cannot erase unrelated settings. */
+export function settingsReport(raw: unknown): SettingsReport {
+  const source = raw === null || raw === undefined ? {} : raw;
+  const input = typeof source === 'object' && !Array.isArray(source) ? source as Record<string, unknown> : {};
+  const errors: SettingsSectionError[] = [];
+  if (input !== source) errors.push({ section: '$root', path: ['$root'], message: 'Expected an object' });
+
+  const values: Record<string, unknown> = {};
+  for (const [section, schema] of Object.entries(Settings.shape)) {
+    const result = schema.safeParse(input[section]);
+    if (result.success) {
+      values[section] = result.data;
+      continue;
+    }
+    values[section] = schema.parse(undefined);
+    for (const issue of result.error.issues) {
+      errors.push({ section, path: [section, ...issue.path], message: issue.message });
+    }
+  }
+  return { settings: values as SecondBrainSettings, errors };
+}
+
 export function parseSettings(raw: unknown): SecondBrainSettings {
-  return Settings.parse(raw ?? {});
+  return settingsReport(raw).settings;
 }
 
 export function settingsPath(vaultRoot = config.vaultRoot): string {
-  const p = process.env.SECONDBRAIN_SETTINGS;
-  if (p) return isAbsolute(p) ? p : join(vaultRoot, p);
-  return join(vaultRoot, 'secondbrain.json');
+  return resolveSettingsPath(vaultRoot);
 }
 
 let cached: { path: string; value: SecondBrainSettings } | null = null;
 
 /** The vault's settings, read once per process (tests reset with `resetSettings`). */
 export function settings(vaultRoot = config.vaultRoot): SecondBrainSettings {
-  const path = settingsPath(vaultRoot);
+  const loaded = loadSettingsFile(vaultRoot);
+  const { path } = loaded;
   if (cached?.path === path) return cached.value;
-  let value = parseSettings({});
-  try {
-    value = parseSettings(JSON.parse(readFileSync(path, 'utf8')));
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException;
-    if (e.code !== 'ENOENT') console.error(`secondbrain.json ignored (${path}): ${e.message.split('\n')[0]}`);
+  const report = settingsReport(loaded.raw);
+  if (loaded.error) {
+    console.error(`secondbrain.json ignored (${path}): ${loaded.error.kind === 'json' ? 'invalid JSON' : 'could not be read'}`);
   }
-  cached = { path, value };
-  return value;
+  for (const error of report.errors) {
+    console.error(`secondbrain.json section ignored (${path}): ${error.path.map(String).join('.')}: ${error.message}`);
+  }
+  cached = { path, value: report.settings };
+  return report.settings;
 }
 
 export function resetSettings(): void {

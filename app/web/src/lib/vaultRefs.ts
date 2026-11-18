@@ -138,3 +138,26 @@ export function remarkMentions(known: ReadonlySet<string>) {
     });
   };
 }
+
+/** Session prose links ticket ids and exact roster names, without touching existing links or code. */
+export function remarkSessionLinks(known: ReadonlySet<string>) {
+  return (tree: Root): void => {
+    visit(tree, 'text', (node: Text, index: number | undefined, parent: Parent | undefined) => {
+      if (!parent || index === undefined || parent.type === 'link' || parent.type === 'linkReference') return;
+      const replacement: (Text | Link)[] = [];
+      let last = 0;
+      for (const m of node.value.matchAll(/(?<![\w@/.:~-])(?:t_[a-f0-9]{8}|[a-z][a-z0-9-]{0,31})(?![\w/.-])/g)) {
+        const token = m[0];
+        const url = /^t_[a-f0-9]{8}$/.test(token) ? `ticket:${token}` : known.has(token) ? `agent:${token}` : null;
+        if (!url) continue;
+        if (m.index > last) replacement.push({ type: 'text', value: node.value.slice(last, m.index) });
+        replacement.push({ type: 'link', url, children: [{ type: 'text', value: token }] });
+        last = m.index + token.length;
+      }
+      if (!replacement.length) return;
+      if (last < node.value.length) replacement.push({ type: 'text', value: node.value.slice(last) });
+      parent.children.splice(index, 1, ...replacement);
+      return index + replacement.length;
+    });
+  };
+}

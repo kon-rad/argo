@@ -87,7 +87,7 @@ Everything beyond browse, search, the database page and the editor is a module: 
 - shows no nav link,
 - gets no systemd timers from `deploy.sh`.
 
-Module tables are created by migrations whether or not the module is on, so turning one on later needs no migration step. Per-module detail: [modules.md](modules.md). The core features are each described by one manifest (`app/server/src/features/<name>/manifest.ts`: nav, commands, timers, wrappers, env, docs) that `app.ts`, `/api/meta`, the launcher and `deploy.sh` read, so a feature is wired in one place.
+Module tables are created by migrations whether or not the module is on, so turning one on later needs no migration step. Per-module detail: [modules.md](modules.md). The core features are each described by one manifest (`app/server/src/features/<name>/manifest.ts`: nav, commands, timers, wrappers, env, docs) that `app.ts`, `/api/meta`, the launcher and `deploy.sh` read, so a feature is wired in one place. A wrapper the manifest lists in `remoteWrappers` also runs on a client machine: `secondbrain-vault clis install` reads the generated `app/bin/agent-clis.json` and installs it there as a bundled HTTPS client (today `cli-board`, door 2 of the [board](kanban-board.md#2-the-three-doors)), and every other wrapper as a one-line server-only notice.
 
 ## 5. The agent harness
 
@@ -100,7 +100,7 @@ AI agents (Claude Code, Hermes, others) work *inside the vault*, not inside the 
 | Dev-log gate | Runs when an agent tries to finish; sends it back once if it changed skills, scripts, hooks or config without writing a dev log today | `harness/hooks/devlog_gate.py` |
 | Skills | `SKILL.md` folders; the engine's shared ones are symlinked into `.agents/skills/` | `skills/` |
 | zen-agent | A headless runtime of our own for bot wakes: the same rules, skills, guard rules and hook scripts, run by a minimal loop (pi agent core) with the context assembled as code, a budget per run and a JSONL trace per run. Any provider; the board and the retrieval API are tools, and `zen-agent lane` claims cards from the board. The plan for moving the bots onto it is [zen-agent.md](zen-agent.md) | `zen-agent/` |
-| The board | The kanban record in Postgres (`cards`, comments, events, dependencies, runs), written only through `board_*` SQL functions that check the caller; Hermes, a Claude Code dispatcher and zen-agent are lanes that claim and finish cards. Any machine reaches it over HTTPS with a per-device token ([board-design.md](board-design.md)) | `app/server/src/board.ts`, `app/db/migrations/*_board.sql` |
+| The board | The kanban record in Postgres (`cards`, comments, events, dependencies, runs), written only through `board_*` SQL functions that check the caller; Hermes, a Claude Code dispatcher, zen-agent and the subscription-only Codex adapter are lanes that claim cards. The Codex adapter hands successful work to `review` for a person to finish. Any machine reaches the board over HTTPS with a per-device token ([board-design.md](board-design.md)) | `app/server/src/board.ts`, `app/server/src/addons/dispatch/`, `app/db/migrations/*_board.sql` |
 
 Both hooks fail open: a payload they can't parse is allowed, so a bug in a hook never stops an agent. They are guardrails, not a sandbox. Details: [agent-harness.md](agent-harness.md).
 
@@ -120,3 +120,38 @@ Both hooks fail open: a payload they can't parse is allowed, so a bug in a hook 
 
 - **Your notes and settings:** commit to your vault, as usual.
 - **The engine:** a branch and a pull request on this repo. CI runs the app suite, the Python suite and the leak checks; `main` is protected. Once merged, each vault moves its pin when it wants the change. See [vault.md](vault.md) and [`CONTRIBUTING.md`](https://github.com/kon-rad/argo/blob/main/CONTRIBUTING.md).
+
+### Usage quota boundary
+
+`secondbrain.json` selects subscription providers, credit cards and Usage page sections. The server returns only that presentation configuration and sanitized quota data. Codex limits are read through its authenticated CLI app-server with bounded requests and a shared cache, separate from dispatcher model turns. Claude retains its existing snapshot pipeline. UI meters live on `/usage`; header and profile links do not run duplicate collectors. Disabled providers are not queried by the subscription endpoint, and hidden sections do not start their browser polling. See [Usage configuration](configuration.md#usage-page-providers-and-sections).
+
+## Automatic review and shipping boundary
+
+The board's database trigger intercepts coding completion and runner review handoff when owner-managed review policy is enabled. `review_jobs` and append-only `review_attempts` retain submissions, original builders, revision-bound verdicts and shipping receipts. A dedicated database login, separate from org identities and builder logins, coordinates a read-only Codex reviewer with GitHub, an atomic Git base/head comparison and an owner-registered serialized deployment target. Only exact merged-revision deployment and health release dependent work, or an owner-only reconciliation (`cli-review reconcile-owner-merge`, refused for the worker login and limited to the gate's owner-merge blocks and unassigned cards) that records an attested `review_owner_merges` receipt for a PR merged outside the gate. Existing approval wrappers refuse gated cards. See [automatic review](automatic-review.md) for commands, host isolation, evidence staging and failure recovery.
+
+Native Codex rollouts join the existing usage SSH wire/import transaction path
+as `codex` complete-prefix envelopes. The collector hashes complete prefixes,
+redacts them locally and advances its cursor only on import acknowledgement.
+The parser derives disjoint token deltas from cumulative high-water snapshots,
+with stable host/session/counter IDs. The forward migration includes Codex in
+`usage_facts`; archives remain the transcript store. No provider pricing is
+inferred. Recent Codex sessions are observations with a 20-minute stale window.
+
+Laptop zen-agent traces travel the same wire as `zen` whole-file envelopes. Every
+ingest path (usage-sync, usage-import, the ledger's batches, agents-sync, the
+archive) ends by calling `archive/bot.ts`, which sets `archive_sessions.bot` (a
+foreign key to `org_agents`) from what the harness recorded: Claude Code's
+`agent-setting` record, a Codex or Hermes first message that opens with the
+compiled persona, a zen-agent persona. `usage_facts` labels a call with the
+run's agent when it is in a run (surface `bot`), else with the session's bot
+(surface `owner-chat`), so wakes and the daily token cap are unchanged.
+
+PR size is never a reason the gate rejects: the worker keeps the whole diff and every source, and `review/passes.ts` splits a snapshot too large for one reviewer call into passes and merges their verdicts. `review/policy.ts` holds the per-call budget and the planning budgets of the offline admission CLI, as one versioned, hashed policy. `review/scope.ts` selects changed reviewable paths and immediate imports for both GitHub and local Git objects. `review/plan.ts` validates acceptance/test/dependency mappings and bounded uncertainty; `review/preflight.ts` supplies read-only forecast and actual-diff checkpoints through `cli-review scope`. This adds no database state or shipping authority. The actual worker still gathers and verifies its own complete revision-bound evidence, and tells the owner through the host policy's optional `notify` program when a review is rejected or blocked. See [the public CLI contract](automatic-review.md#scope-checkpoints-before-building-and-submitting).
+
+### Instagram metrics authorization
+
+The optional social addon mounts an app-owned Unified Login connect page and a callback before SPA routing. A dedicated ten-minute Lax cookie bridges the cross-site return while the main auth cookie stays Strict. Hashed one-time state is tied to an existing auth session, intended account and fixed public callback; one atomic delete validates and consumes it before code exchange. Session revocation cascades to pending states. Typed encrypted metrics credentials separate Facebook USER and business-integration SYSTEM_USER tokens and their asset IDs from legacy Instagram Login tokens and publishing credentials. USER tokens prove the asset through a managed Page; SYSTEM_USER tokens through the asset ID in their granular-scope targets. Facebook collection uses asset-node endpoints and never legacy refresh. Other token types fail closed. See [social metrics](social-metrics.md#unified-login) for limitations and setup.
+
+## Observatory evidence and replay
+
+The optional `observatory` addon reads existing source tables through the owner-session boundary and effective database role. Bounded repeatable-read exports feed the pure versioned reducer in `app/shared/observatory.ts`. Archive steps supply tool evidence; usage rows remain usage measurements. Recorded execution intervals govern visibility, while missing lifecycle and sender provenance remain unknown. Five-minute per-session exports pin pagination and revalidate visibility. See [API and replay contract](observatory.md) and [coordinator audit queries](audits/observatory.sql). No new collectors or LLM processing are involved.

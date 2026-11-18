@@ -4,9 +4,11 @@
  * launcher holds no inline JSON parsing. `--url` names the server (default
  * http://127.0.0.1:$PORT).
  */
+import { config } from './config.js';
+
 const argv = process.argv.slice(2);
 const urlArg = argv.indexOf('--url');
-const url = (urlArg >= 0 ? argv[urlArg + 1] : undefined) ?? `http://127.0.0.1:${process.env.PORT ?? 5123}`;
+const url = (urlArg >= 0 ? argv[urlArg + 1] : undefined) ?? `http://127.0.0.1:${config.env.PORT ?? 5123}`;
 
 async function get(path: string): Promise<unknown> {
   try {

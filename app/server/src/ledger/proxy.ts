@@ -17,6 +17,7 @@ export interface Captured {
 }
 export interface ProxyOpts {
   port: number; upstream: string; bind?: string;
+  provider?: 'anthropic' | 'ollama';
   onCapture: (c: Captured) => void; log?: (msg: string) => void;
 }
 
@@ -29,9 +30,18 @@ const endToEnd = (h: http.IncomingHttpHeaders): http.OutgoingHttpHeaders => {
   for (const [k, v] of Object.entries(h)) if (!HOP.has(k) && v !== undefined) out[k] = v;
   return out;
 };
-const recordable = (method: string, path: string): boolean => method === 'POST' && /^\/v1\/messages(\?|$)/.test(path);
+const OLLAMA_PATHS = new Set([
+  '/api/chat', '/api/generate', '/api/embed', '/api/embeddings',
+  '/v1/chat/completions', '/v1/completions', '/v1/embeddings',
+]);
+const recordable = (provider: 'anthropic' | 'ollama', method: string, path: string): boolean => {
+  if (method !== 'POST') return false;
+  if (provider === 'anthropic') return /^\/v1\/messages(\?|$)/.test(path);
+  return OLLAMA_PATHS.has(path.split('?')[0]!);
+};
 
 export function startProxy(opts: ProxyOpts): Promise<http.Server> {
+  const provider = opts.provider ?? 'anthropic';
   const up = new URL(opts.upstream);
   const client = up.protocol === 'http:' ? http : https;
   const server = http.createServer((req, res) => {
@@ -63,7 +73,7 @@ export function startProxy(opts: ProxyOpts): Promise<http.Server> {
       const path = `${up.pathname.replace(/\/$/, '')}${req.url ?? '/'}`;
       const upstream = client.request({ protocol: up.protocol, hostname: up.hostname, port: up.port || undefined, method: req.method, path, headers }, (ur) => {
         res.writeHead(ur.statusCode ?? 502, endToEnd(ur.headers));
-        const keep = recordable(req.method ?? '', req.url ?? '');
+        const keep = recordable(provider, req.method ?? '', req.url ?? '');
         const tee: Buffer[] = [];
         let size = 0;
         let truncated = false;
@@ -147,6 +157,52 @@ export function assembleSse(text: string): Record<string, any> {
   return msg;
 }
 
+/** Ollama streams native responses as NDJSON and OpenAI-compatible responses as SSE. */
+export function assembleOllama(text: string, path: string): Record<string, any> | null {
+  if (path.split('?')[0]!.startsWith('/v1/')) {
+    const events: Record<string, any>[] = [];
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.startsWith('data:')) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === '[DONE]') continue;
+      try { events.push(JSON.parse(data)); } catch { /* an incomplete event is ignored */ }
+    }
+    if (!events.length) {
+      try { return JSON.parse(text); } catch { return null; }
+    }
+    const last = { ...events.at(-1) };
+    const choices = new Map<number, Record<string, any>>();
+    for (const ev of events) {
+      if (ev.usage) last.usage = ev.usage;
+      for (const choice of ev.choices ?? []) {
+        const index = Number(choice.index ?? 0);
+        const current = choices.get(index) ?? { index, message: { role: 'assistant', content: '' } };
+        if (choice.delta?.role) current.message.role = choice.delta.role;
+        if (typeof choice.delta?.content === 'string') current.message.content += choice.delta.content;
+        if (choice.finish_reason !== undefined && choice.finish_reason !== null) current.finish_reason = choice.finish_reason;
+        choices.set(index, current);
+      }
+    }
+    last.choices = [...choices.values()];
+    return last;
+  }
+
+  const chunks: Record<string, any>[] = [];
+  for (const line of text.split(/\r?\n/).filter(Boolean)) {
+    try { chunks.push(JSON.parse(line)); } catch { /* an incomplete chunk is ignored */ }
+  }
+  if (!chunks.length) {
+    try { return JSON.parse(text); } catch { return null; }
+  }
+  if (chunks.length === 1) return chunks[0]!;
+  const last = { ...chunks.at(-1) };
+  const messageParts = chunks.map((c) => c.message?.content).filter((v): v is string => typeof v === 'string');
+  if (messageParts.length) last.message = { ...(last.message ?? {}), content: messageParts.join('') };
+  const responseParts = chunks.map((c) => c.response).filter((v): v is string => typeof v === 'string');
+  if (responseParts.length) last.response = responseParts.join('');
+  return last;
+}
+
 export const sha = (v: unknown): string => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 
 /**
@@ -178,7 +234,8 @@ export function recordExchange(ledger: Ledger, c: Captured, provider: string, re
   const text = red.text(c.responseBody.toString('utf8'));
   let response: Record<string, any> | null = null;
   if (!c.truncated) {
-    if (c.contentType.includes('text/event-stream')) response = assembleSse(text);
+    if (provider === 'ollama') response = assembleOllama(text, c.path);
+    else if (c.contentType.includes('text/event-stream')) response = assembleSse(text);
     else { try { response = JSON.parse(text); } catch { response = null; } }
   }
   const sid = sessionFromMetadata(req?.metadata?.user_id);
@@ -198,7 +255,10 @@ export function recordExchange(ledger: Ledger, c: Captured, provider: string, re
       sessionExternalId: sid, model: req?.model ?? null, params: req ? params : null,
       system: blob('system', system), tools: blob('tools', tools), messages: messageShas,
       response: response ? { ...response, content: response.content ?? null } : null,
-      usage: response?.usage ?? null,
+      usage: provider === 'ollama' && !c.path.split('?')[0]!.startsWith('/v1/')
+        ? (response && (response.prompt_eval_count !== undefined || response.eval_count !== undefined)
+          ? { prompt_eval_count: response.prompt_eval_count ?? null, eval_count: response.eval_count ?? null } : null)
+        : response?.usage ?? null,
       error: c.status >= 400 || !req || c.truncated ? (c.truncated ? 'response larger than the capture limit' : text.slice(0, 10_000)) : null,
     }, { source: provider, sessionKey, ts: c.ts });
   });
@@ -250,7 +310,11 @@ export function redactCaptures(ledger: Ledger, red: Redactor): { exchanges: numb
     if (!blob) return h;
     const body = red.deep(blob.body);
     const nh = sha(body);
-    if (nh !== h) { ledger.put('blob', nh, { sha: nh, kind: blob.kind, body }, { source: 'anthropic' }); out.blobs++; }
+    if (nh !== h) {
+      const row = ledger.db.prepare(`SELECT source FROM records WHERE kind='blob' AND key=?`).get(h) as { source: string | null } | undefined;
+      ledger.put('blob', nh, { sha: nh, kind: blob.kind, body }, { source: row?.source ?? undefined });
+      out.blobs++;
+    }
     renamed.set(h, nh);
     return nh;
   };

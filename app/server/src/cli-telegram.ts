@@ -44,9 +44,9 @@ const env: Env = {
   bridgeUnitTemplate: [join(appRoot, '..', 'addons', 'telegram-bridge', 'telegram-bridge.service'),
     join(config.vaultRoot, '.secondbrain', 'addons', 'telegram-bridge', 'telegram-bridge.service')].find((p) => existsSync(p))
     ?? join(config.vaultRoot, '.secondbrain', 'addons', 'telegram-bridge', 'telegram-bridge.service'),
-  stateDir: process.env.SECONDBRAIN_TELEGRAM_DIR ?? join(homedir(), '.local', 'share', 'secondbrain', 'telegram'),
+  stateDir: config.env.SECONDBRAIN_TELEGRAM_DIR ?? join(homedir(), '.local', 'share', 'secondbrain', 'telegram'),
   settingsFile: settingsPath(),
-  claudeBin: process.env.CLAUDE_BIN, hermesHome: process.env.HERMES_HOME,
+  claudeBin: config.env.CLAUDE_BIN, hermesHome: config.env.HERMES_HOME,
 };
 
 /** The token from stdin when piped, else typed with echo off. Never printed, never in argv. */
@@ -74,7 +74,7 @@ async function getMe(token: string): Promise<string | null | undefined> {
 }
 
 async function sessions(bot: string | null): Promise<{ n: number; last: string | null } | null> {
-  if (!process.env.DATABASE_URL && !process.env.SECONDBRAIN_DB_URL) return null;
+  if (!config.envHas('DATABASE_URL') && !config.envHas('SECONDBRAIN_DB_URL')) return null;
   try {
     const { pool } = await import('./db.js');
     const { rows } = await pool.query<{ n: string; last: Date | null }>(

@@ -7,7 +7,7 @@ export interface Cursor { fingerprint: string; offsetBytes: number; lines: numbe
 const BATCH = 200;
 
 /** First file wins for session and timing; a later pass that sees more output for the same response raises it. */
-export async function upsertCalls(tx: TxClient, calls: UsageCall[]): Promise<number> {
+export async function upsertCalls(tx: TxClient, calls: UsageCall[], exact = false): Promise<number> {
   const dedup = new Map<string, UsageCall>();
   for (const c of calls) {
     const key = `${c.source}|${c.host}|${c.callId}`;
@@ -42,8 +42,11 @@ export async function upsertCalls(tx: TxClient, calls: UsageCall[]): Promise<num
          thinking_tokens, web_search_requests, tool, action, provider, match_key, cost_usd)
        VALUES ${values.join(',')}
        ON CONFLICT (source, host, call_id) DO UPDATE SET
-         output_tokens = GREATEST(u.output_tokens, EXCLUDED.output_tokens),
-         thinking_tokens = CASE WHEN EXCLUDED.output_tokens > u.output_tokens THEN EXCLUDED.thinking_tokens ELSE u.thinking_tokens END,
+         input_tokens = ${exact ? 'EXCLUDED.input_tokens' : 'u.input_tokens'},
+         cache_read_tokens = ${exact ? 'EXCLUDED.cache_read_tokens' : 'u.cache_read_tokens'},
+         cache_write_tokens = ${exact ? 'EXCLUDED.cache_write_tokens' : 'u.cache_write_tokens'},
+         output_tokens = ${exact ? 'EXCLUDED.output_tokens' : 'GREATEST(u.output_tokens, EXCLUDED.output_tokens)'},
+         thinking_tokens = CASE WHEN ${exact ? 'true' : 'EXCLUDED.output_tokens > u.output_tokens'} THEN EXCLUDED.thinking_tokens ELSE u.thinking_tokens END,
          tool = COALESCE(u.tool, EXCLUDED.tool), action = COALESCE(u.action, EXCLUDED.action),
          provider = COALESCE(EXCLUDED.provider, u.provider), match_key = COALESCE(u.match_key, EXCLUDED.match_key),
          cost_usd = COALESCE(EXCLUDED.cost_usd, u.cost_usd),
@@ -51,7 +54,8 @@ export async function upsertCalls(tx: TxClient, calls: UsageCall[]): Promise<num
                                     THEN EXCLUDED.message_external_id ELSE u.message_external_id END
        -- A fuller copy of the response, the first one that says which provider served it, or the first with a price.
        WHERE EXCLUDED.output_tokens > u.output_tokens OR (u.provider IS NULL AND EXCLUDED.provider IS NOT NULL)
-          OR (u.cost_usd IS NULL AND EXCLUDED.cost_usd IS NOT NULL)`, params);
+          OR (u.cost_usd IS NULL AND EXCLUDED.cost_usd IS NOT NULL)
+          ${exact ? 'OR (u.input_tokens,u.cache_read_tokens,u.cache_write_tokens,u.output_tokens,u.thinking_tokens) IS DISTINCT FROM (EXCLUDED.input_tokens,EXCLUDED.cache_read_tokens,EXCLUDED.cache_write_tokens,EXCLUDED.output_tokens,EXCLUDED.thinking_tokens)' : ''}`, params);
     changed += r.rowCount ?? 0;
   }
   return changed;
@@ -102,14 +106,22 @@ export async function upsertRuns(tx: TxClient, runs: RunRecord[]): Promise<numbe
  * Calls and run logs sync separately, so this runs after both and only fills blanks.
  */
 export async function attachCallsToRuns(tx: TxClient, host: Host): Promise<number> {
-  const r = await tx.query(
+  const attached = await tx.query(
     `UPDATE usage_calls c SET run_id = r.run_id
        FROM usage_runs r
       WHERE c.host = $1 AND c.run_id IS NULL AND r.host = c.host AND r.session_id = c.session_external_id
         AND r.started_at IS NOT NULL
         AND c.ts >= r.started_at - interval '2 minutes'
         AND c.ts <= COALESCE(r.ended_at, now()) + interval '2 minutes'`, [host]);
-  return r.rowCount ?? 0;
+  // A second statement on purpose: inside one statement the delete would not see the rows just attached.
+  await tx.query(
+    `DELETE FROM usage_calls summary
+      WHERE summary.host = $1 AND summary.source = 'codex' AND summary.call_id = summary.run_id
+        AND EXISTS (
+          SELECT 1 FROM usage_calls native
+           WHERE native.host = summary.host AND native.source = 'codex' AND native.run_id = summary.run_id
+             AND native.call_id <> native.run_id)`, [host]);
+  return attached.rowCount ?? 0;
 }
 
 export async function insertPlanSnapshots(tx: TxClient, snaps: PlanSnapshot[]): Promise<number> {

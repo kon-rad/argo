@@ -171,7 +171,7 @@ test('a persona picks its model and the skills it can read', async () => {
   assert.match(r.sessionId, /^bolt-/);
 });
 
-test('delegate runs a child with its own session and returns its report', async () => {
+test('delegate runs a child with its own session and returns its report', async (t) => {
   const { cfg, faux, models } = setup({ tools: ['fs', 'subagent'] });
   faux.setResponses([
     fauxAssistantMessage([fauxToolCall('delegate', { objective: 'count the lines of hello.txt', turns: 3 })], { stopReason: 'toolUse' }),
@@ -184,9 +184,13 @@ test('delegate runs a child with its own session and returns its report', async 
   const sessions = Session.list(cfg.sessionsDir);
   assert.equal(sessions.length, 2);
   const child = sessions.find((s) => s !== r.sessionId)!;
-  const meta = Session.load(cfg.sessionsDir, child).meta as unknown as { parent: string; tools: string[] };
+  const meta = Session.load(cfg.sessionsDir, child).meta as unknown as { parent: string; tools: string[]; entrypoint: string; context_window: number; model: string };
   assert.equal(meta.parent, r.sessionId);
   assert.ok(!meta.tools.includes('delegate'), 'a child cannot delegate');
+  assert.equal(meta.entrypoint, 'subagent');
+  assert.equal(meta.model, 'faux/faux-1');
+  assert.equal(meta.context_window, models.getModel('faux', 'faux-1')!.contextWindow);
+  t.diagnostic(JSON.stringify({ producer: 'delegate', entrypoint: meta.entrypoint, model: meta.model, context_window: meta.context_window }));
 });
 
 test('the token budget counts new work, not the prompt re-read from cache', () => {

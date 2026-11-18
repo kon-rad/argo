@@ -29,8 +29,14 @@ describe('agentSpecProblem', () => {
   });
 
   it('refuses a runtime that no adapter runs', () => {
-    expect(agentSpecProblem({ runtime: 'codex', model: null })).toMatch(/no adapter/);
+    expect(agentSpecProblem({ runtime: 'codex', model: null })).toMatch(/exact Codex CLI model/);
     expect(agentSpecProblem({ runtime: 'gemini', model: null })).toMatch(/no adapter/);
+  });
+
+  it('requires a bare exact Codex CLI model id', () => {
+    expect(agentSpecProblem({ runtime: 'codex', model: 'gpt-6-sol' })).toBeNull();
+    expect(agentSpecProblem({ runtime: 'codex', model: 'openai/gpt-6-sol' })).toMatch(/exact Codex CLI model/);
+    expect(agentSpecProblem({ runtime: 'codex', model: 'opus' })).toBeNull(); // availability is checked by CLI preflight
   });
 
   it('leaves humans and sessions alone: nothing claims for them', () => {
@@ -39,7 +45,7 @@ describe('agentSpecProblem', () => {
   });
 
   it('names the runtimes that do have an adapter', () => {
-    expect([...ADAPTER_RUNTIMES].sort()).toEqual(['claude-code', 'hermes', 'zen-agent']);
+    expect([...ADAPTER_RUNTIMES].sort()).toEqual(['claude-code', 'codex', 'hermes', 'zen-agent']);
   });
 
   it('refuses an effort the runtime cannot take', () => {

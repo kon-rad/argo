@@ -38,9 +38,12 @@ mkdir my-vault && cd my-vault && git init
 git submodule add https://github.com/kon-rad/argo.git .secondbrain
 .secondbrain/bin/secondbrain-vault init .
 cp .env.example .env
+printf '{}\n' > secondbrain.json
 git add -A && git commit -m "new vault"
 .secondbrain/app/bin/secondbrain          # installs, migrates, builds, starts, opens the browser
 .secondbrain/app/bin/secondbrain scan     # builds the index
 ```
+
+`secondbrain.json` is the active **instance configuration**, started here with `{}`. `init` supplies `secondbrain.example.json` as a reference. It is separate from the engine's **feature manifests**, which register features in code. See [Configuration and secrets](08-config-and-secrets.md#instance-configuration-is-not-a-feature-manifest).
 
 That needs git, Node 22, Python 3.9 and PostgreSQL with pgvector. The install steps for those are in [Set up your vault](02-set-up-your-vault.md).

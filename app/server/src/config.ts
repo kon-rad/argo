@@ -21,6 +21,77 @@ if (existsSync(vaultEnv)) dotenv.config({ path: vaultEnv, quiet: true });
 const Schema = z.object({
   VAULT_ROOT: z.string().default(defaultVaultRoot),
   DATABASE_URL: z.string().default('postgres://localhost:5432/secondbrain'),
+  // Standalone review worker only; never passed to its model subprocess.
+  REVIEW_DB_URL: z.string().optional(),
+  GH_TOKEN: z.string().optional(),
+  // Structured settings path, absolute or relative to VAULT_ROOT.
+  SECONDBRAIN_SETTINGS: z.string().optional(),
+  // plan|apply filesystem overrides, primarily for dry runs and tests.
+  SB_UNIT_DIR: z.string().optional(),
+  SB_ENV_FILE: z.string().optional(),
+  // cli-config, called by deploy.sh: unit files only, and the server fields it overrides.
+  SB_CONFIG_UNITS_ONLY: z.string().optional(),
+  SB_CONFIG_BASE_UNITS: z.string().optional(),
+  SB_APP_USER: z.string().optional(),
+  SB_APP_DIR: z.string().optional(),
+  SB_VAULT_DIR: z.string().optional(),
+  SB_HERMES_HOME: z.string().optional(),
+  // Client-mode database URLs used by launchers and bot-scoped roles.
+  SECONDBRAIN_DB_URL: z.string().optional(),
+  SB_ORG_DB_URL: z.string().optional(),
+  ORG_DB_URL: z.string().optional(),
+  // Calling-agent identity and run metadata supplied by the agent harness.
+  ORG_AGENT: z.string().optional(),
+  ORG_VIA: z.string().optional(),
+  ORG_RUN: z.string().optional(),
+  // Pilot routing and breaker overrides for org commands.
+  ORG_ROUTING_JSON: z.string().optional(),
+  ORG_BREAKER: z.enum(['on', 'off']).optional(),
+  ORG_BREAKER_AS: z.string().optional(),
+  // Attribution override for project report writes.
+  PROJECTS_BY: z.string().optional(),
+  // Local agent and usage filesystem locations.
+  PLAN_USAGE_LOG: z.string().optional(),
+  CLAUDE_PROJECTS_DIR: z.string().optional(),
+  CLAUDE_BIN: z.string().optional(),
+  CC_RUNS_DIR: z.string().optional(),
+  SECONDBRAIN_TELEGRAM_DIR: z.string().optional(),
+  // Usage sync host labels, destinations, credentials and batching controls.
+  USAGE_HOST: z.string().optional(),
+  USAGE_SYNC_HOST: z.string().optional(),
+  USAGE_SYNC_SERVER: z.string().optional(),
+  USAGE_SYNC_TOKEN: z.string().optional(),
+  USAGE_PUSH_HOST: z.string().optional(),
+  USAGE_PUSH_STATE: z.string().optional(),
+  USAGE_PUSH_MAX_BYTES: z.coerce.number().int().positive().default(20_000_000),
+  // Standalone ledger location and an optional token override.
+  SB_LEDGER_DIR: z.string().optional(),
+  SB_LEDGER_TOKEN: z.string().optional(),
+  // Archive and agent-sync machine paths and commands.
+  BOT_REPOS_FILE: z.string().optional(),
+  HERMES_ENV_FILE: z.string().optional(),
+  REMOTE_HERMES_USER: z.string().optional(),
+  AGENTS_SYNC_HOST: z.string().optional(),
+  REDACT_ENV_FILES: z.string().optional(),
+  B2STORE: z.string().optional(),
+  // Provider key-file and API credentials used by credits and avatar jobs.
+  CREDITS_KEYS_FILE: z.string().optional(),
+  FAL_BILLING_KEY: z.string().optional(),
+  GEMINI_API_KEY: z.string().optional(),
+  // Optional public collectors and their output locations.
+  BASE_RPC_URL: z.string().url().default('https://mainnet.base.org'),
+  LIVESTREAM_YOUTUBE: z.string().optional(),
+  LIVESTREAM_TWITCH: z.string().optional(),
+  LIVESTREAM_KICK: z.string().optional(),
+  LIVESTREAM_PUBLIC_DIR: z.string().default('/var/lib/secondbrain-public'),
+  SUMMARIES_LOCAL_URL: z.string().url().optional(),
+  // Standard process metadata used for local paths and service instructions.
+  XDG_CONFIG_HOME: z.string().optional(),
+  USER: z.string().optional(),
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  // Opt-in disposable databases for the desk integration suites.
+  DESK_TEST_DATABASE_URL: z.string().url().optional(),
+  DESK_PUBLICATION_TEST_DATABASE_URL: z.string().url().optional(),
   PORT: z.coerce.number().int().positive().default(5123),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   // Optional: the embeddings source falls back to a local Ollama provider, and
@@ -83,6 +154,22 @@ const Schema = z.object({
   DESK_RPC_URL: z.string().optional(),
   DESK_PUBLIC_ORIGIN: z.string().optional(),
   DESK_RUNTIME_MODULE: z.string().optional(),
+  DESK_ARKIV_RPC_URL: z.string().optional(),
+  DESK_ARKIV_CHAIN_ID: z.string().optional(),
+  DESK_ARKIV_PRIVATE_KEY: z.string().optional(),
+  DESK_ARKIV_LIFETIME_BLOCKS: z.string().optional(),
+  DESK_BEE_URL: z.string().optional(),
+  DESK_BEE_POSTAGE_BATCH_ID: z.string().optional(),
+  DESK_IDENTITY_RPC_URL: z.string().optional(),
+  DESK_IDENTITY_CHAIN_ID: z.string().optional(),
+  DESK_ENS_RPC_URL: z.string().optional(),
+  DESK_ENS_CHAIN_ID: z.string().optional(),
+  DESK_ERC8004_REGISTRY_ADDRESS: z.string().optional(),
+  DESK_IDENTITY_METADATA_HOSTS: z.string().optional(),
+  DESK_TRANSPORT_TIMEOUT_MS: z.string().optional(),
+  DESK_MAX_RESPONSE_BYTES: z.string().optional(),
+  DESK_MAX_ARTIFACT_BYTES: z.string().optional(),
+  DESK_PUBLICATION_DESTINATION: z.string().optional(),
   // Deprecated (one release): `SUMMARIES=on` used to install the summaries timer; `summaries` is a module now.
   SUMMARIES: z.string().optional(),
   // Shown in the TOTP app and as the comment author on the Agents board.
@@ -111,6 +198,12 @@ const Schema = z.object({
   ORG_DISPATCH_DAILY_TOKENS: z.coerce.number().int().min(0).default(0),
   // The zen-agent command the dispatcher runs (on the PATH, or an absolute path).
   ORG_ZEN_COMMAND: z.string().min(1).default('zen-agent'),
+  // Subscription-only Codex CLI. A roster row runs only after ChatGPT login and exact-model preflight.
+  ORG_CODEX_COMMAND: z.string().min(1).default('codex'),
+  // usage_hosts.slug where ORG_CODEX_COMMAND executes. Unset: this server's registered usage host.
+  ORG_CODEX_HOST: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/).optional(),
+  // Native Codex conversation directory; authentication remains owned by the CLI.
+  CODEX_HOME: z.string().min(1).optional(),
   // Where zen-agent writes its traces (zen.json sessionsDir); usage-sync reads them. Default: <vault>/.zen/sessions.
   ZEN_SESSIONS_DIR: z.string().optional(),
   // The classify step (secondbrain classify): `none` falls every decision through to the old path.
@@ -152,6 +245,8 @@ const Schema = z.object({
   // minted by `cli-board token create` (door 2 of docs/board-design.md). Unset: the database connection is used.
   BOARD_URL: z.string().url().optional(),
   BOARD_TOKEN: z.string().min(20).optional(),
+  // Where `secondbrain-vault clis install` writes the agent CLI wrappers (default ~/.local/bin); the doctor looks there.
+  SECONDBRAIN_BIN_DIR: z.string().optional(),
   // Read-only bearer token for a kiosk's Projects panel (GET /api/feed/projects).
   // Unset = the feed route does not exist.
   PROJECTS_FEED_TOKEN: z.string().min(32).optional(),
@@ -174,6 +269,9 @@ const Schema = z.object({
   // 32-byte key (64 hex chars) used to AES-256-GCM encrypt stored OAuth tokens.
   // Required only when the social module is on; generate with
   // `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`.
+  FACEBOOK_APP_ID: z.string().min(1).optional(),
+  FACEBOOK_APP_SECRET: z.string().min(1).optional(),
+  FACEBOOK_LOGIN_CONFIG_ID: z.string().min(1).optional(),
   SOCIAL_TOKEN_ENC_KEY: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
   // A personal key from Buffer (Settings > API). Relays Instagram, YouTube
   // Shorts and X through the channels connected in that Buffer account;
@@ -185,6 +283,9 @@ const Schema = z.object({
   SOCIAL_MEDIA_BASE_URL: z.string().url().optional(),
   // X counts a post's length by weight; 280 on a free account, 25000 on Premium.
   SOCIAL_X_MAX_CHARS: z.coerce.number().int().positive().default(280),
+  // YouTube Data API v3 key for the social metrics collector (docs/social-metrics.md).
+  // Unset: configured YouTube accounts report "missing credential" and nothing else changes.
+  YOUTUBE_API_KEY: z.string().min(1).optional(),
 });
 
 /** Every env key the schema validates, sorted. `test/env-schema.test.ts` holds this against every `process.env` read in the source. */
@@ -250,7 +351,23 @@ if (ollamaMachines.skipped.length) {
   console.warn(`OLLAMA_MACHINES: skipped ${ollamaMachines.skipped.length} invalid entr${ollamaMachines.skipped.length === 1 ? 'y' : 'ies'} (expected name=http://host:11434)`);
 }
 
+const schemaShape = Schema.shape as Record<string, z.ZodType>;
+/** Keep explicit run-scoped overrides observable while validating them through the same schema. */
+const schemaEnv = new Proxy(parsed.data, {
+  get(target, key, receiver) {
+    if (typeof key !== 'string' || !(key in schemaShape) || process.env[key] === undefined) {
+      return Reflect.get(target, key, receiver) as unknown;
+    }
+    const current = schemaShape[key]!.safeParse(process.env[key]);
+    return current.success ? current.data : Reflect.get(target, key, receiver) as unknown;
+  },
+});
+
 export const config = {
+  /** Schema-validated environment for operational settings that do not merit a derived field. */
+  env: schemaEnv,
+  /** True only when the process explicitly supplied a key, regardless of schema defaults. */
+  envHas: (key: keyof typeof parsed.data): boolean => process.env[key] !== undefined,
   appRoot,
   vaultRoot: resolve(parsed.data.VAULT_ROOT),
   databaseUrl: parsed.data.DATABASE_URL,
@@ -288,6 +405,22 @@ export const config = {
     rpcUrl: parsed.data.DESK_RPC_URL,
     publicOrigin: parsed.data.DESK_PUBLIC_ORIGIN,
     runtimeModule: parsed.data.DESK_RUNTIME_MODULE,
+    arkivRpcUrl: parsed.data.DESK_ARKIV_RPC_URL,
+    arkivChainId: parsed.data.DESK_ARKIV_CHAIN_ID,
+    arkivPrivateKey: parsed.data.DESK_ARKIV_PRIVATE_KEY,
+    arkivLifetimeBlocks: parsed.data.DESK_ARKIV_LIFETIME_BLOCKS,
+    beeUrl: parsed.data.DESK_BEE_URL,
+    beePostageBatchId: parsed.data.DESK_BEE_POSTAGE_BATCH_ID,
+    identityRpcUrl: parsed.data.DESK_IDENTITY_RPC_URL,
+    identityChainId: parsed.data.DESK_IDENTITY_CHAIN_ID,
+    ensRpcUrl: parsed.data.DESK_ENS_RPC_URL,
+    ensChainId: parsed.data.DESK_ENS_CHAIN_ID,
+    erc8004RegistryAddress: parsed.data.DESK_ERC8004_REGISTRY_ADDRESS,
+    metadataHosts: parsed.data.DESK_IDENTITY_METADATA_HOSTS,
+    timeoutMs: parsed.data.DESK_TRANSPORT_TIMEOUT_MS,
+    maxResponseBytes: parsed.data.DESK_MAX_RESPONSE_BYTES,
+    maxArtifactBytes: parsed.data.DESK_MAX_ARTIFACT_BYTES,
+    publicationDestination: parsed.data.DESK_PUBLICATION_DESTINATION,
   },
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,
@@ -302,6 +435,8 @@ export const config = {
   orgDispatchQuiet: parsed.data.ORG_DISPATCH_QUIET ?? null,
   orgDispatchDailyTokens: parsed.data.ORG_DISPATCH_DAILY_TOKENS,
   orgZenCommand: parsed.data.ORG_ZEN_COMMAND,
+  orgCodexCommand: parsed.data.ORG_CODEX_COMMAND,
+  orgCodexHost: parsed.data.ORG_CODEX_HOST ?? null,
   zenSessionsDir: parsed.data.ZEN_SESSIONS_DIR ?? resolve(parsed.data.VAULT_ROOT, '.zen', 'sessions'),
   classifyProvider: parsed.data.CLASSIFY_PROVIDER,
   classifyDailyTokens: parsed.data.CLASSIFY_DAILY_TOKENS,
@@ -334,7 +469,11 @@ export const config = {
   socialMediaBaseUrl: (
     parsed.data.SOCIAL_MEDIA_BASE_URL ?? parsed.data.SOCIAL_REDIRECT_BASE_URL ?? parsed.data.PUBLIC_ORIGIN ?? `http://localhost:${parsed.data.PORT}`
   ).replace(/\/+$/, ''),
+  facebookAppId: parsed.data.FACEBOOK_APP_ID,
+  facebookAppSecret: parsed.data.FACEBOOK_APP_SECRET,
+  facebookLoginConfigId: parsed.data.FACEBOOK_LOGIN_CONFIG_ID,
   socialTokenEncKey: parsed.data.SOCIAL_TOKEN_ENC_KEY,
   bufferApiKey: parsed.data.BUFFER_API_KEY,
   socialXMaxChars: parsed.data.SOCIAL_X_MAX_CHARS,
+  youtubeApiKey: parsed.data.YOUTUBE_API_KEY,
 } as const;

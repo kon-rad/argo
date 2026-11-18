@@ -5,6 +5,7 @@ import { addonRoutes } from './addons/index.js';
 import { createAuth, type AuthOptions } from './auth/router.js';
 import { config, type ModuleName } from './config.js';
 import { healthy, runChecks } from './doctor.js';
+import { currentTimezone } from './timezone.js';
 import { connectors as defaultConnectors, type ConnectorRegistry } from './connectors/index.js';
 import { defaultEmbeddingProvider } from './embeddings/factory.js';
 import { featureRoutes, mountAt, navFor } from './features/index.js';
@@ -21,6 +22,7 @@ import { rawRouter } from './routes/raw.js';
 import type { RingRouterOptions } from './routes/ring.js';
 import { runsRouter } from './routes/runs.js';
 import { searchRouter, type ProviderFactory } from './routes/search.js';
+import type { InstagramUnifiedOptions } from './metrics/social/unified.js';
 import type { SocialOptions } from './routes/social.js';
 import { sourcesRouter } from './routes/sources.js';
 import { systemRouter } from './routes/system.js';
@@ -80,6 +82,7 @@ export interface AppOptions {
   voice?: Partial<VoiceOptions>;
   /** Overridden in tests with fake providers and a fixed encryption key. */
   social?: Partial<SocialOptions>;
+  instagramUnified?: Partial<InstagramUnifiedOptions>;
   /** Overridden in tests with a fake chat model and a fixed provider catalog. */
   chat?: Partial<ChatOptions>;
 }
@@ -187,6 +190,8 @@ export function createApp(opts: AppOptions = {}): express.Express {
       devLogPath: config.devLogPath,
       docsPath: config.docsPath,
       robot: !remote && Boolean(config.robotLaunchScript),
+      // The vault's current time zone (secondbrain.json), read fresh so `secondbrain timezone set` needs no restart; null: unset.
+      timezone: currentTimezone(),
       ...buildInfo,
     });
   });

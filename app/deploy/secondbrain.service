@@ -17,13 +17,14 @@ ExecStart=/usr/bin/node server/dist/index.js
 Restart=on-failure
 RestartSec=5
 
-# Sandboxing: the process can write the vault and its own data dir, nothing else.
+# Sandboxing: writes are limited to the vault, app data and optional Codex CLI state.
+# Read-only quota RPC still needs the CLI state directory for its SQLite/cache and login refresh.
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=@VAULT_DIR@ @APP_DIR@/data
+ReadWritePaths=@VAULT_DIR@ @APP_DIR@/data -@APP_HOME@/.codex
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

@@ -18,14 +18,14 @@ const one = (s: string, n: number) => { const f = s.replace(/\s+/g, ' ').trim();
 
 /**
  * What the stand-up reads: the last `hours` of summaries as markdown, grouped by project, with the
- * open items and the unreviewed candidate facts pulled out. Bounded by `maxChars` so the pack stays small.
+ * open items and the automatically saved facts pulled out. Bounded by `maxChars` so the pack stays small.
  */
 export async function buildDigest(hours = 24, maxChars = 6000): Promise<string> {
   const { rows } = await query<Row>(
     // card_project: the tracker project of the card a bot run worked on, when the session ran one.
     `SELECT s.id, s.harness, s.host, s.project, s.started_at, s.request, s.done, s.learned, s.open_items, s.outcome, s.metrics,
-            (SELECT tl.project_slug FROM usage_runs r JOIN task_links tl ON tl.task_id = r.task_id
-              WHERE r.host = s.host AND r.session_id = a.external_id AND tl.project_slug IS NOT NULL LIMIT 1) AS card_project
+            (SELECT tl.area_slug FROM usage_runs r JOIN task_links tl ON tl.task_id = r.task_id
+              WHERE r.host = s.host AND r.session_id = a.external_id AND tl.area_slug IS NOT NULL LIMIT 1) AS card_project
        FROM agent_summaries s JOIN archive_sessions a ON a.id = s.session_id
       WHERE s.status = 'ok' AND coalesce(s.ended_at, s.started_at, s.updated_at) >= now() - make_interval(hours => $1)
       ORDER BY coalesce(s.ended_at, s.started_at) DESC LIMIT 300`, [hours]);
@@ -51,9 +51,9 @@ export async function buildDigest(hours = 24, maxChars = 6000): Promise<string> 
   const openLines = open.length ? ['\n### Open items', ...open.map((r) => `- ${one(r.open_items, 200)} (${one(r.request, 60)})`)] : [];
   const facts = (await query<{ subject: string; claim: string }>(
     `SELECT f.subject, f.claim FROM agent_summary_facts f JOIN agent_summaries s ON s.id = f.summary_id
-      WHERE f.status = 'proposed' AND s.status = 'ok' AND coalesce(s.ended_at, s.started_at, s.updated_at) >= now() - make_interval(hours => $1)
+      WHERE f.status = 'promoted' AND s.status = 'ok' AND coalesce(s.ended_at, s.started_at, s.updated_at) >= now() - make_interval(hours => $1)
       ORDER BY f.id DESC LIMIT 8`, [hours])).rows;
-  const factLines = facts.length ? ['\n### Learned, not yet reviewed', ...facts.map((f) => `- ${f.subject}: ${one(f.claim, 220)}`)] : [];
+  const factLines = facts.length ? ['\n### Learned, saved to memory', ...facts.map((f) => `- ${f.subject}: ${one(f.claim, 220)}`)] : [];
 
   let out = [head, ...body, ...openLines, ...factLines].join('\n');
   if (out.length > maxChars) out = `${out.slice(0, maxChars - 40).trimEnd()}\n\n[... cut at ${maxChars} characters]\n`;

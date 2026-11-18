@@ -4,6 +4,14 @@ Status: **works** - where settings and secrets live on the shipped engine, and t
 
 Three places hold settings, each for one kind of value, and nothing personal is ever compiled into the engine. This page is where each thing goes on each machine, and how agents and scripts read it without ever printing it. The full list of variables and keys is [configuration.md](../configuration.md).
 
+## Instance configuration is not a feature manifest
+
+`<vault>/secondbrain.json` is the **instance configuration**: the owner's non-secret settings for one installation. `secondbrain.example.json` is a reference copied by `init`; it is not loaded automatically. The [vault setup commands](02-set-up-your-vault.md#step-2-create-the-vault) create an active `secondbrain.json` containing `{}`. Add only the supported sections you need, using the [configuration reference](../configuration.md#secondbrainjson).
+
+The engine's **feature manifests** live in `app/server/src/features/<name>/manifest.ts` and `app/server/src/addons/<name>/manifest.ts`. These are developer-maintained registration files. Configure your instance through `secondbrain.json` and environment settings; edit a feature manifest only when contributing an engine feature. See [Addons](../addons.md#instance-configuration-and-feature-manifests).
+
+Instance configuration selects options that already exist. It does not install a harness, create a provider account or authenticate a subscription. Install and authenticate integrations through their documented setup steps, keeping credentials outside the JSON file.
+
 ## The three places
 
 | File | Holds | On | Committed? |

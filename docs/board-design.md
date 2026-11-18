@@ -63,8 +63,8 @@ CREATE TABLE cards (
   priority      smallint NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
   assignee      text REFERENCES org_agents(name) ON UPDATE CASCADE,   -- NULL: unassigned
   created_by    text NOT NULL REFERENCES org_agents(name) ON UPDATE CASCADE,
-  project_slug  text REFERENCES projects(slug) ON UPDATE CASCADE ON DELETE SET NULL,
-  feature_slug  text,
+  area_slug     text REFERENCES areas(slug) ON UPDATE CASCADE ON DELETE SET NULL,
+  project_slug  text,                           -- a project of that area; never set without area_slug (a check and a composite FK to projects)
   kind          text NOT NULL DEFAULT 'work' CHECK (kind IN ('work','spec','build','review','verify','doc','status','improve','revert')),
   work_type     text CHECK (work_type IN ('research','coding','design','media','writing','sales','education','ops')),
   needs         text CHECK (needs IN ('code','review','merge','deploy','m1','web')),
@@ -85,7 +85,7 @@ CREATE TABLE cards (
 );
 CREATE INDEX cards_board_status_idx ON cards (board_slug, status, priority, created_at);
 CREATE INDEX cards_assignee_idx     ON cards (assignee) WHERE status NOT IN ('done','archived');
-CREATE INDEX cards_project_idx      ON cards (project_slug, feature_slug);
+CREATE INDEX cards_area_project_idx ON cards (area_slug, project_slug);
 CREATE INDEX cards_tsv_idx          ON cards USING gin (tsv);
 
 CREATE TABLE card_comments (
@@ -182,7 +182,10 @@ Every write is a `SECURITY DEFINER` function, as `org_dm_channel`, `org_task_fla
 | `board_card_finish(card, outcome, result, verification?)` | The caller is the card's assignee. `done` sets `completed_at` and `result`; `blocked` needs a `block_kind`; `budget` is `blocked` with kind `budget`. Closes the run. Writes the `verifications` row when asked. Promotes dependants. |
 | `board_card_link(card, depends_on)` | No cycles (walk up at most 64 steps). A `todo` card with a new open dependency stays `todo`; a `ready` one goes back to `todo`. |
 | `board_card_flags(card, ship_now, needs)` | `ship_now` only from a human: the owner marks ship-now, by construction. |
-| `board_reclaim()` | For every open run past its lease with no heartbeat in the last lease period: outcome `lost`, card back to `ready`, event `reclaimed`. Called by a timer; cheap. |
+| `board_card_tag(card, project, feature)` | Sets, changes or clears (null) the project and feature; nothing else. A human, a dispatcher, the giver or the assignee. A feature needs a project; both must exist in the tracker. |
+| `board_reclaim(hosts_up)` | For every open run past its lease with no heartbeat in the last lease period: outcome `lost`, card back to `ready`, event `reclaimed`. Also: due schedules to `ready`; every `dependency` block re-tested (links recorded from `t_…` ids in an unlinked block's reason), released with a `released` event; `host-down` blocks on a host in `hosts_up` back to `ready`, at most 3 times a card (`cards.host_retries`); `running` cards whose latest run has ended and hold no live lease to `review` (the run left a branch or PR) or `ready`, event `reconciled`. Never touches a `done` or `archived` card. Called by a timer; cheap. |
+| `board_card_block(card, kind, reason, host, after[])` | A block with its cause as data: `after` links (kind `dependency`; released at once if all are finished), `host` (kind `host-down`). Same rights as a move to `blocked`. |
+| `board_run_output(card, branch, pr)` | The run's agent records what the run left, so `board_reclaim` can route a run that ended without a finish to `review`. |
 
 Reads are plain `SELECT`s under row-level security. Cards are company work, so, as `task_links` today, every roster member reads every card on boards whose `team_slug` is NULL or their own team. A board with a team is that team's and the owner's. That is the whole privacy model for the board; DMs stay in the org module.
 
@@ -216,11 +219,12 @@ Mounted only when `board` is in `MODULES`; off by default like every module. Ids
 | Verb | Route | Body / query |
 |---|---|---|
 | GET | `/api/board/boards` | |
-| GET | `/api/board/cards` | `board`, `status`, `assignee`, `project`, `feature`, `kind`, `q`, `limit` |
+| GET | `/api/board/cards` | `board`, `status`, `assignee`, `project`, `feature`, `kind`, `q`, `id`, `limit`. A `q` that looks like a ticket number (`t_1d4c0eff`, `#1d4c`, or 4+ hex) also matches ids by prefix, the exact id first. `id=t_1d4c0eff,2e5d` keeps only those cards (full ids or prefixes); the page's deep link is `/board?id=…`. Either way done cards of any age are included. |
 | GET | `/api/board/cards/:id` | card, comments, events, deps (both directions), runs |
 | POST | `/api/board/cards` | `board`, `title`, `body`, `contract`, `assignee`, `project`, `feature`, `kind`, `work`, `needs`, `repo`, `priority`, `deps` |
 | POST | `/api/board/cards/:id/comment` | `body` |
 | POST | `/api/board/cards/:id/assign` | `assignee`, `project`, `feature` |
+| POST | `/api/board/cards/:id/project` | `project` (null clears), `feature`: the project tag alone, without reassigning or waking anyone |
 | POST | `/api/board/cards/:id/move` | `status`, `note` |
 | POST | `/api/board/cards/:id/link` | `depends_on` |
 | POST | `/api/board/cards/:id/flags` | `ship_now`, `needs` |
@@ -235,11 +239,11 @@ Errors use the app's `{ error: { message } }` shape. Nothing here is new machine
 ### 5.2 CLI: `cli-board` (also `secondbrain board`)
 
 ```
-cli-board list [--board b] [--status s] [--assignee a] [--project p] [--json]
+cli-board list [--board b] [--status s] [--assignee a] [--area a] [--project p] [--json]
 cli-board show <card> [--json]
-cli-board create "<title>" --to <agent> --project p [--feature f] [--kind k] [--type work] [--needs cap] [--repo r] [--priority N] [--after t_…]... [--body "..."] [--contract file.json] [--ship-now] [--json]
+cli-board create "<title>" --to <agent> --area a [--project p] [--kind k] [--type work] [--needs cap] [--repo r] [--priority N] [--after t_…]... [--body "..."] [--contract file.json] [--ship-now] [--json]
 cli-board comment <card> "<body>"
-cli-board assign <card> <agent> [--project p --feature f]
+cli-board assign <card> <agent> [--area a --project p]
 cli-board move <card> <status> ["<note>"]
 cli-board link <card> --after <card>
 cli-board claim --runtime <r> [--agent a] [--json]

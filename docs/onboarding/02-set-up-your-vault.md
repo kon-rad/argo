@@ -54,6 +54,7 @@ mkdir my-vault && cd my-vault && git init
 git submodule add https://github.com/kon-rad/argo.git .secondbrain
 .secondbrain/bin/secondbrain-vault init .
 cp .env.example .env
+printf '{}\n' > secondbrain.json
 git add -A && git commit -m "new vault"
 ```
 
@@ -68,9 +69,27 @@ What `init` created, and what each file is for:
 | `.claude/settings.json`, `.claude/agents/`, `.claude/skills` | Claude Code wired to the hooks, the fact-checker subagent, a link to the shared skills folder |
 | `.agents/skills/`, `.agents/guard.local.json` | Your skills (plus links to the engine's), and your extra guard rules |
 | `.agents/org.json` | The **starter org**: owner, one lead, one coder, one reviewer, two teams. Edit it, then `secondbrain org plan` / `apply` ([From zero](00-from-zero.md) stage 7) |
-| `.env`, `.env.example`, `secondbrain.example.json`, `.gitignore` | Settings. `.env` is gitignored from the first commit |
+| `.env.example`, `secondbrain.example.json`, `.gitignore` | Templates and ignore rules copied by `init`; `.env` is gitignored |
+| `.env`, `secondbrain.json` | Created by the two commands after `init`: machine settings/secrets and an empty active instance configuration |
+| `~/.local/bin/cli-board`, `cli-org`, `cli-projects`, ... | Outside the vault: the agent CLIs, so an agent told to run `cli-board` finds it. `cli-board` reaches a server's board over HTTPS once `BOARD_URL` and `BOARD_TOKEN` are in `.env`; the rest say they are server-only. The `cli-board` bundle is built from `.secondbrain/app` once its dependencies are installed (the first run in Step 3 does that); until then `cli-board` says so. Step 3 re-runs the install; it is safe any time. `init --no-clis` skips this ([details](06-connect-machines.md#the-agent-clis-on-the-laptop-and-every-other-machine)) |
 
-**Check:** `git status` is clean and `cat AGENTS.md | head -3` shows the generated header.
+### Configure this instance
+
+`secondbrain.json` is your **instance configuration**, shared through your private vault. The `printf` command above creates the smallest valid file, `{}`. The app also works when the file is absent, using defaults.
+
+`init` copies `secondbrain.example.json` but does not create `secondbrain.json`. Read the example and add the sections you need to the active file. If you prefer to copy the whole example, use `cp secondbrain.example.json secondbrain.json` only in a new vault without an active file, then remove unwanted sections and replace all example values. The example is a reference, not an automatic onboarding preset.
+
+For example, to enable the map addon, the active file can contain:
+
+```json
+{ "addons": ["map"] }
+```
+
+Put API keys in `.env` and complete native CLI logins separately. Listing a subscription in instance configuration enables its Usage panel; it does not sign in or purchase a subscription. The engine's **feature manifests** register features in code; you do not edit them to configure this vault. Read [Configuration and secrets](08-config-and-secrets.md) and the [instance configuration reference](../configuration.md#secondbrainjson) for the supported settings and file distinction.
+
+The app reads the active configuration at startup. After later edits, run `secondbrain restart` (once the launcher is on your PATH).
+
+**Check:** `python3 -m json.tool secondbrain.json` parses the active file, `git status` is clean after your commit, and `cat AGENTS.md | head -3` shows the generated header.
 
 Two rules from here on. Never make the vault repo public. And never commit inside `.secondbrain/`; it is a pinned copy of the engine.
 
@@ -88,6 +107,12 @@ Put the launcher on your PATH so the rest of these docs read naturally:
 ln -s "$PWD/.secondbrain/app/bin/secondbrain" ~/.local/bin/secondbrain
 ```
 
+Now that the app's dependencies are installed, finish the agent CLIs `init` put on PATH (it builds the one-file `cli-board` client; re-running changes nothing else):
+
+```bash
+.secondbrain/bin/secondbrain-vault clis install
+```
+
 | Command | Does |
 |---|---|
 | `secondbrain` | Start (if needed) and open the browser |
@@ -95,7 +120,7 @@ ln -s "$PWD/.secondbrain/app/bin/secondbrain" ~/.local/bin/secondbrain
 | `secondbrain scan` | Re-index the vault now |
 | `secondbrain embed` | Embed new and changed notes for semantic search |
 | `secondbrain dev` | Server and web UI in watch mode, for development |
-| `secondbrain doctor` | Health checks: Node, Postgres, pgvector, migrations, modules |
+| `secondbrain doctor` | Health checks: Node, Postgres, pgvector, migrations, modules, and each agent CLI (installed, server-only or missing) |
 | `secondbrain help` | Every subcommand, including the feature commands |
 
 The launcher reads `<vault>/.env`. It finds the vault by walking up from `.secondbrain/app/bin/`; set `VAULT_ROOT` to point it elsewhere.
@@ -178,3 +203,8 @@ git check-ignore .env        # prints .env
 - [Connect Claude Code](03-claude-code.md): five minutes, because `init` already wired it.
 - Turn on more modules when you want them, each described in [modules.md](../modules.md).
 - The whole path, stage by stage with a check after each: [From zero to an agent company](00-from-zero.md).
+
+For optional Codex Desktop/CLI conversation history on multiple Macs, use the
+[one-command usage collector setup](../modules.md#native-codex-conversation-usage)
+on each host, then run its `doctor` command. Conversation ingestion and subscription
+quota panels are configured separately.

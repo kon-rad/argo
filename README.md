@@ -52,11 +52,16 @@ mkdir my-vault && cd my-vault && git init
 git submodule add https://github.com/kon-rad/argo.git .secondbrain
 .secondbrain/bin/secondbrain-vault init .
 cp .env.example .env
+printf '{}\n' > secondbrain.json
 git add -A && git commit -m "new vault"
 
 .secondbrain/app/bin/secondbrain        # installs, migrates, builds, starts, opens the browser
 .secondbrain/app/bin/secondbrain scan   # build the index
 ```
+
+`secondbrain.json` is your **instance configuration**: non-secret settings for this vault. The command above starts it with `{}`, which uses the defaults. `init` supplies `secondbrain.example.json` as a reference; copy only the sections you need and replace its example values. Keys stay in `.env`, never in this file. See [Configuration and secrets](docs/onboarding/08-config-and-secrets.md) and the [instance configuration reference](docs/configuration.md#secondbrainjson).
+
+The engine also contains **feature manifests** (`manifest.ts`). Those describe how engine features are registered; they are developer code, not your instance settings. Users configure an installation through `secondbrain.json` and `.env`, without editing feature manifests. See [Addons](docs/addons.md#instance-configuration-and-feature-manifests).
 
 The app runs on `http://127.0.0.1:5123` with no login. Optional next steps, each a few lines in the docs:
 
@@ -79,7 +84,7 @@ my-vault/                      private
 ├── CLAUDE.md                  @AGENTS.md
 ├── .agents/skills/            your skills + links to the shared ones
 ├── .agents/guard.local.json   your extra guard rules
-├── secondbrain.json           optional: metrics, map folders, channels
+├── secondbrain.json           instance configuration: addons and non-secret settings
 ├── .env                       your settings and keys (gitignored)
 └── Projects/ Areas/ Research/ Archives/
 ```
@@ -101,8 +106,9 @@ Markdown is the source of truth. Postgres is an index over it: drop the database
 | [`harness/`](docs/agent-harness.md) | Hooks Claude Code and Hermes both run: a guard against dangerous tool calls, and a gate that asks for a dev log before an agent finishes. Plus a read-only fact-checker subagent |
 | [`skills/`](skills/) | Shared agent skills (`SKILL.md`, used by every harness): `setup-vault`, `fact-check`, `ingest`, `company-report`, `org-member`, `livestream-x` and more |
 | [`zen-agent/`](docs/zen-agent.md) | A minimal headless agent runtime: personas, skills, any provider, the board and the knowledge base as tools, budgets and traces |
-| `bin/secondbrain-vault` | Starts a vault, compiles its `AGENTS.md`, links the skills |
+| `bin/secondbrain-vault` | Starts a vault, compiles its `AGENTS.md`, links the skills, puts the agent CLIs on PATH (`clis install`) |
 | [`addons/tv-kiosk/`](addons/tv-kiosk/README.md) | Flash a Raspberry Pi that shows the app full screen on a TV |
+| [`addons/agent-dock/`](addons/agent-dock/README.md) | A macOS app and CLI: click an agent to open it in a terminal on Claude Code, Codex or Hermes, and see what runs on this machine |
 | [`docs/`](docs/README.md) | How it all works, how to set it up, every setting. Published at [kon-rad.github.io/argo](https://kon-rad.github.io/argo/) |
 
 ## Modules
@@ -111,11 +117,12 @@ The six core features (`projects`, `memory`, `org`, `board`, `usage`, `summaries
 
 | Module | Adds |
 |---|---|
-| `projects` | A project tracker with stages and verifications, a CLI for agents, a kiosk feed |
+| `projects` | A tracker of areas (what you run) and projects (what you finish) with stages and verifications, CLIs for agents, a kiosk feed |
 | `org` | A message board where a company of named AI agents reports to you |
 | `board` | A kanban board agents and people share, with a CLI |
 | `agents` | Agent chats and cron history |
 | `usage` | What your agents cost, by bot, task and project |
+| `observatory` | Optional evidence coverage/window/detail API and pure deterministic replay; [contract](docs/observatory.md) |
 | `summaries` | One model-written summary per finished agent session, with the facts it proposes for memory |
 | `chat` | Ask your notes: answers built from retrieved passages with citations, any provider's model, your org's agents as personas |
 | `map` | A 3D brain map of your notes, projects and goals, with metrics |

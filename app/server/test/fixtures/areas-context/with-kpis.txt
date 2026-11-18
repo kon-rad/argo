@@ -1,0 +1,48 @@
+# LifeOS (lifeos)
+Area, active
+
+A private journal that answers questions about your own life
+
+The journal is the product. Everything else here serves it: the apps, the brand and the server.
+
+Entries stay encrypted on the device.
+
+Paths: home note Areas/lifeos/README.md, design Areas/lifeos/design.md
+Repos: example/lifeos
+
+## Links
+- websites: https://lifeos.example.com
+- repos: example/lifeos
+- socials: Areas/lifeos/social-channels.md
+
+## Style and assets (paths, open what you need)
+- guide: Areas/lifeos/brand/style-guide.md
+- assets: Areas/lifeos/brand/assets/
+
+## Goals
+- A hundred people pay for it
+- Every answer cites the entry it came from
+- Goal codes: Q1
+
+## KPIs
+- Paying users (paying-users): 17 users on 2026-11-17, target 100 users by 2027-03-31
+- MRR (mrr): no reading yet
+
+## Roadmap (3 open projects, by due date)
+- onboarding [designing, due 2026-11-25] Onboarding: A new user writes a first entry in two minutes
+- core [testing, due 2026-12-01, builder] Core: A question gets one cited answer. Next: run the golden questions
+- voice [idea] Voice entries
+
+## Recent (14 days, since 2026-11-06)
+Changes (5):
+- 11-17 area: KPI paying-users = 17 (ada)
+- 11-14 old-sync: archived (ada) "superseded by core"
+- 11-12 core: stage: building -> testing (builder) "endpoints done"
+- 11-12 core: next_action: draft the retrieval query -> run the golden questions (builder) "endpoints done"
+- 11-10 area: KPI paying-users = 12 (ada)
+Finished cards (2):
+- 11-18 t_bbbbbb Fix the footer link
+- 11-13 t_aaaaaa Retrieval: rank by recency (core)
+Files changed (2):
+- 11-16 Areas/lifeos/README.md
+- 11-15 Areas/lifeos/brand/assets/logo.svg

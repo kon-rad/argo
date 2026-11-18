@@ -7,7 +7,8 @@ import type { ModuleName } from '../config.js';
  * spread over app.ts, App.tsx, the launcher, deploy.sh and four docs reads from it:
  * app.ts mounts `routes`, /api/meta serves `nav`, the launcher dispatches `cli`,
  * deploy.sh installs `timers` and `wrappers`, and the tests check that every file a
- * manifest names exists. Deleting a feature is deleting its folder.
+ * manifest names exists. A feature's manifest, routes, service and CLI live in
+ * its folder; migrations and its web page live in db/migrations and web/src/routes/<name>.
  *
  * The manifest (`<name>/manifest.ts`) is pure data so a CLI or a deploy step can read
  * it without loading the server; the routes (`<name>/routes.ts`) are joined to it in
@@ -32,9 +33,30 @@ export interface FeatureCli {
 }
 
 export interface FeatureTimer {
-  /** The unit stem under app/deploy: `<unit>.service` and `<unit>.timer` both exist. */
+  /** The generated systemd unit stem. */
   unit: string;
   summary: string;
+  /** systemd OnCalendar expression. */
+  calendar: string;
+  /** The `secondbrain <command> ...` tail. The generator resolves its manifest CLI entry. */
+  command: string;
+  /** Description= for the service. */
+  description: string;
+  /** Description= for the timer; defaults to `summary`. */
+  timerDescription?: string;
+  persistent?: boolean;
+  randomizedDelaySec?: string | number;
+  accuracySec?: string;
+  /** Extra Environment= values, with manifest placeholders left for the generator. */
+  environment?: string[];
+  /** Unit dependencies and less common service directives that must survive generation. */
+  service?: {
+    after?: string[];
+    wants?: string[];
+    requires?: string[];
+    workingDirectory?: string | false;
+    directives?: string[];
+  };
 }
 
 /**
@@ -60,6 +82,12 @@ export interface FeatureManifest {
   timers: FeatureTimer[];
   /** PATH wrappers deploy.sh installs for the app user, so an agent's `Bash(cli-x *)` rule matches. */
   wrappers: string[];
+  /**
+   * The wrappers above that also work on a client machine (no database, no server env) over the feature's HTTPS
+   * door. `secondbrain-vault clis install` installs these as real commands and every other wrapper as a one-line
+   * server-only notice. Omitted: all of them are server-only off the server.
+   */
+  remoteWrappers?: string[];
   /** The doctor's check for this feature, when it has one. */
   health?: FeatureHealth;
   /** Env keys the feature reads. Each has a row in docs/configuration.md. */

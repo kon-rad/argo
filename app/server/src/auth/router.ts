@@ -44,6 +44,12 @@ function readCookie(req: Request, name: string): string | null {
   return null;
 }
 
+/** Available only when the Strict cookie is sent; OAuth uses a separate scoped binding on cross-site returns. */
+export function sessionCookieHash(req: Request, secure = true): string | null {
+  const token = readCookie(req, cookieName(secure));
+  return token && /^[A-Za-z0-9_-]{43}$/.test(token) ? sha256(token) : null;
+}
+
 async function sessionFor(token: string | null): Promise<boolean> {
   if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return false;
   // One statement: validates, enforces idle expiry, and slides last_seen at
@@ -117,7 +123,10 @@ export function createAuth(opts: AuthOptions): { router: Router; requireSession:
   const requireSession: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
     sessionFor(readCookie(req, name))
       .then((ok) => {
-        if (ok) return next();
+        if (ok) {
+          res.locals.sessionHash = sha256(readCookie(req, name)!);
+          return next();
+        }
         res.status(401).json({ error: { message: 'login required' } });
       })
       .catch(next);

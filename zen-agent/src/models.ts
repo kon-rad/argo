@@ -18,7 +18,19 @@ export function buildModels(cfg: Pick<ZenConfig, 'providers'>): Models {
   return models;
 }
 
-export function customProvider(id: string, p: ProviderConfig) {
+// Runtime planning defaults must not become recorded facts about the endpoint.
+const configuredWindows = new WeakMap<object, Map<string, number | null>>();
+
+/** Capacity established by the provider catalogue/configuration, excluding runtime fallbacks. */
+export function recordedContextWindow(models: Models, model: Model<any>): number | null {
+  const window = model.contextWindow;
+  if (!Number.isFinite(window) || window <= 0) return null;
+  const provider = models.getProvider(model.provider);
+  const configured = provider && configuredWindows.get(provider);
+  return configured ? (configured.get(model.id) === window ? window : null) : window;
+}
+
+export function customProvider(id: string, p: ProviderConfig, capacityKnown = true) {
   const name = p.name ?? id;
   const auth = p.apiKeyEnv
     ? { apiKey: envApiKeyAuth(`${name} API key`, [p.apiKeyEnv]) }
@@ -37,7 +49,7 @@ export function customProvider(id: string, p: ProviderConfig) {
     contextWindow: m.contextWindow ?? 128_000,
     maxTokens: m.maxTokens ?? 16_000,
   })) as Model<any>[];
-  return createProvider({
+  const provider = createProvider({
     id,
     name,
     baseUrl: p.baseUrl,
@@ -45,6 +57,10 @@ export function customProvider(id: string, p: ProviderConfig) {
     models: list,
     api: p.api === 'anthropic-messages' ? anthropicMessagesApi() : openAICompletionsApi(),
   } as Parameters<typeof createProvider>[0]);
+  configuredWindows.set(provider, new Map(p.models.map((m) => [m.id,
+    capacityKnown && Number.isFinite(m.contextWindow) && m.contextWindow! > 0 ? m.contextWindow! : null,
+  ])));
+  return provider;
 }
 
 /** `provider/model`, or a bare model id found in any provider (first match). */

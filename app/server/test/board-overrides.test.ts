@@ -37,11 +37,11 @@ describe('write-time validation on the roster import', () => {
     await expect(importOrg(bad)).rejects.toThrow(/provider\/model/);
   });
 
-  it('refuses a claude-code agent on a non-Anthropic model and a runtime with no adapter', async () => {
+  it('refuses a claude-code agent on a non-Anthropic model and Codex without an exact model', async () => {
     const wrongModel = { ...ORG, agents: { ...ORG.agents, quill: { ...ORG.agents.quill, model: 'openrouter/deepseek/deepseek-v4.1-flash' } } };
     await expect(importOrg(wrongModel)).rejects.toThrow(/Anthropic alias/);
-    const noAdapter = { ...ORG, agents: { ...ORG.agents, quill: { ...ORG.agents.quill, runtime: 'codex' } } };
-    await expect(importOrg(noAdapter)).rejects.toThrow(/no adapter/);
+    const noAdapter = { ...ORG, agents: { ...ORG.agents, quill: { ...ORG.agents.quill, runtime: 'codex', model: undefined } } };
+    await expect(importOrg(noAdapter)).rejects.toThrow(/exact Codex CLI model/);
   });
 });
 
@@ -57,7 +57,7 @@ describe('overrides', () => {
     await expect(setOverride('owner', 'quill', { runtime: 'zen-agent' })).rejects.toThrow(/needs --model provider\/model/);
     await expect(setOverride('owner', 'quill', { runtime: 'zen-agent', model: 'sonnet' })).rejects.toThrow(/provider\/model/);
     await expect(setOverride('owner', 'quill', { model: 'openrouter/x/y' })).rejects.toThrow(/Anthropic alias/);
-    await expect(setOverride('owner', 'quill', { runtime: 'codex' })).rejects.toThrow(/no adapter/);
+    await expect(setOverride('owner', 'quill', { runtime: 'codex' })).rejects.toThrow(/exact Codex CLI model/);
     await expect(setOverride('owner', 'nobody', { model: 'opus' })).rejects.toThrow(/no bot named/);
     expect(await listOverrides()).toHaveLength(0);
   });

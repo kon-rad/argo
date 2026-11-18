@@ -34,7 +34,7 @@
 #                        agents: agents-sync, and (if the vault's .secondbrain/zen-agent builds) zen-agent-serve,
 #                        ZEN_SERVE_TOKEN/ZEN_AGENT_URL/ZEN_AGENT_TOKEN, zen-agent on PATH (docs/zen-agent.md 3.6)
 #                        usage: usage-sync, credits-sync, the usage importer
-#                        projects: projects-render, the kiosk feed token, cli-projects on PATH
+#                        projects: projects-render, the kiosk feed token, cli-areas and cli-projects on PATH
 #                        org: the sb_org role, cli-org on PATH · board: board-reclaim, cli-board on PATH · map: map-build, metrics
 #                        livestream: the minute poller and Caddy's /public/ files
 #                        social: the minute post-publisher and reauth check, cli-social on PATH
@@ -92,8 +92,10 @@ done
 
 echo "→ shipping source to $HOST:$APP_DIR"
 ssh "$HOST" "mkdir -p $APP_DIR"
+# /data is anchored: the app's runtime folder (app/data) stays on the server, but a source folder that happens
+# to be called data (server/src/addons/data) still ships. Unanchored, it silently dropped the warehouse addon's code (then named data).
 rsync -az --delete \
-  --exclude node_modules --exclude dist --exclude 'web/dist' --exclude data --exclude vault-sync \
+  --exclude node_modules --exclude dist --exclude 'web/dist' --exclude /data --exclude vault-sync \
   --exclude .git --exclude .DS_Store \
   "$APP_ROOT/" "$HOST:$APP_DIR/"
 # The vault sync is one stdlib Python file from tools/, outside app/: ship it next to the app.
@@ -121,12 +123,6 @@ render() { sed -e "s#@APP_USER@#$APP_USER#g" -e "s#@APP_DIR@#$APP_DIR#g" -e "s#@
 # The same substitutions, on stdin: a wrapper generated from the feature table has no file to pass to render().
 render_stream() { sed -e "s#@APP_USER@#$APP_USER#g" -e "s#@APP_DIR@#$APP_DIR#g" -e "s#@VAULT_DIR@#$VAULT#g" -e "s#@HERMES_HOME@#$HERMES_HOME_REMOTE#g" -e "s#@APP_HOME@#$APP_HOME#g"; }
 has() { [[ ",$MODS," == *",$1,"* ]]; }
-# A unit pair: the .service rendered, the .timer copied as is.
-unit() {
-  render "$APP_DIR/deploy/$1.service" > "/etc/systemd/system/$1.service"
-  install -m 644 "$APP_DIR/deploy/$1.timer" /etc/systemd/system/
-  TIMERS+=("$1.timer")
-}
 TIMERS=()
 
 # ---- packages (first run only) ----
@@ -271,7 +267,9 @@ rollback() {
 # ---- build ----
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/data"
-if ! sudo -u "$APP_USER" bash -c "cd $APP_DIR && npm ci --no-audit --no-fund && npm run build"; then
+# Built beside the live tree and swapped in (deploy/build-release.sh): an in-place npm ci empties node_modules
+# under any CLI an agent runs meanwhile, and a failed build here leaves the running one whole.
+if ! sudo -u "$APP_USER" bash "$APP_DIR/deploy/build-release.sh" "$APP_DIR"; then
   echo "✗ the build failed"
   if rollback; then exit 3; fi
   exit 4
@@ -340,6 +338,15 @@ if grep -qsE '^SUMMARIES=on$' /etc/secondbrain/env && ! has summaries; then
   echo "! SUMMARIES=on is deprecated: add summaries to DEPLOY_MODULES. Treating it as on for this deploy."
   MODS="${MODS:+$MODS,}summaries"
 fi
+# The vault's own tables (docs/warehouse.md): applied after the engine's, never rolled back with it.
+# A failing vault migration is reported and left for the owner; the engine deploy stands.
+if has warehouse; then
+  if sudo -u "$APP_USER" bash -c "set -a; . /etc/secondbrain/env; set +a; cd $APP_DIR && DATABASE_URL='postgres:///secondbrain?host=/var/run/postgresql' /usr/bin/node --no-warnings server/dist/cli-warehouse.js migrate"; then
+    echo "→ vault warehouse migrations applied"
+  else
+    echo "! vault warehouse migrations failed: run 'secondbrain warehouse migrate' on the server and fix the file it names"
+  fi
+fi
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.local/bin"
 for w in $(features wrappers); do
   # The script comes from the feature table (server/src/features/registry.ts), not a file, so a command and the
@@ -358,22 +365,32 @@ fi
 
 # ---- services ----
 render "$APP_DIR/deploy/secondbrain.service" > /etc/systemd/system/secondbrain.service
-# Core features' timers, from their manifests.
-for u in $(features units); do unit "$u"; done
 if has usage; then
   # A laptop's usage-push runs this over ssh as root and pipes its wire lines in.
   render "$APP_DIR/deploy/secondbrain-usage-import" > /usr/local/bin/secondbrain-usage-import
   chmod 755 /usr/local/bin/secondbrain-usage-import
 fi
 # Non-core modules name their timers in their addon manifest (server/src/addons/<name>/manifest.ts),
-# so `features units` above installed them; nothing is hardcoded here any more.
+# so the generator below installs them; nothing is hardcoded here any more.
 [ "$ZEN_BUILT" = 1 ] && render "$APP_DIR/deploy/zen-agent-serve.service" > /etc/systemd/system/zen-agent-serve.service
-# dispatch: only with the org module and ORG_DISPATCH=on (here or in the server's env file).
+# Compatibility: ORG_DISPATCH=on with org enabled installed this addon before it had its own module name.
 grep -qsE '^ORG_DISPATCH=on$' /etc/secondbrain/env && WITH_DISPATCH=on
-if has org && [ "$WITH_DISPATCH" = on ]; then unit secondbrain-dispatch; fi
-[ "$WITH_EMBED" = 1 ] && unit secondbrain-embed
-[ "$WITH_BACKUP" = 1 ] && unit secondbrain-db-backup
-[ "$WITH_VAULT_SYNC" = 1 ] && unit secondbrain-vault-sync
+if has org && [ "$WITH_DISPATCH" = on ] && ! has dispatch; then MODS="${MODS:+$MODS,}dispatch"; fi
+
+# The manifests and generate.ts are the only source of recurring unit text. `apply` runs in
+# units-only mode here because deploy.sh preserves an existing /etc/secondbrain/env by design.
+BASE_UNITS=""
+[ "$WITH_EMBED" = 1 ] && BASE_UNITS="secondbrain-embed"
+[ "$WITH_BACKUP" = 1 ] && BASE_UNITS="${BASE_UNITS:+$BASE_UNITS,}secondbrain-db-backup"
+[ "$WITH_VAULT_SYNC" = 1 ] && BASE_UNITS="${BASE_UNITS:+$BASE_UNITS,}secondbrain-vault-sync"
+MODULES="$MODS" VAULT_ROOT="$VAULT" SB_CONFIG_UNITS_ONLY=1 SB_CONFIG_BASE_UNITS="$BASE_UNITS" \
+  SB_APP_USER="$APP_USER" SB_APP_DIR="$APP_DIR" SB_VAULT_DIR="$VAULT" SB_HERMES_HOME="$HERMES_HOME_REMOTE" \
+  SB_UNIT_DIR=/etc/systemd/system SB_ENV_FILE=/etc/secondbrain/env \
+  /usr/bin/node --no-warnings "$APP_DIR/server/dist/cli-config.js" apply
+for u in $(features units); do TIMERS+=("$u.timer"); done
+[ "$WITH_EMBED" = 1 ] && TIMERS+=("secondbrain-embed.timer")
+[ "$WITH_BACKUP" = 1 ] && TIMERS+=("secondbrain-db-backup.timer")
+[ "$WITH_VAULT_SYNC" = 1 ] && TIMERS+=("secondbrain-vault-sync.timer")
 
 install -d -o caddy -g caddy /var/log/caddy
 ip_host() { [[ "$1" =~ ^[0-9.]+$ ]]; }

@@ -16,6 +16,8 @@ export const KNOWN_TRACE_VERSIONS = new Set([1]);
 
 export interface ZenTraceResult {
   run: RunRecord | null;
+  /** The dispatcher (or a bridge) started this run; false: a person's chat with the persona. */
+  wake: boolean;
   calls: UsageCall[];
   session: { input: SessionInput; messages: ParsedMessage[] } | null;
 }
@@ -31,6 +33,11 @@ const date = (v: unknown): Date | null => (typeof v === 'string' ? valid(new Dat
 /** The dispatcher's `--meta` pairs: strings, some of them JSON or comma lists. */
 function dispatchOf(meta: Obj): Obj {
   return isObj(meta.dispatch) ? meta.dispatch : {};
+}
+
+/** A trace whose meta carries a dispatcher's or a bridge's labels: a wake, not a person's chat. */
+export function isDispatched(meta: Obj): boolean {
+  return Object.keys(dispatchOf(meta)).length > 0;
 }
 
 function reasonsOf(v: unknown): WakeReason[] {
@@ -73,7 +80,7 @@ function roleOf(m: Obj): string {
 export function parseZenTrace(records: unknown[], host: Host, logPath: string, fileMtime: Date): ZenTraceResult {
   const lines = records.filter(isObj);
   const meta = lines.find((l) => l.type === 'meta');
-  if (!meta || !str(meta.id)) return { run: null, calls: [], session: null };
+  if (!meta || !str(meta.id)) return { run: null, wake: false, calls: [], session: null };
   const version = num(meta.version) ?? 1;
   if (!KNOWN_TRACE_VERSIONS.has(version)) throw new Error(`zen-agent trace version ${version} is newer than this parser knows (${logPath})`);
 
@@ -139,8 +146,10 @@ export function parseZenTrace(records: unknown[], host: Host, logPath: string, f
     }
   });
 
+  // A run the dispatcher (or a bridge) started carries its labels; one without any is a person's chat with the
+  // persona (`zen-agent chat`, the Chat tab), which is not a wake: the persona goes on the session as its bot.
   const run: RunRecord = {
-    host, runId: str(dispatch.run_id) ?? id, sessionId: id, agentName: str(meta.persona),
+    host, runId: str(dispatch.run_id) ?? id, sessionId: id, agentName: isDispatched(latestMeta) ? str(meta.persona) : null,
     teamSlug: str(dispatch.team), workType: str(dispatch.work_type), reasons: reasonsOf(dispatch.reasons),
     wakeupIds: idsOf(dispatch.wakeup_ids), resumed: meta.resumed != null,
     taskId: str(dispatch.task_id), board: str(dispatch.board), lane: null, model: modelSpec,
@@ -156,8 +165,11 @@ export function parseZenTrace(records: unknown[], host: Host, logPath: string, f
     startedAt, endedAt, messageCount: messages.length, inputTokens, outputTokens, costUsd: run.totalCostUsd,
     meta: { persona: meta.persona ?? null, parts: run.parts, budget: run.budget, tools: meta.tools ?? null, skills: meta.skills ?? null,
       dispatch, stopped, resumed: meta.resumed ?? null, version,
+      // How the run was started (chat, run, wake, serve, subagent) and the model's context window; absent on older traces.
+      entrypoint: str(latestMeta.entrypoint) ?? str(meta.entrypoint),
+      context_window: num(latestMeta.context_window) ?? num(meta.context_window),
       ...channelMeta(zenChannel(dispatch, run.reasons), 'zen-agent', str(dispatch.bot)) },
     b2Path: null,
   };
-  return { run, calls, session: { input, messages } };
+  return { run, wake: isDispatched(latestMeta), calls, session: { input, messages } };
 }

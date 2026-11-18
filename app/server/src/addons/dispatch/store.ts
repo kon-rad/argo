@@ -1,4 +1,4 @@
-import { query } from '../../db.js';
+import { query, withTransaction } from '../../db.js';
 
 /**
  * The dispatcher's reads and the two writes org.ts does not already offer. Plain queries on the owner's
@@ -7,7 +7,7 @@ import { query } from '../../db.js';
  */
 
 /** `model` is the effective one (override ?? roster); only the wake query fills it. */
-export interface ZenAgentRow { name: string; team_slug: string | null; role: string; routines: Routine[]; model?: string | null }
+export interface ZenAgentRow { name: string; team_slug: string | null; role: string; routines: Routine[]; model?: string | null; runtime?: string }
 export interface Routine { name: string; at: string; days?: number[]; task_file: string }
 export interface MessageRow {
   id: number; channel_slug: string; thread_id: number | null; author: string; kind: string; body: string;
@@ -54,7 +54,7 @@ export async function tokensToday(tz: string): Promise<number> {
   const { rows } = await query<{ tokens: string }>(
     `SELECT coalesce(sum(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens), 0)::text AS tokens
        FROM usage_calls
-      WHERE source IN ('claude-code', 'zen-agent') AND run_id IS NOT NULL
+      WHERE source IN ('claude-code', 'zen-agent', 'codex') AND run_id IS NOT NULL
         AND ts >= (date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1)`, [tz]);
   return Number(rows[0]?.tokens ?? 0);
 }
@@ -65,12 +65,130 @@ export async function tokensToday(tz: string): Promise<number> {
  */
 export async function zenAgentsWithOpenWakeups(): Promise<ZenAgentRow[]> {
   const { rows } = await query<ZenAgentRow>(
-    `SELECT a.name, a.team_slug, a.role, a.routines, e.model
+    `SELECT a.name, a.team_slug, a.role, a.routines, e.model, e.runtime
        FROM org_agents a JOIN org_agents_effective e ON e.name = a.name
-      WHERE e.runtime = 'zen-agent' AND a.retired_at IS NULL AND NOT e.paused
+      WHERE e.runtime IN ('zen-agent', 'codex') AND a.retired_at IS NULL AND NOT e.paused
         AND EXISTS (SELECT 1 FROM org_wakeups w WHERE w.agent_name = a.name AND w.done_at IS NULL AND w.claimed_at IS NULL)
       ORDER BY a.name`);
   return rows;
+}
+
+/**
+ * Cards that wait on dependencies which have all closed, yet were never promoted: the trigger only fires when a
+ * dependency finishes, so a card moved to `todo` (or dependency-blocked) after that, or one whose open dependency was
+ * unlinked, waits for ever. Only cards with at least one dependency: a `todo` card with none is someone's backlog.
+ */
+export async function waitingCardsWithClosedDeps(): Promise<string[]> {
+  const { rows } = await query<{ id: string }>(
+    `SELECT c.id FROM cards c
+      WHERE (c.status = 'todo' OR (c.status = 'blocked' AND c.block_kind = 'dependency'))
+        AND (c.scheduled_for IS NULL OR c.scheduled_for <= now())
+        AND EXISTS (SELECT 1 FROM card_deps d WHERE d.card_id = c.id)
+        AND NOT EXISTS (SELECT 1 FROM card_deps d JOIN cards p ON p.id = d.depends_on
+                         WHERE d.card_id = c.id AND p.status NOT IN ('done', 'archived'))
+      ORDER BY c.priority, c.created_at`);
+  return rows.map((r) => r.id);
+}
+
+/** board_promote moves the card to ready and wakes its bot; false when the board's own checks say not yet. */
+export async function promoteCard(card: string): Promise<boolean> {
+  const { rows } = await query<{ ok: boolean }>(`SELECT board_promote($1) AS ok`, [card]);
+  return rows[0]?.ok === true;
+}
+
+/**
+ * Ready cards whose bot has nothing to wake it: assigned to a live, unpaused bot (any lane: cc-dispatcher reads the
+ * same wakeups through `cli-org wake-claim`), no open task wakeup, no unfinished run. A card's wake is consumed when
+ * its run ends, so one that ends with the card still ready (a budget stop, a crash, a routed park) is owed another.
+ * At most `retries` wakes per ready stint (since it was created, moved, assigned, reclaimed, released by a dependency,
+ * re-queued on host-up or reconciled after a finished run): past that the card
+ * waits for a person, as addWakeup's hold says, and a person moving it starts a new stint.
+ */
+export async function readyCardsOwedAWake(retries: number): Promise<{ card: string; agent: string }[]> {
+  const { rows } = await query<{ card: string; agent: string }>(
+    `SELECT c.id AS card, c.assignee AS agent FROM cards c JOIN org_agents_effective a ON a.name = c.assignee
+      WHERE c.status = 'ready' AND a.retired_at IS NULL AND NOT a.paused AND a.runtime NOT IN ('human', 'session')
+        AND board_dispatch_enabled(c.board_slug)
+        AND NOT EXISTS (SELECT 1 FROM org_wakeups w WHERE w.agent_name = c.assignee AND w.reason = 'task' AND w.ref = c.id AND w.done_at IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM card_runs r WHERE r.card_id = c.id AND r.finished_at IS NULL)
+        AND (SELECT count(*) FROM org_wakeups w WHERE w.agent_name = c.assignee AND w.reason = 'task' AND w.ref = c.id
+               AND w.created_at >= coalesce((SELECT max(e.at) FROM card_events e WHERE e.card_id = c.id
+                                              AND e.kind IN ('created', 'moved', 'assigned', 'reclaimed', 'released', 'host-retry', 'reconciled')), c.created_at)) <= $1
+      ORDER BY c.priority, c.created_at`, [retries]);
+  return rows;
+}
+
+/**
+ * Open, unclaimed task wakeups whose card is done or archived: nothing will ever run them, yet each one keeps its bot
+ * selected every tick. Closed with result `card closed`. A claimed one belongs to a run in flight and is left to it
+ * (releaseStale reopens it if that run died, and the next pass closes it). Idempotent: a closed wakeup is not open.
+ */
+export async function closeWakeupsOnClosedCards(): Promise<{ id: number; agent: string; card: string }[]> {
+  const { rows } = await query<{ id: number; agent: string; card: string }>(
+    `UPDATE org_wakeups w SET done_at = now(), result = 'card closed'
+       FROM cards c
+      WHERE c.id = w.ref AND w.reason = 'task' AND w.done_at IS NULL AND w.claimed_at IS NULL
+        AND c.status IN ('done', 'archived')
+      RETURNING w.id, w.agent_name AS agent, c.id AS card`);
+  return rows;
+}
+
+/** The card is still running under an unfinished card_runs row: the only state a dispatcher may heartbeat or move. */
+export async function cardHasLiveRun(card: string): Promise<boolean> {
+  const { rowCount } = await query(
+    `SELECT 1 FROM cards c JOIN card_runs r ON r.card_id = c.id AND r.finished_at IS NULL WHERE c.id = $1 AND c.status = 'running' LIMIT 1`, [card]);
+  return (rowCount ?? 0) > 0;
+}
+
+/** The status of each card id that exists; a missing id is absent from the map. */
+export async function cardStatuses(ids: string[]): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  const { rows } = await query<{ id: string; status: string }>(`SELECT id, status FROM cards WHERE id = ANY ($1)`, [ids]);
+  return new Map(rows.map((r) => [r.id, r.status]));
+}
+
+export async function lastCodexSession(agent: string, card: string): Promise<string | null> {
+  const { rows } = await query<{ session_id: string }>(
+    `SELECT session_id FROM usage_runs WHERE runtime = 'codex' AND agent_name = $1 AND task_id = $2
+      AND session_id ~ '^[0-9a-f-]{36}$' ORDER BY started_at DESC NULLS LAST LIMIT 1`, [agent, card]);
+  return rows[0]?.session_id ?? null;
+}
+
+export async function pendingTaskCards(agent: string): Promise<{ wakeupId: number; card: string }[]> {
+  const { rows } = await query<{ wakeup_id: number; card: string }>(
+    `SELECT w.id AS wakeup_id, c.id AS card FROM org_wakeups w JOIN cards c ON c.id = w.ref
+      WHERE w.agent_name = $1 AND w.reason = 'task' AND w.done_at IS NULL AND w.claimed_at IS NULL
+        AND c.status = 'ready' AND c.assignee = $1 AND board_dispatch_enabled(c.board_slug)`, [agent]);
+  return rows.map((r) => ({ wakeupId: r.wakeup_id, card: r.card }));
+}
+
+/** Subscription tokens are recorded without assigning an API dollar price. */
+export async function recordCodexRun(r: { runId: string; sessionId: string | null; agent: string; model: string; card: string | null;
+  startedAt: Date; endedAt: Date; state: string; text: string; inputTokens: number; outputTokens: number; wakeupIds: number[];
+  codexHost?: string | null }): Promise<void> {
+  const session = r.sessionId ?? `dispatch:${r.runId}`;
+  await withTransaction(async (tx) => {
+    const selected = await tx.query<{ slug: string }>(
+      `SELECT slug FROM usage_hosts
+        WHERE slug = COALESCE($1, (SELECT slug FROM usage_hosts WHERE kind = 'server' ORDER BY slug LIMIT 1))`,
+      [r.codexHost ?? null]);
+    const host = selected.rows[0]?.slug;
+    if (!host) {
+      if (r.codexHost) throw new Error(`ORG_CODEX_HOST "${r.codexHost}" is not registered in usage_hosts`);
+      throw new Error('Codex usage host unavailable: usage_hosts has no server row');
+    }
+    await tx.query(`INSERT INTO usage_runs
+      (host, run_id, session_id, log_path, task_id, agent_name, model, started_at, ended_at, duration_ms, runtime, outcome, subtype, is_error, wakeup_ids, usage)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'codex',$11,$12,$13,$14,$15::jsonb)
+      ON CONFLICT (host, run_id) DO NOTHING`, [host, r.runId, session, `dispatch:${r.runId}`, r.card, r.agent, r.model,
+        r.startedAt, r.endedAt, Math.max(0, r.endedAt.getTime() - r.startedAt.getTime()), r.state === 'done' ? 'did-work' : 'failed',
+        `${r.state}: ${r.text}`.slice(0, 300), r.state !== 'done', r.wakeupIds,
+        JSON.stringify({ input_tokens: r.inputTokens, output_tokens: r.outputTokens })]);
+    if (r.inputTokens || r.outputTokens) await tx.query(`INSERT INTO usage_calls
+      (source,host,call_id,session_external_id,ts,model,entrypoint,input_tokens,output_tokens,run_id)
+      VALUES ('codex',$1,$2,$3,$4,$5,'sdk-cli',$6,$7,$8) ON CONFLICT DO NOTHING`,
+      [host, r.runId, session, r.endedAt, r.model, r.inputTokens, r.outputTokens, r.runId]);
+  });
 }
 
 /** Every bot with routines on the roster, whichever runtime runs it. */
@@ -112,9 +230,9 @@ export async function messagesBefore(m: MessageRow, n = 3): Promise<MessageRow[]
   return rows.reverse();
 }
 
-export async function taskLink(taskId: string): Promise<{ title: string; work_type: string | null; project_slug: string | null } | null> {
-  const { rows } = await query<{ title: string; work_type: string | null; project_slug: string | null }>(
-    `SELECT title, work_type, project_slug FROM task_links WHERE task_id = $1`, [taskId]);
+export async function taskLink(taskId: string): Promise<{ title: string; work_type: string | null; area_slug: string | null } | null> {
+  const { rows } = await query<{ title: string; work_type: string | null; area_slug: string | null }>(
+    `SELECT title, work_type, area_slug FROM task_links WHERE task_id = $1`, [taskId]);
   return rows[0] ?? null;
 }
 

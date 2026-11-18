@@ -10,6 +10,10 @@ import type { Goal } from '../projects.js';
  * division) they move.
  */
 
+/**
+ * The kinds the map stores (map_nodes.kind has a CHECK on this list). Since the PARA rename a `project` node is a
+ * tracker area and a `feature` node is a project inside it: the stored names stayed, the page's labels moved.
+ */
 export type NodeKind = 'mission' | 'goal' | 'division' | 'project' | 'feature' | 'note' | 'metric';
 export type EdgeKind = 'link' | 'belongs' | 'goal';
 
@@ -37,7 +41,7 @@ export interface ProjectRow {
   slug: string; title: string; division_slug: string | null; stage: string;
   goals: string[]; paths: string[]; design_path: string | null; devlog_path: string | null;
 }
-export interface FeatureRow { id: number; project_slug: string; title: string; stage: string }
+export interface FeatureRow { id: number; area_slug: string; title: string; stage: string }
 
 export interface GraphInput {
   notes: NoteRow[];
@@ -133,7 +137,7 @@ export function buildGraph(input: GraphInput): Graph {
   }
 
   const featureCount = new Map<string, number>();
-  for (const f of input.features) featureCount.set(f.project_slug, (featureCount.get(f.project_slug) ?? 0) + 1);
+  for (const f of input.features) featureCount.set(f.area_slug, (featureCount.get(f.area_slug) ?? 0) + 1);
 
   for (const p of input.projects) {
     const parent = p.division_slug && ids.has(`division:${p.division_slug}`) ? `division:${p.division_slug}` : 'mission';
@@ -145,10 +149,10 @@ export function buildGraph(input: GraphInput): Graph {
 
   const divisionOf = new Map(input.projects.map((p) => [p.slug, p.division_slug]));
   for (const f of input.features) {
-    if (!ids.has(`project:${f.project_slug}`)) continue;
-    push({ id: `feature:${f.id}`, kind: 'feature', label: f.title, ref: String(f.id), parent: `project:${f.project_slug}`, colorKey: f.stage, size: 1.5,
-      meta: { stage: f.stage, project: f.project_slug } });
-    edge(`feature:${f.id}`, `project:${f.project_slug}`, 'belongs');
+    if (!ids.has(`project:${f.area_slug}`)) continue;
+    push({ id: `feature:${f.id}`, kind: 'feature', label: f.title, ref: String(f.id), parent: `project:${f.area_slug}`, colorKey: f.stage, size: 1.5,
+      meta: { stage: f.stage, project: f.area_slug } });
+    edge(`feature:${f.id}`, `project:${f.area_slug}`, 'belongs');
   }
 
   const owners = input.projects.flatMap((project) => projectFolders(project).map((folder) => ({ folder, project })));

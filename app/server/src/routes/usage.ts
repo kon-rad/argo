@@ -7,6 +7,8 @@ import { live, stopProcess } from '../usage/live.js';
 import { running } from '../usage/running.js';
 import { agentSessionsRouter } from './agentSessions.js';
 import { HttpError, parseOr400, wrap } from './http.js';
+import { settings } from '../settings.js';
+import { claudeSubscription, codexSubscription } from '../usage/subscriptions.js';
 
 /**
  * The Usage board: the ledger written by usage-sync, usage-import and agents-sync
@@ -42,7 +44,7 @@ function stripCost(v: unknown): unknown {
 export const DIMENSIONS = {
   host: 'host', source: 'source', provider: 'provider', surface: 'surface', headless: 'headless', model: 'model',
   agent: 'agent_name', team: 'team_slug', reason: 'reason', action: 'action', work_type: 'work_type',
-  project: 'project_slug', feature: 'feature_slug', task: 'task_id', lane: 'lane',
+  area: 'area_slug', project: 'project_slug', task: 'task_id', lane: 'lane',
 } as const;
 export type Dimension = keyof typeof DIMENSIONS;
 export const DIMENSION_NAMES = Object.keys(DIMENSIONS) as Dimension[];
@@ -95,14 +97,16 @@ function eventsSql(filters: Filters, params: unknown[]): string {
   return `
   WITH claude AS (
     SELECT f.ts, f.model, f.provider, f.host, f.sid, f.source, f.surface, f.headless, f.agent_name, f.team_slug, f.reason, f.action,
-      f.work_type, f.project_slug, f.feature_slug, f.task_id, f.lane, f.run_id,
+      f.work_type, f.area_slug, f.project_slug, f.task_id, f.lane, f.run_id,
       f.input, f.cache_write, f.cache_read, f.output, 1 AS calls, f.cost_usd
     FROM (SELECT uf.*, 'anthropic'::text AS provider FROM usage_facts uf) f
     WHERE f.ts >= $1 AND f.ts < $2${where}),
   hermes_all AS (
-    SELECT h.observed_at AS ts, h.model, nullif(h.billing_provider, '') AS provider, h.host, h.session_id AS sid, 'hermes' AS source, 'hermes' AS surface, true AS headless,
-      h.profile AS agent_name, NULL::text AS team_slug, NULL::text AS reason, NULL::text AS action, NULL::text AS work_type,
-      NULL::text AS project_slug, NULL::text AS feature_slug, NULL::text AS task_id, NULL::text AS lane, NULL::text AS run_id,
+    SELECT h.observed_at AS ts, h.model, nullif(h.billing_provider, '') AS provider, h.host, h.session_id AS sid, 'hermes' AS source,
+      -- A chat a person opened with a bot's persona (archive_sessions.bot) is that bot's owner chat, not the profile's.
+      CASE WHEN hb.bot IS NOT NULL THEN 'owner-chat' ELSE 'hermes' END AS surface, true AS headless,
+      coalesce(hb.bot, h.profile) AS agent_name, hb.team_slug, NULL::text AS reason, NULL::text AS action, NULL::text AS work_type,
+      NULL::text AS area_slug, NULL::text AS project_slug, NULL::text AS task_id, NULL::text AS lane, NULL::text AS run_id,
       GREATEST(h.input_tokens - COALESCE(lag(h.input_tokens) OVER w, 0), 0) AS input,
       GREATEST(h.cache_write_tokens - COALESCE(lag(h.cache_write_tokens) OVER w, 0), 0) AS cache_write,
       GREATEST(h.cache_read_tokens - COALESCE(lag(h.cache_read_tokens) OVER w, 0), 0) AS cache_read,
@@ -114,6 +118,11 @@ function eventsSql(filters: Filters, params: unknown[]): string {
            WHEN h.cost_usd IS NULL OR lag(h.cost_usd) OVER w IS NULL THEN NULL
            ELSE GREATEST(h.cost_usd - lag(h.cost_usd) OVER w, 0) END AS cost_usd
     FROM hermes_usage_snapshots h
+    -- One row per Hermes session that has a bot (few; archive_sessions_bot_idx), so the join keeps one row per snapshot.
+    LEFT JOIN (SELECT s.host, s.external_id, min(s.bot) AS bot, min(o.team_slug) AS team_slug
+                 FROM archive_sessions s JOIN org_agents o ON o.name = s.bot
+                WHERE s.bot IS NOT NULL AND s.harness = 'hermes' GROUP BY 1, 2) hb
+      ON hb.host = h.host AND hb.external_id = h.session_id
     WINDOW w AS (PARTITION BY h.host, h.profile, h.session_id ORDER BY h.observed_at)),
   events AS (
     SELECT * FROM claude
@@ -132,7 +141,7 @@ async function sessionRows(from: Date, to: Date, limit: number, only: SessionFil
             sum(e.calls)::bigint AS calls, sum(e.input)::bigint AS input, sum(e.cache_write)::bigint AS cache_write,
             sum(e.cache_read)::bigint AS cache_read, sum(e.output)::bigint AS output,
             sum(e.cost_usd) AS cost_usd,                -- Hermes and zen-agent; Claude Code has no dollar figure
-            max(e.agent_name) AS agent_name, max(e.task_id) AS task_id, max(e.lane) AS lane, max(e.project_slug) AS project_slug,
+            max(e.agent_name) AS agent_name, max(e.task_id) AS task_id, max(e.lane) AS lane, max(e.area_slug) AS area_slug,
             max(e.work_type) AS work_type, count(DISTINCT e.run_id)::int AS runs,
             max(a.title) AS title, max(a.id) AS archive_id
      FROM events e
@@ -148,22 +157,24 @@ async function sessionRows(from: Date, to: Date, limit: number, only: SessionFil
 const RUNS_CTE = `
   WITH runs AS (
     SELECT r.host, r.run_id, r.session_id, r.task_id, r.board, r.lane, r.model, r.started_at, r.ended_at, r.duration_ms,
-           r.num_turns, r.subtype, r.is_error, r.resumed, r.agent_name, r.wakeup_ids,
+           r.num_turns, r.subtype, r.is_error, r.resumed, coalesce(r.agent_name, s.bot) AS agent_name, r.wakeup_ids,
            r.verify_name, r.verify_passed, r.verify_exit, r.verify_metric, r.verify_output,
-           coalesce(r.team_slug, a.team_slug) AS team_slug,
+           coalesce(r.team_slug, a.team_slug, b.team_slug) AS team_slug,
            coalesce(r.reasons -> 0 ->> 'reason', w.reason) AS reason,
            r.reasons,
            coalesce(tl.work_type, r.work_type,
                     CASE r.lane WHEN 'cc-coder' THEN 'coding' WHEN 'cc-research' THEN 'research'
                                 WHEN 'cc-writer' THEN 'writing' WHEN 'cc-reviewer' THEN 'coding' END,
                     a.work) AS work_type,
-           tl.project_slug, tl.feature_slug, tl.title AS card_title,
-           CASE WHEN r.agent_name IS NOT NULL THEN 'bot' ELSE 'cc-lane' END AS surface,
+           tl.area_slug, tl.project_slug, tl.title AS card_title,
+           CASE WHEN r.agent_name IS NOT NULL THEN 'bot' WHEN s.bot IS NOT NULL THEN 'owner-chat' ELSE 'cc-lane' END AS surface,
            r.runtime AS source, r.runtime, r.tier, r.outcome, r.compactions, r.blocked, true AS headless,
            -- Real dollars only where the runtime priced them; the subscription's API-equivalent figure is never shown.
            CASE WHEN r.runtime = 'claude-code' THEN NULL ELSE r.total_cost_usd END AS cost_usd
     FROM usage_runs r
     LEFT JOIN org_agents a ON a.name = r.agent_name
+    LEFT JOIN archive_sessions s ON r.agent_name IS NULL AND s.host = r.host AND s.source = r.runtime AND s.external_id = r.session_id
+    LEFT JOIN org_agents b ON b.name = s.bot
     LEFT JOIN task_links tl ON tl.task_id = r.task_id
     LEFT JOIN LATERAL (SELECT reason FROM org_wakeups WHERE claimed_by = r.run_id ORDER BY id LIMIT 1) w ON true
     WHERE r.started_at >= $1 AND r.started_at < $2),
@@ -190,12 +201,30 @@ export function usageRouter(): Router {
   const router = Router();
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
+  router.get('/config', wrap(async (_req, res) => {
+    const { subscriptions, credits, sections } = settings().usage;
+    res.json({ subscriptions, credits, sections });
+  }));
+
+  router.get('/subscriptions', wrap(async (_req, res) => {
+    const providers = await Promise.all(settings().usage.subscriptions.map((provider) =>
+      provider === 'codex' ? codexSubscription() : claudeSubscription().catch(() => ({
+        provider: 'claude-code' as const, label: 'Claude Code', status: 'unavailable' as const, observed_at: null,
+        source: 'plan_usage_snapshots', message: 'Claude Code quota read unavailable', stale: false, windows: [],
+      }))));
+    res.json({ providers });
+  }));
+
   // Prepaid API credits (OpenRouter, fal, Gemini): latest per provider plus the balance history.
   router.use('/agent-sessions', agentSessionsRouter());
 
   router.get('/credits', wrap(async (req, res) => {
+    const enabled = settings().usage.credits;
+    if (!enabled.length) { res.json({ providers: [], history: [] }); return; }
     const [from, to] = span(parseOr400(range, req.query), 30);
-    res.json({ providers: await latestCredits(), history: await creditHistory(from, to) });
+    const [providers, history] = await Promise.all([latestCredits(), creditHistory(from, to)]);
+    res.json({ providers: enabled.map((p) => providers.find((x) => x.provider === p)),
+      history: history.filter((r) => enabled.includes(r.provider)) });
   }));
 
   router.get('/plan', wrap(async (req, res) => {
@@ -269,7 +298,7 @@ export function usageRouter(): Router {
 
   router.get('/sessions/:host/:externalId', wrap(async (req, res) => {
     const host = parseOr400(z.string().regex(HOST_RE), req.params.host);
-    const source = parseOr400(z.enum(['claude-code', 'hermes', 'zen-agent']).default('claude-code'), req.query.source);
+    const source = parseOr400(z.enum(['claude-code', 'hermes', 'zen-agent', 'codex']).default('claude-code'), req.query.source);
     const sid = String(req.params.externalId);
     const a = await query<{ archive_id: number }>(
       `SELECT a.id AS archive_id FROM archive_sessions a WHERE a.host=$1 AND a.external_id=$2
@@ -280,7 +309,7 @@ export function usageRouter(): Router {
     const session = row ?? {
       source, host, external_id: sid, title: null, surface: null, started_at: null, ended_at: null,
       calls: 0, input: 0, cache_write: 0, cache_read: 0, output: 0, cost_usd: null, task_id: null, lane: null,
-      agent_name: null, project_slug: null, work_type: null, runs: 0, archive_id: a.rows[0]!.archive_id,
+      agent_name: null, area_slug: null, work_type: null, runs: 0, archive_id: a.rows[0]!.archive_id,
     };
     const runs = await query(
       `${RUNS_CTE}
@@ -294,8 +323,8 @@ export function usageRouter(): Router {
                 'cost_usd', CASE WHEN c.source = 'claude-code' THEN NULL ELSE c.cost_usd END) END AS call
        FROM archive_messages m
        -- A Claude message id is unique on its own; a zen-agent trace numbers its lines, so its calls match within the session.
-       LEFT JOIN usage_calls c ON c.host=$2 AND c.message_external_id=m.external_id AND (c.source <> 'zen-agent' OR c.session_external_id=$3)
-       WHERE m.session_id=$1 ORDER BY m.seq LIMIT 5000`, [a.rows[0].archive_id, host, sid])).rows : [];
+       LEFT JOIN usage_calls c ON c.host=$2 AND c.message_external_id=m.external_id AND c.source=$4 AND c.session_external_id=$3
+       WHERE m.session_id=$1 ORDER BY m.seq LIMIT 5000`, [a.rows[0].archive_id, host, sid, source])).rows : [];
     res.json({
       session,
       run: runs.rows[runs.rows.length - 1] ?? null,
@@ -355,9 +384,9 @@ export function usageRouter(): Router {
               round(avg(EXTRACT(EPOCH FROM (w.done_at - w.claimed_at)) / 60)::numeric, 1)::float AS avg_minutes,
               max(w.created_at) AS last_wake,
               (SELECT coalesce(sum(f.input + f.cache_write + f.cache_read + f.output), 0)::bigint FROM usage_facts f
-                WHERE f.agent_name = w.agent_name AND f.ts >= $1 AND f.ts < $2) AS tokens,
+                WHERE f.agent_name = w.agent_name AND f.surface <> 'owner-chat' AND f.ts >= $1 AND f.ts < $2) AS tokens,
               (SELECT coalesce(sum(f.output), 0)::bigint FROM usage_facts f
-                WHERE f.agent_name = w.agent_name AND f.ts >= $1 AND f.ts < $2) AS output
+                WHERE f.agent_name = w.agent_name AND f.surface <> 'owner-chat' AND f.ts >= $1 AND f.ts < $2) AS output
          FROM org_wakeups w JOIN org_agents a ON a.name = w.agent_name
         WHERE w.created_at >= $1 AND w.created_at < $2
         GROUP BY w.agent_name, a.team_slug, a.role ORDER BY wakes DESC, w.agent_name`, [from, to]);

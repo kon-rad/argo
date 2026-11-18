@@ -10,6 +10,8 @@ export interface ClaudeChunk {
   model: string | null;
   /** The channel the prompts came through (a Telegram bot), from the first tagged prompt; null when typed. */
   channel: ChannelTag | null;
+  /** How Claude Code was started (`cli` at a terminal, `sdk-cli` for `claude -p`, ...), from the first record that says; null when none does. */
+  entrypoint: string | null;
 }
 
 function blockText(b: any): string {
@@ -60,6 +62,7 @@ export function parseClaudeJsonl(buf: Buffer, startLine: number): ClaudeChunk {
   let title: string | null = null;
   let model: string | null = null;
   let channel: ChannelTag | null = null;
+  let entrypoint: string | null = null;
 
   lines.forEach((line, i) => {
     const seq = startLine + i + 1;
@@ -75,6 +78,7 @@ export function parseClaudeJsonl(buf: Buffer, startLine: number): ClaudeChunk {
     if (rec?.type === 'ai-title' && rec.aiTitle) title = rec.aiTitle;
     if (rec?.type === 'assistant' && rec.message?.model) model = rec.message.model;
     if (channel === null && rec?.type === 'user') channel = parseChannelTag(userText(rec));
+    if (entrypoint === null && typeof rec?.entrypoint === 'string' && rec.entrypoint) entrypoint = rec.entrypoint;
     const ts = typeof rec?.timestamp === 'string' && !Number.isNaN(Date.parse(rec.timestamp)) ? new Date(rec.timestamp) : null;
     messages.push({
       seq,
@@ -90,5 +94,5 @@ export function parseClaudeJsonl(buf: Buffer, startLine: number): ClaudeChunk {
     });
   });
 
-  return { messages, consumedBytes, linesConsumed: lines.length, title, model, channel };
+  return { messages, consumedBytes, linesConsumed: lines.length, title, model, channel, entrypoint };
 }

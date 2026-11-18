@@ -14,22 +14,29 @@ import { settings } from '../../settings.js';
 // `secondbrain dispatch tick | routines`: the engine's dispatcher for bots on the zen-agent runtime
 // (docs/zen-runtime.md, section 8). A systemd timer runs `tick` every ORG_DISPATCH_TICK_SECONDS as the app
 // user; a oneshot service that is still running is not started again, so a long run never overlaps a tick.
-const USAGE = `secondbrain dispatch: run zen-agent bots for their open wakeups
+const USAGE = `secondbrain dispatch: run zen-agent and codex bots for their open wakeups
 
-  tick       materialise due routines, release stale claims, then one zen-agent run per bot with open wakeups
+  tick       materialise due routines, release stale claims, wake ready cards nothing woke, then one run per bot with open wakeups
   routines   only add the roster's due routine wakeups (once per local day in ORG_TZ)
 
-Settings: ORG_DISPATCH, ORG_TZ, ORG_DISPATCH_QUIET, ORG_DISPATCH_DAILY_TOKENS, ORG_DISPATCH_PARALLEL, ORG_ZEN_COMMAND
+Settings: ORG_DISPATCH, ORG_TZ, ORG_DISPATCH_QUIET, ORG_DISPATCH_DAILY_TOKENS, ORG_DISPATCH_PARALLEL, ORG_ZEN_COMMAND, ORG_CODEX_COMMAND, ORG_CODEX_HOST
 (env), and secondbrain.json "dispatch" (tiers, budgets, tools). Bots on other runtimes are left to their own dispatcher.`;
 
 /** Runs zen-agent as a child process; stdout is the --json result, stderr the printer's lines. */
 export const execRunner: Runner = (cmd, args, env, cwd, timeoutMs) =>
   new Promise((done) => {
-    execFile(cmd, args, { env, cwd, timeout: timeoutMs, maxBuffer: 16_000_000, killSignal: 'SIGTERM' }, (err, stdout, stderr) => {
+    let cancelled = false;
+    const child = execFile(cmd, args, { env, cwd, timeout: timeoutMs, maxBuffer: 16_000_000, killSignal: 'SIGTERM' }, (err, stdout, stderr) => {
+      process.removeListener('SIGINT', cancel);
+      process.removeListener('SIGTERM', cancel);
       const code = err && typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code
         : err ? 1 : 0;
-      done({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') + (err && typeof (err as { code?: unknown }).code !== 'number' ? `\n${err.message}` : '') });
+      done({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') + (err && typeof (err as { code?: unknown }).code !== 'number' ? `\n${err.message}` : ''),
+        timedOut: Boolean(!cancelled && err && (err as { killed?: boolean }).killed), cancelled });
     });
+    const cancel = () => { cancelled = true; child.kill('SIGTERM'); };
+    process.once('SIGINT', cancel);
+    process.once('SIGTERM', cancel);
   });
 
 export async function main(argv: string[]): Promise<number> {
@@ -53,7 +60,9 @@ export async function main(argv: string[]): Promise<number> {
     settings: dispatch,
     config: {
       orgTz: config.orgTz, orgDispatchQuiet: config.orgDispatchQuiet, orgDispatchDailyTokens: config.orgDispatchDailyTokens,
-      orgDispatchParallel: config.orgDispatchParallel, orgZenCommand: config.orgZenCommand, vaultRoot: config.vaultRoot,
+      orgDispatchParallel: config.orgDispatchParallel, orgZenCommand: config.orgZenCommand, orgCodexCommand: config.orgCodexCommand,
+      orgCodexHost: config.orgCodexHost, vaultRoot: config.vaultRoot,
+      orgTaskWakeRetries: config.orgTaskWakeRetries,
       machines: config.ollamaMachines,
     },
     log: (line) => console.error(line),
@@ -64,9 +73,9 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'tick') {
     // The credit breaker rides the tick (ORG_BREAKER=on): it only ever pauses, and a failure never blocks the tick.
-    if (process.env.ORG_BREAKER === 'on') {
+    if (config.env.ORG_BREAKER === 'on') {
       try {
-        for (const a of await runBreaker(process.env.ORG_BREAKER_AS || config.orgOwner, breakerLimitsFromEnv(), { dryRun: false })) {
+        for (const a of await runBreaker(config.env.ORG_BREAKER_AS || config.orgOwner, breakerLimitsFromEnv(), { dryRun: false })) {
           if (a.paused) console.error(`breaker: ${a.runtime} lane paused (${a.paused} bots): ${a.reason}`);
         }
       } catch (err) {
@@ -74,7 +83,7 @@ export async function main(argv: string[]): Promise<number> {
       }
     }
     const r = await d.tick();
-    console.log(`tick: ${r.routines} routines, ${r.released} released, ${r.agents} bots, ${r.runs} runs, ${r.acks} acks, ${r.gated} gated` +
+    console.log(`tick: ${r.routines} routines, ${r.released} released, ${r.promoted} promoted, ${r.woken} re-woken, ${r.closed} closed, ${r.agents} bots, ${r.runs} runs, ${r.acks} acks, ${r.gated} gated` +
       (r.held ? `, held: ${r.held}` : ''));
     for (const e of r.errors) console.error(`  ! ${e}`);
     return r.errors.length ? 2 : 0;

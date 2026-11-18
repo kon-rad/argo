@@ -5,6 +5,7 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { relabelChannels } from '../src/archive/backfill.js';
+import { telegramBot } from '../src/archive/channelMeta.js';
 import { sha256 } from '../src/archive/clean.js';
 import * as archive from '../src/archive/store.js';
 import type { SessionInput } from '../src/archive/types.js';
@@ -31,13 +32,32 @@ beforeEach(async () => {
   await truncateAll();
   root = mkdtempSync(join(tmpdir(), 'channel-'));
   writeFileSync(join(root, 'secondbrain.json'), JSON.stringify({ telegram: { bots: [
-    { name: 'claude', agent: 'claude-code', username: 'examplebot' }, { name: 'hermes', agent: 'hermes', profile: 'main' }, { name: 'zen', agent: 'zen-agent', persona: 'sol' }] } }));
+    { name: 'claude', agent: 'claude-code', username: 'examplebot' }, { name: 'hermes', agent: 'hermes' }, { name: 'zen', agent: 'zen-agent', persona: 'sol' }] } }));
   process.env.SECONDBRAIN_SETTINGS = join(root, 'secondbrain.json');
   resetSettings();
 });
 afterEach(() => { delete process.env.SECONDBRAIN_SETTINGS; resetSettings(); });
 
 describe('channel label from the collectors', () => {
+  it('matches the profile-less Hermes bot to main without guessing between main candidates', () => {
+    writeFileSync(join(root, 'secondbrain.json'), JSON.stringify({ telegram: { bots: [
+      { name: 'main-bot', agent: 'hermes' },
+      { name: 'research-bot', agent: 'hermes', profile: 'research' },
+    ] } }));
+    resetSettings();
+    expect(telegramBot('hermes', 'main')?.name).toBe('main-bot');
+    expect(telegramBot('hermes', null)?.name).toBe('main-bot');
+    expect(telegramBot('hermes', 'research')?.name).toBe('research-bot');
+
+    writeFileSync(join(root, 'secondbrain.json'), JSON.stringify({ telegram: { bots: [
+      { name: 'first-main', agent: 'hermes' },
+      { name: 'second-main', agent: 'hermes' },
+    ] } }));
+    resetSettings();
+    expect(telegramBot('hermes', 'main')).toBeNull();
+    expect(telegramBot('hermes', null)).toBeNull();
+  });
+
   it('labels a Claude Code Telegram session from its first tagged prompt and keeps the label on later chunks', async () => {
     const proj = join(root, 'projects', '-home-me-vault');
     mkdirSync(proj, { recursive: true });
@@ -46,7 +66,7 @@ describe('channel label from the collectors', () => {
     const paths = { claudeProjectsDir: join(root, 'projects'), runsDir: null, statuslineLog: null };
     await syncUsage(paths, 'droplet');
     const row = async () => (await query(`SELECT channel, meta, title FROM archive_sessions WHERE external_id = 'tg-1'`)).rows[0]!;
-    expect(await row()).toMatchObject({ channel: 'telegram', meta: { channel: 'telegram', channel_handle: '@someone', channel_bot: 'claude' } });
+    expect(await row()).toMatchObject({ channel: 'telegram', meta: { channel: 'telegram', channel_handle: '@someone', channel_bot: 'claude', entrypoint: 'cli' } });
     expect(JSON.stringify((await row()).meta)).not.toContain('12345');
     // The next chunk has no tag: the label stays.
     writeFileSync(file, readFileSync(file, 'utf8') + user('u3', '2026-10-30T19:06:00Z', `${TAG}\nthanks\n</channel>`) + assistant('a2', 'msg_2', '2026-10-30T19:06:05Z'));
@@ -57,13 +77,47 @@ describe('channel label from the collectors', () => {
     expect(steps[1]!.content_text).toBe('file a ticket please');
     // The page: the /clear record is not the title, the chip says telegram, the facet counts it.
     const list = await request(app).get('/api/usage/agent-sessions?from=2026-10-30T00:00:00Z&to=2026-10-31T00:00:00Z').expect(200);
-    expect(list.body.sessions[0]).toMatchObject({ channel: 'telegram', channel_bot: 'claude', first_prompt: 'file a ticket please' });
+    expect(list.body.sessions[0]).toMatchObject({ channel: 'telegram', channel_bot: 'claude', first_prompt: 'file a ticket please',
+      session_type: 'telegram', persona: 'claude', display_title: 'file a ticket please', title_source: 'prompt', context_tokens: 5 });
     const facets = await request(app).get('/api/usage/agent-sessions/facets?from=2026-10-30T00:00:00Z&to=2026-10-31T00:00:00Z').expect(200);
     expect(facets.body.facets.channel).toEqual([{ value: 'telegram', n: 1 }]);
     const none = await request(app).get('/api/usage/agent-sessions?from=2026-10-30T00:00:00Z&to=2026-10-31T00:00:00Z&channel=none').expect(200);
     expect(none.body.total).toBe(0);
     // usage_facts carries it to the token charts.
     expect((await query(`SELECT channel, count(*)::int n FROM usage_facts GROUP BY 1`)).rows).toEqual([{ channel: 'telegram', n: 2 }]);
+  });
+
+  it('never guesses between same-agent bots and honors only recorded matching identities', async () => {
+    writeFileSync(join(root, 'secondbrain.json'), JSON.stringify({ telegram: { bots: [
+      { name: 'first', agent: 'claude-code', username: 'firstbot', persona: 'first-persona' },
+      { name: 'second', agent: 'claude-code', username: 'secondbot', persona: 'second-persona' },
+      { name: 'other-runtime', agent: 'hermes', persona: 'other-persona' },
+    ] } }));
+    resetSettings();
+    const dir = join(root, 'projects', '-srv-example');
+    mkdirSync(dir, { recursive: true });
+    const cases = [['ambiguous', ''], ['named', ' bot="second"'], ['username', ' bot="@secondbot"'],
+      ['unknown', ' bot="not-configured"'], ['wrong-runtime', ' bot="other-runtime"']];
+    for (const [id, hint] of cases) writeFileSync(join(dir, `${id}.jsonl`), line({ type: 'user', uuid: id, sessionId: id,
+      timestamp: '2026-10-30T19:05:31Z', entrypoint: 'cli', message: { content: `<channel source="plugin:telegram:telegram"${hint}>\nInspect a synthetic deployment\n</channel>` } }));
+    await syncUsage({ claudeProjectsDir: join(root, 'projects'), runsDir: null, statuslineLog: null }, 'mac');
+    // Repair a formerly guessed identity when the next increment has no recorded bot hint.
+    await query(`UPDATE archive_sessions SET meta = meta || '{"channel_bot":"first","channel_persona":"first-persona"}'::jsonb WHERE external_id='ambiguous'`);
+    const ambiguous = join(dir, 'ambiguous.jsonl');
+    writeFileSync(ambiguous, readFileSync(ambiguous, 'utf8') + line({ type: 'user', uuid: 'next', sessionId: 'ambiguous',
+      timestamp: '2026-10-30T19:06:31Z', entrypoint: 'cli', message: { content: '<channel source="plugin:telegram:telegram">\nInspect again\n</channel>' } }));
+    await syncUsage({ claudeProjectsDir: join(root, 'projects'), runsDir: null, statuslineLog: null }, 'mac');
+    const rows = (await query(`SELECT external_id, meta ->> 'channel_bot' bot, meta ->> 'channel_persona' persona FROM archive_sessions ORDER BY external_id`)).rows;
+    expect(rows).toEqual([
+      { external_id: 'ambiguous', bot: null, persona: null },
+      { external_id: 'named', bot: 'second', persona: 'second-persona' },
+      { external_id: 'unknown', bot: null, persona: null },
+      { external_id: 'username', bot: 'second', persona: 'second-persona' },
+      { external_id: 'wrong-runtime', bot: null, persona: null },
+    ]);
+    const list = await request(app).get('/api/usage/agent-sessions').query({ from: '2026-10-30T00:00:00Z', to: '2026-10-31T00:00:00Z', type: 'telegram' }).expect(200);
+    expect(list.body.sessions.find((r: { external_id: string }) => r.external_id === 'ambiguous')).toMatchObject({ channel_bot: null, persona: null });
+    expect(list.body.sessions.find((r: { external_id: string }) => r.external_id === 'named')).toMatchObject({ channel_bot: 'second', persona: 'second-persona' });
   });
 
   it('labels a zen-agent run from the meta line a resumed run appended', async () => {
@@ -79,7 +133,8 @@ describe('channel label from the collectors', () => {
       line({ type: 'message', at: '2026-10-28T08:41:58.000Z', message: { role: 'user', content: 'and the reel skill', timestamp: '2026-10-28T08:41:58.000Z' } }) +
       line({ type: 'end', at: '2026-10-28T08:42:30.000Z', stopped: 'done', turns: 1 }));
     await syncUsage({ claudeProjectsDir: join(root, 'none'), runsDir: null, statuslineLog: null, zenSessionsDir: zen }, 'droplet');
-    expect((await query(`SELECT channel, meta ->> 'channel_bot' bot FROM archive_sessions`)).rows).toEqual([{ channel: 'telegram', bot: 'zen' }]);
+    expect((await query(`SELECT channel, meta ->> 'channel_bot' bot, meta ->> 'channel_persona' persona FROM archive_sessions`)).rows)
+      .toEqual([{ channel: 'telegram', bot: 'zen', persona: 'sol' }]);
     expect((await query(`SELECT work_type, reasons FROM usage_runs`)).rows[0]).toMatchObject({ work_type: 'telegram', reasons: [{ reason: 'telegram', ref: '9' }] });
   });
 
@@ -107,19 +162,38 @@ describe('relabelChannels', () => {
       ]);
       await archive.upsertSession(tx, sess({ externalId: 'typed' }));
       await archive.upsertSession(tx, sess({ externalId: 'h-tg', source: 'hermes', meta: { source: 'telegram', profile: 'main', chat_type: 'dm' } }));
+      await archive.upsertSession(tx, sess({ externalId: 'h-labelled-null', source: 'hermes', meta: {
+        source: 'telegram', profile: 'main', channel: 'telegram', channel_bot: null, channel_persona: null,
+      } }));
+      await archive.upsertSession(tx, sess({ externalId: 'h-labelled-kept', source: 'hermes', meta: {
+        source: 'telegram', profile: 'main', channel: 'telegram', channel_bot: 'recorded', channel_persona: 'recorded-persona',
+      } }));
       await archive.upsertSession(tx, sess({ externalId: 'h-cron', source: 'hermes', meta: { source: 'cron', profile: 'main' } }));
       await archive.upsertSession(tx, sess({ externalId: 'z-tg', source: 'zen-agent', meta: { persona: 'sol', dispatch: { work_type: 'telegram', reasons: '[{"reason":"telegram","ref":"9"}]' } } }));
+      await archive.upsertSession(tx, sess({ externalId: 'z-labelled-null', source: 'zen-agent', meta: {
+        persona: 'sol', channel: 'telegram', channel_bot: null, channel_persona: null, dispatch: { channel: 'telegram', bot: 'zen' },
+      } }));
+      await archive.upsertSession(tx, sess({ externalId: 'z-labelled-kept', source: 'zen-agent', meta: {
+        persona: 'sol', channel: 'telegram', channel_bot: 'recorded', channel_persona: 'recorded-persona', dispatch: { channel: 'telegram', bot: 'zen' },
+      } }));
       await archive.upsertSession(tx, sess({ externalId: 'z-card', source: 'zen-agent', meta: { persona: 'sol', dispatch: { reasons: '[{"reason":"task","ref":"t_1"}]' } } }));
     });
     // The first message was stored as a prompt (the parser classified it before this version).
     await query(`UPDATE archive_messages SET step = 'prompt' WHERE external_id = 'u1'`);
     const r = await relabelChannels({ batch: 10, log: () => {} });
-    expect(r).toEqual({ sessions: 3, messages: 1, commands: 1 });
-    const rows = (await query(`SELECT external_id, channel, meta ->> 'channel_bot' bot FROM archive_sessions ORDER BY 1`)).rows;
+    expect(r).toEqual({ sessions: 5, messages: 1, commands: 1 });
+    const rows = (await query(`SELECT external_id, channel, meta ->> 'channel_bot' bot, meta ->> 'channel_persona' persona FROM archive_sessions ORDER BY 1`)).rows;
     expect(rows).toEqual([
-      { external_id: 'h-cron', channel: null, bot: null }, { external_id: 'h-tg', channel: 'telegram', bot: 'hermes' },
-      { external_id: 'old-tg', channel: 'telegram', bot: 'claude' }, { external_id: 'typed', channel: null, bot: null },
-      { external_id: 'z-card', channel: null, bot: null }, { external_id: 'z-tg', channel: 'telegram', bot: 'zen' },
+      { external_id: 'h-cron', channel: null, bot: null, persona: null },
+      { external_id: 'h-labelled-kept', channel: 'telegram', bot: 'recorded', persona: 'recorded-persona' },
+      { external_id: 'h-labelled-null', channel: 'telegram', bot: 'hermes', persona: null },
+      { external_id: 'h-tg', channel: 'telegram', bot: 'hermes', persona: null },
+      { external_id: 'old-tg', channel: 'telegram', bot: 'claude', persona: null },
+      { external_id: 'typed', channel: null, bot: null, persona: null },
+      { external_id: 'z-card', channel: null, bot: null, persona: null },
+      { external_id: 'z-labelled-kept', channel: 'telegram', bot: 'recorded', persona: 'recorded-persona' },
+      { external_id: 'z-labelled-null', channel: 'telegram', bot: 'zen', persona: 'sol' },
+      { external_id: 'z-tg', channel: 'telegram', bot: 'zen', persona: 'sol' },
     ]);
     const msgs = (await query(`SELECT step, content_text FROM archive_messages ORDER BY seq`)).rows;
     expect(msgs).toEqual([{ step: 'meta', content_text: CLEAR }, { step: 'prompt', content_text: 'save this gear' }]);

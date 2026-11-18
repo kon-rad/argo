@@ -10,7 +10,13 @@ The core features (`projects`, `memory`, `org`, `board`, `usage`, `summaries`) s
 
 `MODULES=map,voice` in `.env` still works and means the same thing; `addons` in `secondbrain.json` is the newer home.
 
-Each addon has one place it is wired, a manifest at `app/server/src/addons/<name>/manifest.ts`, the same shape as a core feature's (`app/server/src/features/<name>/manifest.ts`): the CLI commands, the timers, the PATH wrappers, the env keys and the doc page. `secondbrain features list` prints the core features and the addons with their state; `secondbrain plan|apply` and `deploy.sh` read the same manifests for the units and the env, so an addon's timer installs only when the addon is on and off means nothing mounts, links or runs.
+## Instance configuration and feature manifests
+
+`<vault>/secondbrain.json` is the **instance configuration**, edited by the instance owner. The `addons` list above chooses which existing addons this installation enables. It does not define a new addon or contain credentials. See the [configuration reference](configuration.md#secondbrainjson) and [new-vault setup](onboarding/02-set-up-your-vault.md#step-2-create-the-vault).
+
+A **feature manifest** is an engine registration file, maintained by contributors. It describes what a feature supplies; the instance configuration selects whether an addon is enabled and provides its supported options. You do not edit engine manifests to personalize an installation.
+
+Each addon has one place it is wired, an addon manifest at `app/server/src/addons/<name>/manifest.ts`, the same shape as a core feature's (`app/server/src/features/<name>/manifest.ts`): the CLI commands, the timers, the PATH wrappers, the env keys and the doc page. `secondbrain features list` prints the core features and the addons with their state; `secondbrain plan|apply` and `deploy.sh` read the same manifests for the units and the env, so an addon's timer installs only when the addon is on and off means nothing mounts, links or runs.
 
 | Addon | One line | CLI | Timers (server) |
 |---|---|---|---|
@@ -25,13 +31,14 @@ Each addon has one place it is wired, a manifest at `app/server/src/addons/<name
 | [`fund`](modules.md#fund) | A read-only view of an agentic fund | - | - |
 | [`chat`](modules.md#chat) | Ask your second brain, answered from retrieved passages | - | - |
 | [`uploads`](uploads.md) | Send 1 GB to 50 GB files from a browser to the B2 bucket | - | - |
+| [`warehouse`](warehouse.md) | Every table, connector, scheduled job and dashboard on one page; the vault owns its tables and connectors | `warehouse` | `warehouse` |
 | [`garden`](garden.md) | A nightly shelf-keeping pass over Projects/, Areas/ and Research/ | `garden` | `garden` |
 | [`routing`](modules.md) | The model-routing pilot: tier selection and the weekly routing report | - | `routing-report` |
 | [`classify`](modules.md) | The wake gate: one calibrated decision about a state, logged | `classify` | - |
-| [`dispatch`](modules.md) | The zen-agent dispatcher: one run per bot with open wakeups | `dispatch` | `dispatch` |
+| [`dispatch`](modules.md) | The zen-agent and Codex dispatcher: one run per bot with open wakeups | `dispatch` | `dispatch` |
 | [`improve`](modules.md) | The self-improvement loop (proposal) | - | - |
 
-Two addons run outside the app and so keep a `manifest.json` at the repo root instead of a TypeScript manifest: `addons/tv-kiosk/` (a Raspberry Pi that shows the app on a TV) and `addons/telegram-bridge/` (a Python bridge with its own unit and env). `deploy`, `doctor` and this index read both shapes.
+The [kiosk](https://github.com/kon-rad/argo/blob/main/addons/tv-kiosk/README.md) and [Telegram bridge](https://github.com/kon-rad/argo/blob/main/addons/telegram-bridge/README.md) run outside the app. Follow their own README setup instructions. [Agent Dock](https://github.com/kon-rad/argo/blob/main/addons/agent-dock/README.md) is a macOS app and CLI that opens an org agent in a terminal on Claude Code, Codex or Hermes; it reads the optional `agentDock` section of `secondbrain.json`.
 
 ## Pilot and proposal addons
 
@@ -41,7 +48,7 @@ Four addons are pilots or proposals rather than shipped code. Each now has a man
 |---|---|---|
 | `routing` | pilot | The model-routing tier selection and the `route_decisions` / `route_outcomes` ledger, and the weekly routing report (its timer moved off the org manifest onto this one). |
 | `classify` | pilot | The wake gate (`secondbrain classify`): one calibrated decision about a state, logged to `classify_decisions`. |
-| `dispatch` | pilot | The zen-agent dispatcher (`secondbrain dispatch`), one run per bot with open wakeups. Off unless the module is on and the server sets `ORG_DISPATCH=on`. |
+| `dispatch` | pilot | The zen-agent and Codex dispatcher (`secondbrain dispatch`), one run per bot with open wakeups. Off unless the module is on and the server sets `ORG_DISPATCH=on`. |
 | `improve` | proposal | The self-improvement loop from the plan. Docs only: no code paths, no CLI, no timer. |
 
 Their **code** now lives under each addon's folder: `addons/classify/` (`org-classify.ts`, the `classify/` module and `cli.ts`), `addons/dispatch/` (`index.ts`, `store.ts` and `cli.ts`) and `addons/routing/` (`org-router.ts`). Their CLIs ride the manifest's command table (`secondbrain classify`, `secondbrain dispatch`), so the launcher dispatches them like any other feature command and `secondbrain features help` lists them; the routing subcommands stay on the core `org` command, which imports the router from `addons/routing/`.

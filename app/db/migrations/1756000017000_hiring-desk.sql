@@ -1,3 +1,4 @@
+-- These tables belong to the external hiring desk addon.
 -- Up Migration
 -- P3 reserved migration for private Hiring Desk orchestration state.
 -- All public-chain facts remain independently verified by the public-store adapters.

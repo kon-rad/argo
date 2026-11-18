@@ -5,6 +5,7 @@
  *   list [--modules a,b] [--json]   every feature, on or off for that module list
  *   units --modules a,b             systemd unit stems to install (one per line)
  *   wrappers --modules a,b          PATH wrappers to install (one per line)
+ *   agent-clis                      every wrapper with its client door, as bin/agent-clis.json
  *   help                            the `secondbrain <command>` lines for the launcher's help
  *   run <command> [args...]         run a feature's CLI entry in this process
  *
@@ -12,7 +13,7 @@
  * from the CLI's own failure.
  */
 import { join } from 'node:path';
-import { ALL_MANIFESTS, cliFor, commandsFor, unitsFor, wrapperScript, wrappersFor } from './features/registry.js';
+import { agentClisJson, ALL_MANIFESTS, cliFor, commandsFor, unitsFor, wrapperScript, wrappersFor } from './features/registry.js';
 import { moduleSet } from './modules.js';
 
 const EX_USAGE = 64;
@@ -81,6 +82,10 @@ switch (sub) {
     process.stdout.write(script);
     break;
   }
+  case 'agent-clis':
+    // bin/agent-clis.json: what `secondbrain-vault clis install` puts on a client machine's PATH.
+    process.stdout.write(agentClisJson());
+    break;
   case 'help':
     help();
     break;
@@ -88,6 +93,6 @@ switch (sub) {
     await run(argv);
     break;
   default:
-    console.error(`secondbrain features: unknown subcommand "${sub}" (list | units | wrappers | help | run)`);
+    console.error(`secondbrain features: unknown subcommand "${sub}" (list | units | wrappers | agent-clis | help | run)`);
     process.exit(EX_USAGE);
 }

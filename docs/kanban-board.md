@@ -34,11 +34,11 @@ That split is why a card can be given to a runtime that does not exist yet, and 
 | `ready` | Waits for its assignee's lane to claim it. A ready card wakes its bot through the org's wakeups |
 | `running` | A lane claimed it; there is an open `card_runs` row with a lease |
 | `review` | The builder finished; the review card decides |
-| `blocked` | Stuck, with a `block_kind` (`dependency`, `needs-owner`, `missing-input`, `tool-error`, `budget`, `review-changes`, `other`) and a reason |
+| `blocked` | Stuck, with a `block_kind` (`dependency`, `needs-owner`, `missing-input`, `tool-error`, `budget`, `review-changes`, `host-down`, `other`) and a reason; a `host-down` block also names its host |
 | `done` | Finished, with a one-line `result` |
 | `archived` | Off the columns; kept for the record |
 
-Two transitions happen by themselves: `todo → ready` the moment a card has no open dependency and no future `scheduled_for`, and `running → ready` when a lease expires with no heartbeat (`board_reclaim()`, run by the `board-reclaim` timer). Nobody polls for either.
+Two transitions happen by themselves: `todo → ready` the moment a card has no open dependency and no future `scheduled_for`, and `running → ready` when a lease expires with no heartbeat (`board_reclaim()`, run by the `board-reclaim` timer). Nobody polls for either. The same sweep also re-tests every `dependency` block (a block whose reason names a `t_…` card but has no link gets that link first), and reconciles a `running` card whose latest run has already ended with no live lease: to `review` when the run left a branch or a PR (`heartbeat --branch/--pr`, a ship request with a PR, or a `/pull/<n>` link commented since the claim), else to `ready`, with a `reconciled` event naming the run.
 
 **A card's status is not a feature's status.** Card status is work state; a feature's stage is product state in the tracker. The only bridge is finishing a card with a verification, which writes the tracker's `verifications` row. Nothing on the board moves a feature's stage directly.
 
@@ -68,7 +68,7 @@ One identity model, three ways to reach it. `cli-board` picks its door from the 
 Which to use from where:
 
 - **On your laptop, browsing:** door 1. Nothing to configure.
-- **On your laptop or another machine running agents or scripts:** door 2. This is the door that saves you SSH, and the one worth fixing first when it breaks (section 6).
+- **On your laptop or another machine running agents or scripts:** door 2. This is the door that saves you SSH, and the one worth fixing first when it breaks (section 6). Put `cli-board` on that machine's PATH with `.secondbrain/bin/secondbrain-vault clis install` (once `npm ci` has run in `.secondbrain/app`): it installs a one-file bundle that speaks door 2 only and reads `BOARD_URL` and `BOARD_TOKEN` from the environment, else from the vault `.env` (read literally, never sourced). No database, no `/etc/secondbrain/env`, no server build. The same command installs every other wrapper the manifests name (`cli-org`, `cli-projects`, ...) as a one-line "server-only" notice, so an agent never hits "command not found". [Connect machines](onboarding/06-connect-machines.md#the-agent-clis-on-the-laptop-and-every-other-machine) has the steps.
 - **On the server, as a bot or a timer:** door 3, which is what the users' wrappers do already. `cli-org` and `cli-board` on the server source the env file themselves, so it just works.
 
 A write is attributed to the identity the door supplies. There is no `--author`: a comment is always the caller's. That is deliberate, and it is why door 2 asks the token to name a real roster member.
@@ -85,7 +85,7 @@ A write is attributed to the identity the door supplies. There is no `--author`:
 cli-board boards                                   # every board and its open-card count
 cli-board list --board exo
 cli-board list --status ready --assignee rune
-cli-board list --project secondbrain-app --feature board
+cli-board list --area secondbrain-app --project board
 cli-board list --q "vault token"                   # full-text search over title and body
 cli-board list --all                               # include done and archived
 cli-board list --board exo --json
@@ -101,7 +101,7 @@ Card ids are `t_` plus hex and stay stable, so a link or an id in an old message
 
 ```bash
 cli-board create "Add a cli-board token check to the smoke test" \
-  --board exo --to sable --project secondbrain-app --feature board \
+  --board exo --to sable --area secondbrain-app --project board \
   --kind build --type ops --needs deploy --repo secondbrain \
   --body "What, why, and the one check that proves it."
 ```
@@ -111,7 +111,7 @@ cli-board create "Add a cli-board token check to the smoke test" \
 The same card through the company layer, which adds the capability rule and the project's team channel:
 
 ```bash
-cli-org task create sable "Fix the token check" --project secondbrain-app --feature board \
+cli-org task create sable "Fix the token check" --area secondbrain-app --project board \
   --type ops --needs deploy --repo secondbrain --body "..."
 ```
 
@@ -121,14 +121,19 @@ cli-org task create sable "Fix the token check" --project secondbrain-app --feat
 
 ```bash
 cli-board comment t_abc123 "Reproduced on the third try; logs in /tmp/run.log."
-cli-board assign t_abc123 sable --project secondbrain-app --feature board
+cli-board assign t_abc123 sable --area secondbrain-app --project board
 cli-board assign t_abc123 m4 --repo vault          # a coding card names its repo (the vault session takes vault work)
 cli-board assign t_abc123 none                     # unassign, back into the pool
 cli-board redo t_review123 "tighten the error handling"   # changes requested: a new round for the builder
 cli-board move t_abc123 ready
 cli-board move t_abc123 scheduled "after the release"
 cli-board link t_abc123 --after t_def456           # a dependency
+cli-board move t_abc123 blocked --after t_def456 "needs the schema first"   # blocked on cards: clears itself
+cli-board move t_abc123 blocked --host gpu-box "ollama not answering"         # blocked on a host: host-up retries it
+cli-board host-up gpu-box                            # a host is back: its host-down cards go back to ready
 ```
+
+**Blocks that clear themselves.** `move <card> blocked --after <t_x>[,<t_y>]` records each card as a link (kind `dependency`); the moment the last one is `done` (or archived) the card goes back to `ready` in the same transaction, with a `released` event naming the card that released it. If they are all finished already, the card is released at once. `move <card> blocked --host <host>` sets kind `host-down` with the host; when anything reports the host up (`cli-board host-up <host>`, `cli-board reclaim --host-up <host>`, or `POST /api/board/host-up {"hosts": [...]}` with any board token) the card goes back to `ready`, at most 3 times a card; after that it stays blocked and `list`/`show` say `retries 3/3`. The engine never probes a host itself. `move <card> blocked --kind <kind>` sets any other kind. None of this ever moves a `done` or `archived` card.
 
 A comment is always authored by the caller. `assign` re-points a card that already exists, which is how a card you find unassigned becomes someone's; it takes the same `--repo` and `--ship-now` as `create` (`--ship-now` is the owner's alone), and a coding card must name the repo the bots reach. `redo` takes a review card and asks its builder for another round: a new card with the next `rounds` count is created for the builder and the review card is parked until it is done. An unknown flag on any verb is a hard error, never a silent drop.
 
@@ -142,6 +147,7 @@ A lane claims work, keeps the lease alive and reports the outcome. If you are no
 cli-board claim --runtime claude-code --json        # the next ready card for that runtime
 cli-board claim --agent sable --task t_abc123       # this exact card
 cli-board heartbeat t_abc123 --tokens 1200 --turns 8
+cli-board heartbeat t_abc123 --branch card/t_abc123-fix --pr https://example.com/org/repo/pull/52   # what the run left
 cli-board finish t_abc123 --done "Shipped in #52; 992 tests pass."
 cli-board finish t_abc123 --blocked needs-owner "Which board does the kiosk show?"
 cli-board finish t_abc123 --budget "hit the token cap"
@@ -190,7 +196,7 @@ BOARD_TOKEN=<the token you copied>
 | Machine | File | Holds |
 |---|---|---|
 | The server | the app's env file (for this engine, `/etc/secondbrain/env`) | `BOARD_URL` is not needed; the door-3 database URL is there, plus `MODULES` including `board` |
-| Your laptop or another host | the vault's `.env` (gitignored) | `BOARD_URL`, `BOARD_TOKEN` |
+| Your laptop or another host | the vault's `.env` (gitignored) | `BOARD_URL`, `BOARD_TOKEN`; the `cli-board` that `secondbrain-vault clis install` writes reads them from there |
 | A server-side bot or timer | the same server env file | nothing extra: the wrapper scripts source it |
 
 Rules that keep this from becoming an incident:
@@ -256,6 +262,8 @@ cli-board import /tmp/local-board.json --board exo               # upserts by id
 **`board 401: bad, revoked or missing board token`.** The token is wrong, revoked, or absent, and the request never reached an identity. Check three things in order: that `BOARD_TOKEN` is actually set in the environment of *this* process; that it has not been revoked (`cli-board token list`, which prints metadata and never the token); and that `BOARD_URL` points at the app that holds that token's database. A token from one server does not work on another. Mint a new one, put it in the machine's env file, and revoke the old id in the same sitting so you do not leave two live credentials behind.
 
 **`board 403: <name> can't move <card>` (or "can't unassign").** The read succeeded and the write was refused, which means the door worked and the identity is the problem. The message names the identity the server resolved, so read it literally: if it is not who you think you are, the environment is supplying someone else's identity. The usual causes are a `BOARD_TOKEN` minted for a different roster member, or `ORG_AGENT` left set from an earlier command in the same shell. Note that `cli-org` and `cli-board` on the server source the server env file themselves, so a variable you unset in your shell can come straight back.
+
+**`cli-board: command not found` on a laptop or agent host.** The agent CLIs are not installed on that machine: run `.secondbrain/bin/secondbrain-vault clis install` there (section 2). `cli-board: BOARD_URL and BOARD_TOKEN not set ...` means they are installed and the two keys are missing from the vault `.env`; `cli-org is server-only: ...` is the expected answer off the server. `secondbrain-vault clis status` lists all of them.
 
 **A card that finished still shows `ready` or `running` on the board.** Check `cli-board show <id>`: it is the only record. If a worker's run ended without `cli-board finish`, the lane blocks the card or the lease expires and the card goes back to `ready`; `cli-board reclaim <id>` does it by hand. A card closed with a plain `hermes kanban complete` never reached this board at all (see the trap above).
 

@@ -2,7 +2,7 @@
 
 Status: **works** - maps the stores the engine reads today (the vault index and vectors, shared facts, bot memory, harness memory) and the `secondbrain memory recall` arms, with measured checks from one vault on 2026-10-26.
 
-The shared memory is a **core feature** (`app/server/src/features/memory/`): `memory_facts` is the one store, a claim with a source and an optional `agent` tag for a bot's own memory, reached through `secondbrain memory recall|remember|list|retire|propose|stats` and shown on `/memory` with the candidates finished sessions proposed. One row, one layer: the vault holds prose, `memory_facts` holds claims that cite it.
+The shared memory is a **core feature** (`app/server/src/features/memory/`): `memory_facts` is the one store, a claim with a source and an optional `agent` tag for a bot's own memory, reached through `secondbrain memory recall|remember|list|retire|propose|stats` and shown on `/memory`. Finished session facts are saved automatically, without human approval. One row, one layer: the vault holds prose, `memory_facts` holds claims that cite it.
 
 
 A second brain has no single "memory". It has several stores that were added for different jobs, written by different parties and loaded at different moments. This page maps them: what each holds, who writes it, **where it is invoked** (the exact call sites), how to look at what is recorded, and how to tell whether it helps or just fills the context window.
@@ -72,7 +72,7 @@ No automatic call to `recall` was found for an interactive Claude Code or Hermes
 
 ## How `cli-org recall` works
 
-`cli-org recall "<question>" [--project p] [--limit N] [--json]` merges three arms into one list, each hit labelled with its source:
+`cli-org recall "<question>" [--area a] [--limit N] [--json]` merges three arms into one list, each hit labelled with its source:
 
 | Arm | Label | How it matches |
 |---|---|---|
@@ -82,7 +82,7 @@ No automatic call to `recall` was found for an interactive Claude Code or Hermes
 
 **Why vector-only hits are not trusted.** On a vault embedded with `multilingual-e5-large-instruct`, cosine similarity does not separate good matches from noise: gibberish queries scored 0.80 to 0.85, an off-topic query 0.79, and a relevant query's best vector-only hit 0.82. No fixed floor works on that model, so recall asks for a second signal instead, a shared word. If your embedder spreads more widely, measure it (run a few nonsense queries and a few real ones through `hybridSearch`) and set `ORG_RECALL_MIN_SIMILARITY` above the nonsense scores.
 
-Writing: `cli-org remember "<subject>" "<claim>" --source <path|#message|t_card|url> [--project p] [--inferred] [--supersedes id]`. A bot may only insert rows as itself (row-level security: `author = org_me()`), cannot update or delete, A fact is retired with `cli-org forget <id> "<why>"`, which sets `valid_to`; only its author, the author's team lead or the owner may do it. Nothing is deleted, so history stays.
+Writing: `cli-org remember "<subject>" "<claim>" --source <path|#message|t_card|url> [--area a] [--inferred] [--supersedes id]`. A bot may only insert rows as itself (row-level security: `author = org_me()`), cannot update or delete, A fact is retired with `cli-org forget <id> "<why>"`, which sets `valid_to`; only its author, the author's team lead or the owner may do it. Nothing is deleted, so history stays.
 
 A row can carry `via <runtime>@<host>` (flag `--via` or `ORG_VIA`). A vault can give agents on other machines the same verbs through a thin wrapper that runs `cli-org` on the server.
 
@@ -90,7 +90,7 @@ A row can carry `via <runtime>@<host>` (flag `--via` or `ORG_VIA`). A vault can 
 
 | To see | Do this |
 |---|---|
-| Every shared fact, current and retired | `cli-org facts --all` (add `--json`, `--subject`, `--project`, `--author`) |
+| Every shared fact, current and retired | `cli-org facts --all` (add `--json`, `--subject`, `--area`, `--author`) |
 | Shared facts in the app | The `/org` page, Approvals tab, "Shared facts" list (current facts only, up to 100) |
 | One bot's memory | Open `.agents/org/memory/<bot>.md`, or the bot's page `/org/agents/<name>` (read-only) |
 | What `recall` returns for a question | `cli-org recall "<question>" --limit 8` and read the labels; add `--json` for scores |
@@ -229,3 +229,9 @@ How to judge a change: run the golden set before and after, and compare hit@8 an
 - Engine code: `app/server/src/cli-org.ts`, `app/server/src/org-powers.ts`, `app/db/migrations/1756000014000_bot-powers.sql`, `app/server/src/routes/org.ts`, `app/server/src/archive/run.ts`, `zen-agent/src/fetchers.ts`, `zen-agent/src/tools/org.ts`
 - Skills: `org-member` (engine copy; a vault can extend it); `shared-memory` (an example of a vault's own skill)
 - Related pages: [Retrieval and the chat module](rag.md), [Agent harness](agent-harness.md), self-improving orchestration (proposal)
+
+## Automatic session memory
+
+Session-summary facts enter memory automatically in the summary transaction. The database trigger also covers older summarizers during upgrades. Existing pending facts are saved once on migration; rejected history stays rejected. Equal claims in the same agent and project scope link to existing history, including retired facts, without reviving them. Extracted claims retain their session source, summarizer author and inferred confidence.
+
+The Memory page lists saved facts with agent filtering and retirement. Summaries links to that page instead of presenting a second approval queue. Legacy approval/rejection HTTP endpoints return 410. `remember` is the CLI verb for writing to this same store; it is not a separate memory section. `propose` creates an improvement card from an existing fact, not a memory approval request.

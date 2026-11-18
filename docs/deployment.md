@@ -78,13 +78,35 @@ The app refuses to start in server mode without `AUTH_PASSWORD_HASH`, `AUTH_TOTP
 | `secondbrain-agents-sync.timer` | Periodic | `agents` |
 | `secondbrain-usage-sync.timer`, `-credits-sync.timer`, usage importer | Periodic | `usage` |
 | `secondbrain-projects-render.timer` | Hourly | `projects` |
+| `secondbrain-areas-review.timer` | Sunday 20:00 in the vault's `timezone` (UTC when unset) | `projects` |
 | `secondbrain-map-build.timer` | Hourly at :20 | `map` |
 | `secondbrain-metrics.timer` | Daily 00:30 UTC | `map` |
+| `secondbrain-metrics-checkpoints.timer` | Hourly at :45 | `map` |
 | `secondbrain-livestream.timer` | Every minute | `livestream` |
 | `secondbrain-embed.timer` | Daily 02:30 UTC | `DEPLOY_EMBED=1` |
 | `secondbrain-db-backup.timer` | Daily 03:30 UTC | `DEPLOY_DB_BACKUP=1` |
 | `secondbrain-vault-sync.timer` | Every 15 minutes | `DEPLOY_VAULT_SYNC=1` |
 | `claude-telegram.service` + `-clear.timer`, `telegram-bridge.service` | Always, nightly clear 19:00 UTC | `secondbrain telegram add` ([Connect Telegram](onboarding/11-telegram.md)), not `deploy.sh` |
+
+### Unit files are generated
+
+Recurring feature units come only from `app/server/src/features/*/manifest.ts` and
+`app/server/src/addons/*/manifest.ts`. To add a timer, add one `timers` entry to its
+manifest with the unit name, calendar, command, descriptions and any service options.
+The deploy generator renders both the `.service` and `.timer`; do not add either file
+under `app/deploy/`.
+
+Preview the generated env and units without writing them:
+
+```bash
+secondbrain plan
+```
+
+`app/deploy/secondbrain.service` and `app/deploy/zen-agent-serve.service` remain
+hand-written because they are long-running services, not feature timers. The Telegram
+bridge owns its templates under `app/deploy/telegram/`, and Caddy continues to use
+`app/deploy/Caddyfile.template`. Database backup, vault sync and embedding are base
+jobs declared in `app/server/src/deploy/generate.ts` because no feature owns them.
 
 ## Which version is live
 
@@ -95,6 +117,10 @@ Caddy is rendered from `app/deploy/Caddyfile.template`. If you already run Caddy
 ## The login
 
 One user. The password is hashed with scrypt (128 MiB, verified one at a time); the second factor is RFC 6238 TOTP with single-use codes. Both factors are always checked and failures share one message. Sessions are random 256-bit tokens in a `__Host-` cookie (HttpOnly, Secure, SameSite=Strict); only their SHA-256 is stored. They end after 7 idle days or 30 days total, and `POST /api/auth/logout-all` ends every session. Five failures lock an IP out for 15 minutes; 100 failures in an hour lock everyone out. Every mutating request must carry the right `Origin`.
+
+## How the build is swapped in
+
+`deploy.sh` does not run `npm ci` in the live app directory: npm ci empties `node_modules` first, and any CLI an agent started in that minute (`cli-org recall` from a run already in flight) died with `Cannot find package '<app dir>/node_modules/zod/index.js'`. Instead `app/deploy/build-release.sh` copies the shipped source to `<app dir>/data/release`, runs `npm ci` and `npm run build` there, checks that `server/dist/cli-org.js` and `server/dist/cli-memory.js` load from the new build, then swaps `node_modules`, `shared/dist`, `server/dist` and `web/dist` into place, each with one atomic exchange (`renameat2` on Linux). The CLIs always run from `<app dir>/server/dist` and resolve their packages from `<app dir>/node_modules`. A failed install, build or check leaves the live tree as it was. The stage needs room for a second `node_modules` while it builds.
 
 ## When a deploy does not come up
 
@@ -125,7 +151,7 @@ The `desk` addon is off by default. A successful app deploy and a green general 
 
 1. **Ship the merged engine code.** Use the normal deploy procedure above. Compare applied migrations first, run `deploy.sh`, and require a successful build, migration step, service restart and health check. The desk migration is `1756000017000_hiring-desk.sql`; an already-applied migration correctly reports no migrations to run.
 2. **Enable it in the running app's configuration.** On the server, locate the vault selected by the service's `VAULT_ROOT`. Add `"desk"` to its `secondbrain.json` `addons` array, preserving existing entries and settings. The minimal shape is `{"addons":["desk"]}`. Alternatively append `desk` to `MODULES` in `/etc/secondbrain/env` without removing other modules. Keep the intended setting in your normal vault sync process so later syncs preserve it.
-3. **Configure the real services before restarting.** Supply the explicit [desk production settings](configuration.md#hiring-desk-production-settings), including the server-only `DESK_RUNTIME_MODULE` that exports `createDeskRuntime`. That host module must supply actual Arkiv, identity, publisher, bounded worker, capability and provider-transaction services. The engine constructs PostgreSQL persistence, the independent RPC reader and the explicitly selected settlement adapter. Missing settings, missing host operations or fixture adapters abort startup. The shipped composition seam does not include these host implementations.
+3. **Configure the real services before restarting.** Supply every explicit [desk production setting](configuration.md#hiring-desk-production-settings), including the server-only Arkiv signer and Bee batch. `DESK_RUNTIME_MODULE` exports `createCybazaarDependencies` for provider profiles, ENS, worker/capability controls, artifact reads and non-master wallet intents. The addon constructs Arkiv, ERC-8004, Swarm, PostgreSQL publication and settlement adapters. Missing settings, missing operations or fixture adapters abort production startup.
 4. **Restart and verify activation and operations.** Run `sudo systemctl restart secondbrain` and `systemctl is-active secondbrain`. Visit `/api/health`; require `ok: true` and `desk` in the enabled modules. Reload the browser, sign in, and check **Work → Hiring desk**, `/desk` and authenticated `/api/meta`. Private operators use session-gated `/api/desk`; the Vercel client uses only `/api/desk/public`. Verify execution, reviewed release and payment reconciliation independently. The hash-only payment flow remains pending until its Arc-to-Arkiv evidence linkage is resolved; see the [submission status](https://github.com/kon-rad/argo/blob/0c96d254d517e0203f4e98813cd95569336eb5d9/app/server/src/addons/desk/submission/README.md).
 
 **Code and settings have separate delivery paths.** `deploy.sh` copies the engine's app source, builds, migrates and restarts it. It does not copy your laptop's `secondbrain.json` or `.env` into the server's vault. Changing only the laptop settings and redeploying leaves the server addon disabled until the server vault receives that change. `DEPLOY_MODULES` controls deploy-time module installation; it does not replace runtime activation through the server settings or environment.

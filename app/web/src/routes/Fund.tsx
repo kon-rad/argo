@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, type FundOverview, type FundProposal, type FundTransaction, type FundWallet } from '../lib/api.js';
 import { ago } from '../lib/time.js';
+import DataTable from '../components/DataTable.js';
 
 /**
  * The fund: balances of its wallets, its transaction history and the state of
@@ -88,7 +89,7 @@ function Pending({ items }: { items: FundProposal[] }) {
 function Transactions({ txs, explorer }: { txs: FundTransaction[]; explorer: string }) {
   if (txs.length === 0) return <p className="text-sm text-[var(--ink-dim)]">No transactions yet.</p>;
   return (
-    <table className="w-full text-sm">
+    <DataTable label="Transactions" phone="cards" className="w-full text-sm">
       <thead>
         <tr className="border-b border-[var(--rule)] text-left text-xs text-[var(--ink-dim)]">
           <th className="py-1 pr-3 font-normal">When</th>
@@ -103,7 +104,7 @@ function Transactions({ txs, explorer }: { txs: FundTransaction[]; explorer: str
           <tr key={`${t.hash ?? t.proposal}-${t.kind}-${t.when}`} className="border-b border-[var(--rule)] align-top">
             <td className="py-1 pr-3 whitespace-nowrap text-[var(--ink-dim)]">{new Date(t.when).toLocaleDateString([], { month: 'short', day: 'numeric' })}</td>
             <td className="py-1 pr-3 whitespace-nowrap">{KIND_LABEL[t.kind]}</td>
-            <td className="py-1 pr-3">{t.title}{t.gasEth != null && <span className="ml-2 text-xs text-[var(--ink-faint)]">gas {Number(t.gasEth.toPrecision(2))} ETH</span>}</td>
+            <td className="py-1 pr-3 max-md:order-first max-md:col-span-2">{t.title}{t.gasEth != null && <span className="ml-2 text-xs text-[var(--ink-faint)]">gas {Number(t.gasEth.toPrecision(2))} ETH</span>}</td>
             <td className="py-1 pr-3 whitespace-nowrap">{t.confirmed == null ? '—' : t.confirmed ? 'confirmed' : 'reverted'}</td>
             <td className="py-1 font-mono text-xs">
               {t.hash ? <a href={`${explorer}/tx/${t.hash}`} target="_blank" rel="noreferrer" className="underline decoration-dotted">{short(t.hash)}</a> : '—'}
@@ -111,7 +112,7 @@ function Transactions({ txs, explorer }: { txs: FundTransaction[]; explorer: str
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -169,8 +170,8 @@ function Body({ d }: { d: FundOverview }) {
             <tbody>
               {d.runs.map((r) => (
                 <tr key={r.skill}>
-                  <td className="py-0.5 pr-4">{r.skill}</td>
-                  <td className="py-0.5 pr-4 text-[var(--ink-dim)]">{ago(r.at)}</td>
+                  <td className="py-0.5 pr-4 max-md:whitespace-nowrap">{r.skill}</td>
+                  <td className="py-0.5 pr-4 text-[var(--ink-dim)] max-md:whitespace-nowrap">{ago(r.at)}</td>
                   <td className="py-0.5">{r.failed ? `failed: ${r.reason}` : 'ok'}</td>
                 </tr>
               ))}
@@ -178,10 +179,10 @@ function Body({ d }: { d: FundOverview }) {
           </table>
         )}
         {d.harness.rows.length > 0 && (
-          <table className="mt-4 text-xs">
+          <DataTable label="Harness" phone="scroll" className="mt-4 text-xs">
             <thead><tr>{d.harness.header.map((h) => <th key={h} className="pr-4 text-left font-normal text-[var(--ink-dim)]">{h}</th>)}</tr></thead>
             <tbody>{d.harness.rows.map((row, i) => <tr key={i}>{row.map((c, j) => <td key={j} className="pr-4">{c}</td>)}</tr>)}</tbody>
-          </table>
+          </DataTable>
         )}
       </Section>
     </>

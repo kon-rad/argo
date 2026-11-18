@@ -1,3 +1,4 @@
+-- This table belongs to the external hiring desk addon.
 -- Up Migration
 -- Private publication checkpoints. A checkpoint is never chain confirmation.
 CREATE TABLE desk_publications (

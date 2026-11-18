@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
@@ -18,16 +18,22 @@ describe('feature manifests', () => {
     expect(FEATURES.map((f) => f.name)).toEqual(names);
   });
 
-  it('every file a manifest names exists: CLI entries, unit pairs, wrappers and docs', () => {
+  it('every file a manifest names exists: CLI entries, wrappers and docs; timers carry their generated fields', () => {
     for (const m of ALL_MANIFESTS) {
       for (const c of m.cli) expect(existsSync(resolve(APP_ROOT, 'server/src', c.entry.replace(/\.js$/, '.ts'))), `${m.name}: ${c.entry}`).toBe(true);
       for (const t of m.timers) {
-        expect(existsSync(resolve(APP_ROOT, 'deploy', `${t.unit}.service`)), `${m.name}: ${t.unit}.service`).toBe(true);
-        expect(existsSync(resolve(APP_ROOT, 'deploy', `${t.unit}.timer`)), `${m.name}: ${t.unit}.timer`).toBe(true);
+        expect(t.calendar, `${m.name}: ${t.unit} calendar`).toBeTruthy();
+        expect(t.command, `${m.name}: ${t.unit} command`).toBeTruthy();
+        expect(t.description, `${m.name}: ${t.unit} description`).toBeTruthy();
+        expect(cliFor(t.command.split(' ')[0]!)?.cli.entry, `${m.name}: ${t.unit} command`).toBeTruthy();
       }
       for (const w of m.wrappers) expect(wrapperScript(w), `${m.name}: wrapper ${w}`).toContain('server/dist/');
       expect(existsSync(resolve(REPO_ROOT, m.docs.split('#')[0]!)), `${m.name}: ${m.docs}`).toBe(true);
     }
+  });
+
+  it('keeps only zen-agent as a hand-written PATH wrapper', () => {
+    expect(readdirSync(resolve(APP_ROOT, 'deploy/bin'))).toEqual(['zen-agent']);
   });
 
   it('commands, nav paths and units are unique across features and addons', () => {
@@ -40,7 +46,7 @@ describe('feature manifests', () => {
   });
 
   it('answers the deploy script and the launcher for a module list', () => {
-    expect(unitsFor(new Set(['board', 'projects']))).toEqual(['secondbrain-projects-render', 'secondbrain-board-reclaim']);
+    expect(unitsFor(new Set(['board', 'projects']))).toEqual(['secondbrain-projects-render', 'secondbrain-areas-review', 'secondbrain-board-reclaim']);
     expect(unitsFor(new Set())).toEqual([]);
     expect(wrappersFor(new Set(['org', 'usage']))).toEqual(['cli-org']);
     expect(navFor(new Set(['usage', 'summaries']))).toEqual([{ section: 'Work', label: 'Usage', path: '/usage' }]);
@@ -64,7 +70,7 @@ describe('feature manifests', () => {
 describe('features mounted from their manifests', () => {
   it('a feature that is off leaves no route, and one that is on mounts all of its routes', async () => {
     const off = createApp({ modules: new Set() });
-    for (const path of ['/api/projects/report', '/api/feed/projects', '/api/org/channels', '/api/board/cards', '/api/usage/plan', '/api/summaries', '/api/ingest']) {
+    for (const path of ['/api/areas/report', '/api/projects', '/api/feed/projects', '/api/org/channels', '/api/board/cards', '/api/usage/plan', '/api/summaries', '/api/ingest']) {
       const res = await request(off).get(path);
       expect(res.body.error?.message, path).toBe('no such endpoint');
     }

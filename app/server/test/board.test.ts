@@ -6,7 +6,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import {
   assignCard, BoardBus, claimCard, commentCard, createCard, createToken, driftReport, finishCard, findToken, flagCard, getCard, heartbeat, importHermesCards, linkCards,
-  listBoards, listCards, listTokens, moveCard, reclaim, revokeToken,
+  listBoards, listCards, listTokens, moveCard, reclaim, revokeToken, tagCard,
 } from '../src/board.js';
 import { formatCard, formatDetail, HttpBoard, main, parseHermesExport } from '../src/cli-board.js';
 import { agentDatabaseUrl } from '../src/cli-org.js';
@@ -58,8 +58,8 @@ const wakes = async (): Promise<{ agent_name: string; ref: string | null }[]> =>
 beforeEach(async () => {
   await truncateAll();
   await importOrg(ORG);
-  await query(`INSERT INTO projects (slug, title, team_slug, stage) VALUES ('secondbrain-app', 'Second Brain app', 'platform', 'building')`);
-  await query(`INSERT INTO features (project_slug, slug, title, stage) VALUES ('secondbrain-app', 'board', 'The board', 'building')`);
+  await query(`INSERT INTO areas (slug, title, team_slug, status) VALUES ('secondbrain-app', 'Second Brain app', 'platform', 'active')`);
+  await query(`INSERT INTO projects (area_slug, slug, title, stage) VALUES ('secondbrain-app', 'board', 'The board', 'building')`);
 });
 
 describe('the record', () => {
@@ -79,11 +79,11 @@ describe('the record', () => {
   });
 
   it('a card is ready at once, wakes its bot, and carries its project, contract and flags', async () => {
-    const c = await createCard('owner', { title: '  Build   the board ', body: 'GET /api/board', contract: { objective: 'Ship it', budget: { turns: 20 } }, assignee: 'rune', project: 'secondbrain-app', feature: 'board', kind: 'build', work: 'coding', needs: 'code', repo: 'secondbrain', priority: 2 });
+    const c = await createCard('owner', { title: '  Build   the board ', body: 'GET /api/board', contract: { objective: 'Ship it', budget: { turns: 20 } }, assignee: 'rune', area: 'secondbrain-app', project: 'board', kind: 'build', work: 'coding', needs: 'code', repo: 'secondbrain', priority: 2 });
     expect(c).toMatchObject({ title: 'Build the board', status: 'ready', board_slug: 'exo', assignee: 'rune', created_by: 'owner', kind: 'build', work_type: 'coding', needs: 'code', priority: 2, contract: { objective: 'Ship it', budget: { turns: 20 } } });
     expect(c.id).toMatch(/^t_[0-9a-f]{8}$/);
     expect(await wakes()).toEqual([{ agent_name: 'rune', ref: c.id }]);
-    expect((await query<{ owner: string }>(`SELECT owner FROM features WHERE slug = 'board'`)).rows[0]!.owner).toBe('rune');
+    expect((await query<{ owner: string }>(`SELECT owner FROM projects WHERE slug = 'board'`)).rows[0]!.owner).toBe('rune');
     // The board came into being with the first card; the old task_links view shows the same row.
     expect((await listBoards()).map((b) => [b.slug, b.open])).toEqual([['exo', 1]]);
     expect((await query<{ task_id: string; board: string }>(`SELECT task_id, board FROM task_links`)).rows).toEqual([{ task_id: c.id, board: 'exo' }]);
@@ -96,7 +96,7 @@ describe('the record', () => {
     await expect(createCard('owner', { title: 'x', assignee: 'lena', needs: 'code' })).rejects.toThrow(/lena doesn't have the code capability.*rune/);
     await expect(createCard('atlas', { title: 'x', assignee: 'rune', shipNow: true })).rejects.toThrow(/only the owner can mark a card ship-now/);
     await expect(createCard('owner', { title: 'x', assignee: 'owner' })).rejects.toThrow(/not a bot/);
-    await expect(createCard('owner', { title: 'x', assignee: 'rune', project: 'nope' })).rejects.toThrow(/no project "nope"/);
+    await expect(createCard('owner', { title: 'x', assignee: 'rune', area: 'nope' })).rejects.toThrow(/no area "nope"/);
     await expect(createCard('nobody', { title: 'x' })).rejects.toThrow(/unknown agent "nobody"/);
     // A lead assigns inside its team; dispatch anywhere; the vault session takes cards from leads.
     await expect(createCard('atlas', { title: 'x', assignee: 'lena' })).rejects.toThrow(/inside its team/);
@@ -174,7 +174,7 @@ describe('the record', () => {
   });
 
   it('finish: only the assignee or a human; done writes the result and the verification; blocked needs a kind; budget and partial', async () => {
-    const c = await createCard('owner', { title: 'Verify the board', assignee: 'rune', project: 'secondbrain-app', feature: 'board', kind: 'verify' });
+    const c = await createCard('owner', { title: 'Verify the board', assignee: 'rune', area: 'secondbrain-app', project: 'board', kind: 'verify' });
     await claimCard(null, { agent: 'rune' });
     await expect(finishCard('vera', c.id, { outcome: 'done' })).rejects.toThrow(/can't finish rune's card/);
     await expect(finishCard('rune', c.id, { outcome: 'blocked' })).rejects.toThrow(/says why/);
@@ -238,6 +238,82 @@ describe('the record', () => {
   });
 });
 
+describe('ticket numbers and project tags', () => {
+  const app = () => createApp({ modules: ALL_MODULES, board: { owner: 'owner' } });
+  const ids = (cs: { id: string }[]): string[] => cs.map((c) => c.id);
+
+  it('q finds a card by its ticket number: t_<id>, a bare 8-hex id, #<prefix>, and the exact id comes first', async () => {
+    const a = await createCard('owner', { id: 't_1d4c0eff', title: 'Search by ticket number' });
+    const b = await createCard('owner', { id: 't_1d4c0eff99', title: 'A longer id with the same prefix' });
+    const other = await createCard('owner', { id: 't_abcdef12', title: 'Unrelated' });
+    expect(ids(await listCards({ q: 't_1d4c0eff' }))).toEqual([a.id, b.id]);
+    expect(ids(await listCards({ q: '1d4c0eff' }))).toEqual([a.id, b.id]);
+    expect(ids(await listCards({ q: '#1d4c' }))).toEqual(expect.arrayContaining([a.id, b.id]));
+    expect(ids(await listCards({ q: '#1d4c' }))).not.toContain(other.id);
+    expect(ids(await listCards({ q: '1D4C0EFF99' }))).toEqual([b.id]);
+    expect(ids(await listCards({ q: ' t_abcdef12 ' }))).toEqual([other.id]);
+    // Words still go through the full-text index; a short hex word is not an id and a hex-looking word still matches text.
+    expect(ids(await listCards({ q: 'unrelated' }))).toEqual([other.id]);
+    expect(await listCards({ q: '1d4' })).toEqual([]);
+    const beef = await createCard('owner', { title: 'beef stew' });
+    expect(ids(await listCards({ q: 'beef' }))).toEqual([beef.id]);
+  });
+
+  it('ids filters the board to one or several cards by id or prefix, and the API takes ?id=', async () => {
+    const a = await createCard('owner', { id: 't_1d4c0eff', title: 'One' });
+    const b = await createCard('owner', { id: 't_2e5d1f00', title: 'Two' });
+    await createCard('owner', { id: 't_3f6e2a11', title: 'Three' });
+    expect(ids(await listCards({ ids: ['t_1d4c0eff'] }))).toEqual([a.id]);
+    expect(ids(await listCards({ ids: ['1d4c0eff', '#2e5d'] })).sort()).toEqual([a.id, b.id]);
+    const r = await request(app()).get('/api/board/cards').query({ id: 't_1d4c0eff,2e5d1f00' }).expect(200);
+    expect(ids(r.body.cards).sort()).toEqual([a.id, b.id]);
+    await request(app()).get('/api/board/cards').query({ id: 'not-an-id' }).expect(400);
+  });
+
+  it('an area filter returns only that area\'s cards; a card made with --area carries the tag', async () => {
+    await query(`INSERT INTO areas (slug, title, team_slug, status) VALUES ('argo-second-brain', 'Argo second brain', 'platform', 'active')`);
+    const tagged = await createCard('owner', { title: 'Tagged', area: 'argo-second-brain' });
+    await createCard('owner', { title: 'Other area', area: 'secondbrain-app' });
+    await createCard('owner', { title: 'No area' });
+    expect(tagged.area_slug).toBe('argo-second-brain');
+    expect(ids(await listCards({ area: 'argo-second-brain' }))).toEqual([tagged.id]);
+    const r = await request(app()).get('/api/board/cards').query({ area: 'argo-second-brain' }).expect(200);
+    expect(r.body.cards.map((c: { id: string; area_slug: string }) => [c.id, c.area_slug])).toEqual([[tagged.id, 'argo-second-brain']]);
+    await expect(createCard('owner', { title: 'Bad', area: 'no-such-area' })).rejects.toThrow(/no area/);
+  });
+
+  it('tagCard sets, changes and clears a card\'s area and project without touching its assignee', async () => {
+    await query(`INSERT INTO areas (slug, title, team_slug, status) VALUES ('argo-second-brain', 'Argo second brain', 'platform', 'active')`);
+    const c = await createCard('atlas', { title: 'Untagged', assignee: 'rune' });
+    const before = await wakes();
+    const t1 = await tagCard('owner', c.id, { area: 'secondbrain-app', project: 'board' });
+    expect([t1.area_slug, t1.project_slug, t1.assignee]).toEqual(['secondbrain-app', 'board', 'rune']);
+    const t2 = await tagCard('owner', c.id, { area: 'argo-second-brain', project: null });
+    expect([t2.area_slug, t2.project_slug]).toEqual(['argo-second-brain', null]);
+    const t3 = await tagCard('owner', c.id, { area: null, project: null });
+    expect([t3.area_slug, t3.project_slug, t3.assignee]).toEqual([null, null, 'rune']);
+    expect(await wakes()).toEqual(before);
+    await expect(tagCard('owner', c.id, { area: 'no-such-area', project: null })).rejects.toThrow(/no area/);
+    await expect(tagCard('owner', c.id, { area: 'secondbrain-app', project: 'nope' })).rejects.toThrow(/no project/);
+    await expect(tagCard('owner', c.id, { area: null, project: 'board' })).rejects.toThrow(/project needs an area/);
+    // The giver, the assignee and dispatch may tag; another bot may not.
+    expect((await tagCard('atlas', c.id, { area: 'secondbrain-app', project: null })).area_slug).toBe('secondbrain-app');
+    expect((await tagCard('rune', c.id, { area: 'argo-second-brain', project: null })).area_slug).toBe('argo-second-brain');
+    expect((await tagCard('sol', c.id, { area: null, project: null })).area_slug).toBeNull();
+    await expect(tagCard('lena', c.id, { area: 'secondbrain-app', project: null })).rejects.toThrow(/can't tag/);
+    expect((await getCard(c.id)).events.filter((e) => e.kind === 'tagged').length).toBe(6);
+    // The page's door: POST /cards/:id/project, as the owner.
+    const r = await request(app()).post(`/api/board/cards/${c.id}/project`).send({ area: 'secondbrain-app', project: 'board' }).expect(200);
+    expect([r.body.card.area_slug, r.body.card.project_slug]).toEqual(['secondbrain-app', 'board']);
+    const cleared = await request(app()).post(`/api/board/cards/${c.id}/project`).send({ area: null }).expect(200);
+    expect([cleared.body.card.area_slug, cleared.body.card.project_slug]).toEqual([null, null]);
+    await request(app()).post(`/api/board/cards/${c.id}/project`).send({ area: 'no-such-area' }).expect(404);
+    // A project with no area is refused: nothing can put a slug in the project column on its own.
+    await request(app()).post(`/api/board/cards/${c.id}/project`).send({ project: 'board' }).expect(400);
+    expect((await getCard(c.id)).card).toMatchObject({ area_slug: null, project_slug: null });
+  });
+});
+
 describe('tokens and the API', () => {
   const app = () => createApp({ modules: ALL_MODULES, board: { owner: 'owner' } });
 
@@ -261,7 +337,7 @@ describe('tokens and the API', () => {
 
   it('the session door acts as the owner; the token door as its agent; the rules follow', async () => {
     const a = app();
-    const made = await request(a).post('/api/board/cards').send({ title: 'From the page', assignee: 'rune', project: 'secondbrain-app', feature: 'board', work: 'coding' }).expect(201);
+    const made = await request(a).post('/api/board/cards').send({ title: 'From the page', assignee: 'rune', area: 'secondbrain-app', project: 'board', work: 'coding' }).expect(201);
     expect(made.body.card).toMatchObject({ created_by: 'owner', assignee: 'rune', status: 'ready', work_type: 'coding', needs: 'code' });
     expect(made.body.message).toMatchObject({ channel_slug: 'platform', author: 'owner' });
     const id = made.body.card.id as string;
@@ -333,7 +409,7 @@ describe('the CLI', () => {
   };
 
   it('drives the board as the owner through the database door', async () => {
-    const made = await run(['create', 'Write the docs', '--to', 'lena', '--project', 'secondbrain-app', '--priority', '2', '--type', 'writing']);
+    const made = await run(['create', 'Write the docs', '--to', 'lena', '--area', 'secondbrain-app', '--priority', '2', '--type', 'writing']);
     expect(made.code).toBe(0);
     const id = /card (t_[0-9a-f]+) for lena \[ready\]/.exec(made.lines[0]!)![1]!;
     expect(made.lines[0]).toContain('noted as');
@@ -362,7 +438,7 @@ describe('the CLI', () => {
   });
 
   it('runs as an agent through the RLS role, and refuses what is not its own', async () => {
-    const owner = await run(['create', 'Fix it', '--to', 'rune', '--project', 'secondbrain-app', '--type', 'coding']);
+    const owner = await run(['create', 'Fix it', '--to', 'rune', '--area', 'secondbrain-app', '--type', 'coding']);
     const id = /card (t_[0-9a-f]+)/.exec(owner.lines[0]!)![1]!;
     const env = { ORG_AGENT: 'rune', SB_ORG_DB_URL: `postgres://sb_org@${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${TEST_DB}` };
     try {
@@ -383,12 +459,12 @@ describe('the CLI', () => {
     // with "permission denied for table org_agents" for every caller except the owner's unauthenticated connection.
     const env = { ORG_AGENT: 'atlas', SB_ORG_DB_URL: `postgres://sb_org@${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${TEST_DB}` };
     try {
-      const made = await run(['create', 'Vault thing over RLS', '--to', 'vault-session', '--project', 'secondbrain-app'], env);
+      const made = await run(['create', 'Vault thing over RLS', '--to', 'vault-session', '--area', 'secondbrain-app'], env);
       expect(made.code).toBe(0);
       expect(made.lines[0]).toContain('for vault-session');
       expect((await getAgent('vault-session')).runtime).toBe('session');
       // The legacy slug works the same way, and a second call just clears retired_at again (no error).
-      await run(['create', 'Vault thing, legacy slug', '--to', 'm4', '--project', 'secondbrain-app'], env);
+      await run(['create', 'Vault thing, legacy slug', '--to', 'm4', '--area', 'secondbrain-app'], env);
       expect((await getAgent('m4')).runtime).toBe('session');
     } finally {
       setDatabaseUrl(ownerUrl);
@@ -497,7 +573,7 @@ describe('cli-board parity: --repo/--ship-now on assign, redo, unknown flags', (
 
   it('the API takes repo/ship_now on assign and exposes a redo route', async () => {
     const a = createApp({ modules: ALL_MODULES, board: { owner: 'owner' } });
-    const made = await request(a).post('/api/board/cards').send({ title: 'API parity', assignee: 'lena', project: 'secondbrain-app' }).expect(201);
+    const made = await request(a).post('/api/board/cards').send({ title: 'API parity', assignee: 'lena', area: 'secondbrain-app' }).expect(201);
     const id = made.body.card.id as string;
     const assigned = await request(a).post(`/api/board/cards/${id}/assign`).send({ assignee: 'lena', repo: 'reports', ship_now: true }).expect(200);
     expect(assigned.body.card).toMatchObject({ repo: 'reports', ship_now: true });

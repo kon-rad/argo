@@ -14,7 +14,7 @@ export interface LiveAgent {
   /** Stable across polls: `proc:<pid>` or `session:<host>:<external id>`. */
   id: string;
   machine: string;
-  /** claude-code, hermes, zen-agent. */
+  /** claude-code, codex, hermes, zen-agent. */
   harness: string;
   name: string;
   model: string | null;

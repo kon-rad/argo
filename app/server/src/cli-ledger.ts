@@ -3,7 +3,8 @@
 //   ledger run                 collect, then sync (what the scheduler runs)
 //   ledger collect | sync [--force] | status
 //   ledger install --server <url> --token <t> --host <slug> [--hermes <dir>[=<label>]]... [--claude-dir <dir>]
-//                  [--redact-env <file>]... [--provider anthropic] [--interval 120] [--retain-days 60|forever] [--proxy [--proxy-port 18080]] [--no-schedule]
+//                  [--redact-env <file>]... [--provider anthropic] [--interval 120] [--retain-days 60|forever]
+//                  [--proxy [--proxy-port 18080]] [--ollama-proxy [--ollama-listen <url>] [--ollama-upstream <url>]] [--no-schedule]
 //   ledger uninstall
 //   ledger proxy               the capture proxy in the foreground (what its service runs)
 //   ledger proxy-on | proxy-off   route Claude Code through the proxy, or straight to the API again
@@ -79,6 +80,9 @@ async function install(): Promise<void> {
   if (flag('proxy')) cfg.proxy = { ...cfg.proxy, enabled: true };
   if (value('proxy-port')) cfg.proxy = { ...cfg.proxy, port: Number(value('proxy-port')) };
   if (value('upstream')) cfg.proxy = { ...cfg.proxy, upstream: value('upstream')!.replace(/\/+$/, '') };
+  if (flag('ollama-proxy')) cfg.ollamaProxy = { ...cfg.ollamaProxy, enabled: true };
+  if (value('ollama-listen')) cfg.ollamaProxy = { ...cfg.ollamaProxy, listen: value('ollama-listen')!.replace(/\/+$/, '') };
+  if (value('ollama-upstream')) cfg.ollamaProxy = { ...cfg.ollamaProxy, upstream: value('ollama-upstream')!.replace(/\/+$/, '') };
   if (values('redact-env').length) cfg.redactEnvFiles = values('redact-env').map((f) => resolve(f));
   if (value('retain-days')) cfg.retainDays = value('retain-days') === 'forever' ? null : Math.max(1, Number(value('retain-days')));
   if (values('hermes').length) {
@@ -87,9 +91,15 @@ async function install(): Promise<void> {
       return { dir: resolve(d!), label };
     });
   }
-  if (cfg.proxy.enabled && cfg.server && !(cfg.redactEnvFiles ?? []).length) {
-    throw new Error('--proxy with a server needs at least one --redact-env file: proxy captures are sent as they were recorded');
+  if ((cfg.proxy.enabled || cfg.ollamaProxy.enabled) && cfg.server && !(cfg.redactEnvFiles ?? []).length) {
+    throw new Error('a capture proxy with a server needs at least one --redact-env file: captures are sent as they were recorded');
   }
+  const ollamaListen = new URL(cfg.ollamaProxy.listen);
+  if (ollamaListen.protocol !== 'http:' || !ollamaListen.hostname || !ollamaListen.port || ollamaListen.pathname !== '/') {
+    throw new Error('--ollama-listen must be an http base URL with an explicit port');
+  }
+  const ollamaUpstream = new URL(cfg.ollamaProxy.upstream);
+  if (!['http:', 'https:'].includes(ollamaUpstream.protocol)) throw new Error('--ollama-upstream must be an http or https URL');
   const labels = cfg.hermesHomes.map((h) => h.label);
   if (new Set(labels).size !== labels.length) throw new Error(`Hermes home labels must be unique, got ${labels.join(', ')}`);
   const configFile = saveConfig(dir, cfg);
@@ -101,12 +111,14 @@ async function install(): Promise<void> {
   mkdirSync(dirname(bundle), { recursive: true });
   if (resolve(self) !== resolve(bundle)) copyFileSync(self, bundle);
   console.log(`config: ${configFile}\nbundle: ${bundle} (${BUNDLE})`);
+  if (cfg.ollamaProxy.enabled) console.log(`Ollama capture base URL: ${cfg.ollamaProxy.listen}`);
   if (flag('no-schedule')) return;
 
   const spec: ScheduleSpec = { node: process.execPath, bundle, intervalSec: cfg.intervalSec, dataDir: dir, logFile: logFileFor(process.platform, dir) };
   schedule('run', spec);
-  if (!cfg.proxy.enabled) return;
+  if (!cfg.proxy.enabled && !cfg.ollamaProxy.enabled) return;
   schedule('proxy', spec);
+  if (!cfg.proxy.enabled) return;
   // Point Claude Code at the proxy only once it answers.
   const url = `http://127.0.0.1:${cfg.proxy.port}${HEALTH_PATH}`;
   for (let i = 0; i < 20; i++) {
@@ -186,12 +198,26 @@ async function proxy(): Promise<never> {
   let red: Redactor | null = null;
   try { red = buildRedactor({ env: process.env, files: cfg.redactEnvFiles ?? [] }); }
   catch (err) { log(`captures off: redact env file unreadable: ${(err as Error).message}`); }
-  const server = await startProxy({
-    port: cfg.proxy.port, upstream: cfg.proxy.upstream, log,
-    onCapture: red ? captureQueue((c) => recordExchange(ledger, c, 'anthropic', red!), log) : () => {},
-  });
-  log(`capture proxy on http://127.0.0.1:${cfg.proxy.port} -> ${cfg.proxy.upstream} (${BUNDLE})`);
-  const stop = () => server.close(() => { ledger.close(); process.exit(0); });
+  const servers: Awaited<ReturnType<typeof startProxy>>[] = [];
+  if (cfg.proxy.enabled || !cfg.ollamaProxy.enabled) {
+    servers.push(await startProxy({
+      provider: 'anthropic', port: cfg.proxy.port, upstream: cfg.proxy.upstream, log,
+      onCapture: red ? captureQueue((c) => recordExchange(ledger, c, 'anthropic', red!), log) : () => {},
+    }));
+    log(`capture proxy on http://127.0.0.1:${cfg.proxy.port} -> ${cfg.proxy.upstream} (${BUNDLE})`);
+  }
+  if (cfg.ollamaProxy.enabled) {
+    const listen = new URL(cfg.ollamaProxy.listen);
+    servers.push(await startProxy({
+      provider: 'ollama', bind: listen.hostname, port: Number(listen.port), upstream: cfg.ollamaProxy.upstream, log,
+      onCapture: red ? captureQueue((c) => recordExchange(ledger, c, 'ollama', red!), log) : () => {},
+    }));
+    log(`Ollama capture proxy on ${cfg.ollamaProxy.listen} -> ${cfg.ollamaProxy.upstream} (${BUNDLE})`);
+  }
+  const stop = () => {
+    let left = servers.length;
+    for (const server of servers) server.close(() => { if (--left === 0) { ledger.close(); process.exit(0); } });
+  };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
   return new Promise<never>(() => {});

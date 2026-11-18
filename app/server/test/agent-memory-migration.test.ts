@@ -12,7 +12,10 @@ import { truncateAll } from './helpers.js';
  * set and the table is gone. The episodes table is untouched.
  */
 
-const MIGRATION = readFileSync(join(import.meta.dirname, '..', '..', 'db', 'migrations', '1756000016900_drop-agent-memory.sql'), 'utf8');
+// The replay runs on today's schema. This migration was written before the PARA rename (1756000018400), which
+// renamed memory_facts.project_slug to area_slug: read the one column name the way the rename left it.
+const MIGRATION = readFileSync(join(import.meta.dirname, '..', '..', 'db', 'migrations', '1756000016900_drop-agent-memory.sql'), 'utf8')
+  .replaceAll('project_slug', 'area_slug');
 const [UP, DOWN] = MIGRATION.split('-- Down Migration');
 if (!UP || !DOWN) throw new Error('the migration file has no -- Down Migration marker');
 

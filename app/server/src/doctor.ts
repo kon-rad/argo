@@ -9,11 +9,14 @@
  * response). A stale AGENTS.md is worth saying but does not stop the app; a
  * database that will not answer does.
  */
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { config } from './config.js';
 import { pool } from './db.js';
-import { enabledManifests } from './features/registry.js';
+import { agentClis, enabledManifests } from './features/registry.js';
+import { loadSettingsFile } from './settings-file.js';
+import { settingsReport } from './settings.js';
 
 export interface Check {
   /** A short stable key, e.g. `database`. */
@@ -33,6 +36,8 @@ export interface DoctorOptions {
   modules?: ReadonlySet<string>;
   /** Also run the checks that need the deployed server (timers, last backup). */
   deep?: boolean;
+  /** Also say, per agent CLI wrapper, whether this machine has it (the CLI doctor; /api/health leaves it out). */
+  clis?: boolean | AgentCliEnv;
 }
 
 const pass = (name: string, detail: string, critical = false): Check => ({ name, ok: true, critical, detail });
@@ -92,7 +97,7 @@ async function checkMigrations(connected: boolean): Promise<Check> {
 
 /** A module token MODULES does not know is dropped silently by config.parseModules; say so. */
 function checkModules(modules: ReadonlySet<string>): Check {
-  const raw = (process.env.MODULES ?? '').split(',').map((m) => m.trim()).filter(Boolean);
+  const raw = (config.env.MODULES ?? '').split(',').map((m) => m.trim()).filter(Boolean);
   const known = new Set(enabledManifests(modules).map((m) => m.name));
   const enabled = [...modules];
   if (enabled.length === 0) return pass('modules', 'core features off (MODULES is empty)');
@@ -115,15 +120,19 @@ function checkVault(): Check {
 }
 
 /** secondbrain.json is optional; a file that fails to parse is ignored at runtime, so flag it here. */
-function checkSettings(): Check {
-  const path = process.env.SECONDBRAIN_SETTINGS ?? join(config.vaultRoot, 'secondbrain.json');
-  if (!existsSync(path)) return skip('settings', 'no secondbrain.json (fine: every section is optional)');
-  try {
-    JSON.parse(readFileSync(path, 'utf8'));
-    return pass('settings', `${path} parses`);
-  } catch (err) {
-    return fail('settings', `${path} is not valid JSON: ${err instanceof Error ? err.message.split('\n')[0]! : String(err)}`, 'fix the JSON; the app ignores the file until it parses', false);
+export function checkSettings(vaultRoot = config.vaultRoot): Check {
+  const loaded = loadSettingsFile(vaultRoot);
+  if (loaded.raw === null && loaded.error === null) return skip('settings', `no settings file at ${loaded.path} (fine: every section is optional)`);
+  if (loaded.error) {
+    const problem = loaded.error.kind === 'json' ? 'is not valid JSON' : 'could not be read';
+    return fail('settings', `${loaded.path} ${problem}`, 'fix the file; the app uses defaults until it is valid');
   }
+  const report = settingsReport(loaded.raw);
+  if (report.errors.length > 0) {
+    const fields = report.errors.map((error) => `${error.path.map(String).join('.')}: ${error.message}`).join('; ');
+    return fail('settings', `${loaded.path} has invalid settings: ${fields}`, 'fix the named fields; only their sections use defaults');
+  }
+  return pass('settings', `${loaded.path} parses and matches the schema`);
 }
 
 function checkSync(): Check {
@@ -158,6 +167,67 @@ async function checkFeatures(modules: ReadonlySet<string>, connected: boolean): 
   return out;
 }
 
+/** The marker line `secondbrain-vault clis install` (tools/sbclis.py) writes into each wrapper it owns. */
+const CLI_MARK = '# secondbrain-agent-cli:';
+
+/** The first three lines of a regular file, or '' (a directory, an unreadable file). */
+function head(path: string): string {
+  try {
+    if (!statSync(path).isFile()) return '';
+    const fd = openSync(path, 'r');
+    try {
+      const buf = Buffer.alloc(512);
+      return buf.subarray(0, readSync(fd, buf, 0, 512, 0)).toString('utf8');
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return '';
+  }
+}
+
+/** The bundle a client wrapper execs: its `bundle=` line, unquoted the way shlex.quote quotes. */
+function wrapperBundle(text: string): string | undefined {
+  const m = /^bundle=(.*)$/m.exec(text);
+  if (!m) return undefined;
+  const v = m[1]!;
+  return v.startsWith("'") ? v.slice(1, -1).replaceAll(`'"'"'`, "'") : v;
+}
+
+export interface AgentCliEnv {
+  /** The command search path; defaults to this process's PATH. */
+  path?: string;
+  /** Where `secondbrain-vault clis install` writes; searched first. */
+  binDir?: string;
+  /** Whether BOARD_URL and BOARD_TOKEN reach cli-board here. */
+  boardDoor?: boolean;
+}
+
+/**
+ * Per wrapper the manifests name, what this machine has: installed (the server's deploy.sh wrapper, or the HTTPS
+ * client), server-only (the one-line notice) or missing. Advisory: a laptop without them is still a working install.
+ */
+export function checkAgentClis(env: AgentCliEnv = {}): Check[] {
+  const binDir = env.binDir ?? (config.env.SECONDBRAIN_BIN_DIR || join(homedir(), '.local', 'bin'));
+  const dirs = [binDir, ...(env.path ?? process.env.PATH ?? '').split(delimiter).filter(Boolean)];
+  const door = env.boardDoor ?? Boolean(config.boardUrl && config.boardToken);
+  return agentClis().map(({ name }) => {
+    const key = `cli:${name}`;
+    const found = dirs.map((d) => join(d, name)).find((p) => existsSync(p));
+    if (!found) return fail(key, 'missing on this machine', 'secondbrain-vault clis install', false);
+    const text = head(found);
+    const mark = text.split('\n').slice(0, 3).find((l) => l.startsWith(CLI_MARK))?.slice(CLI_MARK.length).trim().split(/\s+/)[0];
+    if (mark === 'server-only') return pass(key, `server-only on this machine (${found} says how to reach it)`);
+    if (mark === 'https') {
+      const bundle = wrapperBundle(text);
+      if (!bundle || !existsSync(bundle)) return fail(key, `missing: ${found} has no bundle`, 'npm ci in app/, then secondbrain-vault clis install', false);
+      if (!door) return fail(key, `installed (HTTPS) at ${found}, but BOARD_URL and BOARD_TOKEN are not set`, 'add both to the vault .env (docs/kanban-board.md, door 2)', false);
+      return pass(key, `installed (HTTPS door) at ${found}`);
+    }
+    return pass(key, `installed at ${found}`);
+  });
+}
+
 /**
  * Server-only checks. On a laptop they are skipped; against a deployed box the
  * route and the CLI both ask for them with deep:true. They shell out to
@@ -175,6 +245,7 @@ export async function runChecks(opts: DoctorOptions = {}): Promise<Check[]> {
   const connected = checks[1]!.ok;
   checks.push(await checkPgvector(connected), await checkMigrations(connected), checkModules(modules), checkVault(), checkSettings(), checkSync());
   checks.push(...(await checkFeatures(modules, connected)), ...(await checkServer(opts.deep === true, connected)));
+  if (opts.clis) checks.push(...checkAgentClis(opts.clis === true ? {} : opts.clis));
   return checks;
 }
 

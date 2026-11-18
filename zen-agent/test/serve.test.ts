@@ -122,7 +122,7 @@ test('personas and skills come from the vault', async () => {
   assert.deepEqual((await call('GET', '/zen/skills')).body.skills, [{ name: 'summarize', description: 'Sum things up.' }]);
 });
 
-test('creating a chat checks its config up front', async () => {
+test('creating a chat checks its config up front', async (t) => {
   assert.match((await call('POST', '/zen/chats', { model: 'nope/none' })).body.error, /unknown model/);
   assert.match((await call('POST', '/zen/chats', { persona: 'ghost' })).body.error, /no persona "ghost"/);
   assert.match((await call('POST', '/zen/chats', { tools: ['fs', 'lasers'] })).body.error, /unknown tool set "lasers"/);
@@ -139,6 +139,11 @@ test('creating a chat checks its config up front', async () => {
   assert.deepEqual(types(page.events), ['meta']);
   assert.equal(page.events[0].persona, 'atlas');
   assert.deepEqual(page.events[0].tools, ['read_skill']);
+  assert.equal(page.events[0].entrypoint, 'serve');
+  assert.equal(page.events[0].model, 'faux/faux-1');
+  assert.equal(page.events[0].context_window, w.models.getModel('faux', 'faux-1')!.contextWindow);
+  t.diagnostic(JSON.stringify({ producer: 'ChatHost', entrypoint: page.events[0].entrypoint,
+    model: page.events[0].model, context_window: page.events[0].context_window }));
   assert.equal(page.offset, 1);
   assert.equal(page.epoch, host.epoch);
 });

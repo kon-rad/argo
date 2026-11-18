@@ -1,11 +1,30 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { NavLink, matchPath, useLocation } from 'react-router-dom';
 
-/** A page link, or an action (the chat panel) that opens in place instead of navigating. */
-export type NavItem = { to: string; label: string; end?: boolean; onSelect?: never } | { to?: never; label: string; onSelect: () => void; end?: never };
+/** A page link, or an action (the chat panel) that opens in place instead of navigating. `also` lists other paths the same page answers. */
+export type NavItem =
+  | { to: string; label: string; end?: boolean; also?: string[]; onSelect?: never }
+  | { to?: never; label: string; onSelect: () => void; end?: never; also?: never };
 
 /** The key a list renders an item under: its path, else its label. */
 export const itemKey = (i: NavItem): string => i.to ?? i.label;
+
+/** The page link the path is on: the longest pattern that matches, so a Docs folder wins over Browse. */
+export function currentItem(sections: [string, NavItem[]][], pathname: string): NavItem | undefined {
+  let best: NavItem | undefined;
+  let length = -1;
+  for (const [, items] of sections) {
+    for (const i of items) {
+      if (i.to === undefined) continue;
+      for (const path of [i.to, ...(i.also ?? [])]) {
+        if (path.length <= length || matchPath({ path, end: path === i.to ? (i.end ?? false) : true }, pathname) === null) continue;
+        best = i;
+        length = path.length;
+      }
+    }
+  }
+  return best;
+}
 
 /** One header menu: a button that opens a list of page links. Closes on Escape, outside click and navigation. */
 export default function NavMenu({ label, items }: { label: string; items: NavItem[] }) {

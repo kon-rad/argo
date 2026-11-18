@@ -64,6 +64,7 @@ export function runtimeOf(args: string): string | null {
   const exe = ['bash', 'sh', 'node', 'python3', 'python'].includes(first) && !t[1]?.startsWith('-') ? second : first;
   if (exe === 'claude') return 'claude-code';
   if (exe === 'zen-agent' || /zen-agent\/dist\/src\/cli\.js/.test(args)) return 'zen-agent';
+  if (exe === 'codex') return 'codex';
   if (exe === 'hermes') return 'hermes';
   return null;
 }

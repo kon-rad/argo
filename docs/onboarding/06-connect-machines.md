@@ -72,6 +72,32 @@ You have two choices for the laptop:
 
 For the second choice, reach Postgres over a private network (Tailscale or WireGuard), never over the public internet, and give the laptop its own database role with only the rights it needs. Postgres on the server listens on a Unix socket by default; opening it to the private interface is a change you make on purpose.
 
+### The agent CLIs on the laptop (and every other machine)
+
+Agents are told by their personas to run `cli-board`, `cli-org` and `cli-projects`. On the server `deploy.sh` puts them on PATH. On any other machine, one command does it:
+
+```bash
+git clone --recurse-submodules <your private vault repo> my-vault && cd my-vault   # a second machine
+(cd .secondbrain/app && npm ci)                    # once: the build tool for the cli-board bundle
+.secondbrain/bin/secondbrain-vault clis install    # -> ~/.local/bin/cli-board, cli-org, cli-projects, ...
+```
+
+Then put the board's two keys in the vault `.env` (mint the token on the server, [kanban-board.md](../kanban-board.md#4-tokens)):
+
+```
+BOARD_URL=https://brain.example.com
+BOARD_TOKEN=<the token, shown once>
+```
+
+| Wrapper | On this machine |
+|---|---|
+| `cli-board` | Works: it reaches the board over HTTPS with `BOARD_URL` and `BOARD_TOKEN`. No database, no server env file, no app build at run time (one bundled file under `~/.local/share/secondbrain/agent-clis/`) |
+| `cli-org`, `cli-projects`, `cli-areas`, `cli-memory`, and any addon wrapper | Prints one line saying it is server-only and how to reach it (`ssh <server> cli-org ...`), and exits 69 |
+
+`secondbrain-vault init` runs the same step on a new vault (`--no-clis` skips it). It is safe to re-run: nothing changes when nothing would, and a file it did not write is never overwritten or removed. `secondbrain-vault clis status` (or `secondbrain doctor`) says, per wrapper, installed, server-only or missing; `secondbrain-vault clis uninstall` removes what it wrote and leaves the vault `.env` alone. On the server itself (it has `/etc/secondbrain/env`) the command does nothing: `deploy.sh` owns the wrappers there.
+
+**Check:** `cli-board list --json` prints cards, and `cli-org` prints one "server-only" line.
+
 ## Shape C: several machines running agents
 
 Each machine that runs Claude Code or Hermes keeps its own record of every turn in a local SQLite file and syncs it to the server when it can reach it. Offline, rows wait. This is the **agent ledger**, and it needs the `usage` module on the server.
@@ -89,6 +115,19 @@ node --no-warnings ledger.mjs status
 ```
 
 `install` writes `ledger.json` (mode 0600, it holds the token) next to `ledger.db` in the OS data folder and schedules `ledger run` every two minutes with launchd, a systemd user timer or Task Scheduler. `--redact-env` names env files whose secret-named values are removed before anything leaves the machine; the server only knows its own keys. Details, including the optional capture proxy and the Hermes per-request plugin: "Agent ledger" in the [app README](https://github.com/kon-rad/argo/blob/main/app/README.md).
+
+### Record local-model calls
+
+The ledger can put a second listener in front of an Ollama server without moving or reconfiguring that server:
+
+```bash
+secondbrain ledger install --ollama-proxy --redact-env /path/to/vault/.env
+# Prints: Ollama capture base URL: http://127.0.0.1:11435
+```
+
+Point each caller you want recorded at the printed base URL, for example by setting that caller's Ollama host or OpenAI-compatible base URL to `http://127.0.0.1:11435`. Native Ollama calls and OpenAI-compatible chat, completion and embedding calls are forwarded to the standard local Ollama address, `http://127.0.0.1:11434`, and recorded as provider `ollama`. A caller is recorded only when it points at the proxy. Calls made directly to port 11434 bypass it and are not recorded.
+
+Use `--ollama-listen <url>` to choose another listener address and `--ollama-upstream <url>` if Ollama itself uses a different local address. These options affect only the ledger proxy; they do not change the Ollama service.
 
 Upgrade the server before the machines. A newer ledger may send rows an older server does not know; they are kept and retried.
 

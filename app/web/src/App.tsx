@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAppTimezone } from './lib/useTimezone.js';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import Browse from './routes/Browse.js';
 import Search from './routes/Search.js';
@@ -9,12 +10,13 @@ import Sources from './routes/Sources.js';
 import Ring from './routes/Ring.js';
 import Agents, { OldCardLink } from './routes/agents/Agents.js';
 import Cron from './routes/Cron.js';
-import NavMenu, { type NavItem } from './components/NavMenu.js';
+import NavMenu, { currentItem, type NavItem } from './components/NavMenu.js';
 import { FEATURE_ROUTES } from './features.js';
 import MobileMenu, { MenuButton } from './components/MobileMenu.js';
 import Tv from './routes/Tv.js';
 import Media from './routes/Media.js';
 import Uploads from './routes/Uploads.js';
+import Warehouse from './routes/Warehouse.js';
 import Fund from './routes/Fund.js';
 // three.js is large: the map loads only when it's opened.
 const MapPage = lazy(() => import('./routes/Map.js'));
@@ -23,15 +25,13 @@ import { api, AUTH_EXPIRED_EVENT, type AppMeta, type FeatureNav } from './lib/ap
 import SearchBox from './components/SearchBox.js';
 import IndexStatus from './components/IndexStatus.js';
 import SyncChip from './components/SyncChip.js';
-import UsageChip from './components/UsageChip.js';
 import FriendlyButton from './components/FriendlyButton.js';
-import AgentToggle from './components/AgentToggle.js';
 import VoiceToggle from './components/VoiceToggle.js';
 import ShortcutsHelp from './components/ShortcutsHelp.js';
 import ChatButton from './components/chat/ChatButton.js';
 // Markdown rendering and the stream client are only needed once the panel opens.
 const ChatPanel = lazy(() => import('./components/chat/ChatPanel.js'));
-import { available, HELP_CODE, isChord, isKey, target } from './lib/shortcuts.js';
+import { available, availableGo, goStep, HELP_CODE, isChord, isKey, target } from './lib/shortcuts.js';
 
 const navClass = ({ isActive }: { isActive: boolean }): string =>
   `px-2 py-1 rounded ${isActive ? 'text-[var(--ink)] bg-[var(--paper-sunk)]' : 'text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
@@ -73,9 +73,14 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
   const queryClient = useQueryClient();
   // Which optional pages and note links this install has; nothing until it answers.
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
+  // The vault's time zone for every time helper (lib/time.ts); the browser's until /api/meta answers.
+  useAppTimezone();
   const modules = new Set(meta.data?.modules ?? []);
   const moduleKey = (meta.data?.modules ?? []).join(',');
   const shortcuts = useMemo(() => available(new Set(moduleKey.split(','))), [moduleKey]);
+  const goShortcuts = useMemo(() => availableGo(new Set(moduleKey.split(','))), [moduleKey]);
+  // When `g` was last pressed, for the `g a` style sequences.
+  const goArmedAt = useRef<number | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const closeChat = useCallback(() => setChatOpen(false), []);
@@ -86,8 +91,10 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   const mobileMenuId = useId();
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const openChat = useCallback(() => setChatOpen(true), []);
   const sections = menus(modules, meta.data, openChat);
+  const here = currentItem(sections, location.pathname);
 
   async function logout(): Promise<void> {
     await api.logout().catch(() => {});
@@ -104,7 +111,19 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         searchRef.current?.select();
         return;
       }
-      if (event.repeat || !isChord(event)) return;
+      if (event.repeat) return;
+      if (!isChord(event)) {
+        // `g` then a letter, no modifier held: g a opens the areas.
+        if (event.defaultPrevented) return;
+        const step = goStep(event, goArmedAt.current, Date.now(), goShortcuts);
+        goArmedAt.current = step.armedAt;
+        if (step.to) {
+          event.preventDefault();
+          setHelpOpen(false);
+          navigate(step.to);
+        }
+        return;
+      }
       if (isKey(event, HELP_CODE)) {
         event.preventDefault();
         setHelpOpen((o) => !o);
@@ -119,7 +138,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [navigate, shortcuts]);
+  }, [navigate, shortcuts, goShortcuts]);
 
   return (
     <div className="flex h-full flex-col">
@@ -128,8 +147,13 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           Second Brain
         </Link>
 
-        {/* Phone: one menu button; the sections, search and status live in the slide-over below. */}
-        <MenuButton open={menuOpen} onToggle={() => setMenuOpen((o) => !o)} controls={mobileMenuId} />
+        {/* Phone: where you are, and one menu button; the sections, search and status live in the slide-over below. */}
+        {here && (
+          <span className="min-w-0 flex-1 truncate text-base text-[var(--ink-dim)] md:hidden">
+            {here.label}
+          </span>
+        )}
+        <MenuButton ref={menuButtonRef} open={menuOpen} onToggle={() => setMenuOpen((o) => !o)} controls={mobileMenuId} />
 
         {/* From md up this wrapper disappears (display: contents), so the desktop header is unchanged. */}
         <div className="hidden md:contents">
@@ -152,18 +176,6 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           )}
         </nav>
 
-        {modules.has('usage') && (
-          <div className="shrink-0 border-l border-[var(--rule)] pl-3">
-            <UsageChip />
-          </div>
-        )}
-
-        {modules.has('agents') && (
-          <div className="shrink-0 border-l border-[var(--rule)] pl-3">
-            <AgentToggle />
-          </div>
-        )}
-
         {/* This machine's voice: the Claude Code spoken-alert switch. Never on a server. */}
         {!loginRequired && modules.has('voice') && (
           <div className="shrink-0 border-l border-[var(--rule)] pl-3">
@@ -181,7 +193,7 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {/* chat module: the assistant over the vault, in a panel over any page. */}
           {modules.has('chat') && <ChatButton open={chatOpen} onClick={() => setChatOpen((o) => !o)} />}
-          <ShortcutsHelp shortcuts={shortcuts} open={helpOpen} onOpenChange={setHelpOpen} build={meta.data} />
+          <ShortcutsHelp shortcuts={shortcuts} go={goShortcuts} open={helpOpen} onOpenChange={setHelpOpen} build={meta.data} />
         </div>
         </div>
       </header>
@@ -194,12 +206,11 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         id={mobileMenuId}
         open={menuOpen}
         onClose={closeMenu}
+        opener={menuButtonRef}
         sections={sections}
         search={<SearchBox inputRef={mobileSearchRef} onSubmit={(q) => navigate(`/search?q=${encodeURIComponent(q)}`)} />}
         footer={
           <>
-            {modules.has('usage') && <UsageChip />}
-            {modules.has('agents') && <AgentToggle />}
             <div className="text-xs"><IndexStatus /></div>
             <SyncChip />
             {loginRequired && (
@@ -211,7 +222,8 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
         }
       />
 
-      <main className="min-h-0 flex-1">
+      {/* Phone: a page with no scroll box of its own scrolls here, under the header, never the whole document. */}
+      <main className="min-h-0 flex-1 max-md:overflow-y-auto">
         <Routes>
           <Route path="/" element={<Browse />} />
           <Route path="/file/*" element={<Browse />} />
@@ -232,6 +244,8 @@ function Shell({ loginRequired }: { loginRequired: boolean }) {
           {modules.has('tv') && <Route path="/tv" element={<Tv />} />}
           {modules.has('media') && <Route path="/media" element={<Media />} />}
           {modules.has('uploads') && <Route path="/uploads" element={<Uploads />} />}
+          {modules.has('warehouse') && <Route path="/warehouse" element={<Warehouse />} />}
+          {modules.has('warehouse') && <Route path="/warehouse/:tab" element={<Warehouse />} />}
           {modules.has('fund') && <Route path="/fund" element={<Fund />} />}
           {/* The page was /argo-tv before the engine port; old kiosk URLs land on /tv. */}
           {modules.has('tv') && <Route path="/argo-tv" element={<Navigate to={`/tv${location.search}`} replace />} />}
@@ -259,7 +273,7 @@ function menus(modules: Set<string>, meta: AppMeta | undefined, openChat: () => 
   const declared = (section: FeatureNav['section']): NavItem[] =>
     (meta?.nav ?? []).filter((n) => n.section === section).map((n) => ({ to: n.path, label: n.label }));
   const vault: NavItem[] = [
-    { to: '/', label: 'Browse', end: true },
+    { to: '/', label: 'Browse', end: true, also: ['/file/*'] },
     ...declared('Vault'),
     // The chat panel opens over the current page rather than navigating; the header button does the same.
     // chat's menu entry is an action (it opens the panel), not a page link, so it stays here.

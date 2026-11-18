@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { runConfig, type ConfigIo } from '../src/deploy/config-commands.js';
-import { applyDeploy, envKeys, planDeploy, unitStems } from '../src/deploy/generate.js';
+import { ALL_GENERATED_UNITS, BASE_UNITS, applyDeploy, envKeys, planDeploy, renderGeneratedUnit, unitStems } from '../src/deploy/generate.js';
 import { parseSettings, type ServerSettings } from '../src/settings.js';
 
 /**
@@ -64,6 +64,48 @@ describe('env and unit generation (pure)', () => {
     expect(unitStems(new Set(['board']))).toEqual(['secondbrain', 'secondbrain-board-reclaim']);
   });
 
+  it('renders every former deploy unit pair from manifests or the base table', () => {
+    expect(ALL_GENERATED_UNITS.map((u) => u.unit)).toEqual([
+      'secondbrain-projects-render',
+      'secondbrain-areas-review',
+      'secondbrain-memory-capture',
+      'secondbrain-board-reclaim',
+      'secondbrain-usage-sync',
+      'secondbrain-credits-sync',
+      'secondbrain-summarize',
+      'secondbrain-agents-sync',
+      'secondbrain-map-build',
+      'secondbrain-metrics',
+      'secondbrain-metrics-checkpoints',
+      'secondbrain-livestream',
+      'secondbrain-social',
+      'secondbrain-garden',
+      'secondbrain-warehouse-run',
+      'secondbrain-routing-report',
+      'secondbrain-dispatch',
+      'secondbrain-db-backup',
+      'secondbrain-vault-sync',
+      'secondbrain-embed',
+    ]);
+    expect(BASE_UNITS.map((u) => u.unit)).toEqual(['secondbrain-db-backup', 'secondbrain-vault-sync', 'secondbrain-embed']);
+    for (const unit of ALL_GENERATED_UNITS) {
+      const service = renderGeneratedUnit(unit, 'service');
+      const timer = renderGeneratedUnit(unit, 'timer');
+      expect(service, unit.unit).toContain('ExecStart=');
+      expect(service, unit.unit).toContain('User=@APP_USER@');
+      expect(service, unit.unit).toContain('EnvironmentFile=/etc/secondbrain/env');
+      expect(timer, unit.unit).toContain('OnCalendar=');
+    }
+  });
+
+  it.each(['secondbrain-board-reclaim', 'secondbrain-map-build', 'secondbrain-garden'])('%s stays byte-compatible with its former files', (stem) => {
+    const unit = ALL_GENERATED_UNITS.find((candidate) => candidate.unit === stem)!;
+    for (const ext of ['service', 'timer'] as const) {
+      const golden = readFileSync(resolve(here, 'fixtures/deploy-units', `${stem}.${ext}`), 'utf8');
+      expect(renderGeneratedUnit(unit, ext)).toBe(golden);
+    }
+  });
+
   it('lists the server keys and the enabled feature env keys, each once', () => {
     const keys = envKeys(new Set(['board']));
     for (const k of ['DEPLOYMENT', 'PUBLIC_ORIGIN', 'VAULT_ROOT', 'MODULES', 'AUTH_PASSWORD_HASH', 'BOARD_URL']) {
@@ -83,6 +125,20 @@ describe('env and unit generation (pure)', () => {
     expect(fs.writes).toEqual([]);
   });
 
+  it('selects base jobs explicitly and can leave an existing env file alone', () => {
+    const fs = memFs();
+    const plan = planDeploy({
+      ...io(fs),
+      installed: [],
+      baseUnits: new Set(['secondbrain-embed']),
+      unitsOnly: true,
+    });
+    expect(plan.files.some((file) => file.path === envPath)).toBe(false);
+    expect(plan.files.map((file) => file.path)).toContain('/etc/systemd/system/secondbrain-embed.service');
+    expect(plan.files.map((file) => file.path)).toContain('/etc/systemd/system/secondbrain-embed.timer');
+    expect(plan.files.map((file) => file.path)).not.toContain('/etc/systemd/system/secondbrain-db-backup.timer');
+  });
+
   it('renders the server block into the units, leaving no @placeholder@', () => {
     const fs = memFs();
     const plan = planDeploy({ ...io(fs), installed: [] });
@@ -90,6 +146,25 @@ describe('env and unit generation (pure)', () => {
     expect(svc?.after).toContain('User=sb');
     expect(svc?.after).toContain('WorkingDirectory=/opt/sb');
     expect(svc?.after).not.toContain('@APP_USER@');
+  });
+
+  it('the weekly review timer is one of the projects feature units, Sunday 20:00 in the vault time zone', () => {
+    expect(unitStems(new Set(['projects']))).toEqual(['secondbrain', 'secondbrain-projects-render', 'secondbrain-areas-review']);
+    const unit = ALL_GENERATED_UNITS.find((candidate) => candidate.unit === 'secondbrain-areas-review')!;
+    for (const ext of ['service', 'timer'] as const) {
+      expect(renderGeneratedUnit(unit, ext)).toBe(readFileSync(resolve(here, 'fixtures/deploy-units', `secondbrain-areas-review.${ext}`), 'utf8'));
+    }
+    const planned = (timezone?: string | null): string => {
+      const plan = planDeploy({ ...io(memFs()), modules: new Set(['projects']), installed: [], timezone });
+      expect(plan.files.find((f) => f.path === '/etc/systemd/system/secondbrain-areas-review.service')?.after).toContain(
+        'ExecStart=/usr/bin/node --no-warnings server/dist/cli-areas.js review --week ending',
+      );
+      return plan.files.find((f) => f.path === '/etc/systemd/system/secondbrain-areas-review.timer')!.after;
+    };
+    expect(planned('Asia/Tokyo')).toContain('OnCalendar=Sun *-*-* 20:00:00 Asia/Tokyo\n');
+    // No zone configured: UTC, never the zone of the machine and never a placeholder.
+    expect(planned()).toContain('OnCalendar=Sun *-*-* 20:00:00 UTC\n');
+    expect(planned(null)).not.toContain('@');
   });
 
   it('apply writes the plan, then a second plan is all unchanged', () => {

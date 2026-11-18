@@ -1,9 +1,0 @@
-{
-  "compilerOptions": {
-    "target": "ES2023", "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "module": "ESNext", "moduleResolution": "Bundler", "strict": true,
-    "noEmit": true, "skipLibCheck": true, "baseUrl": ".",
-    "paths": { "@secondbrain/desk-contracts/desk": ["../../app/shared/desk/index.ts"] }
-  },
-  "include": ["src/**/*.ts", "src/**/*.d.ts"]
-}

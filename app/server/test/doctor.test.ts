@@ -1,7 +1,10 @@
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
-import { healthy, runChecks, type Check } from '../src/doctor.js';
+import { checkSettings, healthy, runChecks, type Check } from '../src/doctor.js';
 
 /**
  * `secondbrain doctor` and /api/health (proposal phase 3). The vitest globalSetup
@@ -9,6 +12,12 @@ import { healthy, runChecks, type Check } from '../src/doctor.js';
  * the CLI prints against a scratch database.
  */
 describe('secondbrain doctor', () => {
+  const saved = process.env.SECONDBRAIN_SETTINGS;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.SECONDBRAIN_SETTINGS;
+    else process.env.SECONDBRAIN_SETTINGS = saved;
+  });
+
   it('is green against a migrated database, feature checks included', async () => {
     const checks = await runChecks({ modules: new Set(['board', 'projects']) });
     const by = (name: string): Check | undefined => checks.find((c) => c.name === name);
@@ -42,5 +51,22 @@ describe('secondbrain doctor', () => {
     expect(names).toContain('database');
     expect(names).toContain('migrations');
     expect(names).toContain('feature:board');
+  });
+
+  it('fails on a schema-invalid settings file and names the section and field', () => {
+    const vault = mkdtempSync(join(tmpdir(), 'sb-doctor-'));
+    writeFileSync(join(vault, 'secondbrain.json'), JSON.stringify({ socialMetrics: { staleHours: -1 } }));
+    const check = checkSettings(vault);
+    expect(check.ok).toBe(false);
+    expect(healthy([check])).toBe(false);
+    expect(check.detail).toContain('socialMetrics.staleHours');
+    expect(check.detail).not.toContain('-1');
+  });
+
+  it('passes when the optional settings file is missing', () => {
+    const vault = mkdtempSync(join(tmpdir(), 'sb-doctor-'));
+    const check = checkSettings(vault);
+    expect(check.ok).toBe(true);
+    expect(check.skipped).toBe(true);
   });
 });
