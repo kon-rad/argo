@@ -1,3 +1,4 @@
+import { ingestLaunch, launchSchema } from './provenance.js';
 import { withTransaction } from '../db.js';
 import type { Host } from '../archive/types.js';
 import * as store from './store.js';
@@ -22,7 +23,11 @@ export async function importLines(input: AsyncIterable<string> | Iterable<string
     }
     // Only malformed input is a skippable bad line. A database failure below propagates so the
     // CLI exits 1 and the client keeps its cursor and resends.
-    if (w?.t === 'transcript' && typeof w.path === 'string' && typeof w.text === 'string') {
+    if (w?.t === 'launch') {
+      const parsed = launchSchema.safeParse(w.launch);
+      if (!parsed.success) { c.errors.push(`line ${c.lines}: invalid launch envelope`); continue; }
+      await withTransaction(tx => ingestLaunch(tx, host, parsed.data));
+    } else if (w?.t === 'transcript' && typeof w.path === 'string' && typeof w.text === 'string') {
       await withTransaction(async (tx) => {
         await tx.query('INSERT INTO usage_hosts (slug, display, kind) VALUES ($1,$1,\'laptop\') ON CONFLICT DO NOTHING', [host]);
         const r = await ingestTranscript(tx, host, w.path, Buffer.from(w.text, 'utf8'), Number(w.startLine) || 0);

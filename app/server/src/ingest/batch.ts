@@ -1,3 +1,4 @@
+import { ingestLaunch, launchSchema, type LaunchEnvelope } from '../usage/provenance.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { clean } from '../archive/clean.js';
@@ -56,7 +57,7 @@ export const batchSchema = z.object({
   v: z.literal(1), ledgerId: z.string().min(1).max(100), bundle: z.string().max(100),
   fromSeq: z.number().int(), toSeq: z.number().int(),
   rows: z.array(z.object({
-    seq: z.number().int(), kind: z.enum(['session', 'message', 'call', 'counter', 'exchange', 'blob']), key: z.string().max(4000),
+    seq: z.number().int(), kind: z.enum(['launch', 'session', 'message', 'call', 'counter', 'exchange', 'blob']), key: z.string().max(4000),
     data: z.record(z.string(), z.unknown()),
   })).min(1).max(20_000),
 });
@@ -75,6 +76,7 @@ function parseRow<T extends z.ZodType>(schema: T, row: { seq: number; data: unkn
 
 export async function ingestBatch(device: { id: number; host: string }, batch: WireBatch): Promise<IngestResponse> {
   const { host } = device;
+  const launches: LaunchEnvelope[] = [];
   const sessions: Array<{ seq: number; s: SessionInput }> = [];
   const messages: Array<{ seq: number; source: string; m: ParsedMessage & { sessionExternalId: string } }> = [];
   const calls: UsageCall[] = [];
@@ -84,7 +86,9 @@ export async function ingestBatch(device: { id: number; host: string }, batch: W
 
   // Validate everything before touching the database: a bad row fails the batch cleanly.
   for (const row of batch.rows) {
-    if (row.kind === 'session') {
+    if (row.kind === 'launch') {
+      launches.push(parseRow(launchSchema, row));
+    } else if (row.kind === 'session') {
       const d = parseRow(sessionData, row);
       sessions.push({ seq: row.seq, s: {
         source: d.source as SessionInput['source'], host, externalId: d.externalId, parentExternalId: d.parentExternalId,
@@ -118,6 +122,7 @@ export async function ingestBatch(device: { id: number; host: string }, batch: W
 
   const counts = { sessions: 0, messages: 0, calls: 0, counters: 0, exchanges: 0, blobs: 0 };
   await withTransaction(async (tx) => {
+    for (const l of launches) await ingestLaunch(tx, host, l);
     const ids = new Map<string, number>();
     for (const { s } of sessions) {
       const r = await archive.upsertSession(tx, s);

@@ -23,18 +23,28 @@ Settings: ORG_DISPATCH, ORG_TZ, ORG_DISPATCH_QUIET, ORG_DISPATCH_DAILY_TOKENS, O
 (env), and secondbrain.json "dispatch" (tiers, budgets, tools). Bots on other runtimes are left to their own dispatcher.`;
 
 /** Runs zen-agent as a child process; stdout is the --json result, stderr the printer's lines. */
-export const execRunner: Runner = (cmd, args, env, cwd, timeoutMs) =>
-  new Promise((done) => {
+export const execRunner: Runner = (cmd, args, env, cwd, timeoutMs, onLine) =>
+  new Promise((done, fail) => {
     let cancelled = false;
+    let pending = Promise.resolve();
+    let tail = '';
     const child = execFile(cmd, args, { env, cwd, timeout: timeoutMs, maxBuffer: 16_000_000, killSignal: 'SIGTERM' }, (err, stdout, stderr) => {
       process.removeListener('SIGINT', cancel);
       process.removeListener('SIGTERM', cancel);
       const code = err && typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code
         : err ? 1 : 0;
-      done({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') + (err && typeof (err as { code?: unknown }).code !== 'number' ? `\n${err.message}` : ''),
-        timedOut: Boolean(!cancelled && err && (err as { killed?: boolean }).killed), cancelled });
+      void pending.then(() => done({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') + (err && typeof (err as { code?: unknown }).code !== 'number' ? `\n${err.message}` : ''),
+        timedOut: Boolean(!cancelled && err && (err as { killed?: boolean }).killed), cancelled })).catch(fail);
     });
     const cancel = () => { cancelled = true; child.kill('SIGTERM'); };
+    if (onLine) child.stdout?.on('data', (buf: Buffer) => {
+      tail += buf.toString('utf8');
+      const lines = tail.split('\n');
+      tail = lines.pop() ?? '';
+      for (const line of lines) pending = pending.then(() => onLine(line));
+      // execFile already bounds the full output. Stop the child if durable identity cannot be saved.
+      void pending.catch(() => child.kill('SIGTERM'));
+    });
     process.once('SIGINT', cancel);
     process.once('SIGTERM', cancel);
   });
@@ -61,7 +71,7 @@ export async function main(argv: string[]): Promise<number> {
     config: {
       orgTz: config.orgTz, orgDispatchQuiet: config.orgDispatchQuiet, orgDispatchDailyTokens: config.orgDispatchDailyTokens,
       orgDispatchParallel: config.orgDispatchParallel, orgZenCommand: config.orgZenCommand, orgCodexCommand: config.orgCodexCommand,
-      orgCodexHost: config.orgCodexHost, vaultRoot: config.vaultRoot,
+      orgCodexHost: config.orgCodexHost, usageSyncHost: config.env.USAGE_SYNC_HOST ?? (config.env.DEPLOYMENT === 'server' ? 'droplet' : 'mac'), vaultRoot: config.vaultRoot,
       orgTaskWakeRetries: config.orgTaskWakeRetries,
       machines: config.ollamaMachines,
     },

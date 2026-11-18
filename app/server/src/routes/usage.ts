@@ -119,9 +119,9 @@ function eventsSql(filters: Filters, params: unknown[]): string {
            ELSE GREATEST(h.cost_usd - lag(h.cost_usd) OVER w, 0) END AS cost_usd
     FROM hermes_usage_snapshots h
     -- One row per Hermes session that has a bot (few; archive_sessions_bot_idx), so the join keeps one row per snapshot.
-    LEFT JOIN (SELECT s.host, s.external_id, min(s.bot) AS bot, min(o.team_slug) AS team_slug
-                 FROM archive_sessions s JOIN org_agents o ON o.name = s.bot
-                WHERE s.bot IS NOT NULL AND s.harness = 'hermes' GROUP BY 1, 2) hb
+    LEFT JOIN (SELECT s.host, s.external_id, min(usage_session_persona(s.id)) AS bot, min(o.team_slug) AS team_slug
+                 FROM archive_sessions s JOIN org_agents o ON o.name = usage_session_persona(s.id)
+                WHERE usage_session_persona(s.id) IS NOT NULL AND s.harness = 'hermes' GROUP BY 1, 2) hb
       ON hb.host = h.host AND hb.external_id = h.session_id
     WINDOW w AS (PARTITION BY h.host, h.profile, h.session_id ORDER BY h.observed_at)),
   events AS (

@@ -56,9 +56,9 @@ it('combines shared timezone setup, inspectable Telegram identity and honest nat
   });
 
   const filtered = (await request(app).get('/api/usage/agent-sessions')
-    .query({ ...range, type: 'telegram', persona: 'example-helper', host: 'mac' }).expect(200)).body.sessions;
+    .query({ ...range, type: 'telegram', persona: 'unknown', host: 'mac' }).expect(200)).body.sessions;
   expect(filtered).toHaveLength(1);
-  expect(filtered[0]).toMatchObject({ external_id: 'integration-telegram', session_type: 'telegram', persona: 'example-helper',
+  expect(filtered[0]).toMatchObject({ external_id: 'integration-telegram', session_type: 'telegram', persona: null,
     channel_bot: 'example-bot', provider: 'anthropic', models: ['example-telegram-model'],
     display_title: 'Inspect deployment status', started_at: at.replace('Z', '.000Z'),
     ended_at: '2026-11-10T07:43:00.000Z' });
@@ -69,7 +69,7 @@ it('combines shared timezone setup, inspectable Telegram identity and honest nat
   const telegramDetail = (await request(app).get('/api/usage/agent-sessions/mac/integration-telegram')
     .query({ source: 'claude-code' }).expect(200)).body.session;
   expect(telegramDetail).toMatchObject({ source: 'claude-code', channel: 'telegram', session_type: 'telegram',
-    channel_bot: 'example-bot', persona: 'example-helper', provider: 'anthropic', models: ['example-telegram-model'],
+    channel_bot: 'example-bot', persona: null, provider: 'anthropic', models: ['example-telegram-model'],
     display_title: 'Inspect deployment status', started_at: at.replace('Z', '.000Z'), ended_at: '2026-11-10T07:43:00.000Z',
     context_tokens: null, context_window: null });
   expect(Date.parse(telegramDetail.ended_at) - Date.parse(telegramDetail.started_at)).toBe(30 * 60_000);
