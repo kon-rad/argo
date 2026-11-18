@@ -1,4 +1,4 @@
--- migrate:up
+-- Up Migration
 CREATE TABLE usage_import_quarantine (
   host text NOT NULL, digest text NOT NULL, wire text NOT NULL,
   reason text NOT NULL, received_at timestamptz NOT NULL DEFAULT now(),
@@ -18,7 +18,7 @@ CREATE INDEX collection_attempts_received ON collection_attempts(received_at);
 CREATE TABLE collection_streams (LIKE collection_attempts INCLUDING DEFAULTS);
 ALTER TABLE collection_streams ADD PRIMARY KEY (host, collector_instance, runtime, path);
 ALTER TABLE collection_streams ADD COLUMN last_success_at timestamptz;
--- migrate:down
+-- Down Migration
 DROP TABLE collection_streams;
 DROP TABLE collection_attempts;
 DROP TABLE usage_import_quarantine;
