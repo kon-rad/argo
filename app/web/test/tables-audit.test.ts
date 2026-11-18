@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { cleanup, render, screen, within } from '@testing-library/react';
+import LocalModels from '../src/routes/usage/LocalModels.js';
 
 /**
  * The route audit, kept true by a test: every table in the web app says what it does on a phone. A data table goes
@@ -31,6 +35,7 @@ const DATA_TABLES: Record<string, string[]> = {
   'routes/skills/Machines.tsx': ['cards'],
   'routes/skills/Matrix.tsx': ['scroll'],
   'routes/usage/AgentSessions.tsx': ['cards'],
+  'routes/usage/LocalModels.tsx': ['scroll', 'cards', 'scroll'],
   'routes/usage/Running.tsx': ['cards'],
   'routes/usage/Summaries.tsx': ['scroll'],
   'routes/usage/Usage.tsx': ['scroll', 'cards', 'scroll'],
@@ -111,5 +116,32 @@ describe('index.css', () => {
     expect(phone).toMatch(/\.data-table-scroll:focus-visible \{[^}]*outline/);
     // links in a row are thumb-sized
     expect(phone).toMatch(/table\[data-phone\] td a \{[^}]*min-height: 44px/);
+  });
+});
+
+
+describe('local model tables on a phone', () => {
+  it('keeps model and run comparisons scrollable and labels caller cards without losing the filter', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const from = '2026-01-01T00:00:00Z', to = '2026-01-02T00:00:00Z';
+    client.setQueryData(['meta'], { modules: ['localai'] });
+    client.setQueryData(['local-ai-summary', from, to, 'hour', 'UTC'], {
+      total: { runs: 1, prompt: 12, output: 3, energy_wh: 0.2, errors: 0 },
+      models: [], hosts: [], series: [],
+      callers: [{ caller: 'researcher', runs: 1, prompt: 12, output: 3, avg_output_tps: 5 }],
+    });
+    client.setQueryData(['local-ai-runs', from, to, undefined], { runs: [] });
+    try {
+      render(createElement(QueryClientProvider, { client }, createElement(LocalModels, {
+        from, to, bucket: 'hour', tz: 'UTC', fmtBucket: value => value,
+      })));
+      expect(screen.getByRole('table', { name: 'Local model totals' }).getAttribute('data-phone')).toBe('scroll');
+      expect(screen.getByRole('table', { name: 'Recent local model calls' }).getAttribute('data-phone')).toBe('scroll');
+      const callers = screen.getByRole('table', { name: 'Local model callers' });
+      expect(callers.getAttribute('data-phone')).toBe('cards');
+      const row = within(callers).getAllByRole('row')[1]!;
+      expect([...row.children].map(cell => cell.getAttribute('data-label'))).toEqual(['Caller', 'Calls', 'In', 'Out', 'Speed']);
+      expect(within(row).getByRole('button', { name: 'researcher' })).toBeTruthy();
+    } finally { cleanup(); client.clear(); }
   });
 });

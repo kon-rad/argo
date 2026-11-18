@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, type LocalAiAgg } from '../../lib/api.js';
 import StackedBars, { type BarSeries } from '../../components/charts/StackedBars.js';
+import DataTable from '../../components/DataTable.js';
 import { formatTokens } from './format.js';
 import { zoned } from '../../lib/time.js';
 
@@ -58,7 +59,7 @@ export default function LocalModels({ from, to, bucket, tz, fmtBucket }: {
         </>
       )}
       <div className="grid gap-3 lg:grid-cols-2">
-        <div className="overflow-x-auto"><table className="w-full text-sm">
+        <DataTable label="Local model totals" phone="scroll" className="w-full text-sm">
           <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
             <th>Model</th><th className="text-right">Calls</th><th className="text-right">In</th><th className="text-right">Out</th><th className="text-right">Speed</th><th className="text-right">Wh</th>
           </tr></thead>
@@ -73,8 +74,8 @@ export default function LocalModels({ from, to, bucket, tz, fmtBucket }: {
             ))}
             {d?.models?.length === 0 && <tr><td colSpan={6} className="py-2 text-xs text-[var(--ink-faint)]">No local calls in this range.</td></tr>}
           </tbody>
-        </table></div>
-        <div className="overflow-x-auto"><table className="w-full text-sm">
+        </DataTable>
+        <DataTable label="Local model callers" phone="cards" className="w-full text-sm">
           <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
             <th>Caller</th><th className="text-right">Calls</th><th className="text-right">In</th><th className="text-right">Out</th><th className="text-right">Speed</th>
           </tr></thead>
@@ -87,9 +88,9 @@ export default function LocalModels({ from, to, bucket, tz, fmtBucket }: {
               </tr>
             ))}
           </tbody>
-        </table></div>
+        </DataTable>
       </div>
-      <div className="overflow-x-auto"><table className="w-full text-sm">
+      <DataTable label="Recent local model calls" phone="scroll" className="w-full text-sm">
         <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
           <th>When</th><th>Caller</th><th>Model</th><th>State</th><th className="text-right">In</th><th className="text-right">Out</th>
           <th className="text-right">First token</th><th className="text-right">tok/s</th><th className="text-right">Sec</th>
@@ -107,7 +108,7 @@ export default function LocalModels({ from, to, bucket, tz, fmtBucket }: {
             </tr>
           ))}
         </tbody>
-      </table></div>
+      </DataTable>
     </section>
   );
 }
