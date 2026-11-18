@@ -242,7 +242,7 @@ function Conversation({
             setPersona(e.target.value);
             if (id !== null) changePersona.mutate(e.target.value);
           }}
-          className="max-w-48 truncate rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs"
+          className="max-w-48 truncate rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs max-md:max-w-32"
         >
           {options.personas.map((p) => (
             <option key={p.id} value={p.id}>{p.name}{p.builtin ? '' : ` · ${p.role}`}</option>
@@ -252,7 +252,7 @@ function Conversation({
           type="button"
           onClick={onOpenSettings}
           title="Chat settings"
-          className="truncate rounded border border-[var(--rule)] px-2 py-1 text-xs text-[var(--ink-dim)] hover:text-[var(--ink)]"
+          className="min-w-0 truncate rounded border border-[var(--rule)] px-2 py-1 text-xs text-[var(--ink-dim)] hover:text-[var(--ink)]"
         >
           {providerLabel ? `${providerLabel} · ` : ''}{modelLabel}
         </button>

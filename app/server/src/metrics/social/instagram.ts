@@ -36,7 +36,7 @@ function recovery(username: string): string {
 }
 
 /** The token to use now, refreshing and storing it when due. Throws an actionable error when there is none. */
-async function resolveToken(a: InstagramAccount, deps: SocialDeps, r: SocialResult): Promise<string> {
+export async function resolveToken(a: InstagramAccount, deps: SocialDeps, r: SocialResult): Promise<string> {
   const username = a.account;
   const unified = a.cfg.login === 'unified';
   if (unified) {
@@ -120,21 +120,26 @@ export async function collectInstagram(a: InstagramAccount, s: SocialMetricsSett
 
     const cutoff = deps.now.getTime() - s.postDays * DAY;
     const items: Media[] = [];
-    let url: string | undefined = `${base}/${node}/media?fields=id,media_type,media_product_type,permalink,timestamp,like_count,comments_count&limit=50&${auth}`;
+    // Page with Meta's `after` cursor on our own URL. Meta's paging.next link can name a newer
+    // API version than ours (v27.0 for a v21.0 call) and carries the token in its query, so the
+    // link itself is never followed: only its cursor is read.
+    const first = `${base}/${node}/media?fields=id,media_type,media_product_type,permalink,timestamp,like_count,comments_count&limit=50&${auth}`;
+    let after: string | undefined;
     const seen = new Set<string>();
-    paging: while (url) {
-      const next = new URL(url);
-      const paths = [`${new URL(base).pathname}/${node}/media`];
-      if (!unified && me.user_id) paths.push(`${new URL(base).pathname}/${me.user_id}/media`);
-      if (next.origin !== host || !paths.includes(next.pathname) || seen.has(url) || seen.size >= s.maxPosts) throw new Error('unsafe Instagram media paging URL');
+    paging: for (;;) {
+      const url = after ? `${first}&after=${encodeURIComponent(after)}` : first;
+      if (seen.has(url) || seen.size >= s.maxPosts) throw new Error('Instagram media paging did not end');
       seen.add(url);
-      const page: { data?: Media[]; paging?: { next?: string } } = await call(url, 'Instagram /me/media');
+      const page: { data?: Media[]; paging?: { next?: string; cursors?: { after?: string } } } = await call(url, 'Instagram /me/media');
       if (unified && !Array.isArray(page.data)) throw new Error('invalid Facebook media response');
       for (const m of page.data ?? []) {
         if ((m.timestamp && Date.parse(m.timestamp) <= cutoff) || items.length >= s.maxPosts) break paging;
         items.push(m);
       }
-      url = page.paging?.next;
+      if (!page.paging?.next) break;
+      const cursor = page.paging.cursors?.after ?? new URL(page.paging.next).searchParams.get('after') ?? undefined;
+      if (!cursor) break;
+      after = cursor;
     }
 
     let failed = 0;

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import Agents from '../src/routes/agents/Agents.js';
 import ZenChat from '../src/routes/agents/ZenChat.js';
 import { toItems } from '../src/components/EventFeed.js';
 
@@ -147,6 +148,26 @@ describe('ZenChat', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { message: 'zen-agent chats run on the server: zen-agent serve is not configured on this machine (ZEN_AGENT_URL, ZEN_AGENT_TOKEN)' } }), { status: 503, headers: { 'content-type': 'application/json' } })));
     mount();
     expect(await screen.findByText(/ZEN_AGENT_URL/)).toBeTruthy();
+  });
+});
+
+describe('Agents tab strip', () => {
+  it('marks Chat as the current page on the zen-agent chat too', async () => {
+    stubFetch();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/agents/zen']}>
+          <Routes><Route path="/agents/*" element={<Agents />} /></Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const tabs = screen.getByRole('navigation', { name: 'Agents' });
+    expect(within(tabs).getByRole('link', { name: 'Chat' }).getAttribute('aria-current')).toBe('page');
+    expect(within(tabs).getByRole('link', { name: 'History' }).getAttribute('aria-current')).toBeNull();
+    // The harness switch under it names the harness.
+    const harness = await screen.findByRole('navigation', { name: 'Harness' });
+    expect(within(harness).getByRole('link', { name: 'zen-agent' }).getAttribute('aria-current')).toBe('page');
   });
 });
 

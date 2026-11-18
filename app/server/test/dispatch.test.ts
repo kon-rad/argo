@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ClassifyInput, ClassifyResult } from '../src/addons/classify/types.js';
 import { query } from '../src/db.js';
-import { createCard, getCard, moveCard, setOverride } from '../src/board.js';
+import { claimCard, createCard, finishCard, getCard, moveCard, setOverride } from '../src/board.js';
 import { Dispatcher, inQuietHours, isProviderError, localTime, machineOf, parseRunResult, primaryReason, providerOf, routineDue, type Deps, type RunnerResult } from '../src/addons/dispatch/index.js';
-import { addWakeup, dm, getAgent, importOrg, openWakeups, post, unreadCounts } from '../src/org.js';
+import { addWakeup, claimWakeups, dm, getAgent, importOrg, openWakeups, post, unreadCounts } from '../src/org.js';
 import { parseSettings } from '../src/settings.js';
 import { truncateAll } from './helpers.js';
 
@@ -45,6 +45,7 @@ function harness(over: Partial<Deps['config']> = {}, settings: unknown = {}) {
   let answer: (input: ClassifyInput) => ClassifyResult = fallthrough;
   let result: RunnerResult | ((args: string[]) => RunnerResult) = { code: 0, stdout: '▸ noise\n' + JSON.stringify({ text: 'posted a status', stopped: 'done', turns: 3 }) + '\n', stderr: '' };
   const now = new Date('2026-10-24T12:30:00Z');
+  const logs: string[] = [];
   const d = new Dispatcher({
     runner: async (cmd, args, env, cwd, timeoutMs) => { calls.push({ cmd, args, env, cwd, timeoutMs }); return typeof result === 'function' ? result(args) : result; },
     classify: async (input) => { classified.push(input); return answer(input); },
@@ -52,8 +53,9 @@ function harness(over: Partial<Deps['config']> = {}, settings: unknown = {}) {
     config: { orgTz: 'UTC', orgDispatchQuiet: null, orgDispatchDailyTokens: 0, orgDispatchParallel: 2, orgZenCommand: 'zen-agent', vaultRoot: vault, ...over },
     now: () => now,
     env: { PATH: '/usr/bin' },
+    log: (line) => { logs.push(line); },
   });
-  return { d, vault, calls, classified, now, setAnswer: (f: typeof answer) => { answer = f; }, setResult: (r: typeof result) => { result = r; } };
+  return { d, vault, calls, classified, now, logs, setAnswer: (f: typeof answer) => { answer = f; }, setResult: (r: typeof result) => { result = r; } };
 }
 
 const codexOrg = () => ({ ...ORG, agents: { ...ORG.agents,
@@ -132,6 +134,23 @@ describe('tick', () => {
       .toEqual([{ runtime: 'codex', outcome: 'did-work', input: '12' }]);
     expect((await query(`SELECT source, input_tokens FROM usage_calls WHERE source = 'codex'`)).rows)
       .toEqual([{ source: 'codex', input_tokens: 12 }]);
+  });
+
+  it('leaves a card the Codex bot finished itself as done, with no cleanup block', async () => {
+    await importOrg(codexOrg());
+    const card = await createCard('owner', { title: 'Daily sweep', body: 'Sweep the board', assignee: 'codebot' });
+    const h = harness();
+    const fake = codexFake();
+    // The bot runs `cli-board finish` inside its own run, as sol did on t_3a93bdae and t_ce4cbf28.
+    h.setResult(((args: string[]) => args[0] === 'exec' && !args.includes('--ephemeral')
+      ? finishCard('codebot', card.id, { outcome: 'done', result: 'swept' }).then(() => fake(args))
+      : fake(args)) as unknown as (args: string[]) => RunnerResult);
+    const r = await h.d.tick();
+    expect(r).toMatchObject({ runs: 1, errors: [] });
+    const after = await getCard(card.id);
+    expect(after.card).toMatchObject({ status: 'done', block_kind: null });
+    expect(after.comments.some((c) => c.body.startsWith('done: '))).toBe(true);
+    expect((await openWakeups('codebot'))).toEqual([]);
   });
 
   it('claims a card using an effective Codex runtime override', async () => {
@@ -449,6 +468,100 @@ describe('tick', () => {
   });
 });
 
+// A card's wake is consumed when its run ends; the triggers only wake on a state change, so before the reconcile pass
+// a card that stayed ready (or a todo card whose dependencies closed while it was not waiting) sat with nothing to wake it.
+describe('ready cards nothing woke (reconcile)', () => {
+  const taskWakes = async (card: string) => (await query<{ agent_name: string; open: boolean; claimed: boolean }>(
+    `SELECT agent_name, done_at IS NULL AS open, claimed_at IS NOT NULL AS claimed FROM org_wakeups WHERE reason = 'task' AND ref = $1 ORDER BY id`, [card])).rows;
+
+  it('an assigned ready card whose wake was consumed is woken once, run once, and not again inside the backoff', async () => {
+    const h = harness();
+    const card = await createCard('owner', { title: 'Write the brief', assignee: 'rune' });
+    expect(card.status).toBe('ready');
+    // The defect: the run ended an hour ago without finishing the card, so its only wake is done and it is still ready.
+    await query(`UPDATE org_wakeups SET claimed_at = now() - interval '1 hour', claimed_by = 'old-run', done_at = now() - interval '1 hour' WHERE ref = $1`, [card.id]);
+    expect(await openWakeups('rune')).toEqual([]);
+
+    const r = await h.d.tick();
+    expect(r).toMatchObject({ woken: 1, promoted: 0, runs: 1, errors: [] });
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]!.args.slice(0, 2)).toEqual(['wake', card.id]);
+    expect(await taskWakes(card.id)).toEqual([
+      { agent_name: 'rune', open: false, claimed: true },
+      { agent_name: 'rune', open: false, claimed: true },
+    ]);
+
+    // The fake run left the card ready again: the next tick is inside the backoff, so nothing is woken or run twice.
+    const again = await h.d.tick();
+    expect(again).toMatchObject({ woken: 0, runs: 0 });
+    expect(h.calls).toHaveLength(1);
+    expect((await getCard(card.id)).card.status).toBe('ready');
+  });
+
+  it('is idempotent: concurrent passes add one wakeup, one claim takes it, and an open wake or a live run owes nothing', async () => {
+    const h = harness();
+    const card = await createCard('owner', { title: 'Draft the post', assignee: 'bolt' });
+    await query(`UPDATE org_wakeups SET done_at = now() - interval '1 hour' WHERE ref = $1`, [card.id]);
+    const passes = await Promise.all([h.d.reconcile(), h.d.reconcile(), h.d.reconcile()]);
+    expect(passes.reduce((n, p) => n + p.woken, 0)).toBe(1);
+    expect((await taskWakes(card.id)).filter((w) => w.open)).toHaveLength(1);
+    // An open wake is enough: another pass adds nothing.
+    expect(await h.d.reconcile()).toEqual({ promoted: 0, woken: 0, closed: 0 });
+
+    // Two dispatchers claim at once: the wakeup goes to one of them.
+    const [a, b] = await Promise.all([claimWakeups('bolt', 'run-a'), claimWakeups('bolt', 'run-b')]);
+    expect(a.length + b.length).toBe(1);
+    // The card itself is claimed once, whichever lane asks first.
+    const [c1, c2] = await Promise.all([
+      claimCard(null, { agent: 'bolt', taskId: card.id, leaseMinutes: 5 }),
+      claimCard(null, { agent: 'bolt', taskId: card.id, leaseMinutes: 5 }),
+    ]);
+    expect([c1, c2].filter(Boolean)).toHaveLength(1);
+
+    // A ready card with an unfinished run (lease not yet reclaimed) is not woken either.
+    const other = await createCard('owner', { title: 'Check the links', assignee: 'bolt' });
+    await query(`UPDATE org_wakeups SET done_at = now() - interval '1 hour' WHERE ref = $1`, [other.id]);
+    await query(`INSERT INTO card_runs (card_id, agent_name, runtime, lease_until) VALUES ($1, 'bolt', 'zen-agent', now() + interval '1 hour')`, [other.id]);
+    expect((await h.d.reconcile()).woken).toBe(0);
+  });
+
+  it('wakes nobody for a held card, a human, a paused bot or a card nobody owns', async () => {
+    const h = harness();
+    const held = await createCard('owner', { title: 'Keeps failing', assignee: 'rune' });
+    // Three wakes this ready stint (the cap is two re-wakes): it waits for a person, even after the 24 h window.
+    await query(`UPDATE org_wakeups SET done_at = now() - interval '2 days' WHERE ref = $1`, [held.id]);
+    await query(`INSERT INTO org_wakeups (agent_name, reason, ref, created_at, done_at) VALUES
+                   ('rune', 'task', $1, now(), now() - interval '2 days'), ('rune', 'task', $1, now(), now() - interval '2 days')`, [held.id]);
+    await createCard('owner', { title: 'Nobody yet' });
+    const paused = await createCard('owner', { title: 'Paused bot', assignee: 'bolt' });
+    await query(`UPDATE org_wakeups SET done_at = now() - interval '1 hour' WHERE ref = $1`, [paused.id]);
+    await query(`UPDATE org_agents SET paused = true WHERE name = 'bolt'`);
+    expect(await h.d.reconcile()).toEqual({ promoted: 0, woken: 0, closed: 0 });
+  });
+
+  it('a todo card whose dependencies all closed while it was not waiting is promoted and woken; a backlog todo card is not', async () => {
+    const h = harness();
+    const first = await createCard('owner', { title: 'Collect the numbers' });
+    const next = await createCard('owner', { title: 'Write them up', assignee: 'rune', deps: [first.id] });
+    expect(next.status).toBe('todo');
+    // The dependency closes while the card is parked, so the trigger's promotion is refused; then a person puts it back.
+    await moveCard('owner', next.id, 'blocked', 'parked for a day');
+    await moveCard('owner', first.id, 'done', 'numbers in');
+    await moveCard('owner', next.id, 'todo', 'back in the queue');
+    expect((await getCard(next.id)).card.status).toBe('todo');
+    expect(await taskWakes(next.id)).toEqual([]);
+    await query(`INSERT INTO cards (id, board_slug, title, assignee, created_by) VALUES ('t_bac0106e', 'exo', 'Someday', 'rune', 'owner')`);
+
+    const r = await h.d.tick();
+    expect(r).toMatchObject({ promoted: 1, woken: 0, runs: 1, errors: [] });
+    expect((await getCard(next.id)).card.status).toBe('ready');
+    expect(h.calls[0]!.args.slice(0, 2)).toEqual(['wake', next.id]);
+    expect(await taskWakes(next.id)).toEqual([{ agent_name: 'rune', open: false, claimed: true }]);
+    expect((await getCard('t_bac0106e')).card.status).toBe('todo');
+    expect(await taskWakes('t_bac0106e')).toEqual([]);
+  });
+});
+
 describe('model routing (docs/org-routing.md)', () => {
   const cfg = {
     tiers: { t0: { turns: 8 }, t1: { turns: 20 }, t2: { turns: 30 }, t3: { turns: 40 } },
@@ -674,5 +787,143 @@ describe('fallback model (docs/org-routing.md, "Fallback model")', () => {
     expect(flag(h.calls[0]!.args, '--model')).toBe('together/deepseek-ai/DeepSeek-V4.1-Flash');
     expect(flag(h.calls[0]!.args, '--max-turns')).toBe('20'); // the tier's budget, not the fallback's
     expect(meta(h.calls[0]!.args, 'tier')).toBe('t1');
+  });
+});
+
+// Card t_6b46b88a (2026-11-16): ten cards their Codex bot had finished were moved done -> blocked "has no live run";
+// rune and tau sat on open task wakeups for hours with "2 bots, 0 runs" and no line saying why; open task wakeups on
+// archived cards selected their bot every tick.
+describe('finished cards stay finished, skipped bots say why, closed cards release their wakeups', () => {
+  /** The bot runs `cli-board finish` (or a person moves the card) inside its own run, then Codex returns `state`. */
+  const duringRun = (during: () => Promise<unknown>, state: Parameters<typeof codexFake>[0] = 'done') => {
+    const fake = codexFake(state);
+    return ((args: string[]) => args[0] === 'exec' && !args.includes('--ephemeral')
+      ? during().then(() => fake(args))
+      : fake(args)) as unknown as (args: string[]) => RunnerResult;
+  };
+  const movedAfterClaim = async (card: string) => (await query<{ kind: string; to: string | null }>(
+    `SELECT kind, payload->>'to' AS to FROM card_events WHERE card_id = $1 AND kind = 'moved'
+        AND id > (SELECT max(id) FROM card_events WHERE card_id = $1 AND kind = 'claimed') ORDER BY id`, [card])).rows;
+  const wakes = async (card: string) => (await query<{ open: boolean; claimed: boolean; result: string | null }>(
+    `SELECT done_at IS NULL AS open, claimed_at IS NOT NULL AS claimed, result FROM org_wakeups WHERE reason = 'task' AND ref = $1 ORDER BY id`, [card])).rows;
+  /** Exactly one open, unclaimed task wakeup on `card`, whatever the board's triggers did on the moves before. */
+  const staleWake = async (agent: string, card: string) => {
+    await query(`DELETE FROM org_wakeups WHERE reason = 'task' AND ref = $1`, [card]);
+    await query(`INSERT INTO org_wakeups (agent_name, reason, ref) VALUES ($1, 'task', $2)`, [agent, card]);
+  };
+
+  it('a run whose bot finished its own card leaves the card done, records the run and moves nothing', async () => {
+    await importOrg(codexOrg());
+    const card = await createCard('owner', { title: 'Daily sweep', body: 'Sweep the board', assignee: 'codebot' });
+    const h = harness();
+    h.setResult(duringRun(() => finishCard('codebot', card.id, { outcome: 'done', result: 'swept' })));
+    const r = await h.d.tick();
+    expect(r).toMatchObject({ runs: 1, errors: [] });
+    expect((await getCard(card.id)).card).toMatchObject({ status: 'done', block_kind: null });
+    expect(await movedAfterClaim(card.id)).toEqual([]); // no heartbeat failure, no cleanup move
+    expect((await query(`SELECT runtime, outcome, task_id FROM usage_runs WHERE agent_name = 'codebot'`)).rows)
+      .toEqual([{ runtime: 'codex', outcome: 'did-work', task_id: card.id }]);
+    // board_card_finish closed the wake itself ("card done"); finishWakeups leaves a done wakeup alone.
+    expect(await wakes(card.id)).toEqual([{ open: false, claimed: true, result: 'card done' }]);
+  });
+
+  it('the error handler never moves a done or an archived card', async () => {
+    await importOrg(codexOrg());
+    // done: the bot finished, then recording the run fails (an unregistered ORG_CODEX_HOST) and the catch runs.
+    const done = await createCard('owner', { title: 'Weekly report', assignee: 'codebot' });
+    const h = harness({ orgCodexHost: 'nowhere' });
+    h.setResult(duringRun(() => finishCard('codebot', done.id, { outcome: 'done', result: 'reported' })));
+    const r = await h.d.tick();
+    expect(r.errors).toEqual([expect.stringMatching(/ORG_CODEX_HOST "nowhere" is not registered/)]);
+    expect((await getCard(done.id)).card).toMatchObject({ status: 'done', block_kind: null });
+    expect(await movedAfterClaim(done.id)).toEqual([]);
+    expect((await wakes(done.id)).map((w) => w.open)).toEqual([false]);
+
+    // archived: a person drops the card while the bot works, and the run then fails.
+    const dropped = await createCard('owner', { title: 'Old idea', assignee: 'codebot' });
+    const h2 = harness({ orgCodexHost: 'nowhere' });
+    h2.setResult(duringRun(() => moveCard('owner', dropped.id, 'archived', 'dropped'), 'error'));
+    await h2.d.tick();
+    expect((await getCard(dropped.id)).card.status).toBe('archived');
+    expect((await movedAfterClaim(dropped.id)).map((m) => m.to)).toEqual(['archived']);
+  });
+
+  it('a selected Codex bot whose task wakeup is on a card that is not ready gets exactly one reason line', async () => {
+    await importOrg(codexOrg());
+    const parked = await createCard('owner', { title: 'Parked', assignee: 'codebot' });
+    await moveCard('owner', parked.id, 'blocked', 'waiting on a person');
+    await staleWake('codebot', parked.id);
+    const h = harness();
+    h.setResult(codexFake());
+    const r = await h.d.tick();
+    expect(r).toMatchObject({ agents: 1, runs: 0, errors: [] });
+    expect(h.logs.filter((l) => l.startsWith('codebot:'))).toEqual([
+      `codebot: not run: no ready card among 1 task wakeup(s) (${parked.id} blocked)`,
+    ]);
+    // The wake stays open and unclaimed for when the card is ready again.
+    expect(await wakes(parked.id)).toEqual([{ open: true, claimed: false, result: null }]);
+  });
+
+  it('a stale task wakeup at the head of the queue no longer holds the bot: the next ready card runs', async () => {
+    await importOrg(codexOrg());
+    const parked = await createCard('owner', { title: 'Parked', assignee: 'codebot' });
+    await moveCard('owner', parked.id, 'blocked', 'waiting on a person');
+    await staleWake('codebot', parked.id); // the oldest open wakeup, as on rune's queue
+    const ready = await createCard('owner', { title: 'Fix a file', assignee: 'codebot', needs: 'code' });
+    const h = harness();
+    h.setResult(codexFake());
+    const r = await h.d.tick();
+    expect(r).toMatchObject({ agents: 1, runs: 1, errors: [] });
+    expect(h.calls.at(-1)!.env).toMatchObject({ CC_CARD: ready.id });
+    expect((await getCard(ready.id)).card.status).toBe('review');
+    expect(await wakes(parked.id)).toEqual([{ open: true, claimed: false, result: null }]);
+    expect(h.logs.filter((l) => l.includes('not run'))).toEqual([]);
+  });
+
+  it('a held tick names each waiting bot once', async () => {
+    await importOrg(codexOrg());
+    await dm(await getAgent('atlas'), 'rune', 'please check the build', {});
+    await dm(await getAgent('atlas'), 'codebot', 'and this', {});
+    const h = harness({ orgDispatchQuiet: '12-13' });
+    const r = await h.d.tick();
+    expect(r).toMatchObject({ held: 'quiet', agents: 2, runs: 0 });
+    expect(h.logs.filter((l) => / not run: /.test(l))).toEqual([
+      'codebot: not run: held by quiet hours (12-13, local 12:30)',
+      'rune: not run: held by quiet hours (12-13, local 12:30)',
+    ]);
+  });
+
+  it('a zen-agent bot whose only wakeup is an ack gets one reason line', async () => {
+    const h = harness();
+    const m = await post(await getAgent('atlas'), 'all-hands', '@rune noted', { kind: 'ack' });
+    await query(`INSERT INTO org_wakeups (agent_name, reason, ref) VALUES ('rune', 'mention', $1)`, [String(m.id)]);
+    await h.d.tick();
+    expect(h.logs.filter((l) => l.startsWith('rune:'))).toEqual(['rune: not run: 1 ack(s); nothing left to run']);
+  });
+
+  it('reconcile closes an open task wakeup on an archived or done card once; a second pass changes nothing', async () => {
+    const h = harness();
+    const archived = await createCard('owner', { title: 'Old idea', assignee: 'rune' });
+    await moveCard('owner', archived.id, 'archived', 'dropped');
+    await staleWake('rune', archived.id);
+    const done = await createCard('owner', { title: 'Shipped', assignee: 'bolt' });
+    await moveCard('owner', done.id, 'done', 'shipped by hand');
+    await staleWake('bolt', done.id);
+    // A claimed wake belongs to a run in flight and is left to it; a ready card's wake is work.
+    const inFlight = await createCard('owner', { title: 'Being finished', assignee: 'bolt' });
+    await moveCard('owner', inFlight.id, 'done', 'done');
+    await staleWake('bolt', inFlight.id);
+    await query(`UPDATE org_wakeups SET claimed_at = now(), claimed_by = 'live-run' WHERE ref = $1`, [inFlight.id]);
+    const live = await createCard('owner', { title: 'Still to do', assignee: 'rune' });
+
+    expect(await h.d.reconcile()).toEqual({ promoted: 0, woken: 0, closed: 2 });
+    expect(await wakes(archived.id)).toEqual([{ open: false, claimed: false, result: 'card closed' }]);
+    expect(await wakes(done.id)).toEqual([{ open: false, claimed: false, result: 'card closed' }]);
+    expect(await wakes(inFlight.id)).toEqual([{ open: true, claimed: true, result: null }]);
+    expect((await wakes(live.id)).map((w) => w.open)).toEqual([true]);
+
+    const before = (await query(`SELECT id, done_at, result FROM org_wakeups ORDER BY id`)).rows;
+    expect(await h.d.reconcile()).toEqual({ promoted: 0, woken: 0, closed: 0 });
+    expect((await query(`SELECT id, done_at, result FROM org_wakeups ORDER BY id`)).rows).toEqual(before);
   });
 });

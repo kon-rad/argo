@@ -11,6 +11,7 @@ const Release = Mutation.extend({ artifactHash: z.string().regex(/^sha256:[0-9a-
 const Dispatch = Mutation.extend({ corpusDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/), inputRefs: z.array(z.string().min(1).max(1000)).min(1).max(32), planDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/), audience: z.string().min(1).max(200), limits: Approval.shape.limits });
 const TxHash = z.object({ txHash: z.string().min(1).max(200) });
 export interface DeskPrivateControls extends DeskOperatorApi, Partial<ProviderWalletApi> {
+  publishRecord?(record: unknown, idempotencyKey: string): Promise<import('@secondbrain/desk-contracts/desk').Result<import('@secondbrain/desk-contracts/desk').Confirmation>>;
   dispatch(id: string, request: DeskMutation, corpusDigest: string, inputRefs: readonly string[], planDigest: string, limits: DeskApproval['limits'], audience: string): Promise<import('@secondbrain/desk-contracts/desk').Result<{ attemptId: string; claimTransaction: unknown }>>;
   reconcileClaim(id: string): Promise<import('@secondbrain/desk-contracts/desk').Result<import('@secondbrain/desk-contracts/desk').OperatorJob>>;
   reconcileRunner(id: string): Promise<import('@secondbrain/desk-contracts/desk').Result<import('@secondbrain/desk-contracts/desk').OperatorJob>>;
@@ -30,6 +31,10 @@ export function deskOperatorRouter(api: DeskPrivateControls, sessionGate: Reques
   router.get('/jobs', wrap(async (_req, res) => send(res, await api.jobs())));
   router.get('/jobs/:id', wrap(async (req, res) => send(res, await api.job(parseOr400(Id, req.params['id'])))));
   router.get('/providers', wrap(async (_req, res) => send(res, await api.providers())));
+  router.post('/publications', wrap(async (req, res) => {
+    const body = parseOr400(z.object({ record: z.unknown(), idempotencyKey: z.string().regex(/^[A-Za-z0-9._:-]{1,200}$/) }).strict(), req.body);
+    send(res, api.publishRecord ? await api.publishRecord(body.record, body.idempotencyKey) : { kind: 'unavailable', message: 'Backend publication is not configured' });
+  }));
   router.post('/jobs/:id/approve', wrap(async (req, res) => send(res, await api.approve(parseOr400(Id, req.params['id']), parseOr400(Approval, req.body)))));
   router.post('/jobs/:id/decline', wrap(async (req, res) => send(res, await api.decline(parseOr400(Id, req.params['id']), parseOr400(Mutation, req.body)))));
   router.post('/jobs/:id/cancel', wrap(async (req, res) => send(res, await api.cancel(parseOr400(Id, req.params['id']), parseOr400(Mutation, req.body)))));

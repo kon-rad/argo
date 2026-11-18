@@ -29,7 +29,7 @@ The agents are not in the app. They are Claude Code, Hermes or any other harness
 | A read-only reviewer | A fact-checker subagent that verifies a finished note against its sources and returns an evidence table, never an edit |
 | Contracts for long tasks | The base rules ask for an outcome, a verification, constraints, boundaries and a stop condition before a long task starts, and `BLOCKED: <reason>` instead of a partial result presented as done |
 | A context budget | Rules that keep headless runs cheap: capped output, one task per run, steps written to a file rather than held in context |
-| A project tracker (module `projects`) | Projects and features with stages, where a feature goes live only after a passing verification is recorded. Agents update it through a CLI, and the `company-report` skill reads it back |
+| A tracker of areas and projects (module `projects`) | Areas you run and the projects inside them, with stages, where a project goes live only after a passing verification is recorded. Agents update it through a CLI, and the `company-report` skill reads it back |
 | A company of agents (module `org`) | Named agents with roles and teams on a message board: channels, DMs, questions waiting on you, cards. Row-level security per agent in Postgres, and wake backoff so a stuck card cannot burn your budget |
 | What it all costs (module `usage`) | A ledger of every run by bot, task and project, with plan percentages and API credit balances. A per-machine agent ledger captures each turn locally, redacts secrets, and syncs when it can |
 

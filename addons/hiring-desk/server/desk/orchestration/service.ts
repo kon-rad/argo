@@ -1,6 +1,6 @@
 import { validateWalletIntent, walletTransaction, walletHash, type ProviderWalletIntent, type WalletSubmission } from '@secondbrain/desk-contracts/desk';
 import { randomUUID } from 'node:crypto';
-import { artifactDigest, assertProductionAdapters, checkMutation, checkRelease, checkWorkerSpec, dispatchEligibility, reducePublicState, type Adapter, type Approval, type DeskIdentity, type DeskOperatorApi, type DeskPublicStore, type DeskPublisher, type DeskRunner, type DeskSettlement, type EntityRef, type Mutation, type Observation, type OperatorJob, type Provider, type PublicState, type ReleaseRequest, type Result, type WorkerResult, type WorkerSpec } from '@secondbrain/desk-contracts/desk';
+import { artifactDigest, assertProductionAdapters, checkMutation, checkRelease, checkWorkerSpec, dispatchEligibility, parseRecord, reducePublicState, type Adapter, type Approval, type Claim, type Confirmation, type DeskIdentity, type DeskOperatorApi, type DeskPublicStore, type DeskPublisher, type DeskRecord, type DeskRunner, type DeskSettlement, type EntityRef, type Mutation, type Observation, type OperatorJob, type Provider, type PublicState, type ReleaseRequest, type Result, type WorkerResult, type WorkerSpec } from '@secondbrain/desk-contracts/desk';
 import { DeskStoreError, type AssignmentRecord, type DeskPersistence } from '../persistence/store.js';
 
 export interface DeskSnapshots extends Adapter { snapshot(jobRef: EntityRef): Promise<Result<Observation[]>> }
@@ -24,6 +24,8 @@ export interface DeskServiceOptions {
   now?: () => number;
   /** Exact artifact bytes are loaded by a trusted artifact store, never supplied by an operator request. */
   artifactBytes(ref: string): Promise<Uint8Array>;
+  /** Server may publish only records whose frozen creator field is this address. */
+  backendSigner?: string;
 }
 
 const err = (kind: 'invalid-input' | 'denied' | 'pending' | 'unavailable' | 'failed', message: string): Result<never> => ({ kind, message });
@@ -59,6 +61,16 @@ export class DeskOrchestrator implements DeskOperatorApi {
       if (binding.value.verified && binding.value.provider.owner === candidate.owner && binding.value.provider.skill === candidate.skill && binding.value.provider.skillVersion === candidate.skillVersion && binding.value.provider.paymentAddress === candidate.paymentAddress) verified.push(binding.value.provider);
     }
     return ok(verified);
+  }
+
+  /** Session-gated publication for signer-owned request and negotiation records. */
+  async publishRecord(input: unknown, idempotencyKey: string): Promise<Result<Confirmation>> {
+    let record: DeskRecord;
+    try { record = parseRecord(input); } catch { return err('invalid-input', 'Invalid desk/v1 publication record'); }
+    if (!this.o.backendSigner || (record.type !== 'job' && record.type !== 'offer' && record.type !== 'acceptance') || !idempotencyKey || idempotencyKey.length > 200) return err('denied', 'Backend publication is not authorized for this record');
+    const creator = record.type === 'offer' ? record.provider : record.client;
+    if (creator.toLowerCase() !== this.o.backendSigner.toLowerCase()) return err('denied', 'Backend signer does not match the frozen record authority');
+    return this.o.publicStore.publish(record, idempotencyKey);
   }
 
   /** Refreshes the full verified public snapshot before any decision; failed reads never become an empty state. */
@@ -105,6 +117,11 @@ export class DeskOrchestrator implements DeskOperatorApi {
     const synced = await this.refresh(id); if (synced.kind !== 'ok') return synced;
     const row = synced.value, state = row.publicState, approval = row.approval;
     if (row.execution === 'queued' && row.activeAttemptId && row.workerSpec && row.dispatchIdempotencyKey === request.idempotencyKey) {
+      if (this.o.backendSigner && this.o.backendSigner.toLowerCase() === state.offer?.provider.toLowerCase()) {
+        const claim: Claim = { version: 'desk/v1', domain: state.offer.domain, chainId: state.offer.chainId, type: 'claim', acceptanceRef: state.acceptanceRef!, provider: state.offer.provider, executionId: row.activeAttemptId };
+        const published = await this.o.publicStore.publish(claim, `desk-claim:${request.idempotencyKey}`);
+        return published.kind === 'ok' ? ok({ attemptId: row.activeAttemptId, claimTransaction: null }) : published as Result<never>;
+      }
       const retryIntent = await this.o.providerTransactions.prepareClaim({ acceptanceRef: state.acceptanceRef!, provider: state.offer!.provider, executionId: row.activeAttemptId, idempotencyKey: request.idempotencyKey });
       return retryIntent.kind === 'ok' ? ok({ attemptId: row.activeAttemptId, claimTransaction: retryIntent.value.transaction }) : retryIntent as Result<never>;
     }
@@ -120,6 +137,11 @@ export class DeskOrchestrator implements DeskOperatorApi {
     catch (e) { return this.storeError(e); }
     const reservedAttempt = reserved.activeAttemptId;
     if (!reservedAttempt || !reserved.workerSpec) return err('unavailable', 'Attempt reservation is incomplete');
+    if (this.o.backendSigner && this.o.backendSigner.toLowerCase() === state.offer!.provider.toLowerCase()) {
+      const claim: Claim = { version: 'desk/v1', domain: state.offer!.domain, chainId: state.offer!.chainId, type: 'claim', acceptanceRef: state.acceptanceRef!, provider: state.offer!.provider, executionId: reservedAttempt };
+      const published = await this.o.publicStore.publish(claim, `desk-claim:${request.idempotencyKey}`);
+      return published.kind === 'ok' ? ok({ attemptId: reservedAttempt, claimTransaction: null }) : published as Result<never>;
+    }
     const claim = await this.o.providerTransactions.prepareClaim({ acceptanceRef: state.acceptanceRef!, provider: state.offer!.provider, executionId: reservedAttempt, idempotencyKey: request.idempotencyKey });
     if (claim.kind !== 'ok') return claim as Result<never>;
     return ok({ attemptId: reservedAttempt, claimTransaction: claim.value.transaction });
@@ -153,6 +175,13 @@ export class DeskOrchestrator implements DeskOperatorApi {
   async release(id: string, request: ReleaseRequest): Promise<Result<OperatorJob>> {
     const row = await this.refresh(id); if (row.kind !== 'ok') return row;
     if (row.value.execution === 'released') return ok(asJob(row.value));
+    if (row.value.backendPublication?.idempotencyKey === request.idempotencyKey) {
+      if (row.value.backendPublication.release.artifactHash !== request.artifactHash || row.value.backendPublication.release.mediaType !== request.mediaType || row.value.backendPublication.release.publicDestination !== request.publicDestination) return err('denied', 'Publication key is already bound to different release terms');
+      const reconciled = await this.o.publisher.reconcile(request.idempotencyKey);
+      if (reconciled.kind !== 'ok') return reconciled as Result<never>;
+      const refreshed = await this.refresh(id);
+      return refreshed.kind === 'ok' ? ok(asJob(refreshed.value)) : refreshed;
+    }
     if (row.value.pendingDeliveryIntent?.idempotencyKey === request.idempotencyKey && row.value.pendingDeliveryIntent.release.artifactHash === request.artifactHash && row.value.pendingDeliveryIntent.release.mediaType === request.mediaType && row.value.pendingDeliveryIntent.release.publicDestination === request.publicDestination) {
       return ok({ ...asJob(row.value), transactionIntent: { chainId: row.value.pendingDeliveryIntent.chainId, transaction: row.value.pendingDeliveryIntent.transaction, requiredCreator: row.value.publicState.claim?.provider } });
     }
@@ -164,6 +193,20 @@ export class DeskOrchestrator implements DeskOperatorApi {
     const snapshot = await this.o.snapshots.snapshot(id); if (snapshot.kind !== 'ok') return snapshot;
     const claimObservation = snapshot.value.find(o => (o.record as { type?: string; executionId?: string }).type === 'claim' && (o.record as { executionId?: string }).executionId === row.value.activeAttemptId);
     if (!claimObservation) return err('unavailable', 'Verified provider claim reference is missing');
+    if (this.o.backendSigner && this.o.backendSigner.toLowerCase() === row.value.publicState.claim.provider.toLowerCase()) {
+      let reserved: AssignmentRecord;
+      try {
+        reserved = (await this.o.store.mutate(id, { action: 'backend-release', idempotencyKey: request.idempotencyKey, expectedRevision: request.expectedRevision, actor: 'operator', apply: current => {
+          if (current.execution !== 'review' || !current.result || current.result.artifactHash !== request.artifactHash || current.backendPublication) throw new DeskStoreError('conflict');
+          current.backendPublication = { idempotencyKey: request.idempotencyKey, claimRef: claimObservation.ref, release: { artifactHash: request.artifactHash, mediaType: request.mediaType, publicDestination: request.publicDestination } };
+          return current;
+        } })).record;
+      } catch (e) { return this.storeError(e); }
+      const published = await this.o.publisher.publish(claimObservation.ref, reserved.backendPublication!.release, request.idempotencyKey);
+      if (published.kind !== 'ok' && published.kind !== 'pending') return published as Result<never>;
+      const refreshed = await this.refresh(id);
+      return refreshed.kind === 'ok' ? ok(asJob(refreshed.value)) : refreshed;
+    }
     const prepared = await this.o.providerTransactions.prepareDelivery({ claimRef: claimObservation.ref, provider: row.value.publicState.claim.provider, artifactHash: r.artifactHash, mediaType: r.mediaType, publicDestination: request.publicDestination, idempotencyKey: request.idempotencyKey });
     if (prepared.kind !== 'ok') return prepared as Result<never>;
     const saved = await this.o.store.mutate(id, { action: 'release-intent', idempotencyKey: request.idempotencyKey, expectedRevision: request.expectedRevision, actor: 'operator', apply: current => { if (current.execution !== 'review' || !current.result || current.result.artifactHash !== request.artifactHash) throw new DeskStoreError('conflict'); current.pendingDeliveryIntent = { chainId: prepared.value.chainId, transaction: prepared.value.transaction, idempotencyKey: request.idempotencyKey, release: { artifactHash: request.artifactHash, mediaType: request.mediaType, publicDestination: request.publicDestination } }; return current; } });
@@ -177,6 +220,7 @@ export class DeskOrchestrator implements DeskOperatorApi {
     const a = row.value.approval; if (!a) return err('denied', 'Operator approval is required');
     const dispatched = await this.dispatch(id, request, a.corpusDigest, a.inputRefs, a.planDigest, a.limits, a.audience);
     if (dispatched.kind !== 'ok') return dispatched;
+    if (dispatched.value.claimTransaction === null) return err('pending', 'Backend claim publication is awaiting finalized reconciliation');
     // Re-query the trusted adapter to preserve its explicit chain; legacy dispatch returns only calldata.
     const current = await this.ensure(id); if (current.kind !== 'ok') return current;
     const r = current.value;

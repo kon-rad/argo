@@ -1,6 +1,7 @@
 import { reducePublicState } from '@secondbrain/desk-contracts/desk';
 import { canonicalJson, parseRecord } from '@secondbrain/desk-contracts/desk';
 import type { DeskPublicStore, DeskRecord, EntityRef, Observation, Result } from '@secondbrain/desk-contracts/desk';
+import type { DeskSnapshots } from '../orchestration/service.js';
 
 /** One stable Arkiv keyset page, already decoded by the selected SDK/schema adapter. */
 export interface ArkivRow {
@@ -75,6 +76,14 @@ export class ArkivDeskPublicStore implements DeskPublicStore {
   }
 
   async listJobs(): Promise<Result<Observation[]>> {
+    const listed = await this.all();
+    return listed.kind === 'ok'
+      ? { kind: 'ok', value: listed.value.filter(value => (value.record as DeskRecord).type === 'job') }
+      : listed;
+  }
+
+  /** One bounded finalized view used by snapshots and job discovery. */
+  async all(): Promise<Result<Observation[]>> {
     try {
       const observations: Observation[] = [];
       let afterKey: string | undefined;
@@ -137,7 +146,7 @@ export class ArkivDeskPublicStore implements DeskPublicStore {
 
   /** Apply the frozen reducer only to complete, finalized observations. */
   async state(jobRef: EntityRef) {
-    const listed = await this.listJobs();
+    const listed = await this.all();
     if (listed.kind !== 'ok') return listed;
     try { return { kind: 'ok' as const, value: await reducePublicState(listed.value, jobRef, this.now()) }; }
     catch (error) { return failure('failed', error instanceof Error ? error.message : 'Desk reduction failed'); }
@@ -146,5 +155,34 @@ export class ArkivDeskPublicStore implements DeskPublicStore {
   private keyFromRef(ref: string): string | null {
     const prefix = `${this.options.chainId.includes(':') ? this.options.chainId : `arkiv:${this.options.chainId}`}/`;
     return ref.startsWith(prefix) && ref.length > prefix.length ? ref.slice(prefix.length) : null;
+  }
+}
+
+/** Builds a complete job graph from one verified Arkiv view; partial reads fail closed. */
+export class ArkivDeskSnapshots implements DeskSnapshots {
+  readonly mode = 'live' as const;
+  constructor(private readonly store: ArkivDeskPublicStore) {}
+  async snapshot(jobRef: EntityRef): Promise<Result<Observation[]>> {
+    const listed = await this.store.all();
+    if (listed.kind !== 'ok') return listed;
+    const jobs = listed.value.filter(value => value.ref === jobRef && (value.record as DeskRecord).type === 'job');
+    if (jobs.length !== 1) return failure('unavailable', 'Arkiv job snapshot is missing or ambiguous');
+    const selected = new Set<string>([jobRef]);
+    const output = [...jobs];
+    for (const type of ['offer', 'acceptance'] as const) {
+      for (const value of listed.value) {
+        const record = value.record as DeskRecord;
+        if (record.type === type && record.jobRef === jobRef) { output.push(value); selected.add(value.ref); }
+      }
+    }
+    for (const value of listed.value) {
+      const record = value.record as DeskRecord;
+      if (record.type === 'claim' && selected.has(record.acceptanceRef)) { output.push(value); selected.add(value.ref); }
+    }
+    for (const value of listed.value) {
+      const record = value.record as DeskRecord;
+      if ((record.type === 'delivery' && selected.has(record.claimRef)) || (record.type === 'payment' && record.jobRef === jobRef)) output.push(value);
+    }
+    return { kind: 'ok', value: output };
   }
 }

@@ -276,7 +276,7 @@ const TelegramBot = z.object({
   agent: z.enum(['claude-code', 'hermes', 'zen-agent']),
   /** The bot's Telegram username, without @ (informational) */
   username: z.string().optional(),
-  /** Hermes: the profile whose gateway polls this bot ('main' for ~/.hermes). Unset: any profile */
+  /** Hermes: the profile whose gateway polls this bot. 'main' or unset means the main Hermes home. */
   profile: z.string().optional(),
   /** zen-agent: the persona the bridge runs */
   persona: z.string().optional(),
@@ -440,8 +440,23 @@ const Settings = z.object({
     .prefault({}),
   projects: z
     .object({
-      /** Vault-relative file `cli-projects render` writes the report to. */
+      /** Vault-relative file `cli-areas render` writes the report to. The key and its default kept their names through the PARA rename. */
       reportFile: z.string().default('projects.md'),
+    })
+    .prefault({}),
+  areas: z
+    .object({
+      /** Vault-relative folder `cli-areas review` writes the weekly review to, one file per ISO week (`<reviewDir>/2026-W46.md`). */
+      reviewDir: z.string().min(1).default('Areas/weekly-review'),
+    })
+    .prefault({}),
+  /** The warehouse addon (docs/warehouse.md): where the vault keeps its migrations, connectors and dashboards. */
+  warehouse: z
+    .object({
+      /** Vault-relative folder holding `migrations/`, `connectors/` and `dashboards/`. */
+      dir: z.string().min(1).default('warehouse'),
+      /** Where connectors may keep raw files; absolute, or relative to the vault. Default: `<app data dir>/warehouse-raw`. */
+      rawDir: z.string().min(1).optional(),
     })
     .prefault({}),
   /** `secondbrain garden`: the nightly vault gardener (docs/garden.md). */
@@ -476,6 +491,7 @@ const Settings = z.object({
 export type SecondBrainSettings = z.infer<typeof Settings>;
 export type ServerSettings = SecondBrainSettings['server'];
 export type GardenSettings = SecondBrainSettings['garden'];
+export type WarehouseSettings = SecondBrainSettings['warehouse'];
 export type ChatSettingsOverrides = z.infer<typeof Chat>;
 export type ClassifySettings = z.infer<typeof Classify>;
 export type DispatchSettings = z.infer<typeof Dispatch>;

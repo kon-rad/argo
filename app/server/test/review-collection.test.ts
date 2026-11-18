@@ -22,7 +22,7 @@ it('requests an immutable aggregate diff with the same flags as actual admission
   expect(await github.diff(revision)).toBe('net diff');
   expect(github.git).toHaveBeenCalledWith(['fetch', '--no-tags', 'https://github.com/example/engine.git', head, base]);
   expect(github.git).toHaveBeenCalledWith(['diff', '--name-only', '--no-renames', '-z', base, head, '--']);
-  expect(github.git).toHaveBeenCalledWith(['diff', '--no-ext-diff', '--no-textconv', '--binary', base, head, '--']);
+  expect(github.git).toHaveBeenCalledWith(['diff', '--no-ext-diff', '--no-textconv', '--binary', base, head, '--'], 64_000_000);
   expect(github.gh).not.toHaveBeenCalled();
 });
 
@@ -111,7 +111,7 @@ it.each(['stable', 'head', 'base', 'merged'] as const)('worker binds aggregate e
     for (const file of ['RESULT.md', 'run.log']) await writeFile(join(dir, card, file), `Builder revision: ${head}\nTests passed`);
     const host = { repositories: { engine: repo }, targets: { fixture: {} }, notesRoot: dir, evidenceRoot: dir, exclude: [] } as unknown as HostConfig;
     const job = { id: 1, card, builder: 'builder', reviewer: 'auditor', target: 'fixture', round: 0, state: 'queued', snapshot: change === 'merged' ? { repo: repo.github, pr: 7, base, head } : null };
-    const context = { ticket: { repo: 'engine', body: 'Acceptance: final revision', assignee: 'builder' }, comments: [{ body: 'Earlier reviewer finding: verify removed lines' }], conversations: [], reviews: [{ findings: ['Earlier rejection retained'] }] };
+    const context = { ticket: { repo: 'engine', body: 'Acceptance: final revision', assignee: 'builder' }, comments: [{ body: 'Earlier reviewer finding: verify removed lines' }], conversations: [], earlier_findings: [], reviews: [{ findings: ['Earlier rejection retained'] }] };
     const client = { query: vi.fn(async (sql: string) => ({ rows: sql.includes('pg_try_advisory_lock') ? [{ ok: true }] : sql.includes('review_context') ? [{ context }] : sql.includes('review_policy') ? [{ enabled: true }] : sql.includes('SELECT * FROM review_jobs') ? [job] : [] })) } as unknown as pg.Client;
     const p = { ...revision, body: card, headRefName: card, baseRefName: 'main', isDraft: false, mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', reviewDecision: null, isCrossRepository: false, state: change === 'merged' ? 'MERGED' : 'OPEN', mergeCommit: change === 'merged' ? { oid: 'd'.repeat(40) } : null, statusCheckRollup: [{ name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' }] };
     if (change === 'merged') p.baseRefOid = 'c'.repeat(40);
@@ -132,6 +132,7 @@ it.each(['stable', 'head', 'base', 'merged'] as const)('worker binds aggregate e
       expect(s.sources.find(s => s.ref === `github:diff:${head}`)?.text).toBe('final net diff');
       expect(s.sources.find(s => s.ref.endsWith(':comments'))?.text).toContain('Earlier reviewer finding');
       expect(s.sources.find(s => s.ref.endsWith(':reviews'))?.text).toContain('Earlier rejection retained');
+      expect(s.sources.find(s => s.ref === 'board:t_123abc:earlier_findings')).toMatchObject({ text: '[]', missing: false, truncated: false });
       expect(s.sources.find(s => s.ref.startsWith('github:example/engine/pull'))?.text).toContain('prior-thread');
       expect(s.sources.find(s => s.ref === `github:source:${head}:main.ts`)?.text).toBe('final source');
       expect(reads).toBe(2);

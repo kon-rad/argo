@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, type AgentSessionFilters, type AgentSessionRow } from '../../lib/api.js';
+import DataTable from '../../components/DataTable.js';
 import { shortStamp, span, startedStamp } from '../../lib/time.js';
 import { clampLine, contextLabel, formatTokens, personaLabel } from './format.js';
 
@@ -57,7 +58,7 @@ function Row({ s, tz }: { s: AgentSessionRow; tz: string }) {
         {s.channel_bot && s.channel_bot !== s.persona ? <div className="text-xs text-[var(--ink-dim)]">bot {s.channel_bot}</div> : null}</td>
       <td>{s.harness}{s.profile && s.profile !== 'main' ? <span className="text-xs text-[var(--ink-dim)]"> · {s.profile}</span> : null}
         {s.channel ? <span className="ml-1 rounded border border-[var(--rule)] px-1 text-xs text-[var(--ink-dim)]" title={s.channel === 'telegram' ? 'a Telegram chat' : `via ${s.channel}`}>{s.channel}{s.channel_bot ? ` · ${s.channel_bot}` : ''}</span> : null}</td>
-      <td className="max-w-[28rem] truncate" title={name ?? undefined}><Link className="underline" to={sessionLink(s)}>{name ?? <span className={dim} title="no usable title recorded">{s.external_id.slice(0, 12)}</span>}</Link>
+      <td className="max-w-[28rem] truncate max-md:order-first max-md:col-span-2" title={name ?? undefined}><Link className="underline" to={sessionLink(s)}>{name ?? <span className={dim} title="no usable title recorded">{s.external_id.slice(0, 12)}</span>}</Link>
         {s.parent_external_id ? <span className="text-xs text-[var(--ink-dim)]"> ({s.harness === 'claude-code' ? 'subagent' : 'continued'})</span> : null}</td>
       <td>{s.task_ids?.length ? s.task_ids.map((id) => <Link key={id} to={`/board/${encodeURIComponent(id)}`} className="block whitespace-nowrap text-xs underline">{id}</Link>) : <span className="text-[var(--ink-faint)]">-</span>}</td>
       <td className="text-xs">{s.models.join(', ')}{s.provider ? <div className="text-[var(--ink-dim)]">{s.provider}</div> : null}</td>
@@ -129,7 +130,7 @@ export default function AgentSessions({ from, to, tz }: { from: string; to: stri
         <label className="flex items-center gap-1"><input type="checkbox" checked={!!filters.errors} onChange={(e) => flag('s_errors', e.target.checked)} />with errors</label>
         <label className="flex items-center gap-1"><input type="checkbox" checked={!!filters.subagents} onChange={(e) => flag('s_sub', e.target.checked)} />subagents as rows</label>
       </div>
-      <div className="overflow-x-auto"><table className="w-full text-sm">
+      <DataTable label="Sessions" phone="cards" className="w-full text-sm">
         <thead className="text-left text-xs text-[var(--ink-dim)]"><tr>
           <th title={`YYYYMMDD HH:mm, ${tz}`}>Started</th><th>Duration</th><th>Machine</th><th>Type</th><th>Bot persona</th><th>Agent</th><th>Session</th><th>Ticket</th><th>Model</th><th className="text-right">Steps</th>
           <th className="text-right">Tool calls</th><th className="text-right" title="summed over every call">Tokens in / out</th><th className="text-right" title="latest call / context window">Context</th><th className="text-right">USD (Hermes)</th><th className="text-right">Subagents</th>
@@ -138,7 +139,7 @@ export default function AgentSessions({ from, to, tz }: { from: string; to: stri
           {(list.data?.sessions ?? []).map((s) => <Row key={s.id} s={s} tz={tz} />)}
           {list.data && total === 0 && <tr><td colSpan={15} className="py-2 text-xs text-[var(--ink-faint)]">No sessions in this range.</td></tr>}
         </tbody>
-      </table></div>
+      </DataTable>
       {list.isError && <p className="text-xs text-red-600">Could not load sessions: {(list.error as Error).message}</p>}
       {total > PAGE && (
         <div className="mt-1 flex items-center gap-2 text-xs">

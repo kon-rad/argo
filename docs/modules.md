@@ -14,7 +14,7 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 
 | Module | Page | One line |
 |---|---|---|
-| [`projects`](#projects) | `/projects` | A project tracker: divisions, teams, projects, features, verifications |
+| [`projects`](#projects) | `/areas`, `/projects` | A tracker of areas (what you run) and projects (what you finish): divisions, teams, stages, verifications, archive |
 | [`memory`](memory.md) | `/memory` | The shared memory: sourced claims every agent recalls, and the capture loop that writes each bot's own lessons from its finished wakes |
 | [`org`](#org) | `/org` | A message board for a company of named AI agents, with you as the human member |
 | [`board`](#board) | `/board` | The kanban board: cards for people and agents, claimed and finished by lanes, with per-device tokens |
@@ -30,6 +30,11 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 | [`social`](#social) | (connect + queue, no page UI yet) | Schedule and publish posts with images to LinkedIn (more platforms planned) |
 | [`chat`](#chat) | (a button in the header) | Ask your notes: conversations with an assistant that answers from retrieved passages, with citations, on the provider and model you pick |
 | [`desk`](#desk) | `/desk` | Hiring desk operator console under Work; requires production service wiring for operations |
+| [`observatory`](#observatory) | API only | Authorized evidence windows, coverage and deterministic replay |
+
+## observatory
+
+Off by default. Enable `observatory` through `MODULES` or the vault addons list for the authenticated evidence API. No UI, nav link or timer in this slice. Source modules retain their authorization. See [Observatory API and replay](observatory.md).
 
 ## desk
 
@@ -45,17 +50,116 @@ For activation checks, troubleshooting and rollback, use [Hiring desk rollout](d
 
 ## projects
 
-A tracker where each project has a stage (`idea`, `designing`, `building`, `testing`, `live`, `parked`, `done`), features with their own stages, and **verifications**: a feature goes `live` or `done` only after a passing check is recorded.
+A tracker of **areas** and **projects**, the two words PARA uses ([vault.md](vault.md#areas-and-projects)). An area is what you run: it has no end, so it has a status (`active` or `parked`) and no due date. A project is what you finish: an `outcome`, inside one area, with a stage (`idea`, `designing`, `building`, `testing`, `live`, `parked`, `done`) and **verifications**: a project goes `live` or `done` only after a passing check is recorded.
 
 | | |
 |---|---|
-| Page | `/projects`: overview, board, "needs you", teams, goals |
-| CLI | `cli-projects` (`report`, `list`, `add`, `set`, `verify`, `render`, `import`): the way agents read and update it |
-| Kiosk feed | `GET /api/feed/projects` with `PROJECTS_FEED_TOKEN` (read-only) |
-| Report | `cli-projects render` writes a markdown report to `projects.reportFile` |
-| Settings | `goalsFile` in `secondbrain.json` (goals table) |
-| Timers (server) | `projects-render` |
+| Pages | `/areas`: the active areas by division, with open project count, owner and KPI health; parked and archived areas behind toggles. `/areas/<area>`: the area's home page (below). `/projects`: projects across areas, filtered by area, stage and due date (`?area=&stage=&due=overdue\|week\|month\|none&archived=1`); its other tabs are the overview, the board (areas with their projects by stage), "needs you", teams and goals. `/projects/<area>/<project>`: outcome, stage history, verifications, next action, the start of its README. An old `/projects/<area>` link redirects to `/areas/<area>` |
+| Keys | `g` then `a` opens `/areas`, `g` then `p` opens `/projects` (no modifier, not while typing in a field) |
+| CLI, areas | `cli-areas` (`list`, `show`, `review`, `report`, `render`, `add`, `set`, `archive`, `unarchive`, `record`, `team`, `division`, `import`) |
+| CLI, projects | `cli-projects` (`list --area --stage --due-before`, `add <area>/<project> --outcome`, `set`, `verify`, `archive`, `unarchive`, `report`): the way agents read and update it |
+| API | `/api/areas` (the board; `?view=index` is the list behind `/areas`), `/api/areas/report`, `/api/areas/:area` (`GET` is the area page: the row, the home note's links, style, goals and KPIs with readings, the roadmap, 14 days of history; `PATCH` sets fields), `/api/areas/:area/projects`, `GET /api/areas/:area/context` (the context pack, `?project=`), `POST /api/areas/:area/kpis` (one KPI reading: `{ key, value, at?, note? }`), `/api/projects` (across areas; `?area=`, `?stage=`, `?due_before=`, `?archived=1`), `/api/projects/:area/:project` (`GET` is the project page; `PATCH` sets fields), `.../verifications`, `.../archive`, `.../unarchive` |
+| Kiosk feed | `GET /api/feed/projects` with `PROJECTS_FEED_TOKEN` (read-only). Its path and keys are the ones a kiosk already reads: `projects` lists the areas |
+| Report | `cli-areas render` writes a markdown report to `projects.reportFile` |
+| Project folders | `cli-projects add` creates `<area home>/projects/<project>/README.md` when the area has a home (`cli-areas set <area> --home <path>`), and never overwrites one |
+| Archive | `cli-areas archive <area>`, `cli-projects archive <area>/<project>`: hidden from active views, nothing deleted; `--archived` lists them; `archive --purge --yes` deletes for good |
+| Settings | `goalsFile` in `secondbrain.json` (goals table), `projects.reportFile`, `areas.reviewDir` |
+| Timers (server) | `projects-render` (hourly), `areas-review` (Sunday 20:00 in the vault's `timezone`) |
 | Skill | `company-report` |
+| Change history | `tracker_events`: every change to an area or a project, frontmatter changes of home notes, KPI readings (below) |
+| KPIs | `cli-areas record <area> <kpi> <value> [--at D] [--note "why"]`; the keys are the `kpis:` frontmatter of the area's home note |
+| Context pack | `cli-areas show <area> [--project P] [--format text\|json]`: what an agent reads before it works on an area (below) |
+| Weekly review | `cli-areas review [--week YYYY-Www]` writes `<areas.reviewDir>/<week>.md` (below) |
+
+### Context pack
+
+`cli-areas show <area>` prints what an agent with a ticket on an area needs before it starts, and `GET /api/areas/:area/context` returns the same thing as JSON (`--format json` on the CLI).
+
+| Section | From |
+|---|---|
+| What it is | The home note's `description` and the first section of its body |
+| Links | The home note's `links:` frontmatter, as written |
+| Style and assets | The home note's `style:` frontmatter: paths, listed |
+| Goals and KPIs | `goals:` and `kpis:` of the home note, each KPI with its latest reading and its target. An area that defines no KPIs has no `kpis` key and no KPI section |
+| Roadmap | The open projects (`idea` to `testing`), by due date: outcome, stage, due, next action |
+| Recent | The last 14 days: rows of the change history, cards finished, files changed under the area's home (from the vault index) |
+| Project | With `--project <slug>` (or `show <area>/<project>`, or `?project=` on the API): the project's row, the first section of its README, its newest verifications |
+
+The pack names paths and never inlines a file, so an agent opens only what its ticket needs. The text form stays under about 8,000 characters (about 2,000 tokens): each list is cut with a count of what was left out (`... and 12 more`), and a busy area is rendered with shorter lists until it fits. The JSON carries up to 30 rows of a list with its `*_total` next to it. An unknown area or project is a 404 (exit 1 on the CLI).
+
+### Weekly review
+
+`cli-areas review` writes one markdown file per ISO week, `<areas.reviewDir>/2026-W46.md` (default folder `Areas/weekly-review`). The week runs Monday to Sunday in the vault's [`timezone`](timezone.md) (UTC when unset). `--week 2026-W46` picks a week; `--week ending` is the week that is ending or just ended, which is what the timer asks for.
+
+For each area where something happened:
+
+| Section | From |
+|---|---|
+| Shipped | Projects that reached `live` or `done` |
+| Moved | Every other stage change, and a status change of the area |
+| Slipped | A `due` moved to a later date during the week; and a `due` that fell in the week and passed while the project was still open (not shipped, parked or archived at the end of the week) |
+| New and dropped | Projects created, archived, unarchived |
+| KPIs | The reading the week started with (the last one before it, else the first one in it) and ended with, the change, and the distance to the target |
+| Changed facts | Frontmatter changes of the home notes, and tracker fields other than a stage (an owner, a next action, a due date set or moved earlier) |
+| Work | Cards finished for the area, and notes changed under its home |
+
+Active areas where nothing happened are one `Quiet:` line. Cards finished that name no area are one `Unfiled work:` line: a card needs neither an area nor a project.
+
+The generated part sits between `<!-- review:start -->` and `<!-- review:end -->`. A new file gets a title and an empty `## Reflection` section above the block, which is yours. A re-run rewrites the block and nothing else: every character outside the markers is kept, and a file whose block would not change is not written at all. If you wrote the file before the first run, the block is added at its end.
+
+On a server the `secondbrain-areas-review` timer runs `cli-areas review --week ending` on Sunday at 20:00 in the vault's `timezone`. The zone is written into the timer when its unit is generated (`deploy.sh`, `secondbrain apply`), so after `secondbrain timezone set` the timer moves on the next deploy. A week that has passed can be written again at any time; "notes changed" is then read from the vault index as it is now, which keeps only the last change of a file.
+
+### The area page
+
+`/areas/<area>` joins the tracker row with the area's home note ([vault.md](vault.md#areas-and-projects)). Areas differ, so every section below the header is drawn only when the area has it.
+
+| Section | From |
+|---|---|
+| Header | The row: title, status, health, division, team and its members; the owner is the team's lead. The description is the home note's `description:` |
+| About | The first section of the home note's body |
+| Links | `links:` as given. A URL opens outside, a path opens the note, `owner/name` under `repos` is read as a GitHub repository, anything else is text |
+| Style and assets | `style.guide` rendered as markdown, the images in `style.assets` shown inline (up to 48), other `style:` keys listed. Both are read from the index, so a path the scanner does not index shows nothing |
+| Goals | `goals:` of the home note, then the goal codes on the row with their text from `goalsFile` |
+| KPIs | `kpis:` with the latest reading, the target and a small trend of the last 30 readings. Hidden when the area defines none |
+| Roadmap | The open projects (`idea` to `testing`) by due date: outcome, stage, due, next action |
+| Recent activity | The last 14 days of `tracker_events` for the area and its projects |
+| Archive | Asks for a note, which goes into the change history; an archived area shows Unarchive |
+
+"Active projects" on `/areas` counts the same open stages. "At target" compares a KPI's latest reading with its `target`; add `direction: down` to a KPI where lower is better.
+
+### Change history
+
+`tracker_events` is one append-only log of how areas and projects change. Triggers on the two tables write it, so a change made by a CLI, the web page, a bot through the board or plain SQL is logged the same way.
+
+| Column | Meaning |
+|---|---|
+| `id`, `at` | Order and time |
+| `actor` | Who made the change (`--by`, the signed-in owner, the board caller); `unknown` when the writer did not say |
+| `source` | `cli`, `api`, `board`, `scanner`, `kpi`, `migration` (rows copied from the old stage history), or `unknown` |
+| `area_slug`, `project_id` | What changed; `project_id` is empty for the area itself |
+| `kind` | `created`, `changed`, `stage`, `archived`, `unarchived`, `frontmatter`, `kpi_reading` |
+| `field`, `from_value`, `to_value` | One row per changed column (or frontmatter key, or KPI key), with both values as JSON. `updated_at` and `updated_by` are not logged. A `created` row holds the whole new row in `to_value` |
+| `note` | The `--note` of the command that made the change |
+
+- **Who and how.** A writer names itself for its transaction with `set_config('app.actor', ..., true)` and `set_config('app.source', ..., true)`; `app.note` carries the note. The CLIs and the API do this on every write. Code that writes to `areas` or `projects` without it is still logged, as `unknown`.
+- **Append-only.** An `UPDATE` or `DELETE` on `tracker_events` is refused for every role, the app's own included. The agents' role (`sb_org`) can read it and nothing else. `archive --purge` still takes the history of what it deletes.
+- **`stage_changes` is a view** over the log with the columns it always had (stage moves, the first stage of a new row, archive and unarchive), so the report and anything else that reads it keep working. Rows from before the log were copied in with their ids.
+- **Frontmatter.** The vault scanner adds a `frontmatter` row per changed top-level key of a home note ([vault.md](vault.md#areas-and-projects)); `note` holds the file's path.
+- **KPI readings** live in `kpi_readings` (`area_slug`, `kpi_key`, `value`, `at`, `source`, `actor`, `note`), and each one also appears in the log as `kpi_reading` with the reading before it as `from_value`. `--at` takes a date or a time; a bare date is midnight in the database's time zone.
+
+**Renamed in one step.** Until this release the tracker called an area a project and a project a feature. The tables, the API and the CLIs changed together, and a caller that still writes the old way fails instead of writing the wrong row: a card or a message can carry a project only with its area, and only a pair that exists. The old spellings keep working until 2026-12-01, each with a warning that names the new one; from that day they print the new command and exit 2.
+
+| Old | New |
+|---|---|
+| `cli-projects add-project <p>` | `cli-areas add <area>` |
+| `cli-projects remove-project <p>` | `cli-areas archive <area>` (deletes nothing; `--purge --yes` does) |
+| `cli-projects set <p>` (no slash) | `cli-areas set <area>`; `--stage` becomes `--status active\|parked` |
+| `cli-projects render`, `team`, `division`, `import` | the same verbs on `cli-areas` |
+| `cli-projects add <p>/<f> --title T` | `cli-projects add <area>/<project> --outcome O` (without `--outcome` it defaults to the title, with a warning) |
+| `--project <p> [--feature <f>]` on `cli-board`, `cli-org`, `secondbrain memory` | `--area <a> [--project <p>]` |
+| `GET /api/projects/report` | `GET /api/areas/report` (the old path answers 308 to it) |
+
+`cli-projects report` is not an alias: it stays for good. An import file in the old shape (`projects` with `features`) is still read.
 
 ## memory
 
@@ -133,6 +237,17 @@ A ledger of Claude Code, Codex, zen-agent and Hermes usage: tokens per run, whic
 | Timers (server) | `usage-sync`, `credits-sync`, and the usage importer |
 | Summaries | The Summaries tab, `summarize` and the summarize timer are the `summaries` module ([summaries.md](summaries.md)) |
 
+**Chats you start with a bot.** A session you open yourself with a roster bot, on any machine, is counted under that bot as an *owner chat* (surface `owner-chat`), not as a wake. The bot is read at import time from what the harness recorded, and only a name in the roster (`org_agents`, not the human owner) is ever stored:
+
+| Harness | Where the bot comes from |
+|---|---|
+| Claude Code | `claude --agent <name>`: the transcript's `agent-setting` record |
+| Codex | the first prompt you sent (after Codex's own environment and AGENTS.md messages) opens with the compiled persona, `You are **<name>**` (Agent Dock, the Codex dispatcher's preamble) |
+| Hermes | the first user message opens with the compiled persona; a cron session never counts |
+| zen-agent | the trace's `persona`, when no dispatcher labelled the run |
+
+A subagent (and a Hermes compression continuation) takes its parent's bot. Nothing is guessed from a folder name or a title; a session with none of these stays unattributed. Owner chats appear in the agent filter, the sessions list and the by-bot totals; the wake panel (`/org-wakes`), the wake counts and the bots' daily token cap (`ORG_DISPATCH_DAILY_TOKENS`) count dispatcher wakes only. A zen-agent trace with no dispatcher labels is a chat: its run carries no agent, and when it comes from a laptop the server stores no run for it. `usage-push` sends a laptop's zen-agent traces (`ZEN_SESSIONS_DIR`, gitignored in a vault, so this is the only way they reach the server), each one whole when it changes, with the same cursor rules as Codex. For sessions imported before this, run `secondbrain usage-backfill --bots` once on the server; it is safe to run again.
+
 Subscription quotas and prepaid balances are shown only for configured providers. Codex quota windows come from its subscription-authenticated CLI app-server, including five-hour and weekly limits when reported by the account. Header quota meters are consolidated here. Missing CLI/login or a failed refresh is visible in the provider panel; there is no API billing fallback.
 
 ## map
@@ -144,7 +259,7 @@ A 3D graph of the vault: notes, projects, divisions and goals, drawn from wikili
 | Page | `/map` |
 | CLI | `secondbrain map-build`, `secondbrain metrics`, `secondbrain backlinks` |
 | Settings | `map.divisionFolders`, `map.missionFolders`, `metrics[]`, `socialMetrics`, `goalsFile`, `missionFile` in `secondbrain.json`; `YOUTUBE_API_KEY`, `SOCIAL_TOKEN_ENC_KEY` for social metrics |
-| Timers (server) | `map-build` (hourly), `metrics` (daily) |
+| Timers (server) | `map-build` (hourly), `metrics` (daily), `metrics-checkpoints` (hourly: per-post readings at 24 h, 72 h and 7 d) |
 
 The daily `metrics` run also collects **social metrics** when `socialMetrics` lists accounts: follower counts and per-post views, likes and comments for YouTube, Instagram and X, plus LinkedIn numbers entered by hand, with `secondbrain metrics social` for the weekly report. See [social-metrics.md](social-metrics.md).
 

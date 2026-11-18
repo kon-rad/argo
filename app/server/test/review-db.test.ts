@@ -1,4 +1,7 @@
 import pg from 'pg';
+import { boardSources } from '../src/review/context.js';
+import { POLICY } from '../src/review/policy.js';
+import { readFile } from 'node:fs/promises';
 import { beforeEach, afterAll, it, expect } from 'vitest';
 import { query } from '../src/db.js';
 import { importOrg } from '../src/org.js';
@@ -25,6 +28,75 @@ beforeEach(async()=>{
 afterAll(async()=>{await query('UPDATE review_policy SET enabled=false,reviewer=NULL,worker_login=NULL');});
 async function card(work:'coding'|'writing'='coding') {return createCard('owner',{title:'Review fixture',body:'Acceptance: authorized writes',contract:{objective:'Authorized write',verification:'tests'},assignee:'builder',work,repo:'engine'});}
 async function job(id:string) {return (await query('SELECT * FROM review_jobs WHERE card=$1 ORDER BY id DESC LIMIT 1',[id])).rows[0]!;}
+
+// t_f67fa0ca: prior findings must survive the full review_jobs verdict capacity.
+it.each([
+  [8000, 'x'], [8001, 'x'], [99999, 'x'], [100000, 'x'], [100000, '界'],
+] as const)('retains a complete %i-byte prior verdict (%s)',async(bytes,character)=>{
+  const c=await card();
+  const verdict={reviewer:'auditor',decision:'reject',findings:Array.from({length:11},(_,i)=>({fix:`Fix finding ${i}`,verification:`Verify finding ${i}`}))};
+  verdict.findings[0]!.fix='';
+  // PostgreSQL jsonb text includes spaces; size the fixture using its stored form.
+  const emptyBytes=Number((await query('SELECT octet_length($1::jsonb::text) AS bytes',[JSON.stringify(verdict)])).rows[0].bytes);
+  const padding=bytes-emptyBytes, width=Buffer.byteLength(character);
+  verdict.findings[0]!.fix=character.repeat(Math.floor(padding/width))+'x'.repeat(padding%width);
+  const prior=(await query(`INSERT INTO review_jobs(card,builder,reviewer,repo,round,state,verdict,snapshot)
+    VALUES($1,'builder','auditor','engine',0,'rejected',$2,'{"pr":42}')
+    RETURNING id,verdict::text AS text,octet_length(verdict::text) AS bytes`,[c.id,JSON.stringify(verdict)])).rows[0]!;
+  expect(prior.bytes).toBe(bytes);
+  const current=(await query(`INSERT INTO review_jobs(card,builder,reviewer,repo,round)
+    VALUES($1,'builder','auditor','engine',1) RETURNING id`,[c.id])).rows[0]!;
+  await query(`INSERT INTO review_jobs(card,builder,reviewer,round,state,verdict)
+    VALUES($1,'builder','auditor',2,'rejected','{"findings":["later job"]}')`,[c.id]);
+  const context=(await as(workerName,'SELECT review_context($1) AS context',[current.id])).rows[0].context;
+  expect(context.earlier_findings).toEqual([{round:0,pr:42,verdict:prior.text,truncated:false}]);
+  expect(JSON.parse(context.earlier_findings[0].verdict)).toEqual(verdict);
+  const sources = boardSources(`board:${c.id}:earlier_findings`, context.earlier_findings);
+  expect(sources.every(s => !s.truncated && s.text.length <= POLICY.sourceChars)).toBe(true);
+  const collected = JSON.parse(sources.map(s => s.text).join(''));
+  expect(JSON.parse(collected[0].verdict)).toEqual(verdict);
+  // Crossing the actual table byte limit still fails, including multibyte text.
+  verdict.findings[0]!.fix+='x'.repeat(100001-bytes);
+  await expect(query('UPDATE review_jobs SET verdict=$1 WHERE id=$2',[JSON.stringify(verdict),prior.id])).rejects.toThrow(/review_jobs_verdict_check/);
+});
+
+it('retains the history sentinel, round ordering, card isolation and null verdicts',async()=>{
+  const c=await card(),other=await card();
+  await query(`INSERT INTO review_jobs(card,builder,reviewer,round,state,verdict)
+    SELECT $1,'builder','auditor',n,'rejected',NULL FROM generate_series(101,0,-1) n`,[c.id]);
+  await query(`INSERT INTO review_jobs(card,builder,reviewer,round,state,verdict)
+    VALUES($1,'builder','auditor',0,'rejected','{"findings":["unrelated"]}')`,[other.id]);
+  const current=(await query(`INSERT INTO review_jobs(card,builder,reviewer,round)
+    VALUES($1,'builder','auditor',102) RETURNING id`,[c.id])).rows[0]!;
+  const context=(await as(workerName,'SELECT review_context($1) AS context',[current.id])).rows[0].context;
+  expect(context.earlier_findings).toEqual(Array.from({length:101},(_,round)=>({round,pr:null,verdict:null,truncated:null})));
+  expect(context.ticket.id).toBe(c.id);
+  await expect(as('sb_org','SELECT review_context($1)',[current.id])).rejects.toThrow(/permission denied/);
+});
+
+it('migrates only the verdict limits, preserves function security and refuses unexpected source',async()=>{
+  const migration=await readFile(new URL('../../db/migrations/1756000019150_review-context-verdict-capacity.sql',import.meta.url),'utf8');
+  const oldFragment="'verdict',left(verdict::text,8000),'truncated',octet_length(verdict::text)>8000";
+  const newFragment="'verdict',left(verdict::text,100000),'truncated',octet_length(verdict::text)>100000";
+  const client=new pg.Client({connectionString:url});await client.connect();
+  const inspect=async()=> (await client.query(`SELECT pg_get_functiondef(oid) AS definition,
+    to_jsonb(p)-'prosrc' AS attributes FROM pg_proc p WHERE oid='public.review_context(bigint)'::regprocedure`)).rows[0]!;
+  try{
+    await client.query('BEGIN');
+    const migrated=await inspect();
+    expect(migrated.definition).toContain(newFragment);
+    await client.query(migrated.definition.replace(newFragment,oldFragment));
+    const before=await inspect();
+    await client.query(migration);
+    const after=await inspect();
+    expect(after.definition).toBe(before.definition.replace(oldFragment,newFragment));
+    expect(after.attributes).toEqual(before.attributes);
+    expect(after.attributes.prosecdef).toBe(true);
+    expect(after.attributes.proconfig).toContain('search_path=public');
+    await expect(client.query(migration)).rejects.toThrow(/expected exactly one prior-verdict limit fragment/);
+  }finally{await client.query('ROLLBACK');await client.end();}
+});
+
 it.each(['finish','move','runner'])('%s queues review transactionally and does not release dependencies',async path=>{
   const c=await card();const child=await createCard('owner',{title:'After deployment',assignee:'builder',deps:[c.id]});
   if(path==='finish') await as('sb_org','SELECT board_card_finish($1,$2,$3,$4,NULL,NULL,NULL,NULL,NULL)',['builder',c.id,'done','tests pass']);

@@ -60,7 +60,7 @@ export default function ZenChat() {
           ))}
         </ul>
       </aside>
-      <section className={`flex min-w-0 flex-1 flex-col ${chatId || showForm ? '' : 'max-md:hidden'}`}>
+      <section className={`flex min-w-0 flex-1 flex-col max-md:overflow-y-auto ${chatId || showForm ? '' : 'max-md:hidden'}`}>
         {showForm ? <NewSession from={form?.from ?? null} onClose={() => setForm(null)} />
           : chatId ? <Conversation id={chatId} onBack={() => navigate('/agents/zen')} onContinue={(c) => setForm({ from: c })} />
           : <p className="p-6 text-sm text-[var(--ink-dim)]">Start a new session or pick one on the left. zen-agent works in the vault on the server.</p>}
@@ -231,12 +231,12 @@ function Conversation({ id, onBack, onContinue }: { id: string; onBack: () => vo
 
   return (
     <>
-      <div className="flex items-center gap-2 border-b border-[var(--rule)] px-3 py-2 text-sm">
+      <div className="flex items-center gap-2 border-b border-[var(--rule)] px-3 py-2 text-sm max-md:flex-wrap">
         <button type="button" onClick={onBack} className="text-[var(--ink-dim)] md:hidden" aria-label="Back">←</button>
-        <span className="truncate font-medium">{chat ? chat.title || 'untitled' : '…'}</span>
+        <span className="min-w-0 truncate font-medium max-md:flex-1">{chat ? chat.title || 'untitled' : '…'}</span>
         {chat?.persona && <AgentAvatar name={chat.persona} size={22} />}
         {chat && (
-          <span className="truncate text-xs text-[var(--ink-dim)]" title={`${chat.model} · tools: ${chat.tools.join(', ') || 'none'} · thinking ${chat.thinking} · session ${chat.session_id}`}>
+          <span className="truncate text-xs text-[var(--ink-dim)] max-md:order-last max-md:basis-full" title={`${chat.model} · tools: ${chat.tools.join(', ') || 'none'} · thinking ${chat.thinking} · session ${chat.session_id}`}>
             {chat.persona ?? 'default'} · {chat.model} · {chat.tools.join(', ') || 'no tools'}{chat.thinking !== 'off' ? ` · thinking ${chat.thinking}` : ''}
           </span>
         )}

@@ -10,10 +10,16 @@ import { ArcErc20UsdcSettlement, ARC_ERC20_USDC_INTERFACE, ARC_TESTNET_USDC_ADDR
 import { ArcJsonRpcReader } from './settlement/rpc.js';
 import type { DeskPublicControls } from './routes.js';
 import type { DeskPrivateControls } from './operator/routes.js';
+import { createCybazaarBackend, cybazaarConfigSchema, type CybazaarOperationalDependencies } from './runtime.js';
 
 export interface DeskBootSettings {
   domain?: string; chainId?: string; paymentInterface?: string; usdcAddress?: string;
   rpcUrl?: string; publicOrigin?: string; runtimeModule?: string;
+  arkivRpcUrl?: string; arkivChainId?: string; arkivPrivateKey?: string; arkivLifetimeBlocks?: string;
+  beeUrl?: string; beePostageBatchId?: string; identityRpcUrl?: string; identityChainId?: string;
+  ensRpcUrl?: string; ensChainId?: string;
+  erc8004RegistryAddress?: string; metadataHosts?: string; timeoutMs?: string; maxResponseBytes?: string;
+  maxArtifactBytes?: string; publicationDestination?: string;
 }
 const settingsSchema = z.object({
   domain: z.string().min(1).max(200),
@@ -30,7 +36,8 @@ const settingsSchema = z.object({
 /** The host supplies real identity/marketplace/worker services, never browser input. */
 export type DeskHostRuntime = Omit<DeskServiceOptions, 'store' | 'settlement'>;
 export interface DeskRuntimeModule {
-  createDeskRuntime(context: { domain: string; persistence: PgDeskPersistence }): Promise<DeskHostRuntime> | DeskHostRuntime;
+  createDeskRuntime?(context: { domain: string; persistence: PgDeskPersistence }): Promise<DeskHostRuntime> | DeskHostRuntime;
+  createCybazaarDependencies?(context: { domain: string; persistence: PgDeskPersistence }): Promise<CybazaarOperationalDependencies> | CybazaarOperationalDependencies;
 }
 export interface DeskBoot { public: DeskPublicControls; operator: DeskPrivateControls }
 type Query = <T extends Record<string, unknown> = Record<string, unknown>>(sql: string, params?: readonly unknown[]) => Promise<{ rows: T[]; rowCount: number | null }>;
@@ -77,11 +84,11 @@ export async function bootDesk(
   if (!modules.has('desk')) return undefined;
   const parsed = settingsSchema.safeParse(raw);
   if (!parsed.success) {
-    // Keep the rest of the server available while this optional addon is being
-    // configured. Its routes return an explicit 503 until trusted adapters exist.
+    // Development may keep the rest of the server available while this optional
+    // addon is being configured. Production always fails closed before listen.
     const runtimeUnconfigured = [raw.domain, raw.chainId, raw.paymentInterface, raw.rpcUrl, raw.runtimeModule]
       .every(value => value === undefined || value === '');
-    if (runtimeUnconfigured) {
+    if (runtimeUnconfigured && process.env.NODE_ENV !== 'production') {
       console.warn('Hiring Desk is enabled but not configured; its API will return 503.');
       return undefined;
     }
@@ -89,10 +96,30 @@ export async function bootDesk(
   }
   const settings = parsed.data;
   const runtimeModule = await load(pathToFileURL(settings.runtimeModule).href);
-  if (typeof runtimeModule.createDeskRuntime !== 'function') throw new Error('Desk runtime module must export createDeskRuntime with real production services');
+  const hasConcreteHint = [raw.arkivRpcUrl, raw.arkivChainId, raw.arkivPrivateKey, raw.beeUrl, raw.beePostageBatchId, raw.identityRpcUrl].some(value => value !== undefined);
+  if (!hasConcreteHint && typeof runtimeModule.createDeskRuntime !== 'function') throw new Error('Desk runtime module must export createDeskRuntime with real production services');
   if (!database) throw new Error('Hiring Desk requires the host database adapter.');
   const persistence = new PgDeskPersistence(database.transact, database.query);
-  const host = await runtimeModule.createDeskRuntime({ domain: settings.domain, persistence });
+  const rawCybazaar = {
+    arkivRpcUrl: raw.arkivRpcUrl, arkivChainId: raw.arkivChainId, arkivPrivateKey: raw.arkivPrivateKey,
+    arkivLifetimeBlocks: raw.arkivLifetimeBlocks, beeUrl: raw.beeUrl, beePostageBatchId: raw.beePostageBatchId,
+    identityRpcUrl: raw.identityRpcUrl, identityChainId: raw.identityChainId, ensRpcUrl: raw.ensRpcUrl, ensChainId: raw.ensChainId, erc8004RegistryAddress: raw.erc8004RegistryAddress,
+    metadataHosts: raw.metadataHosts?.split(',').map(value => value.trim()).filter(Boolean), timeoutMs: raw.timeoutMs,
+    maxResponseBytes: raw.maxResponseBytes, maxArtifactBytes: raw.maxArtifactBytes, publicationDestination: raw.publicationDestination,
+  };
+  const configured = Object.values(rawCybazaar).some(value => value !== undefined);
+  if (process.env.NODE_ENV === 'production' && !configured) throw new Error('Desk production configuration missing concrete Arkiv, Swarm, signer, and identity settings');
+  let host: DeskHostRuntime;
+  if (configured) {
+    const concrete = cybazaarConfigSchema.safeParse(rawCybazaar);
+    if (!concrete.success) throw new Error(`Desk production configuration missing or invalid: ${concrete.error.issues.map(issue => issue.path.join('.')).join(', ')}`);
+    if (typeof runtimeModule.createCybazaarDependencies !== 'function') throw new Error('Desk runtime module must export createCybazaarDependencies for operational worker services');
+    const operational = await runtimeModule.createCybazaarDependencies({ domain: settings.domain, persistence });
+    host = createCybazaarBackend({ domain: settings.domain, config: concrete.data, persistence, publicationQuery: database.query, operational });
+  } else {
+    if (typeof runtimeModule.createDeskRuntime !== 'function') throw new Error('Desk runtime module must export createDeskRuntime with real production services');
+    host = await runtimeModule.createDeskRuntime({ domain: settings.domain, persistence });
+  }
   assertLiveDeskHost(host);
   const reader = new ArcJsonRpcReader(settings.rpcUrl);
   const reserve = (receiptId: string, assignmentKey: string) => reserveReleasedReceipt(persistence, receiptId, assignmentKey);

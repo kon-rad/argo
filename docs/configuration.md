@@ -40,7 +40,7 @@ For a fresh instance, follow [Set up your vault](onboarding/02-set-up-your-vault
 | `B2STORE_CRYPT_PASSWORD`, `B2STORE_CRYPT_PASSWORD2` | unset | uploads: the rclone-crypt passwords when the vault part of the bucket is encrypted (the same rclone-crypt passwords the object-storage tooling uses) |
 | `UPLOADS_MAX_GB` | `50` | uploads: the largest single file the page accepts |
 | `UPLOADS_PULL_TOKEN` | unset | uploads: bearer token (16+ characters) the second machine's puller sends |
-| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `summaries`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`, `uploads`, `garden`. Unknown names are ignored |
+| `MODULES` | empty | Optional features, comma separated: `ring`, `agents`, `projects`, `org`, `board`, `usage`, `summaries`, `map`, `tv`, `voice`, `livestream`, `media`, `social`, `fund`, `chat`, `uploads`, `garden`, `warehouse`, `observatory`. Observatory is off by default and adds only an evidence API (see [contract](observatory.md)). Unknown names are ignored |
 | `OWNER_NAME` | `owner` | Your name in the authenticator app and as a comment author |
 | `DEV_LOG_PATH`, `DOCS_PATH` | unset | Vault-relative notes the nav bar links to; unset hides the link |
 | `SCAN_INTERVAL_MINUTES` | `0` | Rescan and re-embed every N minutes; `0` means only when asked |
@@ -117,7 +117,17 @@ These settings are optional strings in the global environment schema and are val
 | `DESK_USDC_ADDRESS` | unset | Verified ERC-20 USDC contract, required for the ERC-20 interface |
 | `DESK_RPC_URL` | unset | Server-only HTTP(S) RPC URL; never returned to the public client |
 | `DESK_PUBLIC_ORIGIN` | unset | Exact allowed HTTPS browser origin, without a trailing slash |
-| `DESK_RUNTIME_MODULE` | unset | Absolute path to a trusted server-only ES module exporting `createDeskRuntime` for live marketplace, identity, publication and worker services |
+| `DESK_RUNTIME_MODULE` | unset | Absolute trusted server ES module exporting `createCybazaarDependencies`; production rejects the legacy fully injected runtime |
+| `DESK_ARKIV_RPC_URL`, `DESK_ARKIV_CHAIN_ID` | unset | HTTPS Arkiv RPC and exact numeric network for finalized reads and writes |
+| `DESK_ARKIV_PRIVATE_KEY` | unset | Server-only master signer; never sent to a browser or worker |
+| `DESK_ARKIV_LIFETIME_BLOCKS` | unset | Immutable entity lifetime in blocks, 1 to 1,296,000 |
+| `DESK_BEE_URL`, `DESK_BEE_POSTAGE_BATCH_ID` | unset | Bee endpoint and funded postage batch for verified Markdown uploads |
+| `DESK_IDENTITY_RPC_URL`, `DESK_IDENTITY_CHAIN_ID`, `DESK_ERC8004_REGISTRY_ADDRESS` | unset | Finalized identity RPC and exact ERC-8004 deployment |
+| `DESK_ENS_RPC_URL`, `DESK_ENS_CHAIN_ID` | unset | Exact HTTPS endpoint and chain the operational ENS resolver must report |
+| `DESK_IDENTITY_METADATA_HOSTS` | unset | Comma-separated allowlist for HTTPS ERC-8004 metadata |
+| `DESK_TRANSPORT_TIMEOUT_MS` | unset | External-call bound, 100 to 30,000 ms |
+| `DESK_MAX_RESPONSE_BYTES`, `DESK_MAX_ARTIFACT_BYTES` | unset | RPC and public Markdown response limits |
+| `DESK_PUBLICATION_DESTINATION` | unset | Allowed release reference prefix; must be `swarm://` |
 
 The engine supplies a real JSON-RPC reader, the explicitly selected settlement adapter and PostgreSQL receipt reservation. The runtime module supplies the remaining production services through the existing Phase 1 contracts. All adapters must be live, including capabilities and provider wallet transaction preparation. This is a production composition boundary, not a shipped host runtime: a deployment without concrete live host services is blocked. See [desk boot contract](https://github.com/kon-rad/argo/blob/0c96d254d517e0203f4e98813cd95569336eb5d9/app/server/src/addons/desk/README.md#production-boot-contract).
 
@@ -130,7 +140,7 @@ The engine supplies a real JSON-RPC reader, the explicitly selected settlement a
 | `HERMES_HOME` | `agents`, archive | `~/.hermes` | Hermes's home on this machine |
 | `ARCHIVE_SSH_HOST`, `REMOTE_HERMES_HOME`, `REMOTE_HERMES_USER` | archive | unset | Pull a server's Hermes history over ssh; unset skips the pull |
 | `SB_LEDGER_DIR`, `SB_LEDGER_TOKEN` | agent ledger (on each machine, not the server) | the OS data folder, the token in `ledger.json` | Where a machine's agent ledger keeps `ledger.db` and `ledger.json`, and a token that overrides the stored one. See the app README, "Agent ledger" |
-| `PROJECTS_FEED_TOKEN` | `projects` | unset | Read-only bearer token for `GET /api/feed/projects` (a kiosk panel). Unset: the route doesn't exist. `deploy.sh` generates one |
+| `PROJECTS_FEED_TOKEN` | `projects` | unset | Read-only bearer token for `GET /api/feed/projects` (a kiosk panel: the areas and their projects in flight). Unset: the route doesn't exist. `deploy.sh` generates one |
 | `KNOWLEDGE_TOKEN` | any | unset | Read-only bearer token for an agent on the same machine (zen-agent's `search_notes` and `read_note`). Opens `GET /api/search`, `/api/search/global` and `/api/file/source` and nothing else, only from loopback and never through a proxy (a request with a forwarding header, or a Host that is not `127.0.0.1`, `localhost` or `[::1]`, is refused). At least 32 characters; `openssl rand -hex 24`. Unset: the token does nothing |
 | `ORG_OWNER` | `org` | `owner` | Your handle on the agent board (lowercase, `a-z0-9-`) |
 | `ORG_VAULT_ASSIGNEE` | `org` | `vault-session` | The kanban assignee for vault work: a Claude Code session on your machine that no dispatcher spawns (lowercase, `a-z0-9-`). Cards on boards that still use the older assignee slug keep working |
@@ -144,7 +154,7 @@ The engine supplies a real JSON-RPC reader, the explicitly selected settlement a
 | `ORG_DISPATCH_QUIET` | `org` | unset | Local hours with no wakes, `HH-HH` (e.g. `01-07`) |
 | `ORG_DISPATCH_DAILY_TOKENS` | `org` | `0` (off) | Tokens all bots together may spend in one local day before the rest of the day's wakes are held |
 | `ORG_ZEN_COMMAND` | `org` | `zen-agent` | The zen-agent command the dispatcher runs (on the PATH, or absolute) |
-| `ZEN_SESSIONS_DIR` | `usage` | `<vault>/.zen/sessions` | Where zen-agent writes its traces; `usage-sync` reads them into the ledger |
+| `ZEN_SESSIONS_DIR` | `usage` | `<vault>/.zen/sessions` | Where zen-agent writes its traces; `usage-sync` reads them into the ledger on the server, `usage-push` sends a laptop's to the server |
 | `CLASSIFY_PROVIDER` | `org` | `none` | The classify step's provider: `openrouter` (through OpenRouter with `OPENROUTER_API_KEY`) or `typesafe` (with `TYPESAFE_API_KEY`). `none`: every decision falls through to the old path |
 | `CLASSIFY_DAILY_TOKENS` | `org` | `2000000` | Classifier input tokens per day; above it, decisions fall through |
 | `TYPESAFE_API_KEY` | `org` | unset | A direct provider key, when `CLASSIFY_PROVIDER=typesafe` |
@@ -188,7 +198,19 @@ These are schema-validated too. Most are set by launchers, installers, agent run
 
 `secondbrain doctor` checks the whole install and exits non-zero when a critical check fails. The same checks answer at `GET /api/health` (`{"ok": true, "checks": [...]}`), so a monitor and a person read one answer. It checks Node's major version, Postgres, the `vector` extension, pending migrations, unknown names in `MODULES`, a stale `AGENTS.md`, an unparsable `secondbrain.json`, the sync state, and each core feature's tables (the feature's manifest names them).
 
+The CLI (not `/api/health`) also prints one advisory line per agent CLI wrapper the manifests name (`cli:cli-board`, `cli:cli-org`, ...): **installed** (the server's own wrapper, or `cli-board`'s HTTPS client with `BOARD_URL` and `BOARD_TOKEN` set), **server-only** (the one-line notice `secondbrain-vault clis install` writes off the server) or **missing**, with the command that fixes it.
+
 `--deep` adds the checks that only make sense on the deployed server (failed `secondbrain-*` units, the last backup); `?deep=1` does the same over HTTP. `--json` prints the checks as JSON. The doctor is additive: a failed non-critical check (a stale doc, a missing backup) is a warning, not an error.
+
+## Agent CLIs on a client machine
+
+`secondbrain-vault clis install` ([connect machines](onboarding/06-connect-machines.md#the-agent-clis-on-the-laptop-and-every-other-machine)) reads these from the shell environment when it runs. They are per machine and optional; nothing goes in the vault `.env` except `BOARD_URL` and `BOARD_TOKEN` (module settings, above).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SECONDBRAIN_BIN_DIR` | `~/.local/bin` | Where the wrappers are written (`--bin DIR` overrides it); it must be on PATH |
+| `SECONDBRAIN_CLI_HOME` | `$XDG_DATA_HOME/secondbrain/agent-clis`, else `~/.local/share/secondbrain/agent-clis` | Where the `cli-board.mjs` bundle is kept |
+| `SB_VAULT_ENV` | set by the wrapper | The vault `.env` the `cli-board` bundle reads `BOARD_URL` and `BOARD_TOKEN` from when they are not in the environment. The wrapper sets it; you do not |
 
 ## Vault sync
 
@@ -239,14 +261,15 @@ The reference below lists shipped settings. It is not a generic registry for arb
 | `tv.shows` | `tv` | `{ "slug": "Show name" }` |
 | `livestream.youtube`, `.twitch`, `.kick` | `livestream` | Your channel handle on each platform |
 | `fund.dir`, `fund.txService`, `fund.explorer` | `fund` | Vault folder of the fund's state (default `fund`), the Safe Transaction Service URL and the block explorer for its chain (defaults: Base) |
-| `projects.reportFile` | `projects` | Where `cli-projects render` writes the markdown report (default `projects.md`) |
+| `areas.reviewDir` | `projects` | Vault folder `cli-areas review` and its Sunday timer write the weekly review to, one file per ISO week (default `Areas/weekly-review`) ([modules.md](modules.md#weekly-review)) |
+| `projects.reportFile` | `projects` | Where `cli-areas render` writes the markdown report (default `projects.md`). The key and its default kept their names when the tracker was renamed to areas and projects ([modules.md](modules.md#projects)) |
 | `summaries.chain`, `summaries.minSteps`, `summaries.quietMinutes`, `summaries.maxInputChars` | `usage` | Which providers write session summaries and in what order, the shortest session worth summarizing, how long a session must be quiet, and how much transcript is sent. Defaults in `app/config/summaries.json`; see [summaries.md](summaries.md) |
 | `chat.defaultProvider` | `chat` | The preset provider the chat starts on, when its key is set |
 | `chat.systemPrompt` | `chat` | Replaces the engine's base system prompt (still editable in the app's settings modal) |
 | `chat.providers.<id>` | `chat` | Per preset provider: `models` to add (`[{ "id", "label" }]`), another `default` model, another `baseUrl` |
 | `sync.remote`, `sync.branch` | vault sync | What every machine syncs with (default `origin`, `main`) |
 | `sync.agentOwned` | vault sync | Files only `agent`-role machines commit, e.g. a rendered report |
-| `sync.embeddedRepos`, `sync.maxFileMB`, `sync.settleSeconds`, `sync.heartbeat` | vault sync | `ignore` or `record` nested repos' pointers; largest file to commit (20); recent-write wait (90); write `.sync/<machine>.json` with each commit (off). See [sync.md](sync.md#settings) |
+| `sync.embeddedRepos`, `sync.maxFileMB`, `sync.settleSeconds`, `sync.heartbeat`, `sync.alertRepeatHours` | vault sync | `ignore` or `record` nested repos' pointers; largest file to commit (20); recent-write wait (90); write `.sync/<machine>.json` with each commit (off); hours between repeats of a still-active conflict alert (6, `0` for once only). See [sync.md](sync.md#settings) |
 | `classify.allow` | `org` | Channel slugs and vault folder prefixes whose text may be sent to the classifier. Empty (the default): every decision falls through and nothing leaves the machine |
 | `classify.model` | `org` | `provider/model` for decisions whose schema pins none (default: a hosted model over OpenRouter) |
 | `classify.schemasDir` | `org` | Vault folder of decision schemas, `<decision>.json` (default `.agents/classify`); the engine's defaults fill in what is missing |
@@ -255,6 +278,8 @@ The reference below lists shipped settings. It is not a generic registry for arb
 | `dispatch.tools` | `org` | Per wake reason: zen-agent tool sets (`fs`, `shell`, `skills`, `knowledge`, `kanban`, `org`, `subagent`) |
 | `dispatch.fallback` | `org` | What runs when a connected computer's model is down: `{ "model", "thinking"?, "retryOnError"? }`. Unset: no fallback. See "Model fallback" below |
 | `memory.capture` | `memory` | The capture loop: `{ "enabled", "trigger", "everyMinutes", "maxWakesPerRun", "minTurns", "outcomes", "maxAgeHours", "maxFactsPerWake", "dedupe", "dedupeSimilarity", "scope", "chain", "promptFile", "systemPrompt" }`. Off by default; see [memory.md](memory.md#the-capture-loop-how-a-bots-own-memory-gets-written) |
+| `warehouse.dir` | `warehouse` | The vault folder holding `migrations/`, `connectors/` and `dashboards/` (default `warehouse`). See [warehouse.md](warehouse.md) |
+| `warehouse.rawDir` | `warehouse` | Where connectors keep raw files (default `<app>/data/warehouse-raw`) |
 | `garden.roots` | `garden` | Folders whose immediate subfolders are shelves (default `Projects`, `Areas`, `Research`) |
 | `garden.archiveDir`, `garden.catalogFile`, `garden.reportDir`, `garden.shelfFile` | `garden` | Where archived shelves go (`Archives`), the rendered catalog (`garden/catalog.md`), the nightly reports (`garden/reports`) and the shelf note's file name (`README.md`) |
 | `garden.projectArchiveAfterDays`, `garden.areaProposeAfterDays` | `garden` | Days without a commit before a project shelf is archived (90) or an area shelf is proposed (180) |
@@ -272,6 +297,8 @@ Example:
   "livestream": { "youtube": "example" }
 }
 ```
+
+The `agentDock` section is read by the [Agent Dock](https://github.com/kon-rad/argo/blob/main/addons/agent-dock/README.md#settings) add-on, not by the app: the terminal to open and the model each harness starts with. The app ignores it.
 
 ## Model fallback
 
@@ -313,7 +340,7 @@ Restart the app after changing instance configuration; settings are read once pe
 
 Subscriptions and credits default to empty lists. Listing a provider enables its panel; it does not create credentials, purchase a plan, or change a provider's limits. Array order determines panel order. An explicit empty `sections` list hides all four optional page sections, while subscription/credit panels are controlled separately. Disabled sections do not start their UI polling. The Usage core feature and its navigation remain available.
 
-For Codex, install the supported Codex CLI as the same OS user that runs the app, then sign in using its ChatGPT subscription. `ORG_CODEX_COMMAND` selects the executable (default `codex`). The app starts `codex app-server` using its default stdio transport (no `--stdio` flag), then makes bounded, read-only app-server calls to `account/read` and `account/rateLimits/read`. It strips API-key and endpoint overrides, rejects API-key authentication, caches quota readings, and never launches a model turn to fetch a quota. CLI credentials stay with Codex and are never returned to the browser.
+For Codex, install the supported Codex CLI as the same OS user that runs the app, then sign in using its ChatGPT subscription. `ORG_CODEX_COMMAND` selects the executable (default `codex`). If that command executes Codex on another machine, set `ORG_CODEX_HOST` to that machine's registered `usage_hosts.slug`; unset means Codex runs on the app server. The host must already be registered through the Usage host setup. The app starts `codex app-server` using its default stdio transport (no `--stdio` flag), then makes bounded, read-only app-server calls to `account/read` and `account/rateLimits/read`. It strips API-key and endpoint overrides, rejects API-key authentication, caches quota readings, and never launches a model turn to fetch a quota. CLI credentials stay with Codex and are never returned to the browser.
 
 If the default `codex` command is absent from the app service's `PATH`, the quota reader also checks the service user's `~/.local/bin/codex`. A custom `ORG_CODEX_COMMAND` is used exactly as configured; use an absolute executable path when the service has a different `PATH` from your interactive shell. Verify quotas under the actual service user's environment, since a successful interactive-shell read does not verify service executable discovery.
 
@@ -356,7 +383,7 @@ Doctor checks saved local discovery, not remote connectivity. After upload, open
 
 ### Automatic review host settings
 
-Automatic review is off until the owner enables `review_policy` in PostgreSQL. The standalone worker receives `REVIEW_DB_URL` only in its dedicated service environment and takes an explicit owner-owned host JSON policy path. Repository mappings, required checks, the sole reviewer, note exclusions, subscription transport and registered deployment targets have no personal defaults. This service does not load the app's vault environment. See [automatic review setup](automatic-review.md).
+Automatic review is off until the owner enables `review_policy` in PostgreSQL. The standalone worker receives `REVIEW_DB_URL` only in its dedicated service environment and takes an explicit owner-owned host JSON policy path. Repository mappings, required checks, the sole reviewer, note exclusions, subscription transport, registered deployment targets and the optional `notify` program (one line to the owner when a review is rejected or blocked) have no personal defaults. This service does not load the app's vault environment. See [automatic review setup](automatic-review.md).
 
 
 

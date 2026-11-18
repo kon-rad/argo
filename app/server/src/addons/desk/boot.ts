@@ -3,6 +3,10 @@ import { query, withTransaction } from '../../db.js';
 export interface DeskBootSettings {
   domain?: string; chainId?: string; paymentInterface?: string; usdcAddress?: string;
   rpcUrl?: string; publicOrigin?: string; runtimeModule?: string;
+  arkivRpcUrl?: string; arkivChainId?: string; arkivPrivateKey?: string; arkivLifetimeBlocks?: string;
+  beeUrl?: string; beePostageBatchId?: string; identityRpcUrl?: string; identityChainId?: string;
+  ensRpcUrl?: string; ensChainId?: string; erc8004RegistryAddress?: string; metadataHosts?: string;
+  timeoutMs?: string; maxResponseBytes?: string; maxArtifactBytes?: string; publicationDestination?: string;
 }
 export interface DeskBoot { public: unknown; operator: unknown }
 type ExternalRoutes = (context: unknown) => unknown[];

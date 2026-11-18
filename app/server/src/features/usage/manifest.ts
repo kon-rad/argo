@@ -8,7 +8,7 @@ export default defineFeature({
   cli: [
     { command: 'usage-sync', entry: 'cli-usage-sync.js', summary: "this machine's Claude Code and Codex usage into the ledger" },
     { command: 'usage-push', entry: 'cli-usage-push.js', summary: 'send new Claude Code and Codex usage to the server ledger over one SSH call' },
-    { command: 'usage-backfill', entry: 'cli-usage-backfill.js', summary: 'wire lines for archived sessions (pipe to the server importer)' },
+    { command: 'usage-backfill', entry: 'cli-usage-backfill.js', summary: 'wire lines for archived sessions (pipe to the server importer); --actions, --bots label what is already in the ledger' },
     { command: 'credits', entry: 'cli-credits.js', summary: 'show | set <provider> <balance> | sync  prepaid API credit balances' },
     { command: 'ingest-device', entry: 'cli-ingest-device.js', summary: '(server) device tokens for ledgers: add <host> | list | revoke <id>' },
   ],
@@ -43,6 +43,6 @@ export default defineFeature({
   ],
   wrappers: [],
   health: { label: 'the usage tables answer', tables: ['usage_runs', 'usage_calls', 'usage_hosts', 'usage_files'] },
-  env: ['ORG_CODEX_COMMAND', 'CODEX_HOME', 'USAGE_HOST', 'USAGE_PUSH_HOST', 'USAGE_PUSH_STATE', 'ZEN_SESSIONS_DIR', 'USAGE_SYNC_SERVER', 'USAGE_SYNC_TOKEN'],
+  env: ['ORG_CODEX_COMMAND', 'ORG_CODEX_HOST', 'CODEX_HOME', 'USAGE_HOST', 'USAGE_PUSH_HOST', 'USAGE_PUSH_STATE', 'ZEN_SESSIONS_DIR', 'USAGE_SYNC_SERVER', 'USAGE_SYNC_TOKEN'],
   docs: 'docs/modules.md#usage',
 });

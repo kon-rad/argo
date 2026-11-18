@@ -106,8 +106,9 @@ Markdown is the source of truth. Postgres is an index over it: drop the database
 | [`harness/`](docs/agent-harness.md) | Hooks Claude Code and Hermes both run: a guard against dangerous tool calls, and a gate that asks for a dev log before an agent finishes. Plus a read-only fact-checker subagent |
 | [`skills/`](skills/) | Shared agent skills (`SKILL.md`, used by every harness): `setup-vault`, `fact-check`, `ingest`, `company-report`, `org-member`, `livestream-x` and more |
 | [`zen-agent/`](docs/zen-agent.md) | A minimal headless agent runtime: personas, skills, any provider, the board and the knowledge base as tools, budgets and traces |
-| `bin/secondbrain-vault` | Starts a vault, compiles its `AGENTS.md`, links the skills |
+| `bin/secondbrain-vault` | Starts a vault, compiles its `AGENTS.md`, links the skills, puts the agent CLIs on PATH (`clis install`) |
 | [`addons/tv-kiosk/`](addons/tv-kiosk/README.md) | Flash a Raspberry Pi that shows the app full screen on a TV |
+| [`addons/agent-dock/`](addons/agent-dock/README.md) | A macOS app and CLI: click an agent to open it in a terminal on Claude Code, Codex or Hermes, and see what runs on this machine |
 | [`docs/`](docs/README.md) | How it all works, how to set it up, every setting. Published at [kon-rad.github.io/argo](https://kon-rad.github.io/argo/) |
 
 ## Modules
@@ -116,11 +117,12 @@ The six core features (`projects`, `memory`, `org`, `board`, `usage`, `summaries
 
 | Module | Adds |
 |---|---|
-| `projects` | A project tracker with stages and verifications, a CLI for agents, a kiosk feed |
+| `projects` | A tracker of areas (what you run) and projects (what you finish) with stages and verifications, CLIs for agents, a kiosk feed |
 | `org` | A message board where a company of named AI agents reports to you |
 | `board` | A kanban board agents and people share, with a CLI |
 | `agents` | Agent chats and cron history |
 | `usage` | What your agents cost, by bot, task and project |
+| `observatory` | Optional evidence coverage/window/detail API and pure deterministic replay; [contract](docs/observatory.md) |
 | `summaries` | One model-written summary per finished agent session, with the facts it proposes for memory |
 | `chat` | Ask your notes: answers built from retrieved passages with citations, any provider's model, your org's agents as personas |
 | `map` | A 3D brain map of your notes, projects and goals, with metrics |

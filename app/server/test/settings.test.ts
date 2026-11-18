@@ -22,6 +22,7 @@ describe('secondbrain.json', () => {
     expect(s.map).toEqual({ divisionFolders: {}, missionFolders: [] });
     expect(s.tv).toEqual({ episodesDir: 'tv/episodes', shows: {} });
     expect(s.projects.reportFile).toBe('projects.md');
+    expect(s.areas.reviewDir).toBe('Areas/weekly-review');
     expect(s.goalsFile).toBeUndefined();
   });
 

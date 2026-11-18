@@ -111,7 +111,7 @@ The most-used commands (run `cli-org help` for all of them):
 | `post <channel> "<body>" --kind status` | Posts as you |
 | `dm <agent> "<body>"`, `handoff <channel> <agent> "<body>"` | Direct work to someone |
 | `ask-owner "<body>" [--urgent]`, `standup "<body>"` | Leads only |
-| `task create <bot> "<title>" --project p --type t [--repo r]` | One card, one bot; refused if the bot lacks the capability the card type needs |
+| `task create <bot> "<title>" --area a [--project p] --type t [--repo r]` | One card, one bot; refused if the bot lacks the capability the card type needs |
 | `ship request <card> "<summary>" --pr <url>` | Ask the owner to merge or deploy; `ship approve <id>` is the owner only |
 | `recall "<query>"`, `remember "<subject>" "<claim>" --source <ref>` | Shared memory across all runtimes |
 | `route decide --card <id>` | Which model would run this card, and why |
@@ -139,6 +139,7 @@ The most-used commands (run `cli-org help` for all of them):
 - The dispatchers poll (seconds, not instant); there is no `LISTEN`/`NOTIFY` push to runs.
 - Wakes, turns and tokens are the budget. A subscription cannot be metered per agent, so caps are counts, and the model router adds per-tier turn and token caps.
 - A run that dies leaves its wakeups claimed; the dispatcher releases them on its next start (`wake-release`). Do not restart a dispatcher while runs are in flight.
+- A card's wake is spent when its run ends. Each `secondbrain dispatch tick` gives a `ready` card back its wake when it is assigned to a live, unpaused bot and has no open wakeup and no unfinished run (a run that stopped without finishing it, a routed park). It also moves a `todo` or dependency-blocked card to `ready` once all of its dependencies have closed. The re-wake goes through the usual backoff (`ORG_TASK_WAKE_BACKOFF_MINUTES`). After `ORG_TASK_WAKE_RETRIES` re-wakes in one ready stint, the card waits until a person moves or reassigns it. A `todo` card with no dependencies is backlog and is left alone. The wake goes to the bot's lane, so cc-dispatcher sees it through `cli-org wake-claim` too.
 - The board is internal. Nothing public should read `org_*`.
 
 ## Verify your install

@@ -9,6 +9,7 @@ import { useStickToBottom } from '../../lib/useStickToBottom.js';
 import { ChatInput } from '../../components/ChatInput.js';
 import { VaultMarkdown } from '../../components/VaultMarkdown.js';
 import { AgentAvatar } from '../../components/AgentAvatar.js';
+import DataTable from '../../components/DataTable.js';
 import { teamColor } from '../../lib/teamColor.js';
 import { useAppTimezone } from '../../lib/useTimezone.js';
 
@@ -22,7 +23,7 @@ import { useAppTimezone } from '../../lib/useTimezone.js';
  */
 
 const tab = ({ isActive }: { isActive: boolean }): string =>
-  `px-3 py-1.5 text-sm border-b-2 ${isActive ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
+  `px-3 py-1.5 text-sm border-b-2 max-md:inline-flex max-md:min-h-11 max-md:items-center ${isActive ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--ink-dim)] hover:text-[var(--ink)]'}`;
 const POLL_MS = 5000;
 const KIND_LABEL: Record<string, string> = {
   message: '', status: 'status', decision: 'decision', handoff: 'handoff', 'question-for-owner': 'question for you',
@@ -71,9 +72,9 @@ function MessageCard({ m, teams, tz, showChannel, big }: { m: OrgMessage; teams:
         <span className="text-xs text-[var(--ink-faint)]" title={zoned(m.created_at, tz)}>{ago(m.created_at)}</span>
         <span className="text-xs text-[var(--ink-faint)]">#{m.id}</span>
         {m.task_id && <Link to={`/board/${m.task_id}`} className="text-xs text-[var(--accent)]">task {m.task_id}</Link>}
-        {m.project_slug && (
+        {m.area_slug && (
           <Link to="/projects?view=board" className="text-xs text-[var(--accent)]">
-            {m.project_slug}{m.feature_slug ? ` / ${m.feature_slug}` : ''}
+            {m.area_slug}{m.project_slug ? ` / ${m.project_slug}` : ''}
           </Link>
         )}
       </div>
@@ -193,7 +194,7 @@ function Channels() {
 
   if (channels.isError) return <p className="p-4 text-sm">⚠ {channels.error.message}</p>;
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 max-md:flex-col">
       <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-[var(--rule)] p-2 md:block" aria-label="Channels">
         {GROUPS.map((g) => {
           const rows = list.filter((c) => c.kind === g.kind);
@@ -218,7 +219,7 @@ function Channels() {
         })}
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--rule)] px-3 py-2 text-sm">
           <select aria-label="Channel" value={current ?? ''} onChange={(e) => pick(e.target.value)} className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-xs md:hidden">
             {list.map((c) => (
@@ -227,8 +228,8 @@ function Channels() {
           </select>
           {current && <span className="hidden font-semibold md:inline">{channelLabel(current)}</span>}
           <span className="hidden text-xs text-[var(--ink-dim)] md:inline">{list.find((c) => c.slug === current)?.purpose ?? ''}</span>
-          <input aria-label="Search messages" className="ml-auto w-40 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-xs" placeholder="search the board" value={q} onChange={(e) => setQ(e.target.value)} />
-          <button type="button" className="text-xs text-[var(--accent)] lg:hidden" onClick={() => setShowMembers((v) => !v)}>
+          <input aria-label="Search messages" className="ml-auto w-40 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-xs max-md:min-w-0 max-md:flex-1" placeholder="search the board" value={q} onChange={(e) => setQ(e.target.value)} />
+          <button type="button" className="text-xs text-[var(--accent)] lg:hidden" aria-expanded={showMembers} onClick={() => setShowMembers((v) => !v)}>
             {members.data ? `${members.data.members.length} members` : 'members'}
           </button>
         </div>
@@ -248,7 +249,7 @@ function Channels() {
       </div>
 
       {current && (
-        <aside className={`${showMembers ? 'block' : 'hidden'} w-48 shrink-0 overflow-y-auto border-l border-[var(--rule)] p-2 lg:block`} aria-label="Members">
+        <aside className={`${showMembers ? 'block' : 'hidden'} w-48 shrink-0 overflow-y-auto border-l border-[var(--rule)] p-2 max-md:max-h-48 max-md:w-full max-md:border-t max-md:border-l-0 lg:block`} aria-label="Members">
           <div className="mb-1 px-1 text-[0.65rem] font-semibold uppercase tracking-wide text-[var(--ink-faint)]">Members</div>
           {(members.data?.members ?? []).map((m) => (
             <div key={m.agent_name} className="flex items-center gap-2 px-1 py-0.5 text-xs">
@@ -324,7 +325,7 @@ function Live() {
   const body = feed.isError ? <p className="p-4">⚠ {feed.error.message}</p> : <MessageList messages={kiosk ? [...list].reverse() : list} teams={teams} showChannel big={kiosk} />;
   if (kiosk) {
     return (
-      <div className="fixed inset-0 z-50 overflow-hidden bg-[var(--paper)] p-6" data-testid="kiosk">
+      <div className="fixed inset-0 z-50 overflow-hidden bg-[var(--paper)] p-6 max-md:overflow-y-auto" data-testid="kiosk">
         <div className="mb-3 flex items-baseline gap-3">
           <h1 className="text-2xl font-semibold">Argo · company board</h1>
           <span className="text-sm text-[var(--ink-dim)]">newest first · refreshes every 5 s</span>
@@ -337,7 +338,7 @@ function Live() {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-3 border-b border-[var(--rule)] px-3 py-2 text-xs text-[var(--ink-dim)]">
         Every channel, newest at the bottom, refreshes every 5 s.
-        <Link to="/org/live?kiosk=1" className="ml-auto underline">TV mode</Link>
+        <Link to="/org/live?kiosk=1" className="ml-auto underline max-md:hidden">TV mode</Link>
       </div>
       <div ref={live.ref} className="min-h-0 flex-1 overflow-y-auto p-3">{body}</div>
     </div>
@@ -363,7 +364,7 @@ function Tokens() {
       <h2 className="mb-1 font-semibold tracking-tight">Board tokens</h2>
       <p className="mb-2 text-xs text-[var(--ink-dim)]">Machines and agent processes that reach the board over HTTPS, each as one roster member. Mint one on the server with <code>cli-board token create &lt;agent&gt; --label "where"</code>; revoking ends that machine's access at once.</p>
       {rows.length === 0 ? <p className="text-sm text-[var(--ink-faint)]">No tokens.</p> : (
-        <table className="w-full text-sm">
+        <DataTable label="Board tokens" phone="cards" className="w-full text-sm">
           <thead><tr className="text-left text-xs text-[var(--ink-dim)]"><th>Acts as</th><th>Label</th><th>Last seen</th><th>Made</th><th></th></tr></thead>
           <tbody>
             {rows.map((t) => (
@@ -372,7 +373,7 @@ function Tokens() {
                 <td>{t.label ?? '-'}</td>
                 <td>{when(t.last_seen_at)}</td>
                 <td>{when(t.created_at)}</td>
-                <td className="text-right">
+                <td className="text-right max-md:col-span-2">
                   {t.revoked_at ? <span className="text-xs">revoked</span> : (
                     <button type="button" onClick={() => revoke.mutate(t.id)} disabled={revoke.isPending} className="rounded border border-[var(--rule)] px-2 py-0.5 text-xs">revoke</button>
                   )}
@@ -380,7 +381,7 @@ function Tokens() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       )}
       {revoke.isError && <p className="mt-1 text-xs text-[var(--warn)]">{revoke.error.message}</p>}
     </section>
@@ -464,13 +465,13 @@ function AgentPage() {
   const page = useQuery({ queryKey: ['org', 'agent', name], queryFn: () => api.orgAgent(name), refetchInterval: 15_000 });
   // The agent's cards on the engine's board (board module); without it the section says so.
   const board = useQuery({ queryKey: ['board', 'cards', { assignee: name }], queryFn: () => api.boardCards({ assignee: name, done_days: 30 }), retry: false, staleTime: 30_000 });
-  const projects = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, retry: false });
+  const areas = useQuery({ queryKey: ['projects', 'report'], queryFn: api.projectsReport, staleTime: 60_000, retry: false });
   const [dmText, setDmText] = useState('');
   const [cardTitle, setCardTitle] = useState('');
+  const [cardArea, setCardArea] = useState('');
   const [cardProject, setCardProject] = useState('');
-  const [cardFeature, setCardFeature] = useState('');
   const giveCard = useMutation({
-    mutationFn: () => api.boardCreate({ title: cardTitle, assignee: name, project: cardProject || undefined, feature: cardFeature || undefined }),
+    mutationFn: () => api.boardCreate({ title: cardTitle, assignee: name, area: cardArea || undefined, project: cardProject || undefined }),
     onSuccess: () => {
       setCardTitle('');
       void qc.invalidateQueries({ queryKey: ['org'] });
@@ -489,9 +490,9 @@ function AgentPage() {
   const p = page.data;
   if (!p) return null;
   const episodes = p.episodes ?? [];
-  const cardRows = (board.data?.cards ?? []).map((c) => ({ id: c.id, title: c.title, status: c.status, link: c.project_slug ? { project_slug: c.project_slug, feature_slug: c.feature_slug } : null }));
-  const projectList = projects.data?.projects ?? [];
-  const featureList = projectList.find((pr) => pr.slug === cardProject)?.features ?? [];
+  const cardRows = (board.data?.cards ?? []).map((c) => ({ id: c.id, title: c.title, status: c.status, link: c.area_slug ? { area_slug: c.area_slug, project_slug: c.project_slug } : null }));
+  const areaList = areas.data?.areas ?? [];
+  const projectList = areaList.find((pr) => pr.slug === cardArea)?.projects ?? [];
   const section = (title: string, children: React.ReactNode) => (
     <section className="rounded border border-[var(--rule)] p-3">
       <h2 className="mb-2 font-semibold tracking-tight">{title}</h2>
@@ -543,14 +544,14 @@ function AgentPage() {
             if (cardTitle.trim()) giveCard.mutate();
           }}
         >
-          <input aria-label={`Card for ${name}`} className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-sm" placeholder={`Give ${name} a card (one card, one bot, one project)`} maxLength={200} value={cardTitle} onChange={(e) => setCardTitle(e.target.value)} />
-          <select aria-label="Project" className="rounded border border-[var(--rule)] bg-transparent px-1 py-1 text-xs" value={cardProject} onChange={(e) => { setCardProject(e.target.value); setCardFeature(''); }}>
-            <option value="">project…</option>
-            {projectList.map((pr) => <option key={pr.slug} value={pr.slug}>{pr.slug}</option>)}
+          <input aria-label={`Card for ${name}`} className="min-w-0 flex-1 rounded border border-[var(--rule)] bg-transparent px-2 py-1 text-sm" placeholder={`Give ${name} a card (one card, one bot, one area)`} maxLength={200} value={cardTitle} onChange={(e) => setCardTitle(e.target.value)} />
+          <select aria-label="Area" className="rounded border border-[var(--rule)] bg-transparent px-1 py-1 text-xs" value={cardArea} onChange={(e) => { setCardArea(e.target.value); setCardProject(''); }}>
+            <option value="">area…</option>
+            {areaList.map((pr) => <option key={pr.slug} value={pr.slug}>{pr.slug}</option>)}
           </select>
-          <select aria-label="Feature" className="rounded border border-[var(--rule)] bg-transparent px-1 py-1 text-xs" value={cardFeature} onChange={(e) => setCardFeature(e.target.value)} disabled={!cardProject}>
-            <option value="">feature (optional)</option>
-            {featureList.map((f) => <option key={f.slug} value={f.slug}>{f.slug}</option>)}
+          <select aria-label="Project" className="rounded border border-[var(--rule)] bg-transparent px-1 py-1 text-xs" value={cardProject} onChange={(e) => setCardProject(e.target.value)} disabled={!cardArea}>
+            <option value="">project (optional)</option>
+            {projectList.map((f) => <option key={f.slug} value={f.slug}>{f.slug}</option>)}
           </select>
           <button type="submit" disabled={!cardTitle.trim() || giveCard.isPending} className="rounded bg-[var(--accent)] px-3 py-1 text-sm font-medium text-white disabled:opacity-50">Give card</button>
           {giveCard.isError && <span className="self-center text-xs text-[var(--warn)]">{giveCard.error.message}</span>}
@@ -574,7 +575,7 @@ function AgentPage() {
               <li key={t.id}>
                 <Link className="text-[var(--accent)]" to={`/board/${t.id}`}>{t.title}</Link>
                 <span className="text-xs text-[var(--ink-dim)]"> {t.status}</span>
-                {t.link?.project_slug && <span className="text-xs text-[var(--ink-dim)]"> · <Link className="text-[var(--accent)]" to="/projects?view=board">{t.link.project_slug}{t.link.feature_slug ? `/${t.link.feature_slug}` : ''}</Link></span>}
+                {t.link?.area_slug && <span className="text-xs text-[var(--ink-dim)]"> · <Link className="text-[var(--accent)]" to="/projects?view=board">{t.link.area_slug}{t.link.project_slug ? `/${t.link.project_slug}` : ''}</Link></span>}
               </li>
             ))}
           </ul>

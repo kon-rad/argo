@@ -1,14 +1,16 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
 import {
-  assignCard, BLOCK_KINDS, BoardBus, BoardError, CARD_KINDS, claimCard, commentCard, finishCard, flagCard, getCard, heartbeat, linkCards, listBoards,
-  listCards, listTokens, moveCard, OUTCOMES, reclaim, revokeToken, STATUSES, findToken, tagCard, type BoardNotice,
+  assignCard, BLOCK_KINDS, blockCard, BoardBus, BoardError, CARD_KINDS, claimCard, commentCard, finishCard, flagCard, getCard, heartbeat, linkCards, listBoards,
+  listCards, listTokens, moveCard, OUTCOMES, reclaim, recordRunOutput, revokeToken, STATUSES, findToken, tagCard, type BoardNotice,
 } from './service/index.js';
 import { config } from '../../config.js';
-import { assignTask, createTask, getAgent, OrgError, redoTask, type Agent } from '../../org.js';
+import { assignTask, createTask, getAgent, OrgError, redoTask, trackerRef, type Agent } from '../../org.js';
+import { log } from '../../logger.js';
 import { HttpError, intParam, parseOr400, wrap } from '../../routes/http.js';
 import type { HubOptions } from '../../routes/hub.js';
 import type { FeatureRoutes } from '../types.js';
+import type { BoardBoardsResponse, BoardCardDetail, BoardCardResponse, BoardCardsResponse } from '@secondbrain/contracts/board';
 
 /**
  * /api/board: the board module's API (docs/board-design.md section 5). Three doors, one identity: a browser
@@ -16,6 +18,9 @@ import type { FeatureRoutes } from '../types.js';
  * its board token names; a process on the server uses the CLI, not this router. The rules live in the SQL
  * functions, so these handlers only parse and call.
  */
+
+/** An older client still spoke the pre-rename words: the request works, and the server log says who should move. */
+const oldSpelling = (line: string): void => log.warn(`board API: ${line}`);
 
 export interface BoardRouterOptions {
   /** The app's session check, applied to requests without a token. Absent on a local install (no login). */
@@ -40,26 +45,34 @@ const Contract = z.object({
   verification: z.string().max(2000).optional(),
 });
 const ListQuery = z.object({
-  board: BoardSlug.optional(), status: z.string().regex(/^[a-z,]+$/).optional(), assignee: z.union([Name, z.literal('none')]).optional(), project: Slug.optional(), feature: Slug.optional(),
+  board: BoardSlug.optional(), status: z.string().regex(/^[a-z,]+$/).optional(), assignee: z.union([Name, z.literal('none')]).optional(), area: Slug.optional(), project: Slug.optional(), feature: Slug.optional(),
   kind: z.enum(CARD_KINDS).optional(), q: z.string().trim().min(1).max(200).optional(),
   // ?id=t_1d4c0eff,2e5d: a deep link to one or several cards, by full id or prefix.
   id: z.string().regex(/^(?:(?:t_|#)?[0-9a-fA-F]{4,32})(?:,(?:t_|#)?[0-9a-fA-F]{4,32}){0,49}$/).optional(), done_days: z.coerce.number().int().min(0).max(3650).optional(), limit: z.coerce.number().int().min(1).max(2000).optional(),
 });
 const NewCardBody = z.object({
   board: BoardSlug.optional(), title: z.string().trim().min(1).max(200), body: z.string().max(20000).optional(), contract: Contract.optional(),
-  assignee: Name.nullable().optional(), project: Slug.optional(), feature: Slug.optional(), kind: z.enum(CARD_KINDS).optional(),
+  assignee: Name.nullable().optional(), area: Slug.optional(), project: Slug.optional(), feature: Slug.optional(), kind: z.enum(CARD_KINDS).optional(),
   work: z.enum(['research', 'coding', 'design', 'media', 'writing', 'sales', 'education', 'ops']).optional(), needs: z.enum(['code', 'review', 'merge', 'deploy', 'm1', 'web']).optional(),
   repo: z.string().regex(/^[A-Za-z0-9._-]{1,80}$/).optional(), priority: z.number().int().min(1).max(5).optional(), deps: z.array(Id).max(50).optional(), ship_now: z.boolean().optional(),
 });
-const AssignBody = z.object({ assignee: Name.nullable(), project: Slug.optional(), feature: Slug.optional(), work: z.string().optional(), needs: z.string().optional(), repo: z.string().regex(/^[A-Za-z0-9._-]{1,80}$/).optional(), ship_now: z.boolean().optional() });
-const TagBody = z.object({ project: Slug.nullable(), feature: Slug.nullable().optional() });
+const AssignBody = z.object({ assignee: Name.nullable(), area: Slug.optional(), project: Slug.optional(), feature: Slug.optional(), work: z.string().optional(), needs: z.string().optional(), repo: z.string().regex(/^[A-Za-z0-9._-]{1,80}$/).optional(), ship_now: z.boolean().optional() });
+// `feature` is the pre-rename name for a project: an older client (a CLI on another machine, a cached page) may still send
+// it, and a lone `project` that names an area. trackerRef reads both until the aliases end, and logs a warning.
+const TagBody = z.object({ area: Slug.nullable().optional(), project: Slug.nullable().optional(), feature: Slug.nullable().optional() });
 const RedoBody =z.object({ changes: z.string().trim().min(1).max(8000), run_id: z.string().max(200).optional() });
 const CommentBody = z.object({ body: z.string().trim().min(1).max(8000) });
 const MoveBody = z.object({ status: z.enum(STATUSES), note: z.string().trim().max(2000).optional() });
 const LinkBody = z.object({ depends_on: Id });
 const FlagsBody = z.object({ ship_now: z.boolean().optional(), needs: z.enum(['code', 'review', 'merge', 'deploy', 'm1', 'web']).optional() });
 const ClaimBody = z.object({ runtime: z.string().regex(/^[a-z-]{1,20}$/).optional(), agent: Name.optional(), board: BoardSlug.optional(), lease_minutes: z.number().int().min(1).max(1440).optional(), wakeup: z.number().int().positive().optional(), task_id: Id.optional() });
-const HeartbeatBody = z.object({ tokens: z.number().int().nonnegative().optional(), turns: z.number().int().nonnegative().optional(), lease_minutes: z.number().int().min(1).max(1440).optional() });
+const HeartbeatBody = z.object({
+  tokens: z.number().int().nonnegative().optional(), turns: z.number().int().nonnegative().optional(), lease_minutes: z.number().int().min(1).max(1440).optional(),
+  branch: z.string().trim().min(1).max(200).optional(), pr: z.string().trim().min(1).max(500).optional(),
+});
+const Host = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/);
+const BlockBody = z.object({ kind: z.enum(BLOCK_KINDS).optional(), note: z.string().trim().max(2000).optional(), host: Host.optional(), after: z.array(Id).min(1).max(50).optional() });
+const HostUpBody = z.object({ hosts: z.array(Host).min(1).max(20) });
 const FinishBody = z.object({
   outcome: z.enum(OUTCOMES), result: z.string().trim().max(4000).optional(), block_kind: z.enum(BLOCK_KINDS).optional(),
   verification: z.object({ kind: z.enum(['test', 'manual', 'deploy', 'review', 'metric']).optional(), check: z.string().trim().min(1).max(500), result: z.enum(['pass', 'fail']).optional(), evidence: z.string().max(4000).optional() }).optional(),
@@ -71,7 +84,7 @@ async function boardErrors<T>(fnc: () => Promise<T>): Promise<T> {
     return await fnc();
   } catch (err) {
     if (err instanceof BoardError) throw new HttpError(err.status, err.message);
-    if (err instanceof OrgError) throw new HttpError(/^unknown agent|^no card|^no project|^no feature/.test(err.message) ? 404 : /can't|only the owner|doesn't have|not a bot|takes vault work|is worked by/.test(err.message) ? 403 : 400, err.message);
+    if (err instanceof OrgError) throw new HttpError(/^unknown agent|^no card|^no area|^no project/.test(err.message) ? 404 : /can't|only the owner|doesn't have|not a bot|takes vault work|is worked by/.test(err.message) ? 403 : 400, err.message);
     throw err;
   }
 }
@@ -120,28 +133,33 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
 
   router.get('/boards', wrap(async (_req, res) => {
     noStore(res);
-    res.json({ boards: await boardErrors(() => listBoards(caller(res).viewer)) });
+    const response = { boards: await boardErrors(() => listBoards(caller(res).viewer)) } as unknown as BoardBoardsResponse;
+    res.json(response);
   }));
 
   router.get('/cards', wrap(async (req, res) => {
     const q = parseOr400(ListQuery, req.query);
     noStore(res);
-    const { id, done_days, ...rest } = q;
-    res.json({ cards: await boardErrors(() => listCards({ ...rest, ids: id?.split(','), doneDays: done_days }, caller(res).viewer)) });
+    const { id, done_days, area: _a, project: _p, feature: _f, ...rest } = q;
+    const ref = await boardErrors(() => trackerRef(q, oldSpelling));
+    const response = { cards: await boardErrors(() => listCards({ ...rest, ...ref, ids: id?.split(','), doneDays: done_days }, caller(res).viewer)) } as unknown as BoardCardsResponse;
+    res.json(response);
   }));
 
   router.get('/cards/:id', wrap(async (req, res) => {
     const id = parseOr400(Id, req.params['id']);
     noStore(res);
-    res.json(await boardErrors(() => getCard(id, caller(res).viewer)));
+    const response = await boardErrors(() => getCard(id, caller(res).viewer)) as unknown as BoardCardDetail;
+    res.json(response);
   }));
 
   // Create and assign go through the org's verbs: the repo rule and the team mention live there.
   router.post('/cards', wrap(async (req, res) => {
     const b = parseOr400(NewCardBody, req.body);
     const me = await agentOf(caller(res));
+    const ref = await boardErrors(() => trackerRef(b, oldSpelling));
     const r = await boardErrors(() => createTask(me, {
-      assignee: b.assignee ?? null, title: b.title, body: b.body, contract: b.contract, project: b.project, feature: b.feature, board: b.board, priority: b.priority,
+      assignee: b.assignee ?? null, title: b.title, body: b.body, contract: b.contract, ...ref, board: b.board, priority: b.priority,
       type: b.work, needs: b.needs, repo: b.repo, shipNow: b.ship_now, kind: b.kind, deps: b.deps, run: 'app',
     }));
     res.status(201).json({ card: r.card, message: r.message });
@@ -152,18 +170,26 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
     const b = parseOr400(AssignBody, req.body);
     const me = await agentOf(caller(res));
     if (b.assignee === null) {
-      res.json({ card: await boardErrors(() => assignCard(me.name, id, null)) });
+      const response = { card: await boardErrors(() => assignCard(me.name, id, null)) } as unknown as BoardCardResponse;
+      res.json(response);
       return;
     }
-    const r = await boardErrors(() => assignTask(me, { taskId: id, assignee: b.assignee!, project: b.project, feature: b.feature, type: b.work, needs: b.needs, repo: b.repo, shipNow: b.ship_now, run: 'app' }));
+    const ref = await boardErrors(() => trackerRef(b, oldSpelling));
+    const r = await boardErrors(() => assignTask(me, { taskId: id, assignee: b.assignee!, ...ref, type: b.work, needs: b.needs, repo: b.repo, shipNow: b.ship_now, run: 'app' }));
     res.json({ card: r.card, message: r.message });
   }));
 
-  // The project tag alone: set, change or clear (null) without reassigning or waking anyone.
+  // The area and project tag alone: set, change or clear (area null) without reassigning or waking anyone.
+  // The path keeps its name: the tag is what a card's project chip shows.
   router.post('/cards/:id/project', wrap(async (req, res) => {
     const id = parseOr400(Id, req.params['id']);
     const b = parseOr400(TagBody, req.body);
-    res.json({ card: await boardErrors(() => tagCard(caller(res).name, id, { project: b.project, feature: b.project ? (b.feature ?? null) : null })) });
+    const ref = await boardErrors(() => trackerRef(b, oldSpelling));
+    // `area: null` clears both. A project sent without an area is passed on, so the board function refuses it
+    // ("a project needs an area") instead of the tag being dropped without a word.
+    const tag = b.area === null ? { area: null, project: null } : { area: ref.area ?? null, project: ref.project ?? null };
+    const response = { card: await boardErrors(() => tagCard(caller(res).name, id, tag)) } as unknown as BoardCardResponse;
+    res.json(response);
   }));
 
   // Changes requested on a review card: a new round for the builder, the review card parked until it is done.
@@ -184,7 +210,16 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
   router.post('/cards/:id/move', wrap(async (req, res) => {
     const id = parseOr400(Id, req.params['id']);
     const b = parseOr400(MoveBody, req.body);
-    res.json({ card: await boardErrors(() => moveCard(caller(res).name, id, b.status, b.note)) });
+    const response = { card: await boardErrors(() => moveCard(caller(res).name, id, b.status, b.note)) } as unknown as BoardCardResponse;
+    res.json(response);
+  }));
+
+  // Blocked with its cause as data: `after` (dependency links) or `host` (host-down). Clears itself; see board_reclaim.
+  router.post('/cards/:id/block', wrap(async (req, res) => {
+    const id = parseOr400(Id, req.params['id']);
+    const b = parseOr400(BlockBody, req.body);
+    const response = { card: await boardErrors(() => blockCard(caller(res).name, id, { kind: b.kind, reason: b.note, host: b.host, after: b.after })) } as unknown as BoardCardResponse;
+    res.json(response);
   }));
 
   router.post('/cards/:id/link', wrap(async (req, res) => {
@@ -197,7 +232,8 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
   router.post('/cards/:id/flags', wrap(async (req, res) => {
     const id = parseOr400(Id, req.params['id']);
     const b = parseOr400(FlagsBody, req.body);
-    res.json({ card: await boardErrors(() => flagCard(caller(res).name, id, { shipNow: b.ship_now, needs: b.needs })) });
+    const response = { card: await boardErrors(() => flagCard(caller(res).name, id, { shipNow: b.ship_now, needs: b.needs })) } as unknown as BoardCardResponse;
+    res.json(response);
   }));
 
   router.post('/claim', wrap(async (req, res) => {
@@ -215,13 +251,17 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
   router.post('/cards/:id/heartbeat', wrap(async (req, res) => {
     const id = parseOr400(Id, req.params['id']);
     const b = parseOr400(HeartbeatBody, req.body ?? {});
-    res.json({ run: await boardErrors(() => heartbeat(caller(res).name, id, { tokens: b.tokens, turns: b.turns, leaseMinutes: b.lease_minutes })) });
+    const who = caller(res).name;
+    let run = await boardErrors(() => heartbeat(who, id, { tokens: b.tokens, turns: b.turns, leaseMinutes: b.lease_minutes }));
+    if (b.branch || b.pr) run = await boardErrors(() => recordRunOutput(who, id, { branch: b.branch, pr: b.pr }));
+    res.json({ run });
   }));
 
   router.post('/cards/:id/finish', wrap(async (req, res) => {
     const id = parseOr400(Id, req.params['id']);
     const b = parseOr400(FinishBody, req.body);
-    res.json({ card: await boardErrors(() => finishCard(caller(res).name, id, { outcome: b.outcome, result: b.result, blockKind: b.block_kind, verification: b.verification, tokens: b.tokens, turns: b.turns, runId: b.run_id })) });
+    const response = { card: await boardErrors(() => finishCard(caller(res).name, id, { outcome: b.outcome, result: b.result, blockKind: b.block_kind, verification: b.verification, tokens: b.tokens, turns: b.turns, runId: b.run_id })) } as unknown as BoardCardResponse;
+    res.json(response);
   }));
 
   // The live feed: one line per board event, a comment every 25 s so proxies keep the stream open.
@@ -287,6 +327,13 @@ export function boardRouter(opts: BoardRouterOptions = {}): Router {
   router.post('/reclaim', wrap(async (_req, res) => {
     ownerOnly(res);
     res.json({ reclaimed: await reclaim() });
+  }));
+
+  // A machine reports a host back up: host-down blocks on it go back to ready (at most 3 times a card), plus the
+  // usual sweep. Any caller: it can only re-queue cards a host-down block already parked. The engine never probes a host.
+  router.post('/host-up', wrap(async (req, res) => {
+    const b = parseOr400(HostUpBody, req.body);
+    res.json({ reclaimed: await boardErrors(() => reclaim(b.hosts)) });
   }));
 
   return router;

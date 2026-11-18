@@ -16,10 +16,10 @@ import { settings } from '../../settings.js';
 // user; a oneshot service that is still running is not started again, so a long run never overlaps a tick.
 const USAGE = `secondbrain dispatch: run zen-agent and codex bots for their open wakeups
 
-  tick       materialise due routines, release stale claims, then one run per bot with open wakeups
+  tick       materialise due routines, release stale claims, wake ready cards nothing woke, then one run per bot with open wakeups
   routines   only add the roster's due routine wakeups (once per local day in ORG_TZ)
 
-Settings: ORG_DISPATCH, ORG_TZ, ORG_DISPATCH_QUIET, ORG_DISPATCH_DAILY_TOKENS, ORG_DISPATCH_PARALLEL, ORG_ZEN_COMMAND, ORG_CODEX_COMMAND
+Settings: ORG_DISPATCH, ORG_TZ, ORG_DISPATCH_QUIET, ORG_DISPATCH_DAILY_TOKENS, ORG_DISPATCH_PARALLEL, ORG_ZEN_COMMAND, ORG_CODEX_COMMAND, ORG_CODEX_HOST
 (env), and secondbrain.json "dispatch" (tiers, budgets, tools). Bots on other runtimes are left to their own dispatcher.`;
 
 /** Runs zen-agent as a child process; stdout is the --json result, stderr the printer's lines. */
@@ -60,7 +60,9 @@ export async function main(argv: string[]): Promise<number> {
     settings: dispatch,
     config: {
       orgTz: config.orgTz, orgDispatchQuiet: config.orgDispatchQuiet, orgDispatchDailyTokens: config.orgDispatchDailyTokens,
-      orgDispatchParallel: config.orgDispatchParallel, orgZenCommand: config.orgZenCommand, orgCodexCommand: config.orgCodexCommand, vaultRoot: config.vaultRoot,
+      orgDispatchParallel: config.orgDispatchParallel, orgZenCommand: config.orgZenCommand, orgCodexCommand: config.orgCodexCommand,
+      orgCodexHost: config.orgCodexHost, vaultRoot: config.vaultRoot,
+      orgTaskWakeRetries: config.orgTaskWakeRetries,
       machines: config.ollamaMachines,
     },
     log: (line) => console.error(line),
@@ -81,7 +83,7 @@ export async function main(argv: string[]): Promise<number> {
       }
     }
     const r = await d.tick();
-    console.log(`tick: ${r.routines} routines, ${r.released} released, ${r.agents} bots, ${r.runs} runs, ${r.acks} acks, ${r.gated} gated` +
+    console.log(`tick: ${r.routines} routines, ${r.released} released, ${r.promoted} promoted, ${r.woken} re-woken, ${r.closed} closed, ${r.agents} bots, ${r.runs} runs, ${r.acks} acks, ${r.gated} gated` +
       (r.held ? `, held: ${r.held}` : ''));
     for (const e of r.errors) console.error(`  ! ${e}`);
     return r.errors.length ? 2 : 0;

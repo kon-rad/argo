@@ -40,6 +40,8 @@ try {
 const push = buildPush({
   claudeProjectsDir: config.env.CLAUDE_PROJECTS_DIR ?? join(home, '.claude', 'projects'),
   codexSessionsDir: join(config.env.CODEX_HOME ?? join(home, '.codex'), 'sessions'),
+  // zen-agent chats on this machine: the vault's .zen/sessions is gitignored, so they reach the server only from here.
+  zenSessionsDir: config.zenSessionsDir,
   planLog: join(stateDir, 'plan-usage.ndjson'),
   maxBytes: config.env.USAGE_PUSH_MAX_BYTES,
   host: usageHost,

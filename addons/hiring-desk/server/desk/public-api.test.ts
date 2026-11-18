@@ -98,6 +98,13 @@ describe('public Hiring Desk payment boundary', () => {
     expect((await request(app).post('/api/desk/public/jobs').send({ record: fixtures.job, idempotencyKey: 'x'.repeat(201) })).status).toBe(400);
     expect((await request(app).post('/api/desk/public/jobs').send({ record: { ...fixtures.job, brief: 'x'.repeat(17000) }, idempotencyKey: 'job-1' })).status).toBe(413);
   });
+  it('never exposes the configured backend signer through public publication routes', async () => {
+    const { app, controls } = await setup();
+    Object.assign(controls.store, { serverAuthorized: true });
+    const response = await request(app).post('/api/desk/public/jobs').send({ record: fixtures.job, idempotencyKey: 'job-1' });
+    expect(response.status).toBe(403);
+    expect(controls.store.publish).not.toHaveBeenCalled();
+  });
   it('limits public write requests', async () => {
     const { app } = await setup();
     let status = 0;

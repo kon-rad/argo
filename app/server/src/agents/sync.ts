@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { query, withTransaction } from '../db.js';
 import { snapshotSqlite } from '../archive/collect.js';
 import { readHermes } from '../archive/hermes.js';
+import { attributeBots } from '../archive/bot.js';
 import * as store from '../archive/store.js';
 import type { Host } from '../archive/types.js';
 import { readHermesCounters } from '../usage/hermesCounters.js';
@@ -88,19 +89,27 @@ async function syncSessions(home: HermesHome, host: Host, tz: string | null, tmp
   catch (err) { c.errors.push(`${home.profile} hermes calls: ${(err as Error).message}`); }
   await withTransaction(async (tx) => {
     const ids = new Map<string, number>();
+    const changed: number[] = [];
     for (const s of sessions) {
       const r = await store.upsertSession(tx, {
         ...s, source, meta: { ...s.meta, profile: home.profile, timezone: tz, ...channelMeta(hermesChannel(s.meta.source), 'hermes', home.profile) },
       });
       ids.set(s.externalId, r.id);
-      if (r.changed) c.sessions++;
+      if (r.changed) { c.sessions++; changed.push(r.id); }
     }
     const bySession = new Map<string, typeof messages>();
     for (const m of messages) {
       if (!ids.has(m.sessionExternalId)) continue;
       (bySession.get(m.sessionExternalId) ?? bySession.set(m.sessionExternalId, []).get(m.sessionExternalId)!).push(m);
     }
-    for (const [sid, msgs] of bySession) c.messages += await store.upsertMessages(tx, ids.get(sid)!, msgs);
+    // Only sessions that changed are read for their bot: the whole state.db comes through every run.
+    const touched = new Set(changed);
+    for (const [sid, msgs] of bySession) {
+      const n = await store.upsertMessages(tx, ids.get(sid)!, msgs);
+      c.messages += n;
+      if (n) touched.add(ids.get(sid)!);
+    }
+    await attributeBots(tx, [...touched]);
     c.usage += await recordHermesCounters(tx, counters, new Date());
     c.calls += await upsertCalls(tx, calls);
   });

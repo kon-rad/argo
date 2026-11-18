@@ -13,11 +13,11 @@ export async function truncateAll(): Promise<void> {
                cron_jobs, cron_runs, cron_outputs, agents_sync_runs,
                livestream_sessions, livestream_viewer_samples, livestream_x_broadcasts, livestream_notices,
                org_agent_episodes, memory_facts, org_approvals, board_tokens, org_agent_overrides, card_runs, card_events, card_comments, card_deps, cards, board_settings, boards, org_wakeups, org_reads, org_messages, org_channel_members, org_channels, org_agents,
-               verifications, stage_changes, features, projects, teams, divisions,
+               verifications, kpi_readings, tracker_events, projects, areas, teams, divisions,
                ingest_batches, ingest_devices, llm_exchanges, llm_blobs,
                usage_calls, usage_runs, plan_usage_snapshots, hermes_usage_snapshots, usage_files, provider_credit_snapshots,
                metric_samples, map_edges, map_nodes, map_layouts,
-               social_post_stats, social_metric_status, social_metric_tokens, instagram_login_states,
+               social_post_metrics, social_post_stats, social_metric_status, social_metric_tokens, instagram_login_states,
                social_post_media, social_posts, social_accounts,
                chat_messages, chat_conversations, chat_settings, classify_decisions, uploads
                RESTART IDENTITY CASCADE`);

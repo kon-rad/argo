@@ -154,6 +154,22 @@ const Schema = z.object({
   DESK_RPC_URL: z.string().optional(),
   DESK_PUBLIC_ORIGIN: z.string().optional(),
   DESK_RUNTIME_MODULE: z.string().optional(),
+  DESK_ARKIV_RPC_URL: z.string().optional(),
+  DESK_ARKIV_CHAIN_ID: z.string().optional(),
+  DESK_ARKIV_PRIVATE_KEY: z.string().optional(),
+  DESK_ARKIV_LIFETIME_BLOCKS: z.string().optional(),
+  DESK_BEE_URL: z.string().optional(),
+  DESK_BEE_POSTAGE_BATCH_ID: z.string().optional(),
+  DESK_IDENTITY_RPC_URL: z.string().optional(),
+  DESK_IDENTITY_CHAIN_ID: z.string().optional(),
+  DESK_ENS_RPC_URL: z.string().optional(),
+  DESK_ENS_CHAIN_ID: z.string().optional(),
+  DESK_ERC8004_REGISTRY_ADDRESS: z.string().optional(),
+  DESK_IDENTITY_METADATA_HOSTS: z.string().optional(),
+  DESK_TRANSPORT_TIMEOUT_MS: z.string().optional(),
+  DESK_MAX_RESPONSE_BYTES: z.string().optional(),
+  DESK_MAX_ARTIFACT_BYTES: z.string().optional(),
+  DESK_PUBLICATION_DESTINATION: z.string().optional(),
   // Deprecated (one release): `SUMMARIES=on` used to install the summaries timer; `summaries` is a module now.
   SUMMARIES: z.string().optional(),
   // Shown in the TOTP app and as the comment author on the Agents board.
@@ -184,6 +200,8 @@ const Schema = z.object({
   ORG_ZEN_COMMAND: z.string().min(1).default('zen-agent'),
   // Subscription-only Codex CLI. A roster row runs only after ChatGPT login and exact-model preflight.
   ORG_CODEX_COMMAND: z.string().min(1).default('codex'),
+  // usage_hosts.slug where ORG_CODEX_COMMAND executes. Unset: this server's registered usage host.
+  ORG_CODEX_HOST: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/).optional(),
   // Native Codex conversation directory; authentication remains owned by the CLI.
   CODEX_HOME: z.string().min(1).optional(),
   // Where zen-agent writes its traces (zen.json sessionsDir); usage-sync reads them. Default: <vault>/.zen/sessions.
@@ -227,6 +245,8 @@ const Schema = z.object({
   // minted by `cli-board token create` (door 2 of docs/board-design.md). Unset: the database connection is used.
   BOARD_URL: z.string().url().optional(),
   BOARD_TOKEN: z.string().min(20).optional(),
+  // Where `secondbrain-vault clis install` writes the agent CLI wrappers (default ~/.local/bin); the doctor looks there.
+  SECONDBRAIN_BIN_DIR: z.string().optional(),
   // Read-only bearer token for a kiosk's Projects panel (GET /api/feed/projects).
   // Unset = the feed route does not exist.
   PROJECTS_FEED_TOKEN: z.string().min(32).optional(),
@@ -385,6 +405,22 @@ export const config = {
     rpcUrl: parsed.data.DESK_RPC_URL,
     publicOrigin: parsed.data.DESK_PUBLIC_ORIGIN,
     runtimeModule: parsed.data.DESK_RUNTIME_MODULE,
+    arkivRpcUrl: parsed.data.DESK_ARKIV_RPC_URL,
+    arkivChainId: parsed.data.DESK_ARKIV_CHAIN_ID,
+    arkivPrivateKey: parsed.data.DESK_ARKIV_PRIVATE_KEY,
+    arkivLifetimeBlocks: parsed.data.DESK_ARKIV_LIFETIME_BLOCKS,
+    beeUrl: parsed.data.DESK_BEE_URL,
+    beePostageBatchId: parsed.data.DESK_BEE_POSTAGE_BATCH_ID,
+    identityRpcUrl: parsed.data.DESK_IDENTITY_RPC_URL,
+    identityChainId: parsed.data.DESK_IDENTITY_CHAIN_ID,
+    ensRpcUrl: parsed.data.DESK_ENS_RPC_URL,
+    ensChainId: parsed.data.DESK_ENS_CHAIN_ID,
+    erc8004RegistryAddress: parsed.data.DESK_ERC8004_REGISTRY_ADDRESS,
+    metadataHosts: parsed.data.DESK_IDENTITY_METADATA_HOSTS,
+    timeoutMs: parsed.data.DESK_TRANSPORT_TIMEOUT_MS,
+    maxResponseBytes: parsed.data.DESK_MAX_RESPONSE_BYTES,
+    maxArtifactBytes: parsed.data.DESK_MAX_ARTIFACT_BYTES,
+    publicationDestination: parsed.data.DESK_PUBLICATION_DESTINATION,
   },
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,
@@ -400,6 +436,7 @@ export const config = {
   orgDispatchDailyTokens: parsed.data.ORG_DISPATCH_DAILY_TOKENS,
   orgZenCommand: parsed.data.ORG_ZEN_COMMAND,
   orgCodexCommand: parsed.data.ORG_CODEX_COMMAND,
+  orgCodexHost: parsed.data.ORG_CODEX_HOST ?? null,
   zenSessionsDir: parsed.data.ZEN_SESSIONS_DIR ?? resolve(parsed.data.VAULT_ROOT, '.zen', 'sessions'),
   classifyProvider: parsed.data.CLASSIFY_PROVIDER,
   classifyDailyTokens: parsed.data.CLASSIFY_DAILY_TOKENS,

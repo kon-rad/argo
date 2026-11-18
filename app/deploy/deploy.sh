@@ -34,7 +34,7 @@
 #                        agents: agents-sync, and (if the vault's .secondbrain/zen-agent builds) zen-agent-serve,
 #                        ZEN_SERVE_TOKEN/ZEN_AGENT_URL/ZEN_AGENT_TOKEN, zen-agent on PATH (docs/zen-agent.md 3.6)
 #                        usage: usage-sync, credits-sync, the usage importer
-#                        projects: projects-render, the kiosk feed token, cli-projects on PATH
+#                        projects: projects-render, the kiosk feed token, cli-areas and cli-projects on PATH
 #                        org: the sb_org role, cli-org on PATH · board: board-reclaim, cli-board on PATH · map: map-build, metrics
 #                        livestream: the minute poller and Caddy's /public/ files
 #                        social: the minute post-publisher and reauth check, cli-social on PATH
@@ -92,8 +92,10 @@ done
 
 echo "→ shipping source to $HOST:$APP_DIR"
 ssh "$HOST" "mkdir -p $APP_DIR"
+# /data is anchored: the app's runtime folder (app/data) stays on the server, but a source folder that happens
+# to be called data (server/src/addons/data) still ships. Unanchored, it silently dropped the warehouse addon's code (then named data).
 rsync -az --delete \
-  --exclude node_modules --exclude dist --exclude 'web/dist' --exclude data --exclude vault-sync \
+  --exclude node_modules --exclude dist --exclude 'web/dist' --exclude /data --exclude vault-sync \
   --exclude .git --exclude .DS_Store \
   "$APP_ROOT/" "$HOST:$APP_DIR/"
 # The vault sync is one stdlib Python file from tools/, outside app/: ship it next to the app.
@@ -265,7 +267,9 @@ rollback() {
 # ---- build ----
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/data"
-if ! sudo -u "$APP_USER" bash -c "cd $APP_DIR && npm ci --no-audit --no-fund && npm run build"; then
+# Built beside the live tree and swapped in (deploy/build-release.sh): an in-place npm ci empties node_modules
+# under any CLI an agent runs meanwhile, and a failed build here leaves the running one whole.
+if ! sudo -u "$APP_USER" bash "$APP_DIR/deploy/build-release.sh" "$APP_DIR"; then
   echo "✗ the build failed"
   if rollback; then exit 3; fi
   exit 4
@@ -333,6 +337,15 @@ features() { sudo -u "$APP_USER" -H /usr/bin/node --no-warnings "$APP_DIR/server
 if grep -qsE '^SUMMARIES=on$' /etc/secondbrain/env && ! has summaries; then
   echo "! SUMMARIES=on is deprecated: add summaries to DEPLOY_MODULES. Treating it as on for this deploy."
   MODS="${MODS:+$MODS,}summaries"
+fi
+# The vault's own tables (docs/warehouse.md): applied after the engine's, never rolled back with it.
+# A failing vault migration is reported and left for the owner; the engine deploy stands.
+if has warehouse; then
+  if sudo -u "$APP_USER" bash -c "set -a; . /etc/secondbrain/env; set +a; cd $APP_DIR && DATABASE_URL='postgres:///secondbrain?host=/var/run/postgresql' /usr/bin/node --no-warnings server/dist/cli-warehouse.js migrate"; then
+    echo "→ vault warehouse migrations applied"
+  else
+    echo "! vault warehouse migrations failed: run 'secondbrain warehouse migrate' on the server and fix the file it names"
+  fi
 fi
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.local/bin"
 for w in $(features wrappers); do

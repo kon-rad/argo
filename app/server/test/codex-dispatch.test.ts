@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { codexCommand, codexPreflight, parseCodexResult, subscriptionEnv } from '../src/addons/dispatch/codex.js';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { codexCommand, codexPersona, codexPreamble, codexPreflight, parseCodexResult, subscriptionEnv } from '../src/addons/dispatch/codex.js';
 import type { Runner, RunnerResult } from '../src/addons/dispatch/index.js';
 
 const ok: RunnerResult = { code: 0, stderr: '', stdout: [
@@ -54,5 +57,25 @@ describe('Codex subscription adapter', () => {
     expect(parseCodexResult({ ...ok, cancelled: true })).toMatchObject({ state: 'cancelled' });
     expect(parseCodexResult({ ...ok, timedOut: true })).toMatchObject({ state: 'timeout' });
     expect(parseCodexResult({ code: 0, stdout: '', stderr: '' })).toMatchObject({ state: 'error' });
+  });
+
+  it('loads the compiled persona without its frontmatter, and nothing when the vault has none', () => {
+    const vault = mkdtempSync(join(tmpdir(), 'codex-persona-'));
+    mkdirSync(join(vault, '.claude', 'agents'), { recursive: true });
+    writeFileSync(join(vault, '.claude', 'agents', 'ada.md'), '---\nname: ada\ntools: Read\n---\n\n# ada, Engineer\n\nYou are **ada**.\n');
+    expect(codexPersona(vault, 'ada')).toBe('# ada, Engineer\n\nYou are **ada**.');
+    expect(codexPersona(vault, 'nobody')).toBeNull();
+    expect(codexPersona(vault, '../ada')).toBeNull();
+  });
+
+  it('puts the persona, the board checklist and the sandbox mode ahead of the task', () => {
+    const card = codexPreamble('# ada, Engineer', true);
+    expect(card.startsWith('# ada, Engineer\n')).toBe(true);
+    expect(card).toContain('.agents/skills/org-member/SKILL.md');
+    expect(card).toContain('can write');
+    const message = codexPreamble(null, false);
+    expect(message).toContain('read-only');
+    expect(message).not.toContain('can write');
+    expect(message).toContain('org-member');
   });
 });

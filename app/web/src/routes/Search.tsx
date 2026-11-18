@@ -1,10 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import {
-  api, fileHref,
-  type AgentHit, type GlobalSearchResponse, type RecordHit, type SearchHit, type SearchMode, type SearchScope,
-} from '../lib/api.js';
+import { fileHref } from '../lib/http.js';
+import { searchApi, type AgentHit, type GlobalSearchResponse, type RecordHit, type SearchHit, type SearchMode, type SearchScope } from '../lib/searchApi.js';
 
 const PAGE = 25;
 const OVERVIEW = 5;
@@ -13,7 +11,7 @@ type Tab = 'all' | SearchScope;
 const TABS: { value: Tab; label: string; hint: string }[] = [
   { value: 'all', label: 'All', hint: 'A few hits from every store' },
   { value: 'notes', label: 'Notes', hint: 'Markdown in the vault, plus Discord' },
-  { value: 'records', label: 'Records', hint: 'Database rows: gear, projects, features, teams' },
+  { value: 'records', label: 'Records', hint: 'Database rows: gear, areas, projects, teams' },
   { value: 'agents', label: 'Agent logs', hint: 'Claude Code and Hermes messages, tool calls and results' },
 ];
 
@@ -37,7 +35,7 @@ export default function Search() {
   const { data, isPending, error } = useQuery<GlobalSearchResponse>({
     queryKey: ['global-search', q, tab, mode, offset],
     queryFn: () =>
-      api.globalSearch(q, single ? [tab] : ['notes', 'records', 'agents'], mode, single ? offset : 0, single ? PAGE : OVERVIEW),
+      searchApi.globalSearch(q, single ? [tab] : ['notes', 'records', 'agents'], mode, single ? offset : 0, single ? PAGE : OVERVIEW),
     enabled: q.trim().length > 0,
   });
 
@@ -62,12 +60,13 @@ export default function Search() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-6">
-      <div className="mb-3 flex flex-wrap items-center gap-1">
+      <div className="mb-3 flex flex-wrap items-center gap-1" role="group" aria-label="Search in">
         {TABS.filter((t) => t.value === 'all' || available.includes(t.value as SearchScope)).map((t) => (
           <button
             key={t.value}
             type="button"
             title={t.hint}
+            aria-pressed={tab === t.value}
             onClick={() => setParam('scope', t.value === 'all' ? '' : t.value)}
             className={'rounded px-2.5 py-1 text-xs transition ' +
               (tab === t.value ? 'bg-[var(--accent)] text-[var(--paper)]' : 'border border-[var(--rule)] text-[var(--ink-dim)] hover:text-[var(--ink)]')}
@@ -76,12 +75,13 @@ export default function Search() {
           </button>
         ))}
         {(tab === 'all' || tab === 'notes') && (
-          <span className="ml-auto flex items-center gap-1">
+          <span className="ml-auto flex items-center gap-1" role="group" aria-label="Search mode">
             {MODES.map((m) => (
               <button
                 key={m.value}
                 type="button"
                 title={m.hint}
+                aria-pressed={mode === m.value}
                 onClick={() => setParam('mode', m.value === 'hybrid' ? '' : m.value)}
                 className={'rounded px-2 py-0.5 text-[11px] ' +
                   (mode === m.value ? 'border border-[var(--accent)] text-[var(--ink)]' : 'text-[var(--ink-faint)] hover:text-[var(--ink)]')}

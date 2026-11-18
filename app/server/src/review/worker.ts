@@ -1,8 +1,8 @@
 import type pg from 'pg';
 import { evidence, runReview, type Job, type Snapshot, type Source } from './gate.js';
-import { GitHub, codexReview, deploy, type HostConfig } from './adapters.js';
-import { note, source, linkedNote, hasAcceptance, repositoryKey, builderIsReviewer } from './context.js';
-import { CapacityError, POLICY, evaluate, requireCapacity, scopeObservation } from './policy.js';
+import { GitHub, codexReview, deploy, notifyOwner, type HostConfig } from './adapters.js';
+import { note, source, boardSources, linkedNote, hasAcceptance, repositoryKey, builderIsReviewer } from './context.js';
+import { reviewInPasses } from './passes.js';
 import { failure } from '../verification/contract.js';
 import type { Decision } from '../verification/evidence.js';
 import { GitHubVerificationSource, activation, integrationsAt, offState, verifyHead } from '../verification/github.js';
@@ -18,6 +18,18 @@ export function normalizeChecks(checks: readonly CheckRollup[]): Snapshot['check
   return checks.map(c => ({ name: c.name ?? c.context ?? '', state: c.status != null
     ? c.status === 'COMPLETED' ? conclusions.get(c.conclusion ?? '') ?? 'unknown' : pending.has(c.status) ? 'pending' : 'unknown'
     : legacy.get(c.state ?? '') ?? 'unknown' }));
+}
+
+/** The line the owner gets when a review rejects or blocks. Null when there is nothing new to say. */
+export function ownerNotice(job: Job, before: { state: Job['state']; error: string | null }, title: string): string | null {
+  if (job.state !== 'rejected' && job.state !== 'blocked') return null;
+  if (job.state === 'blocked' && before.state === 'blocked' && before.error === (job.error ?? null)) return null;
+  const pr = job.snapshot ? ` PR: https://github.com/${job.snapshot.repo}/pull/${job.snapshot.pr}` : '';
+  const name = `${job.card}${title ? ` "${title.slice(0,90)}"` : ''}`;
+  if (job.state === 'blocked') return `${job.reviewer}: review blocked on ${name}: ${(job.error ?? 'unknown error').slice(0,600)}.${pr} ${job.merged ? 'Already merged, not confirmed deployed.' : 'Not merged.'} It needs you.`;
+  const findings = job.verdict?.findings ?? [];
+  const lines = findings.slice(0,5).map(f => `- [${f.severity}] ${f.location}: ${f.evidence.slice(0,220)}`);
+  return `${job.reviewer}: changes requested on ${name}, round ${job.round}, ${findings.length} finding${findings.length === 1 ? '' : 's'}.${pr}\n${lines.join('\n')}${findings.length > 5 ? `\n(${findings.length - 5} more on the card)` : ''}\nThe card is back with ${job.builder}.`;
 }
 
 export async function tick(client: pg.Client, host: HostConfig): Promise<{ claimed: boolean; job?: Job }> {
@@ -44,7 +56,14 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
       targetHeld = await acquire(targetLock); if (!targetHeld) continue;
       const policy = (await client.query('SELECT * FROM review_policy')).rows[0];
       if (!policy?.enabled) return { claimed:false }; // disabled pauses existing submissions; never releases them
-      const save = async (patch: Partial<Job>) => { await client.query('SELECT review_save($1,$2::jsonb)',[job.id,JSON.stringify(patch)]); };
+      // The owner hears once about each rejection and each new block; a retry that blocks on the same error stays quiet.
+      const before = { state: fresh.state as Job['state'], error: (fresh.error ?? null) as string | null };
+      let told = false;
+      const save = async (patch: Partial<Job>) => {
+        await client.query('SELECT review_save($1,$2::jsonb)',[job.id,JSON.stringify(patch)]);
+        const text = told ? null : ownerNotice({ ...job, ...patch }, before, String(initialContext.ticket?.title ?? ''));
+        if (text) { told = true; await notifyOwner(host,text); }
+      };
       if (changedTarget) { await save({state:'blocked',error:'Registered target changed for active submission'}); return {claimed:true,job}; }
       const repo = host.repositories[repoKey];
       if (!repo || !host.targets[repo.target]) {
@@ -65,7 +84,7 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
       }
       const gather = async (): Promise<Snapshot> => {
         const context = (await client.query('SELECT review_context($1) AS context',[job.id])).rows[0]!.context as Record<string,unknown>;
-        const sources: Source[] = Object.entries(context).map(([key,value]) => ({ ...source(`board:${job.card}:${key}`,value),truncated:Array.isArray(value) && (value.length>100 || value.some(v=>v && typeof v==='object' && v.truncated===true)) }));
+        const sources: Source[] = Object.entries(context).flatMap(([key,value]) => boardSources(`board:${job.card}:${key}`,value));
         // Empty collections are valid, absent ticket/body/acceptance or builder evidence is not.
         const ticket = context.ticket as Record<string,unknown>;
         if (!hasAcceptance(ticket)) sources.push(source('missing:ticket-acceptance',''));
@@ -92,34 +111,28 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
         sources.push(source(`github:${repo.github}/pull/${p.number}`,{body:p.body,headRefName:p.headRefName,baseRefName:p.baseRefName,isDraft:p.isDraft,reviewDecision:p.reviewDecision,statusCheckRollup:p.statusCheckRollup,threads}));
         // After merge, retain the approved base even if the protected branch has advanced.
         const revision={...p,baseRefOid:p.mergeCommit && job.snapshot ? job.snapshot.base : p.baseRefOid};
-        const snapshot=(preflight?:Snapshot['preflight']):Snapshot=>({ repo:repo.github,pr:p.number,head:p.headRefOid,behind:p.state==='OPEN' && p.mergeStateStatus==='BEHIND',conflicting:p.state==='OPEN' && (p.mergeStateStatus==='DIRTY' || p.mergeable==='CONFLICTING'),draft:p.isDraft,unresolved:threads.filter(t=>!t.isResolved).length,changesRequested:p.reviewDecision==='CHANGES_REQUESTED',
+        const snapshot=():Snapshot=>({ repo:repo.github,pr:p.number,head:p.headRefOid,behind:p.state==='OPEN' && p.mergeStateStatus==='BEHIND',conflicting:p.state==='OPEN' && (p.mergeStateStatus==='DIRTY' || p.mergeable==='CONFLICTING'),draft:p.isDraft,unresolved:threads.filter(t=>!t.isResolved).length,changesRequested:p.reviewDecision==='CHANGES_REQUESTED',
           base:revision.baseRefOid,branch:p.baseRefName,merged:p.mergeCommit?.oid ?? null,
-          requiredChecks:[...repo.checks],checks:normalizeChecks(p.statusCheckRollup),sources,...(preflight?{preflight}:{}) });
-        try{
-          const diff=await github.diff(revision), code=await github.code(revision);
-          if(repo.verification){
-            // Obtained from the configured workflow's run and artifact for this exact head, never from builder files.
-            const decision=await verifyHead(verifier,repo.verification,p.headRefOid);
-            verified.set(p.headRefOid,decision);
-            sources.push(source(`verification:${p.headRefOid}`,decision.record));
-          }
-          const current=await github.pr(job.card,p.number);
-          if(current.headRefOid!==p.headRefOid || current.baseRefOid!==p.baseRefOid)throw new Error('PR head or base changed during collection; retry with fresh evidence');
-          requireCapacity(evaluate(scopeObservation([],code,diff,0,sources.reduce((n,s)=>n+s.text.length,0)),'actual'));
-          sources.push(source(`github:diff:${p.headRefOid}`,diff,true,POLICY.diffChars));for(const item of code)sources.push(source(item.ref,item.text));return snapshot();
-        }catch(error){
-          if(!(error instanceof CapacityError))throw error;
-          const mapping:Record<string,string>={changedFiles:'scope-changed-files',reviewableFiles:'scope-reviewable-files',sources:'scope-sources',sourceChars:'scope-source-chars',diffChars:'scope-diff-chars',combinedChars:'scope-combined-chars'};
-          return snapshot(error.result.reasons.filter(r=>mapping[r.code]).map(r=>({code:mapping[r.code] as 'scope-changed-files',severity:'high' as const,location:'Review source capacity',evidence:`Observed ${r.observed}; allowed ${r.allowed}. Full independent model review did not run.`,impact:'This revision exceeds the deterministic reviewer capacity and is not accepted.',fix:r.action,verification:'Run review scope actual on the complete clean revision and record a passing result.'})));
+          requiredChecks:[...repo.checks],checks:normalizeChecks(p.statusCheckRollup),sources });
+        const diff=await github.diff(revision), code=await github.code(revision);
+        if(repo.verification){
+          const decision=await verifyHead(verifier,repo.verification,p.headRefOid);
+          verified.set(p.headRefOid,decision);
+          sources.push(source(`verification:${p.headRefOid}`,decision.record));
         }
-
+        const current=await github.pr(job.card,p.number);
+        if(current.headRefOid!==p.headRefOid || current.baseRefOid!==p.baseRefOid)throw new Error('PR head or base changed during collection; retry with fresh evidence');
+        // Size is never a finding. The whole diff and every source are kept; reviewInPasses splits what one call cannot hold.
+        sources.push(source(`github:diff:${p.headRefOid}`,diff,true,Number.MAX_SAFE_INTEGER));
+        for(const item of code)sources.push(source(item.ref,item.text,true,Number.MAX_SAFE_INTEGER));
+        return snapshot();
       };
       await runReview(job,repo.checks,{
         gather,
         beforeShip:async()=>{if(!contentHeld){contentHeld=await acquire(`review-content:${job.card}`);if(!contentHeld)throw new Error('Ticket evidence is changing; retry shipping');}},
         verifyMerge:(s,revision)=>github.confirmMerge(job.card,s,revision),
         mayShip:async()=>{const p=(await client.query('SELECT * FROM review_policy')).rows[0];return p?.enabled===true && p.shipping_enabled===true;},
-        review:(s,e) => codexReview(host,job.reviewer,s,e),save,
+        review:(s,e) => reviewInPasses(s,e,(part,evidenceHash,pass)=>codexReview(host,job.reviewer,part,evidenceHash,pass)),save,
         reject:async text => { await github.reject(job.snapshot!.pr,job.id,text); },
         merge:s => github.merge(job.card,s),
         deploy:async revision => {

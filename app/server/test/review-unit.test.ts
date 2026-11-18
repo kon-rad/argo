@@ -83,7 +83,49 @@ import { mkdtemp, writeFile, readFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { vi } from 'vitest';
-import { source, note } from '../src/review/context.js';
+import { source, note, boardSource, boardSources } from '../src/review/context.js';
+import { POLICY } from '../src/review/policy.js';
+
+it.each([
+  ['source budget', 'comments', [{ verdict: 'x'.repeat(POLICY.sourceChars), truncated: false }]],
+  ['database truncation', 'earlier_findings', [{ verdict: 'partial', truncated: true }]],
+  ['history overflow', 'earlier_findings', Array.from({ length: 101 }, () => ({ verdict: null, truncated: null }))],
+] as const)('blocks incomplete context before model dispatch: %s', async (_, key, raw) => {
+  const f = fixture(), s = snapshot();
+  const collected = boardSources(`board:t_123abc:${key}`, raw);
+  expect(collected.every(s => s.truncated)).toBe(true);
+  s.sources.push(...collected); f.setCurrent(s);
+  await runReview(f.job, ['test'], f.io);
+  expect(f.job.state).toBe('blocked');
+  expect(f.counts()).toEqual({ reviews: 0, merges: 0, deploys: 0, completions: 0 });
+});
+
+it('preserves an explicit empty prior-findings source and its original identity', () => {
+  const ref = 'board:t_123abc:earlier_findings';
+  expect(boardSources(ref, [])).toEqual([source(ref, [])]);
+  expect(boardSources(ref, [])[0]).toMatchObject({ ref, text: '[]', missing: false, truncated: false });
+});
+
+it.each([20, POLICY.sourceChars * 3])('retains original revision for a complete %i-character prior collection', size => {
+  const ref = 'board:t_123abc:earlier_findings', raw = [{ verdict: '界'.repeat(size), truncated: false }];
+  const original = source(ref, raw, true, Number.MAX_SAFE_INTEGER), parts = boardSources(ref, raw);
+  expect(parts.map(part => part.text).join('')).toBe(original.text);
+  expect(parts.every(part => part.revision === source(ref, raw).revision && !part.missing && !part.truncated)).toBe(true);
+  if (parts.length === 1) expect(parts[0]!.ref).toBe(ref);
+  else expect(parts.map(part => part.ref)).toEqual(parts.map((_, index) => `${ref}:part-${index + 1}-of-${parts.length}`));
+});
+
+it('dispatches complete prior findings above the former database limit', async () => {
+  const f = fixture(), s = snapshot();
+  const raw = [{ verdict: JSON.stringify({ findings: [{ fix: 'x'.repeat(12_000) }] }), truncated: false }];
+  const collected = boardSource('board:t_123abc:earlier_findings', raw);
+  expect(collected.truncated).toBe(false);
+  expect(JSON.parse(collected.text)).toEqual(raw);
+  s.sources.push(collected); f.setCurrent(s);
+  await runReview(f.job, ['test'], f.io);
+  expect(f.counts().reviews).toBe(1);
+  expect(f.job.state).toBe('done');
+});
 import { childEnv, command, correctionLookupDisposition, SafeProcessError } from '../src/review/process.js';
 import { targetMain } from '../src/review/target.js';
 import { GitHub, type HostConfig } from '../src/review/adapters.js';
@@ -270,7 +312,7 @@ it('restores deployed state after health failure before SQL completion without r
   f.io.health=health;await runReview(f.job,['test'],f.io);
   expect(f.job.state).toBe('done');expect(f.counts()).toEqual({reviews:1,merges:1,deploys:1,completions:1});
 });
-it.each(['project','feature'])('ignores only board %s audit stamps while retaining meaningful evidence',kind=>{
+it.each(['area','project','feature'])('ignores only board %s audit stamps while retaining meaningful evidence',kind=>{
   const project={title:'Platform',owner:'lead',stage:'building',updated_at:'before',updated_by:'writer'};
   const snap=(data:unknown,ref=`board:t_123abc:${kind}`)=>({...snapshot(),sources:[source(ref,data)]});
   const original=snap(project),before=structuredClone(original);
@@ -331,4 +373,53 @@ it('invalidates a paused approval when its branch falls behind',async()=>{
   const f=fixture();f.io.mayShip=async()=>false;await runReview(f.job,['test'],f.io);
   f.setCurrent({...snapshot(),behind:true});f.io.mayShip=async()=>true;
   await runReview(f.job,['test'],f.io);expect(f.job.state).toBe('rejected');expect(f.counts().merges).toBe(0);
+});
+
+describe('reviewer output schema', () => {
+  it('lists every property as required, as the provider\'s strict output mode demands', async () => {
+    const { z } = await import('zod');
+    const { ReviewerVerdict, Verdict } = await import('../src/review/gate.js');
+    const loose: string[] = [];
+    const walk = (node: unknown, path: string): void => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach((child, i) => walk(child, `${path}[${i}]`)); return; }
+      const n = node as Record<string, unknown>;
+      if (n.properties && typeof n.properties === 'object') {
+        const required = new Set(Array.isArray(n.required) ? n.required as string[] : []);
+        for (const key of Object.keys(n.properties)) if (!required.has(key)) loose.push(`${path}.${key}`);
+        if (n.additionalProperties !== false) loose.push(`${path} allows extra keys`);
+      }
+      for (const [key, child] of Object.entries(n)) walk(child, `${path}.${key}`);
+    };
+    walk(z.toJSONSchema(ReviewerVerdict), '$');
+    expect(loose).toEqual([]);
+    // The model's answer, which carries no code, is still a valid gate verdict.
+    const answer = { ...verdict(), evidence: 'e'.repeat(64), decision: 'reject' as const,
+      findings: [{ severity: 'high' as const, location: 'a.ts:1', evidence: 'ticket', impact: 'breaks', fix: 'fix it', verification: 'npm test' }] };
+    expect(ReviewerVerdict.safeParse(answer).success).toBe(true);
+    expect(Verdict.safeParse(answer).success).toBe(true);
+    expect(ReviewerVerdict.safeParse({ ...answer, findings: [{ ...answer.findings[0], code: 'ci-failure' }] }).success).toBe(false);
+  });
+});
+
+it('dispatches complete supported verdicts in bounded transport parts, and blocks database truncation', async () => {
+  const raw = [{round: 0, verdict: JSON.stringify({findings: [{fix: 'x'.repeat(99_900)}]}), truncated: false}];
+  const parts = boardSources('board:t_123abc:earlier_findings', raw);
+  expect(parts.length).toBeGreaterThan(1);
+  expect(parts.every(s => !s.truncated && s.text.length <= POLICY.sourceChars)).toBe(true);
+  expect(JSON.parse(parts.map(s => s.text).join(''))).toEqual(raw);
+  const f = fixture(), s = snapshot(); s.sources.push(...parts); f.setCurrent(s);
+  await runReview(f.job, ['test'], f.io); expect(f.counts().reviews).toBe(1); expect(f.job.state).toBe('done');
+  raw[0]!.truncated = true;
+  const g = fixture(), bad = snapshot(); bad.sources.push(...boardSources('board:t_123abc:earlier_findings', raw)); g.setCurrent(bad);
+  await runReview(g.job, ['test'], g.io); expect(g.counts().reviews).toBe(0); expect(g.job.state).toBe('blocked');
+});
+
+it('keeps Unicode characters intact at a prior-findings transport boundary', () => {
+  const prefix = JSON.stringify([{verdict:'',truncated:false}]).indexOf('","truncated');
+  const raw = [{verdict:'x'.repeat(POLICY.sourceChars-1-prefix)+'😀'+'y'.repeat(100),truncated:false}];
+  const parts=boardSources('board:t_123abc:earlier_findings',raw);
+  expect(parts.length).toBe(2);
+  expect(JSON.parse(parts.map(p=>p.text).join(''))).toEqual(raw);
+  expect(parts.every(p=>!/[\uD800-\uDBFF]$/.test(p.text))).toBe(true);
 });

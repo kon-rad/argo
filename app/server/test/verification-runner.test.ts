@@ -255,6 +255,13 @@ describe('execution and evidence on a disposable backend', () => {
     expect(decision.failures).toEqual([]); expect(decision.record.checks[0]).toMatchObject({ cwd: '/home/sbverify/work', report: { path: 'reports/tests.json' } });
     expect(decision.record.isolation).toMatch(/^linux-user:sbverify egress loopback-only/);
   });
+  it('collects a report whose path is embedded in a CLI option', async () => {
+    const argv = node(`require('fs').writeFileSync(process.argv[1].split('=')[1], ${JSON.stringify(vitest({ numTotalTests: 2, numPassedTests: 2 }))})`).concat('--', '--outputFile.json={report}');
+    const { ev, decision } = await verified(contractOf(check('tests', argv, { report: 'vitest-json', count: 'required' })));
+    expect(ev.result).toBe('pass');
+    expect(ev.checks[0].count).toMatchObject({ total: 2, passed: 2 });
+    expect(decision.failures).toEqual([]);
+  });
   it('routes failing tests typed as AssertionError to the original builder', async () => {
     const { decision } = await verified(tests({ numTotalTests: 2, numPassedTests: 1, ...failed(1, 'AssertionError: expected 1 to be 2') }, 1));
     expect(decision.failures).toEqual([expect.objectContaining({ type: 'assertion', route: 'builder', code: 'tests-failed', check: 'tests' })]);

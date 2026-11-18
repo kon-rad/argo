@@ -66,11 +66,19 @@ describe('parseZenTrace', () => {
   });
 
   it('is not a trace without a meta line, uses the meta id without a dispatch run id, and refuses a newer version', () => {
-    expect(parseZenTrace([{ type: 'message' }], 'mac', '/x.jsonl', MTIME)).toEqual({ run: null, calls: [], session: null });
+    expect(parseZenTrace([{ type: 'message' }], 'mac', '/x.jsonl', MTIME)).toEqual({ run: null, wake: false, calls: [], session: null });
     const bare = [{ type: 'meta', id: 'zen-1', at: '2026-10-24T09:00:00Z', model: 'ollama/qwen3:8b', parts: [] }];
     const { run } = parseZenTrace(bare, 'mac', '/x.jsonl', MTIME);
     expect(run).toMatchObject({ runId: 'zen-1', agentName: null, endedAt: null, numTurns: null, subtype: null, reasons: [], wakeupIds: [], runtime: 'zen-agent' });
     expect(() => parseZenTrace([{ type: 'meta', id: 'z', version: 9 }], 'mac', '/x.jsonl', MTIME)).toThrow(/version 9/);
+  });
+
+  it('a persona with no dispatcher labels is a chat, not a wake: the run carries no agent, the session keeps the persona', () => {
+    const chat = parseZenTrace([{ type: 'meta', id: 'zen-c', at: '2026-10-24T09:00:00Z', model: 'ollama/qwen3:8b', persona: 'bolt', parts: [], dispatch: {} }], 'mac', '/x.jsonl', MTIME);
+    expect(chat.wake).toBe(false);
+    expect(chat.run!.agentName).toBeNull();
+    expect(chat.session!.input.meta).toMatchObject({ persona: 'bolt' });
+    expect(parseZenTrace(records(), 'droplet', '/x.jsonl', MTIME)).toMatchObject({ wake: true, run: { agentName: 'bolt' } });
   });
 
   it('carries how the run was started and the context window into session meta; older traces leave both null', () => {

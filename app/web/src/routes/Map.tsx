@@ -6,7 +6,8 @@ import { ageDays, formatValue, mapApi, nodeColor, type MapMetric } from '../lib/
 
 /**
  * Brain map: the second brain as one 3D scene. Mission at the centre, goals
- * and divisions on rings, projects and features around their division, the
+ * and divisions on rings, areas and their projects around their division (node kinds `project` and `feature`: the
+ * names the map stored before the PARA rename), the
  * vault's notes settled around them, and the live numbers as satellites.
  * `?kiosk=1` is the lean TV view for a Raspberry Pi.
  */
@@ -16,7 +17,7 @@ const KioskMap = lazy(() => import('../components/map/KioskMap.js'));
 const FullMap = lazy(() => import('../components/map/FullMap.js').then((m) => ({ default: m.FullMap })));
 
 const KIND_LABEL: Record<string, string> = {
-  mission: 'Mission', goal: 'Goal', division: 'Division', project: 'Project', feature: 'Feature', note: 'Note', metric: 'Metric',
+  mission: 'Mission', goal: 'Goal', division: 'Division', project: 'Area', feature: 'Project', note: 'Note', metric: 'Metric',
 };
 
 function Sparkline({ series }: { series: { day: string; value: number }[] }) {
@@ -124,16 +125,17 @@ function FullMapPage() {
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-3 border-b border-[var(--rule)] px-4 py-2 text-sm">
         <h1 className="font-semibold">Brain map</h1>
-        <div className="relative">
+        <div className="relative max-md:w-full">
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && matches[0]) { pick(matches[0].id); setSearch(''); } }}
-            placeholder="Find a note, project, goal..."
-            className="w-64 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1"
+            placeholder="Find a note, area, goal..."
+            aria-label="Find on the map"
+            className="w-64 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 max-md:w-full"
           />
           {matches.length > 0 && (
-            <ul className="absolute left-0 top-full z-20 mt-1 w-80 rounded border border-[var(--rule)] bg-[var(--paper)] shadow">
+            <ul className="absolute left-0 top-full z-20 mt-1 w-80 rounded max-md:w-full border border-[var(--rule)] bg-[var(--paper)] shadow">
               {matches.map((n) => (
                 <li key={n.id}>
                   <button type="button" className="block w-full truncate px-2 py-1 text-left hover:bg-[var(--paper-sunk)]" onClick={() => { pick(n.id); setSearch(''); }}>
@@ -151,7 +153,7 @@ function FullMapPage() {
           </label>
         ))}
         <span className="text-xs text-[var(--ink-faint)]">
-          {counts['note'] ?? 0} notes · {counts['project'] ?? 0} projects · {counts['feature'] ?? 0} features
+          {counts['note'] ?? 0} notes · {counts['project'] ?? 0} areas · {counts['feature'] ?? 0} projects
           {graph.data ? ` · layout v${graph.data.version}` : ''}
         </span>
         <Link to="/map?kiosk=1" className="ml-auto underline">TV view</Link>
@@ -170,7 +172,7 @@ function FullMapPage() {
           ))}
         </div>
         {!selected && headline.length > 0 && (
-          <div className="absolute right-3 top-3 grid w-56 gap-2">
+          <div className="absolute right-3 top-3 grid w-56 gap-2 max-md:max-h-[50%] max-md:w-44 max-md:overflow-y-auto">
             {headline.map((m) => <MetricCard key={m.key} m={m} />)}
           </div>
         )}

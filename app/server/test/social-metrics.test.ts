@@ -200,7 +200,8 @@ function instagramRoutes(opts: { username?: string; refreshed?: string } = {}): 
             { id: 'm1', media_type: 'VIDEO', media_product_type: 'REELS', permalink: 'https://www.instagram.com/reel/AAA111/', timestamp: daysAgo(1), like_count: 9, comments_count: 2 },
             { id: 'm2', media_type: 'IMAGE', media_product_type: 'FEED', permalink: 'https://www.instagram.com/p/BBB222/', timestamp: daysAgo(2), like_count: 4, comments_count: 0 },
           ],
-          paging: { next: `${base}/me/media?after=c2&access_token=${tok}` },
+          // Meta's next link may name a newer API version; the collector must page by cursor, not by the link.
+          paging: { cursors: { after: 'c2' }, next: `https://graph.instagram.com/v99.0/me/media?after=c2&access_token=${tok}` },
         });
       }
       return json(200, { data: [{ id: 'm3', media_type: 'CAROUSEL_ALBUM', media_product_type: 'FEED', permalink: 'https://www.instagram.com/p/CCC333/', timestamp: daysAgo(3), like_count: 1, comments_count: 1 }] });

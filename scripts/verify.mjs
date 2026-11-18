@@ -405,7 +405,7 @@ export async function run({ repo, out, env, contractPath = CONTRACT_PATH, sandbo
     const survivors = !(await sandbox.kill());
     let count = 'unknown', report = null;
     if (check.report) {
-      const bytes = sandbox.read(resolved(check).argv.find(a => a.startsWith(SANDBOX.reports)), LIMITS.reportBytes);
+      const bytes = sandbox.read(`${SANDBOX.reports}/${check.id}.json`, LIMITS.reportBytes);
       if (bytes && bytes.length <= LIMITS.reportBytes) {
         writeFileSync(join(out, 'reports', `${check.id}.json`), bytes, { mode: 0o600 });
         report = { path: `reports/${check.id}.json`, bytes: bytes.length, sha256: sha256(bytes) }; count = summarize(bytes);

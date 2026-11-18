@@ -5,6 +5,7 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { patchFrom, parseArgs, writeIfChanged } from '../src/cli-projects.js';
+import { AREA_FIELDS } from '../src/features/projects/cli-shared.js';
 import { query } from '../src/db.js';
 import {
   addVerification,
@@ -12,10 +13,14 @@ import {
   getBoard,
   importSeed,
   kioskSummary,
+  listProjects,
+  removeArea,
   removeProject,
   nextActionFrom,
   parseGoals,
-  upsertFeature,
+  setAreaArchived,
+  setProjectArchived,
+  upsertArea,
   upsertProject,
   upsertDivision,
   upsertTeam,
@@ -69,14 +74,14 @@ const vault = fixtureVault();
 async function seedBasic(): Promise<void> {
   await upsertDivision('lifeos-div', { name: 'LifeOS', head: 'owner' });
   await upsertTeam('platform', { name: 'Platform', lead: 'claude-code', members: ['claude-code', 'hermes'] });
-  await upsertProject(
+  await upsertArea(
     'lifeos',
-    { title: 'argo-lifeos', stage: 'building', team: 'platform', division: 'lifeos-div', priority: 2, goals: ['W1'], devlog_path: 'Areas/lifeos/dev-log/README.md' },
+    { title: 'argo-lifeos', team: 'platform', division: 'lifeos-div', priority: 2, goals: ['W1'], devlog_path: 'Areas/lifeos/dev-log/README.md' },
     'test',
     { create: true },
   );
-  await upsertFeature('lifeos', 'core', { title: 'Headless core', stage: 'building', owner: 'claude-code' }, 'test', { create: true });
-  await upsertFeature('lifeos', 'mcp', { title: 'MCP server' }, 'test', { create: true });
+  await upsertProject('lifeos', 'core', { title: 'Headless core', outcome: 'The core answers /v1/days', stage: 'building', owner: 'claude-code' }, 'test', { create: true });
+  await upsertProject('lifeos', 'mcp', { title: 'MCP server' }, 'test', { create: true });
 }
 
 describe('parsers', () => {
@@ -96,7 +101,9 @@ describe('parsers', () => {
   it('turns CLI flags into a patch; "none" clears', () => {
     const { pos, opts } = parseArgs(['lifeos/core', '--stage', 'testing', '--needs', 'none', '--goals', 'W1, M2', '--priority', '3', '--paths', 'none']);
     expect(pos).toEqual(['lifeos/core']);
-    expect(patchFrom(opts)).toEqual({ stage: 'testing', needs_owner: null, goals: ['W1', 'M2'], priority: 3, paths: [] });
+    // A project has no priority and no paths: those are an area's fields, and each CLI reads only its own.
+    expect(patchFrom(opts)).toEqual({ stage: 'testing', needs_owner: null, goals: ['W1', 'M2'] });
+    expect(patchFrom(opts, AREA_FIELDS)).toEqual({ needs_owner: null, goals: ['W1', 'M2'], priority: 3, paths: [] });
   });
 
   it('writes the rendered file only when it changed', () => {
@@ -110,37 +117,48 @@ describe('parsers', () => {
 describe('writes and the verification gate', () => {
   beforeEach(truncateAll);
 
-  it('removes a project with its features, and a dry run removes nothing', async () => {
+  it('purges an area with its projects, and a dry run removes nothing', async () => {
     await seedBasic();
-    expect(await removeProject('lifeos', { dryRun: true })).toEqual({ features: 2, facts: 0 });
-    expect((await query(`SELECT 1 FROM projects WHERE slug = 'lifeos'`)).rowCount).toBe(1);
-    expect(await removeProject('lifeos')).toEqual({ features: 2, facts: 0 });
-    expect((await query(`SELECT 1 FROM projects WHERE slug = 'lifeos'`)).rowCount).toBe(0);
-    expect((await query(`SELECT 1 FROM features WHERE project_slug = 'lifeos'`)).rowCount).toBe(0);
-    await expect(removeProject('lifeos')).rejects.toThrow(/no project/);
+    expect(await removeArea('lifeos', { dryRun: true })).toEqual({ projects: 2, facts: 0 });
+    expect((await query(`SELECT 1 FROM areas WHERE slug = 'lifeos'`)).rowCount).toBe(1);
+    expect(await removeArea('lifeos')).toEqual({ projects: 2, facts: 0 });
+    expect((await query(`SELECT 1 FROM areas WHERE slug = 'lifeos'`)).rowCount).toBe(0);
+    expect((await query(`SELECT 1 FROM projects WHERE area_slug = 'lifeos'`)).rowCount).toBe(0);
+    await expect(removeArea('lifeos')).rejects.toThrow(/no area/);
   });
 
-  it('keeps memory facts when their project is removed: re-tagged with --into, else untagged', async () => {
+  it('purges one project with its history and leaves the area', async () => {
     await seedBasic();
-    await upsertProject('parent', { title: 'Parent', stage: 'building' }, 'test', { create: true });
-    await query(`INSERT INTO memory_facts (subject, claim, source, author, project_slug) VALUES ('a', 'b', 'c', 'lena', 'lifeos')`);
-    await expect(removeProject('lifeos', { into: 'nope' })).rejects.toThrow(/no project "nope"/);
-    expect((await removeProject('lifeos', { into: 'parent' })).facts).toBe(1);
-    expect((await query(`SELECT project_slug FROM memory_facts`)).rows).toEqual([{ project_slug: 'parent' }]);
-    await upsertProject('other', { title: 'Other', stage: 'idea' }, 'test', { create: true });
-    await query(`UPDATE memory_facts SET project_slug = 'other'`);
-    await removeProject('other');
-    expect((await query(`SELECT project_slug FROM memory_facts`)).rows).toEqual([{ project_slug: null }]);
+    await addVerification('lifeos', 'core', { kind: 'test', check: 'npm test', result: 'pass' }, 't');
+    expect(await removeProject('lifeos', 'core', { dryRun: true })).toEqual({ verifications: 1 });
+    expect((await listProjects({ area: 'lifeos' })).map((p) => p.slug)).toEqual(['core', 'mcp']);
+    await removeProject('lifeos', 'core');
+    expect((await listProjects({ area: 'lifeos' })).map((p) => p.slug)).toEqual(['mcp']);
+    expect((await query(`SELECT 1 FROM verifications`)).rowCount).toBe(0);
+    await expect(removeProject('lifeos', 'core')).rejects.toThrow(/no project "lifeos\/core"/);
+  });
+
+  it('keeps memory facts when their area is purged: re-tagged with --into, else untagged', async () => {
+    await seedBasic();
+    await upsertArea('parent', { title: 'Parent' }, 'test', { create: true });
+    await query(`INSERT INTO memory_facts (subject, claim, source, author, area_slug) VALUES ('a', 'b', 'c', 'lena', 'lifeos')`);
+    await expect(removeArea('lifeos', { into: 'nope' })).rejects.toThrow(/no area "nope"/);
+    expect((await removeArea('lifeos', { into: 'parent' })).facts).toBe(1);
+    expect((await query(`SELECT area_slug FROM memory_facts`)).rows).toEqual([{ area_slug: 'parent' }]);
+    await upsertArea('other', { title: 'Other' }, 'test', { create: true });
+    await query(`UPDATE memory_facts SET area_slug = 'other'`);
+    await removeArea('other');
+    expect((await query(`SELECT area_slug FROM memory_facts`)).rows).toEqual([{ area_slug: null }]);
   });
 
   it('records every stage move with who and why', async () => {
     await seedBasic();
-    await upsertFeature('lifeos', 'core', { stage: 'testing', note: 'endpoints done' }, 'claude@mac');
+    await upsertProject('lifeos', 'core', { stage: 'testing', note: 'endpoints done' }, 'claude@mac');
     const { rows } = await query(
-      `SELECT f.slug, s.from_stage, s.to_stage, s.by, s.note FROM stage_changes s LEFT JOIN features f ON f.id = s.feature_id ORDER BY s.id`,
+      `SELECT p.slug, s.from_stage, s.to_stage, s.by, s.note FROM stage_changes s LEFT JOIN projects p ON p.id = s.project_id ORDER BY s.id`,
     );
     expect(rows).toEqual([
-      { slug: null, from_stage: null, to_stage: 'building', by: 'test', note: 'added' },
+      { slug: null, from_stage: null, to_stage: 'active', by: 'test', note: 'added' },
       { slug: 'core', from_stage: null, to_stage: 'building', by: 'test', note: 'added' },
       { slug: 'mcp', from_stage: null, to_stage: 'idea', by: 'test', note: 'added' },
       { slug: 'core', from_stage: 'building', to_stage: 'testing', by: 'claude@mac', note: 'endpoints done' },
@@ -149,46 +167,75 @@ describe('writes and the verification gate', () => {
 
   it('refuses live without a passing verification, then allows it once one passes', async () => {
     await seedBasic();
-    await expect(upsertFeature('lifeos', 'core', { stage: 'live' }, 't')).rejects.toThrow(/has no verification/);
+    await expect(upsertProject('lifeos', 'core', { stage: 'live' }, 't')).rejects.toThrow(/has no verification/);
     await addVerification('lifeos', 'core', { kind: 'test', check: 'npx vitest run', result: 'fail', evidence: '2 failed' }, 't');
-    await expect(upsertFeature('lifeos', 'core', { stage: 'live' }, 't')).rejects.toThrow(/newest verification failed/);
+    await expect(upsertProject('lifeos', 'core', { stage: 'live' }, 't')).rejects.toThrow(/newest verification failed/);
     await addVerification('lifeos', 'core', { kind: 'test', check: 'npx vitest run', result: 'pass', evidence: '40 passed' }, 't');
-    const r = await upsertFeature('lifeos', 'core', { stage: 'live' }, 't');
+    const r = await upsertProject('lifeos', 'core', { stage: 'live' }, 't');
     expect(r.stage_changed).toBe(true);
-    const { rows } = await query(`SELECT stage, shipped_at IS NOT NULL AS shipped FROM features WHERE slug = 'core'`);
+    const { rows } = await query(`SELECT stage, shipped_at IS NOT NULL AS shipped FROM projects WHERE slug = 'core'`);
     expect(rows[0]).toEqual({ stage: 'live', shipped: true });
   });
 
-  it('lets a feature ship unverified only with a reason, kept in the history and flagged in the report', async () => {
+  it('lets a project ship unverified only with a reason, kept in the history and flagged in the report', async () => {
     await seedBasic();
-    await upsertFeature('lifeos', 'mcp', { stage: 'done', unverified: 'shipped before the tracker' }, 't');
+    await upsertProject('lifeos', 'mcp', { stage: 'done', unverified: 'shipped before the tracker' }, 't');
     const { rows } = await query(`SELECT note FROM stage_changes WHERE to_stage = 'done'`);
     expect(rows[0]!.note).toBe('UNVERIFIED: shipped before the tracker');
     const report = await buildReport(vault);
-    expect(report.gaps.unverified_shipped).toEqual([{ project: 'lifeos', feature: 'mcp', title: 'MCP server', detail: 'no verification' }]);
+    expect(report.gaps.unverified_shipped).toEqual([{ area: 'lifeos', project: 'mcp', title: 'MCP server', detail: 'no verification' }]);
   });
 
-  it('rejects unknown projects, teams and bad stages', async () => {
-    await expect(upsertProject('nope', { stage: 'live' }, 't')).rejects.toThrow(/no project "nope"/);
-    await expect(upsertProject('x', { title: 'X', stage: 'building', team: 'ghosts' }, 't', { create: true })).rejects.toThrow(/no team/);
-    await expect(upsertProject('x', { title: 'X', stage: 'building', division: 'ghosts' }, 't', { create: true })).rejects.toThrow(/no division/);
+  it('rejects unknown areas, teams, bad stages and bad statuses', async () => {
+    await expect(upsertArea('nope', { status: 'parked' }, 't')).rejects.toThrow(/no area "nope"/);
+    await expect(upsertArea('x', { title: 'X', team: 'ghosts' }, 't', { create: true })).rejects.toThrow(/no team/);
+    await expect(upsertArea('x', { title: 'X', division: 'ghosts' }, 't', { create: true })).rejects.toThrow(/no division/);
+    // An area has a status, not a stage, and no due date: the old fields are refused, not ignored.
+    await expect(upsertArea('x', { title: 'X', stage: 'building' } as never, 't', { create: true })).rejects.toThrow();
+    await expect(upsertArea('x', { title: 'X', due: '2026-12-01' } as never, 't', { create: true })).rejects.toThrow();
+    await expect(upsertArea('x', { title: 'X', status: 'building' as never }, 't', { create: true })).rejects.toThrow();
     await seedBasic();
-    await expect(upsertFeature('lifeos', 'core', { stage: 'shipping' as never }, 't')).rejects.toThrow();
+    await expect(upsertProject('lifeos', 'core', { stage: 'shipping' as never }, 't')).rejects.toThrow();
+    await expect(upsertProject('ghost-area', 'x', { title: 'X' }, 't', { create: true })).rejects.toThrow(/no area "ghost-area"/);
+  });
+
+  it('a new area starts active; parking it is a status change in the history', async () => {
+    await seedBasic();
+    expect((await getBoard(vault)).areas[0]).toMatchObject({ slug: 'lifeos', status: 'active', archived_at: null });
+    expect(await upsertArea('lifeos', { status: 'parked', note: 'paused for the quarter' }, 't')).toEqual({ created: false, stage_changed: true });
+    const { rows } = await query(`SELECT from_stage, to_stage, note FROM stage_changes WHERE project_id IS NULL ORDER BY id`);
+    expect(rows).toEqual([
+      { from_stage: null, to_stage: 'active', note: 'added' },
+      { from_stage: 'active', to_stage: 'parked', note: 'paused for the quarter' },
+    ]);
+  });
+
+  it('a project keeps an outcome and a next action; the outcome defaults to the title', async () => {
+    await seedBasic();
+    await upsertProject('lifeos', 'core', { next_action: 'write the /v1/days test' }, 't');
+    const [core, mcp] = (await getBoard(vault)).areas[0]!.projects;
+    expect(core).toMatchObject({ area: 'lifeos', slug: 'core', outcome: 'The core answers /v1/days', next_action: 'write the /v1/days test' });
+    expect(mcp).toMatchObject({ slug: 'mcp', outcome: 'MCP server', next_action: null });
+  });
+
+  it('refuses a project named like an area, so a bare slug is never ambiguous', async () => {
+    await seedBasic();
+    await expect(upsertProject('lifeos', 'lifeos', { title: 'Same name' }, 't', { create: true })).rejects.toThrow(/is the name of an area/);
   });
 
   it('imports a seed idempotently', async () => {
     const seed = {
       teams: [{ slug: 'platform', name: 'Platform' }],
-      projects: [
+      areas: [
         {
-          slug: 'lifeos', title: 'argo-lifeos', stage: 'building', team: 'platform',
-          features: [{ slug: 'core', title: 'Core', stage: 'building' }, { slug: 'ui', title: 'UI' }],
+          slug: 'lifeos', title: 'argo-lifeos', status: 'active', team: 'platform', home_path: 'Areas/lifeos/README.md',
+          projects: [{ slug: 'core', title: 'Core', outcome: 'Core ships', stage: 'building' }, { slug: 'ui', title: 'UI' }],
         },
       ],
     };
-    expect(await importSeed(seed, 'seed')).toEqual({ teams: 1, projects: 1, features: 2 });
+    expect(await importSeed(seed, 'seed')).toEqual({ teams: 1, areas: 1, projects: 2 });
     await importSeed(seed, 'seed');
-    // one row each for the project and its two features, and nothing more on the second import
+    // one row each for the area and its two projects, and nothing more on the second import
     const { rows } = await query(`SELECT count(*)::int AS n FROM stage_changes`);
     expect(rows[0]!.n).toBe(3);
     // Imports are not news: the report's "moved" list and "shipped this week" ignore them.
@@ -196,12 +243,24 @@ describe('writes and the verification gate', () => {
     expect(r.moved_7d).toEqual([]);
   });
 
-  it('imports existing evidence with its real date, so a shipped feature passes the gate', async () => {
-    const seed = {
+  it('reads a seed file written before the rename: projects with features, a stage, a due date', async () => {
+    const old = {
       projects: [
+        { slug: 'lifeos', title: 'argo-lifeos', stage: 'building', due: '2026-12-01', features: [{ slug: 'core', title: 'Core', stage: 'building' }] },
+        { slug: 'shelved', title: 'Shelved', stage: 'parked', features: [] },
+      ],
+    };
+    expect(await importSeed(old, 'seed')).toEqual({ teams: 0, areas: 2, projects: 1 });
+    expect((await query(`SELECT slug, status FROM areas ORDER BY slug`)).rows).toEqual([{ slug: 'lifeos', status: 'active' }, { slug: 'shelved', status: 'parked' }]);
+    expect((await listProjects()).map((p) => `${p.area}/${p.slug}`)).toEqual(['lifeos/core']);
+  });
+
+  it('imports existing evidence with its real date, so a shipped project passes the gate', async () => {
+    const seed = {
+      areas: [
         {
-          slug: 'lifeos', title: 'argo-lifeos', stage: 'designing',
-          features: [
+          slug: 'lifeos', title: 'argo-lifeos',
+          projects: [
             {
               slug: 'repo', title: 'Public repo', stage: 'done',
               verifications: [{ kind: 'deploy', check: 'GitHub Actions CI', result: 'pass', evidence: 'run 1 succeeded', at: '2026-10-12T10:00:00+08:00' }],
@@ -224,30 +283,32 @@ describe('the report', () => {
 
   it('rolls up stages, needs-you, teams, goal coverage and gaps', async () => {
     await seedBasic();
-    await upsertProject('lifeos', { needs_owner: 'Write the README pitch' }, 't');
-    await upsertFeature('lifeos', 'core', { stage: 'testing' }, 't');
-    // An old in-flight feature: no activity for 10 days.
-    await upsertFeature('lifeos', 'mcp', { stage: 'designing' }, 't');
-    await query(`UPDATE features SET updated_at = now() - interval '10 days' WHERE slug = 'mcp'`);
-    await query(`UPDATE stage_changes SET at = now() - interval '10 days' WHERE feature_id = (SELECT id FROM features WHERE slug = 'mcp')`);
+    await upsertArea('lifeos', { needs_owner: 'Write the README pitch' }, 't');
+    await upsertProject('lifeos', 'core', { stage: 'testing' }, 't');
+    // An old in-flight project: no activity for 10 days.
+    await upsertProject('lifeos', 'mcp', { stage: 'designing' }, 't');
+    await query(`UPDATE projects SET updated_at = now() - interval '10 days' WHERE slug = 'mcp'`);
+    // The history is append-only, so backdating it takes the guard off for a moment (tests only).
+    await query(`ALTER TABLE tracker_events DISABLE TRIGGER tracker_events_append_only`);
+    await query(`UPDATE tracker_events SET at = now() - interval '10 days' WHERE project_id = (SELECT id FROM projects WHERE slug = 'mcp')`);
+    await query(`ALTER TABLE tracker_events ENABLE TRIGGER tracker_events_append_only`);
 
     const r = await buildReport(vault);
-    expect(r.totals.projects.building).toBe(1);
-    expect(r.totals.features).toMatchObject({ testing: 1, designing: 1 });
-    expect(r.needs_owner).toEqual([{ project: 'lifeos', feature: null, title: 'argo-lifeos', detail: 'Write the README pitch', priority: 2, due: null }]);
+    expect(r.totals.areas).toEqual({ active: 1, parked: 0 });
+    expect(r.totals.projects).toMatchObject({ testing: 1, designing: 1 });
+    expect(r.needs_owner).toEqual([{ area: 'lifeos', project: null, title: 'argo-lifeos', detail: 'Write the README pitch', priority: 2, due: null }]);
     expect(r.teams).toEqual([
-      { slug: 'platform', name: 'Platform', lead: 'claude-code', projects: ['lifeos'], in_flight: 2, shipped_7d: 0, needs_owner: 1,
-        stages: { idea: 0, designing: 0, building: 1, testing: 0, live: 0, parked: 0, done: 0 } },
+      { slug: 'platform', name: 'Platform', lead: 'claude-code', areas: ['lifeos'], in_flight: 2, shipped_7d: 0, needs_owner: 1, statuses: { active: 1, parked: 0 } },
     ]);
-    expect(r.divisions.map((d) => [d.slug, d.projects])).toEqual([['lifeos-div', ['lifeos']]]);
+    expect(r.divisions.map((d) => [d.slug, d.areas])).toEqual([['lifeos-div', ['lifeos']]]);
     expect(r.gaps.no_division).toEqual([]);
-    expect(r.goals.find((g) => g.code === 'W1')!.projects).toEqual(['lifeos']);
+    expect(r.goals.find((g) => g.code === 'W1')!.areas).toEqual(['lifeos']);
     // W2 is open with nothing linked; M1 is cancelled and T1 is ten-year, so neither is a gap.
     expect(r.gaps.goals_uncovered.map((g) => g.code)).toEqual(['W2']);
-    expect(r.gaps.testing_unverified.map((i) => i.feature)).toEqual(['core']);
-    expect(r.gaps.stale.map((i) => i.feature)).toEqual(['mcp']);
-    expect(r.projects[0]!.next_action).toBe('write `/v1/days` and its test');
-    expect(r.projects[0]!.progress).toBe(0);
+    expect(r.gaps.testing_unverified.map((i) => i.project)).toEqual(['core']);
+    expect(r.gaps.stale.map((i) => i.project)).toEqual(['mcp']);
+    expect(r.areas[0]!.next_action).toBe('write `/v1/days` and its test');
+    expect(r.areas[0]!.progress).toBe(0);
   });
 
   it('renders markdown, stand-up and Telegram text without em-dashes', async () => {
@@ -259,21 +320,83 @@ describe('the report', () => {
       expect(text).toContain('LifeOS');
     }
     expect(renderMarkdown(r)).toContain('| **W2** Livestream to create video | open | 2026-10-18 | **nothing linked** |');
+    // Areas are the sections, projects are the rows.
+    expect(renderMarkdown(r)).toContain('# Company Report - Areas, Projects, Goals');
+    expect(renderMarkdown(r)).toContain('## Projects by area');
+    expect(renderStandup(r)).toContain('Areas: 1 active. Projects: 1 backlog, 1 building.');
     expect(renderTelegram(r).length).toBeLessThan(3600);
+    // The kiosk is a separate device: its feed keeps the keys it had before the rename.
     const k = kioskSummary(r);
-    expect(k.projects[0]).toMatchObject({ slug: 'lifeos', stage: 'building', in_flight: [{ title: 'Headless core', stage: 'building' }] });
+    expect(k.projects[0]).toMatchObject({ slug: 'lifeos', stage: 'active', in_flight: [{ title: 'Headless core', stage: 'building' }] });
+    expect(k.totals.features).toMatchObject({ building: 1, idea: 1 });
   });
 
   it('due dates come back as written, whatever the timezone', async () => {
     await seedBasic();
-    await upsertFeature('lifeos', 'core', { due: '2026-10-18' }, 't');
-    expect((await getBoard(vault)).projects[0]!.features[0]!.due).toBe('2026-10-18');
+    await upsertProject('lifeos', 'core', { due: '2026-10-18' }, 't');
+    expect((await getBoard(vault)).areas[0]!.projects[0]!.due).toBe('2026-10-18');
   });
 
   it('an empty tracker still reports', async () => {
     const r = await buildReport(vault);
-    expect(r.projects).toEqual([]);
+    expect(r.areas).toEqual([]);
     expect(renderMarkdown(r)).toContain('Nothing is waiting on you.');
+  });
+});
+
+describe('archive', () => {
+  beforeEach(truncateAll);
+
+  it('archiving a project hides it from the active views and keeps its stage; unarchiving brings it back', async () => {
+    await seedBasic();
+    expect(await setProjectArchived('lifeos', 'core', true, 't', 'superseded')).toEqual({ archived: true, changed: true });
+    // Idempotent: a second archive changes nothing and writes no history.
+    expect(await setProjectArchived('lifeos', 'core', true, 't')).toEqual({ archived: true, changed: false });
+    expect((await getBoard(vault)).areas[0]!.projects.map((p) => p.slug)).toEqual(['mcp']);
+    expect((await listProjects()).map((p) => p.slug)).toEqual(['mcp']);
+    expect((await buildReport(vault)).totals.projects).toMatchObject({ building: 0, idea: 1 });
+    const all = await listProjects({ archived: true });
+    expect(all.map((p) => [p.slug, p.stage, p.archived_at !== null])).toEqual([['core', 'building', true], ['mcp', 'idea', false]]);
+    expect((await getBoard(vault, new Date(), { archived: true })).areas[0]!.projects.map((p) => p.slug)).toEqual(['core', 'mcp']);
+
+    expect(await setProjectArchived('lifeos', 'core', false, 't')).toEqual({ archived: false, changed: true });
+    expect((await getBoard(vault)).areas[0]!.projects.find((p) => p.slug === 'core')).toMatchObject({ stage: 'building', archived_at: null });
+    const { rows } = await query(`SELECT to_stage, note FROM stage_changes WHERE to_stage IN ('archived', 'unarchived') ORDER BY id`);
+    expect(rows).toEqual([{ to_stage: 'archived', note: 'superseded' }, { to_stage: 'unarchived', note: null }]);
+    await expect(setProjectArchived('lifeos', 'nope', true, 't')).rejects.toThrow(/no project/);
+  });
+
+  it('archiving an area hides its projects with it and does not change their stages', async () => {
+    await seedBasic();
+    await upsertArea('other', { title: 'Other' }, 't', { create: true });
+    expect(await setAreaArchived('lifeos', true, 't', 'no longer run')).toEqual({ archived: true, changed: true });
+    expect((await getBoard(vault)).areas.map((a) => a.slug)).toEqual(['other']);
+    expect(await listProjects()).toEqual([]);
+    expect((await buildReport(vault)).totals).toMatchObject({ areas: { active: 1, parked: 0 } });
+    const hidden = await listProjects({ archived: true });
+    expect(hidden.map((p) => [p.slug, p.stage, p.archived_at !== null])).toEqual([['core', 'building', true], ['mcp', 'idea', true]]);
+    // The projects themselves were not touched: only the area carries the flag.
+    expect((await query(`SELECT count(*)::int AS n FROM projects WHERE archived_at IS NOT NULL`)).rows[0]!.n).toBe(0);
+
+    await setAreaArchived('lifeos', false, 't');
+    const back = (await getBoard(vault)).areas.find((a) => a.slug === 'lifeos')!;
+    expect(back).toMatchObject({ status: 'active', archived_at: null });
+    expect(back.projects.map((p) => [p.slug, p.stage])).toEqual([['core', 'building'], ['mcp', 'idea']]);
+    await expect(setAreaArchived('nope', true, 't')).rejects.toThrow(/no area/);
+  });
+
+  it('the API archives and unarchives areas and projects', async () => {
+    await seedBasic();
+    const app = createApp({ modules: ALL_MODULES, vaultRoot: vault });
+    expect((await request(app).post('/api/projects/lifeos/core/archive').send({ note: 'done with it' }).expect(200)).body).toEqual({ archived: true, changed: true });
+    expect(((await request(app).get('/api/projects').expect(200)).body.projects as { slug: string }[]).map((p) => p.slug)).toEqual(['mcp']);
+    expect(((await request(app).get('/api/projects?archived=1').expect(200)).body.projects as { slug: string }[]).map((p) => p.slug)).toEqual(['core', 'mcp']);
+    await request(app).post('/api/projects/lifeos/core/unarchive').send({}).expect(200);
+    await request(app).post('/api/areas/lifeos/archive').send({}).expect(200);
+    expect((await request(app).get('/api/areas').expect(200)).body.areas).toEqual([]);
+    expect((await request(app).get('/api/areas?archived=1').expect(200)).body.areas).toHaveLength(1);
+    await request(app).post('/api/areas/nope/archive').send({}).expect(404);
+    await request(app).post('/api/areas/lifeos/archive').send({ bogus: 1 }).expect(400);
   });
 });
 
@@ -284,30 +407,57 @@ describe('API', () => {
 
   it('serves the board and the report', async () => {
     await seedBasic();
-    const board = await request(app()).get('/api/projects').expect(200);
-    expect(board.body.projects[0]).toMatchObject({ slug: 'lifeos', team: 'platform', counts: { building: 1, idea: 1 } });
+    const board = await request(app()).get('/api/areas').expect(200);
+    expect(board.body.areas[0]).toMatchObject({ slug: 'lifeos', status: 'active', team: 'platform', counts: { building: 1, idea: 1 } });
     expect(board.body.goals).toHaveLength(4);
-    const tg = await request(app()).get('/api/projects/report?format=telegram').expect(200);
+    const tg = await request(app()).get('/api/areas/report?format=telegram').expect(200);
     expect(tg.body.text).toContain('Needs you');
-    await request(app()).get('/api/projects/report?format=pdf').expect(400);
+    await request(app()).get('/api/areas/report?format=pdf').expect(400);
   });
 
-  it('updates, adds features, records verifications and enforces the gate', async () => {
+  it('the old report path answers 308 to the new one, query string and all', async () => {
+    const r = await request(app()).get('/api/projects/report?format=telegram').expect(308);
+    expect(r.headers['location']).toBe('/api/areas/report?format=telegram');
+    expect((await request(app()).get('/api/projects/report').expect(308)).headers['location']).toBe('/api/areas/report');
+    // Followed, it is the report.
+    const followed = await request(app()).get('/api/projects/report?format=telegram').redirects(1).expect(200);
+    expect(followed.body.text).toContain('Needs you');
+  });
+
+  it('lists projects across areas, by area, stage and due date', async () => {
     await seedBasic();
-    await request(app()).patch('/api/projects/lifeos').send({ health: 'yellow', needs_owner: 'Pick a name' }).expect(200);
-    await request(app()).post('/api/projects/lifeos/features').send({ slug: 'sdk', title: 'TS SDK' }).expect(201);
-    const refused = await request(app()).patch('/api/projects/lifeos/features/sdk').send({ stage: 'live' }).expect(409);
+    await upsertArea('other', { title: 'Other' }, 't', { create: true });
+    await upsertProject('other', 'site', { title: 'Site', stage: 'building', due: '2026-11-30' }, 't', { create: true });
+    const slugs = async (q: string): Promise<string[]> =>
+      ((await request(app()).get(`/api/projects${q}`).expect(200)).body.projects as { area: string; slug: string }[]).map((p) => `${p.area}/${p.slug}`).sort();
+    expect(await slugs('')).toEqual(['lifeos/core', 'lifeos/mcp', 'other/site']);
+    expect(await slugs('?area=lifeos')).toEqual(['lifeos/core', 'lifeos/mcp']);
+    expect(await slugs('?stage=building')).toEqual(['lifeos/core', 'other/site']);
+    expect(await slugs('?due_before=2026-12-01')).toEqual(['other/site']);
+    expect(await slugs('?due_before=2026-11-30')).toEqual([]);
+    expect((await request(app()).get('/api/areas/lifeos/projects').expect(200)).body.projects).toHaveLength(2);
+    await request(app()).get('/api/projects?stage=shipping').expect(400);
+  });
+
+  it('updates, adds projects, records verifications and enforces the gate', async () => {
+    await seedBasic();
+    await request(app()).patch('/api/areas/lifeos').send({ health: 'yellow', needs_owner: 'Pick a name' }).expect(200);
+    await request(app()).post('/api/areas/lifeos/projects').send({ slug: 'sdk', title: 'TS SDK' }).expect(201);
+    const refused = await request(app()).patch('/api/projects/lifeos/sdk').send({ stage: 'live' }).expect(409);
     expect(refused.body.error.message).toMatch(/no verification/);
     await request(app())
-      .post('/api/projects/lifeos/features/sdk/verifications')
+      .post('/api/projects/lifeos/sdk/verifications')
       .send({ kind: 'test', check: 'npm test', result: 'pass' })
       .expect(201);
-    await request(app()).patch('/api/projects/lifeos/features/sdk').send({ stage: 'live' }).expect(200);
-    await request(app()).patch('/api/projects/lifeos/features/nope').send({ stage: 'live' }).expect(404);
-    await request(app()).patch('/api/projects/lifeos').send({ bogus: 1 }).expect(400);
-    const board = (await getBoard(vault)).projects[0]!;
+    await request(app()).patch('/api/projects/lifeos/sdk').send({ stage: 'live' }).expect(200);
+    await request(app()).patch('/api/projects/lifeos/nope').send({ stage: 'live' }).expect(404);
+    await request(app()).patch('/api/areas/lifeos').send({ bogus: 1 }).expect(400);
+    // An old page still PATCHes an area at the old path, or sends an area a stage: both are refused, neither writes.
+    await request(app()).patch('/api/projects/lifeos').send({ health: 'red' }).expect(404);
+    await request(app()).patch('/api/areas/lifeos').send({ stage: 'building' }).expect(400);
+    const board = (await getBoard(vault)).areas[0]!;
     expect(board).toMatchObject({ health: 'yellow', needs_owner: 'Pick a name' });
-    expect(board.features.find((f) => f.slug === 'sdk')).toMatchObject({ stage: 'live', verification: { result: 'pass' } });
+    expect(board.projects.find((f) => f.slug === 'sdk')).toMatchObject({ stage: 'live', verification: { result: 'pass' } });
   });
 
   it('the kiosk feed needs the bearer token and exists only when one is set', async () => {
@@ -328,6 +478,7 @@ describe('API', () => {
       deployment: 'server',
       auth: { passwordHash: 'x', totpSecret: 'JBSWY3DPEHPK3PXP', publicOrigin: 'https://example.test' },
     });
+    await request(server).get('/api/areas').expect(401);
     await request(server).get('/api/projects').expect(401);
     await request(server).get('/api/feed/projects').set('Authorization', `Bearer ${TOKEN}`).expect(200);
   });

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api, type DbQueryResult, type DbTable } from '../lib/api.js';
+import DataTable from '../components/DataTable.js';
 
 /** Columns that are unreadable in a result grid: vectors and tsvectors. */
 const OPAQUE = /^(vector|tsvector)\b/;
@@ -229,9 +230,10 @@ function Results({ result }: { result: DbQueryResult }) {
         {result.truncated && <span className="text-amber-600"> · capped at {result.row_count} — add a LIMIT or narrow the query</span>}
       </p>
       {result.columns.length > 0 && (
-        <div className="mt-2 max-h-[60vh] overflow-auto rounded border border-[var(--rule)]">
-          <table className="min-w-full text-xs">
-            <thead className="sticky top-0 bg-[var(--paper-sunk)]">
+        <DataTable label="Query results" phone="scroll" className="min-w-full text-xs"
+          frameClassName="mt-2" scrollClassName="max-h-[60vh] overflow-auto rounded border border-[var(--rule)]">
+            {/* On a phone the first column is pinned (see DataTable): it takes the colour of its row, and the header stays on top of it. */}
+            <thead className="sticky top-0 bg-[var(--paper-sunk)] [--dt-pin-bg:var(--paper-sunk)] max-md:z-[2]">
               <tr>
                 {result.columns.map((c, i) => (
                   <th key={i} className="border-b border-[var(--rule)] px-2 py-1.5 text-left font-mono font-medium whitespace-nowrap">
@@ -242,27 +244,27 @@ function Results({ result }: { result: DbQueryResult }) {
             </thead>
             <tbody>
               {result.rows.map((row, r) => (
-                <tr key={r} className="odd:bg-[var(--paper)] even:bg-[var(--paper-sunk)]/50">
+                <tr key={r} className="odd:bg-[var(--paper)] even:bg-[var(--paper-sunk)]/50 even:[--dt-pin-bg:color-mix(in_srgb,var(--paper-sunk)_50%,var(--paper))]">
                   {row.map((v, i) => (
                     <td key={i} className="max-w-md border-b border-[var(--rule)] px-2 py-1 align-top">
-                      <Cell value={v} />
+                      <Cell value={v} pinned={i === 0} />
                     </td>
                   ))}
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
+        </DataTable>
       )}
     </div>
   );
 }
 
-function Cell({ value }: { value: unknown }) {
+/** On a phone a value is shown whole (no tooltip to hover for the rest) in a column no wider than the screen. */
+function Cell({ value, pinned }: { value: unknown; pinned: boolean }) {
   if (value === null || value === undefined) return <span className="text-[var(--ink-faint)] italic">null</span>;
   const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
   return (
-    <div className="line-clamp-4 font-mono break-words whitespace-pre-wrap" title={text.length > 120 ? text : undefined}>
+    <div className={`line-clamp-4 font-mono break-words whitespace-pre-wrap max-md:line-clamp-none max-md:w-max max-md:wrap-anywhere ${pinned ? 'max-md:max-w-[38vw]' : 'max-md:max-w-[70vw]'}`} title={text.length > 120 ? text : undefined}>
       {text}
     </div>
   );

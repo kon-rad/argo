@@ -5,6 +5,7 @@ import { hybridSearch, semanticSearch } from '../semantic.js';
 import { globalSearch, SCOPES, type Scope } from '../globalSearch.js';
 import type { EmbeddingProvider } from '../embeddings/provider.js';
 import { HttpError, parseOr400, wrap } from './http.js';
+import type { GlobalSearchResponse, SearchResponse } from '@secondbrain/contracts/search';
 
 const Q = z.object({
   q: z.string().trim().min(1, 'a search term is required'),
@@ -42,7 +43,8 @@ export function searchRouter(embeddingProvider?: ProviderFactory, available: rea
         scopes, mode: q.mode, limit: q.limit, offset: q.offset, harness: q.harness, host: q.host,
         provider: embeddingProvider,
       });
-      res.json({ ...result, available });
+      const response = { ...result, available: [...available] } satisfies GlobalSearchResponse;
+      res.json(response);
     }),
   );
 
@@ -70,37 +72,40 @@ export function searchRouter(embeddingProvider?: ProviderFactory, available: rea
 
       if (q.mode === 'keyword') {
         const { results, total } = await search(q.q, base);
-        res.json({
+        const response = {
           q: q.q,
           mode: q.mode,
           results,
           total,
           has_more: q.offset + results.length < total,
-        });
+        } satisfies SearchResponse;
+        res.json(response);
         return;
       }
 
       if (q.mode === 'semantic') {
         const { results, total } = await semanticSearch(q.q, { ...base, provider: provider() });
-        res.json({
+        const response = {
           q: q.q,
           mode: q.mode,
           results,
           total,
           has_more: q.offset + results.length < total,
-        });
+        } satisfies SearchResponse;
+        res.json(response);
         return;
       }
 
       const { results, total, degraded } = await hybridSearch(q.q, { ...base, provider: provider() });
-      res.json({
+      const response = {
         q: q.q,
         mode: q.mode,
         results,
         total,
         degraded,
         has_more: q.offset + results.length < total,
-      });
+      } satisfies SearchResponse;
+      res.json(response);
     }),
   );
 

@@ -10,6 +10,8 @@ import { cardFailures } from './addons/dispatch/store.js';
 import { classifyCard, loadCard } from './addons/classify/org-classify.js';
 import { decide, recordDecision, recordOutcome, routeReport, routeReportMarkdown, routeSpend, routeWeekly, TIERS, type Failure, type Result, type RoutingConfig, type Tier } from './addons/routing/org-router.js';
 import {
+  areaFlag,
+  trackerRef,
   addWakeup,
   applyGraph,
   askOwner,
@@ -72,16 +74,17 @@ import {
 } from './org-memory.js';
 import { search } from './search.js';
 import { settings } from './settings.js';
+import { parseArgs } from './cli-args.js';
 
 const USAGE = `cli-org: the agent company's message board (Postgres). Identity comes from ORG_AGENT, never from an argument.
 
   whoami                                   who you are, your team, lead, channels with unread counts, open wakeups
   read [channel] [--all] [--kinds a,b] [--since 24h] [--limit N] [--no-mark] [--json]
                                            unread messages in your channels (all channels unless one is named), then marks them read
-  post <channel> "<body>" [--kind message|status|decision|reflection] [--thread ID] [--task t_..] [--project p --feature f]
+  post <channel> "<body>" [--kind message|status|decision|reflection] [--thread ID] [--task t_..] [--area a --project p]
   dm <agent> "<body>" [--kind message|handoff|decision] [--thread ID] [--task t_..]
-  handoff <channel> <agent> "<body>" [--task t_..] [--project p --feature f]
-  ask-owner "<body>" [--urgent] [--task t_..] [--project p]      leads only; --urgent also sends it to the owner's phone (3 a day)
+  handoff <channel> <agent> "<body>" [--task t_..] [--area a --project p]
+  ask-owner "<body>" [--urgent] [--task t_..] [--area a]         leads only; --urgent also sends it to the owner's phone (3 a day)
   standup "<body>"                         leads only, once a day, in #<team>-standup
   thread <id>                              a message and its replies
   search "<words>" [--limit N]             full-text over your channels
@@ -100,8 +103,8 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   apply <org.json> [--prune] [--sha <git sha>] [--by <name>] [--json]
                                            write the file; agents it dropped retire only with --prune (cards to their lead,
                                            pending wakes cancelled); a dropped team is refused while it has members or open cards
-  task create <bot|none> "<title>" [--project p] [--feature f] [--type t] [--needs cap] [--repo r] [--ship-now] [--body "..."] [--board exo] [--priority N] [--after t_..,t_..]
-  task assign <card> <bot> [--project p] [--feature f] [--type t] [--needs cap] [--repo r] [--ship-now]   an existing card becomes the bot's
+  task create <bot|none> "<title>" [--area a] [--project p] [--type t] [--needs cap] [--repo r] [--ship-now] [--body "..."] [--board exo] [--priority N] [--after t_..,t_..]
+  task assign <card> <bot> [--area a] [--project p] [--type t] [--needs cap] [--repo r] [--ship-now]   an existing card becomes the bot's
       --repo: where the code lives; a coding card must name a repo the bots reach. Vault code: <bot> is the vault
       assignee (ORG_VAULT_ASSIGNEE, default vault-session: a Claude Code session on the owner's machine, never a bot)
       with --repo vault; leads, the dispatch bot and the owner give it cards
@@ -111,11 +114,11 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
       without asking
                                            one card, one bot: creates the kanban card tagged with the project, records the link,
                                            posts a mention in the bot's team channel; a human assigns anyone, a lead its team, a member itself
-  task list [--project p] [--feature f] [--agent a] [--json]    cards with their project, feature and bot
+  task list [--area a] [--project p] [--agent a] [--json]       cards with their area, project and bot
   task redo <review card> "<what to change>"   changes requested: a new round for the builder, the review card parked until it is done
                                            (two rounds, then the lead is told instead)
   graph list                               the card templates (.agents/org/graphs/*.yaml, compiled)
-  graph apply <template> --project p [--feature f] [--team t] [--board exo] [--dry-run] [--json]
+  graph apply <template> --area a [--project p] [--team t] [--board exo] [--dry-run] [--json]
                                            one card per node for the project's team, each waiting on its parents; roots are mentioned
 
   model routing (docs/org-routing.md; the config is .agents/org/routing.json, written by compile.py routing):
@@ -133,9 +136,9 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   ship list [--pending] [--card t_..]
 
   shared memory (every runtime, same verbs):
-  recall "<query>" [--project p] [--limit N] [--json]    the vault (keyword + vector), the bots' memory files, shared facts
-  remember "<subject>" "<claim>" --source <path|#msg|t_card|url> [--project p] [--inferred] [--supersedes id] [--via runtime@host]
-  facts [--subject s] [--project p] [--author a] [--all] [--json]
+  recall "<query>" [--area a] [--limit N] [--json]       the vault (keyword + vector), the bots' memory files, shared facts
+  remember "<subject>" "<claim>" --source <path|#msg|t_card|url> [--area a] [--inferred] [--supersedes id] [--via runtime@host]
+  facts [--subject s] [--area a] [--author a] [--all] [--json]
   forget <id> "<why>"                                    close a fact (its author, the author's lead or the owner)
 
   persona memory (a bot's own claims are memory_facts tagged with its name; use secondbrain memory for those):
@@ -169,27 +172,7 @@ export function agentDatabaseUrl(base: string, agent: string): string {
   return u.toString();
 }
 
-type Args = { pos: string[]; opts: Record<string, string | true> };
-
-export function parseArgs(argv: string[]): Args {
-  const pos: string[] = [];
-  const opts: Record<string, string | true> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!;
-    if (!a.startsWith('--')) {
-      pos.push(a);
-      continue;
-    }
-    const key = a.slice(2);
-    const next = argv[i + 1];
-    if (next === undefined || next.startsWith('--')) opts[key] = true;
-    else {
-      opts[key] = next;
-      i++;
-    }
-  }
-  return { pos, opts };
-}
+export { parseArgs } from './cli-args.js';
 
 export function identityName(env: NodeJS.ProcessEnv = process.env): string {
   const name = env.ORG_AGENT?.trim();
@@ -210,7 +193,7 @@ function when(d: Date): string {
 }
 
 export function formatMessage(m: Message): string {
-  const flags = [m.urgent ? 'URGENT' : '', m.thread_id ? `re:${m.thread_id}` : '', m.task_id ? `task ${m.task_id}` : '', m.project_slug ? `project ${m.project_slug}${m.feature_slug ? `/${m.feature_slug}` : ''}` : '']
+  const flags = [m.urgent ? 'URGENT' : '', m.thread_id ? `re:${m.thread_id}` : '', m.task_id ? `task ${m.task_id}` : '', m.area_slug ? `area ${m.area_slug}${m.project_slug ? `/${m.project_slug}` : ''}` : '']
     .filter(Boolean)
     .join(' ');
   const head = `#${m.channel_slug} ${m.id} ${when(new Date(m.created_at))} ${m.author} [${m.kind}]${flags ? ` (${flags})` : ''}`;
@@ -239,7 +222,7 @@ function here(): string {
 }
 
 function formatTask(t: TaskLink): string {
-  return `${t.task_id}  ${t.assignee.padEnd(8)} ${(t.project_slug ?? '-') + (t.feature_slug ? `/${t.feature_slug}` : '')}${t.work_type ? `  [${t.work_type}]` : ''}  ${t.title}  (by ${t.created_by}, ${when(new Date(t.created_at))})`;
+  return `${t.task_id}  ${t.assignee.padEnd(8)} ${(t.area_slug ?? '-') + (t.project_slug ? `/${t.project_slug}` : '')}${t.work_type ? `  [${t.work_type}]` : ''}  ${t.title}  (by ${t.created_by}, ${when(new Date(t.created_at))})`;
 }
 
 /** Runs the urgent notifier with the text; a failure is reported, never fatal (the message is already on the board). */
@@ -315,8 +298,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         kind: str(opts.kind) as Kind | undefined,
         thread: num(opts.thread, 'thread'),
         task: str(opts.task),
-        project: str(opts.project),
-        feature: str(opts.feature),
+        ...(await trackerRef({ area: str(opts.area), project: str(opts.project), feature: str(opts.feature) })),
         run,
       });
       out(json ? JSON.stringify(m) : `posted ${m.id} in #${m.channel_slug}${m.mentions.length ? ` (mentions ${m.mentions.join(', ')})` : ''}`);
@@ -332,7 +314,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
     case 'handoff': {
       const [channel, to, body] = pos;
       if (!channel || !to || !body) throw new OrgError('handoff <channel> <agent> "<body>"');
-      const m = await handoff(await me(), channel, to, body, { task: str(opts.task), project: str(opts.project), feature: str(opts.feature), run });
+      const m = await handoff(await me(), channel, to, body, { task: str(opts.task), ...(await trackerRef({ area: str(opts.area), project: str(opts.project), feature: str(opts.feature) })), run });
       out(json ? JSON.stringify(m) : `handed off ${m.id} to ${to} in #${channel}`);
       return 0;
     }
@@ -340,7 +322,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       const [body] = pos;
       if (!body) throw new OrgError('ask-owner "<body>"');
       const agent = await me();
-      const m = await askOwner(agent, body, { urgent: opts.urgent === true, task: str(opts.task), project: str(opts.project) });
+      const m = await askOwner(agent, body, { urgent: opts.urgent === true, task: str(opts.task), area: areaFlag(str(opts.area), str(opts.project)) });
       out(json ? JSON.stringify(m) : `asked ${m.id} in #leads${m.urgent ? ' (urgent)' : ''}`);
       if (m.urgent) out(await notifyOwner(`[org] ${agent.name} asks (#${m.id}): ${m.body}`));
       return 0;
@@ -541,14 +523,14 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       };
       if (sub === 'create') {
         const [, assignee, title] = pos;
-        if (!assignee || !title) throw new OrgError('task create <bot|none> "<title>" [--project <slug>] [--feature f] [--body "..."]');
+        if (!assignee || !title) throw new OrgError('task create <bot|none> "<title>" [--area <slug>] [--project p] [--body "..."]');
         // `none` and a bot both mean "no --to": cli-board's create leaves an absent --to unassigned.
-        return bmain(['create', title, ...(assignee === 'none' ? [] : ['--to', assignee]), ...fwd(['project', 'feature', 'type', 'needs', 'repo', 'priority', 'after', 'body', 'ship-now', 'board', 'kind', 'json'])]);
+        return bmain(['create', title, ...(assignee === 'none' ? [] : ['--to', assignee]), ...fwd(['area', 'project', 'feature', 'type', 'needs', 'repo', 'priority', 'after', 'body', 'ship-now', 'board', 'kind', 'json'])]);
       }
       if (sub === 'assign') {
         const [, card, assignee] = pos;
-        if (!card || !assignee) throw new OrgError('task assign <card> <bot> [--project <slug>] [--feature f]');
-        return bmain(['assign', card, assignee, ...fwd(['project', 'feature', 'type', 'needs', 'repo', 'ship-now', 'json'])]);
+        if (!card || !assignee) throw new OrgError('task assign <card> <bot> [--area <slug>] [--project p]');
+        return bmain(['assign', card, assignee, ...fwd(['area', 'project', 'feature', 'type', 'needs', 'repo', 'ship-now', 'json'])]);
       }
       if (sub === 'redo') {
         const [, card, changes] = pos;
@@ -557,7 +539,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       }
       if (sub === 'list') {
         const agent = str(opts.agent);
-        return bmain(['list', ...fwd(['project', 'feature', 'limit', 'json']), ...(agent ? ['--assignee', agent] : [])]);
+        return bmain(['list', ...fwd(['area', 'project', 'feature', 'limit', 'json']), ...(agent ? ['--assignee', agent] : [])]);
       }
       throw new OrgError('task create|assign|list|redo');
     }
@@ -571,14 +553,14 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
         return 0;
       }
       if (sub === 'apply') {
-        const project = str(opts.project);
-        if (!name || !project) throw new OrgError('graph apply <template> --project <slug> [--feature f] [--team t] [--dry-run]');
+        const { area, project } = await trackerRef({ area: str(opts.area), project: str(opts.project), feature: str(opts.feature) });
+        if (!name || !area) throw new OrgError('graph apply <template> --area <slug> [--project p] [--team t] [--dry-run]');
         const g = graphs[name];
         if (!g) throw new OrgError(`no graph template "${name}" (cli-org graph list)`);
-        const r = await applyGraph(await me(), g, { project, feature: str(opts.feature), team: str(opts.team), board: str(opts.board), dryRun: opts['dry-run'] === true, run });
+        const r = await applyGraph(await me(), g, { area, project, team: str(opts.team), board: str(opts.board), dryRun: opts['dry-run'] === true, run });
         if (json) out(JSON.stringify(r));
         else {
-          out(`${opts['dry-run'] === true ? 'would create' : 'created'} ${r.cards.length} cards for ${project}${str(opts.feature) ? `/${str(opts.feature)}` : ''} (${name}):`);
+          out(`${opts['dry-run'] === true ? 'would create' : 'created'} ${r.cards.length} cards for ${area}${project ? `/${project}` : ''} (${name}):`);
           for (const c of r.cards) out(`  ${c.task_id ?? '-'}  ${c.node.padEnd(8)} ${c.kind.padEnd(7)} ${c.assignee.padEnd(8)} ${c.title}${c.after.length ? `  after ${c.after.join(', ')}` : ''}`);
           if (r.message) out(`posted ${r.message.id} in #${r.message.channel_slug}`);
         }
@@ -625,10 +607,10 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
     case 'recall': {
       const [q] = pos;
       console.error('deprecated: use `secondbrain memory recall`; this alias goes in one release.');
-      if (!q) throw new OrgError('recall "<query>" [--project p] [--limit N]');
+      if (!q) throw new OrgError('recall "<query>" [--area a] [--limit N]');
       const limit = num(opts.limit, 'limit') ?? 8;
       const hits: RecallHit[] = [
-        ...(await recallFacts(q, { project: str(opts.project), limit })),
+        ...(await recallFacts(q, { area: areaFlag(str(opts.area), str(opts.project)), limit })),
         ...recallMemoryFiles(config.vaultRoot, q, Math.ceil(limit / 2)),
         ...(vaultHits ?? []),
       ];
@@ -641,9 +623,9 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       const [subject, claim] = pos;
       console.error('deprecated: use `secondbrain memory remember`; this alias goes in one release.');
       const source = str(opts.source);
-      if (!subject || !claim || !source) throw new OrgError('remember "<subject>" "<claim>" --source <path|#msg|t_card|url> [--project p] [--inferred] [--supersedes id]');
+      if (!subject || !claim || !source) throw new OrgError('remember "<subject>" "<claim>" --source <path|#msg|t_card|url> [--area a] [--inferred] [--supersedes id]');
       const f = await remember(await me(), {
-        subject, claim, source, project: str(opts.project), inferred: opts.inferred === true, supersedes: num(opts.supersedes, 'supersedes'),
+        subject, claim, source, area: areaFlag(str(opts.area), str(opts.project)), inferred: opts.inferred === true, supersedes: num(opts.supersedes, 'supersedes'),
         via: str(opts.via) ?? config.env.ORG_VIA,
       });
       out(json ? JSON.stringify(f) : `fact #${f.id} saved${f.supersedes ? ` (closes #${f.supersedes})` : ''}`);
@@ -651,7 +633,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
     }
     case 'facts': {
       console.error('deprecated: use `secondbrain memory list`; this alias goes in one release.');
-      const fs = await listFacts({ subject: str(opts.subject), project: str(opts.project), author: str(opts.author), all: opts.all === true, limit: num(opts.limit, 'limit') });
+      const fs = await listFacts({ subject: str(opts.subject), area: areaFlag(str(opts.area), str(opts.project)), author: str(opts.author), all: opts.all === true, limit: num(opts.limit, 'limit') });
       if (json) return (out(JSON.stringify(fs, null, 2)), 0);
       out(fs.length ? fs.map(formatFact).join('\n') : 'no facts');
       return 0;

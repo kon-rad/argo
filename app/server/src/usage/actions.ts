@@ -37,7 +37,7 @@ export function classifyAction(tool: string | null, input: unknown): Action {
   const words = cmd.split(/\s*(?:&&|\|\||;|\|)\s*/).map((w) => w.trim()).filter((w) => w && !/^cd\s/.test(w));
   for (const w of words) {
     // `ORG_AGENT=atlas cli-org …`, `sudo -u <user> hermes kanban …`, `~/.local/bin/cli-org …` all count.
-    const m = /(?:^|[/\s])(cli-org|cli-projects|hermes)\s+(.*)$/.exec(w.replace(/^(?:\w+=\S*\s+)+/, ''));
+    const m = /(?:^|[/\s])(cli-org|cli-projects|cli-areas|hermes)\s+(.*)$/.exec(w.replace(/^(?:\w+=\S*\s+)+/, ''));
     if (!m) break;
     const rest = m[2]!.replace(/^(--\S+\s+\S+\s+)+/, '');
     const verb = rest.split(/\s+/)[0] ?? '';
@@ -48,7 +48,7 @@ export function classifyAction(tool: string | null, input: unknown): Action {
       if (verb === 'graph' || (verb === 'task' && ['create', 'assign', 'redo'].includes(sub))) return 'ticket';
       return 'read';
     }
-    if (m[1] === 'cli-projects') return ['list', 'report', 'show'].includes(verb) ? 'read' : 'tracker';
+    if (m[1] === 'cli-projects' || m[1] === 'cli-areas') return ['list', 'report', 'show'].includes(verb) ? 'read' : 'tracker';
     if (verb === 'kanban') return 'card';
     break;
   }
