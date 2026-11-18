@@ -65,6 +65,17 @@ const list = (q: Record<string, string> = {}) => request(app).get('/api/usage/ag
   .query({ from: '2026-10-18T00:00:00Z', to: '2026-10-19T00:00:00Z', ...q });
 
 describe('agent sessions api', () => {
+  it('exports a harness-neutral restart transcript without old system or thinking text', async () => {
+    const claude = await request(app).get('/api/usage/agent-sessions/mac/s1/portable').query({ source: 'claude-code' });
+    expect(claude.status).toBe(200);
+    expect(claude.body.source).toMatchObject({ host: 'mac', harness: 'claude-code', external_id: 's1' });
+    expect(claude.body.turns.map((t: { role: string }) => t.role)).toEqual(['user', 'tool', 'tool', 'assistant']);
+    expect(JSON.stringify(claude.body)).not.toContain('look at the route');
+    const hermes = await request(app).get('/api/usage/agent-sessions/mac/h1/portable').query({ source: 'hermes' });
+    expect(hermes.status).toBe(200);
+    expect(hermes.body.turns[0]).toMatchObject({ role: 'user', text: 'run my stand-up' });
+    expect((await request(app).get('/api/usage/agent-sessions/mac/s1/portable').query({ source: 'hermes' })).status).toBe(404);
+  });
   it('returns distinct tickets for the matching host and runtime, with empty tickets for unrelated sessions', async () => {
     await query(`INSERT INTO usage_runs (host, run_id, session_id, task_id, log_path, runtime) VALUES
       ('mac', 'run-a', 's1', 't_1234abcd', '/tmp/a.jsonl', 'claude-code'),

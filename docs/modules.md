@@ -233,7 +233,7 @@ A ledger of Claude Code, Codex, zen-agent and Hermes usage: tokens per run, whic
 |---|---|
 | Page | `/usage`, with filters in the URL |
 | Settings | `usage.subscriptions`, `usage.credits` and `usage.sections` in `secondbrain.json`; [provider configuration](configuration.md#usage-page-providers-and-sections) |
-| CLI | `secondbrain usage-sync`, `usage-push`, `usage-backfill`, `credits`, `ingest-device`, `ledger` |
+| CLI | `secondbrain usage-sync`, `usage-push`, `usage-backfill`, `session-restart`, `credits`, `ingest-device`, `ledger` |
 | Timers (server) | `usage-sync`, `credits-sync`, and the usage importer |
 | Summaries | The Summaries tab, `summarize` and the summarize timer are the `summaries` module ([summaries.md](summaries.md)) |
 
@@ -247,6 +247,10 @@ A ledger of Claude Code, Codex, zen-agent and Hermes usage: tokens per run, whic
 | zen-agent | the trace's `persona`, when no dispatcher labelled the run |
 
 A subagent (and a Hermes compression continuation) takes its parent's bot. Nothing is guessed from a folder name or a title; a session with none of these stays unattributed. Owner chats appear in the agent filter, the sessions list and the by-bot totals; the wake panel (`/org-wakes`), the wake counts and the bots' daily token cap (`ORG_DISPATCH_DAILY_TOKENS`) count dispatcher wakes only. A zen-agent trace with no dispatcher labels is a chat: its run carries no agent, and when it comes from a laptop the server stores no run for it. `usage-push` sends a laptop's zen-agent traces (`ZEN_SESSIONS_DIR`, gitignored in a vault, so this is the only way they reach the server), each one whole when it changes, with the same cursor rules as Codex. For sessions imported before this, run `secondbrain usage-backfill --bots` once on the server; it is safe to run again.
+
+**Restart an archived session.** Open any session under `/usage?view=sessions`, choose a harness, provider, model and optional roster persona, then copy the generated `secondbrain session-restart` command to the machine where the new session should run. The CLI asks for a new request, reads the stored conversation, starts a new local process, and leaves the source untouched. For example: `secondbrain session-restart laptop old-id --source codex --harness zen-agent --provider openrouter --model example/model --persona builder`. A named persona is read from that machine's vault roster. Claude Code accepts Anthropic models only; Codex needs the selected `model_provider` configured; Hermes and zen-agent need their selected provider configured. A restart carries user and assistant text plus historical tool records; thinking and system messages are excluded. Native tool state and the original harness's session ID cannot be transferred. Sessions with no archived text or more than 50,000 records or 2 million characters return an explicit error. The destination model must have enough context for the assembled prompt.
+
+Machines without database access can use `--api http://127.0.0.1:5123 --token-env KNOWLEDGE_TOKEN` through an SSH tunnel to the server's loopback port. The token stays in the environment and the portable read endpoint uses the same loopback-only knowledge gate as vault search. The browser session can also read `GET /api/usage/agent-sessions/:host/:id/portable?source=...` under its normal login.
 
 Subscription quotas and prepaid balances are shown only for configured providers. Codex quota windows come from its subscription-authenticated CLI app-server, including five-hour and weekly limits when reported by the account. Header quota meters are consolidated here. Missing CLI/login or a failed refresh is visible in the provider panel; there is no API billing fallback.
 

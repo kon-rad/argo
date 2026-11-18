@@ -550,6 +550,12 @@ export interface AgentSessionRow {
   models: string[]; calls: number; input: number; cache_write: number; cache_read: number; output: number; reasoning: number;
   cost_usd?: number | null;
 }
+export interface PortableSessionInfo {
+  version: 1;
+  source: { host: string; harness: string; external_id: string; archive_id: number };
+  turns: { role: 'user' | 'assistant' | 'tool'; text: string }[];
+  omitted: { metadata: number; thinking: number; empty: number };
+}
 export type AgentStepKind = 'prompt' | 'response' | 'thinking' | 'tool_call' | 'tool_result' | 'system' | 'meta';
 export interface AgentStep {
   id: number; key: string; step: AgentStepKind; ts: string | null; text: string; length: number; truncated: boolean;
@@ -1085,6 +1091,8 @@ export const api = {
   agentSession: (host: string, externalId: string, source: string | null, offset = 0) =>
     request<{ session: AgentSessionRow; runs: AgentSessionRun[]; steps: AgentStep[]; next: number | null }>(
       `/usage/agent-sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}`, { source: source ?? undefined, offset, meta: '1' }),
+  portableSession: (host: string, externalId: string, source: string) =>
+    request<PortableSessionInfo>(`/usage/agent-sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}/portable`, { source }),
   usageRuns: (from: string, to: string, f: UsageFilters = {}) => request<{ runs: UsageRun[] }>('/usage/runs', { from, to, ...usageFilterParams(f) }),
   usageRunning: () => request<RunningNow>('/usage/running'),
   usageLive: () => request<LiveNow>('/usage/live'),
