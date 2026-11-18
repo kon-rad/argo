@@ -23,6 +23,7 @@ export const ADDON_MODULES = [
   'uploads',
   'garden',
   'warehouse',
+  'skills',
   // Pilots and proposals: each has a manifest and a docs-only Status line. Off unless listed.
   'routing',
   'classify',

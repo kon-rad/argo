@@ -37,6 +37,11 @@
   "livestream": { "youtube": "example" },
   "projects": { "reportFile": "projects.md" },
   "areas": { "reviewDir": "Areas/weekly-review" },
+  "skills": {
+    "policyFile": ".agents/skills-policy.yaml",
+    "externalRoots": [],
+    "staleAfterHours": 24
+  },
   "sync": {
     "remote": "origin",
     "branch": "main",

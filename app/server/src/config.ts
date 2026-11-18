@@ -67,6 +67,8 @@ const Schema = z.object({
   // Standalone ledger location and an optional token override.
   SB_LEDGER_DIR: z.string().optional(),
   SB_LEDGER_TOKEN: z.string().optional(),
+  // Destination for machine skill-deployment acknowledgements; the CLI can also pass --server.
+  SECONDBRAIN_SERVER: z.string().url().optional(),
   // Archive and agent-sync machine paths and commands.
   BOT_REPOS_FILE: z.string().optional(),
   HERMES_ENV_FILE: z.string().optional(),

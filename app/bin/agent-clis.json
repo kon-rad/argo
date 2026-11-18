@@ -35,6 +35,11 @@
       "name": "cli-social",
       "feature": "social",
       "door": "server-only"
+    },
+    {
+      "name": "cli-skills",
+      "feature": "skills",
+      "door": "server-only"
     }
   ]
 }

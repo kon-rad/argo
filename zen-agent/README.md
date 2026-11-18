@@ -47,6 +47,7 @@ Secrets come from the environment only: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `
 | `vault` | `.` | Where rules, skills, personas and sessions live |
 | `rules` | `["AGENTS.md"]` | Rule files; the first that exists is the `rules` part |
 | `skills` | `[".agents/skills", "~/.zen/skills"]` | Skill folders, earlier wins |
+| `managedSkills` | `null` | `{ root, enforce, snapshots }`: use the engine skills manager's generated per-persona view instead of the folders (below) |
 | `persona.org` | `.agents/org/org.json` | The roster (`.json` or `.yaml`): `agents.<name>.{role, team, reports_to, model, expertise, capabilities, runtime}`, `teams.<slug>.{name, lead}` |
 | `persona.definitions` | `.claude/agents` | `<name>.md`, frontmatter dropped: the identity Claude Code runs the agent with |
 | `persona.memory` | `.agents/org/memory` | `<name>.md`: the playbook, read in full at the start of a run |
@@ -70,6 +71,12 @@ Secrets come from the environment only: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `
 | `machines` | `{}` | Connected computers that run Ollama: `{ "<name>": { "url": "http://host:11434", "name"?, "contextWindow"? } }`. Each becomes the provider `ollama-<name>` whose models are whatever the machine has installed right now (`/api/tags`, embedding models left out), so a model pulled there appears without editing anything: `--model ollama-<name>/<tag>`. `contextWindow` (default 32 000) is the window assumed and the cap on a model's own: Ollama's OpenAI-compatible endpoint cannot ask for one, the server's `OLLAMA_CONTEXT_LENGTH` decides, so set it to that. The `OLLAMA_MACHINES` variable (`name=url,name=url`) adds to and overrides this key. A machine that stops answering keeps its last models, greyed out as unreachable |
 
 `zen-agent config` prints the effective configuration. `zen-agent models --available` lists the models whose provider has a key.
+
+### Managed skills
+
+Managed skills (off by default). With `managedSkills: { "root": "~/.local/share/secondbrain/skills", "enforce": true, "snapshots": null }`, a run with a persona reads the view the engine's skills manager generated for it (`secondbrain skills sync`): `<root>/views/<persona>/zen-agent/manifest.json`. That view is the whole catalog; the `skills` folders are not also read. Every package is checked against its full digest (SKILL.md, scripts, references and assets), copied into a read-only snapshot `<snapshots or sessionsDir>/<session>.skills/`, checked again, and served from there until the run ends, so a sync during the run changes nothing it sees; a resumed session reuses its snapshot. A package whose digest does not match is left out and listed. Whenever `managedSkills` is configured, a missing persona or view gives no skills, including with `enforce: false`. Only `managedSkills: null` (the default) retains legacy discovery; `enforce` is accepted for compatibility and does not permit fallback. The trace's meta line records `skills_mode` (`legacy`, `managed`, `managed-missing`), `skills_packages` (name, id, digest, Git revision), `skills_rejected` and `skills_snapshot`.
+
+This filters the catalog and `read_skill` only (`skills_support: "catalog-filtered"`). It is not a sandbox: with the `fs` or `shell` tool sets a run can still read any file its user can, including other skill folders. Skill availability grants no tool, credential or publishing authority.
 
 ## Use
 
@@ -151,7 +158,8 @@ src/
   config.ts       zen.json → ZenConfig with defaults and resolved paths; parseBudgetLine
   models.ts       pi-ai catalogue + custom providers; pickModel('provider/model')
   persona.ts      roster entry + definition + playbook → Persona; personaHeader
-  skills.ts       Agent Skills discovery (frontmatter, first dir wins), skillsIndex
+  skills.ts       Agent Skills discovery (frontmatter, first dir wins), skillsIndex, managed views and run snapshots
+  skillpkg.ts     package digest v1 (the engine skills manager computes the same bytes)
   context.ts      named parts with caps → system prompt + per-part stats
   guard.ts        the Python guard, ported: decide(payload, rules); toolPayload maps zen tools to Claude names
   hooks.ts        external hook commands (stdin JSON, exit 2 blocks, fail open); a Claude-style transcript for Stop hooks

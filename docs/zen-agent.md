@@ -78,6 +78,7 @@ The keys, in the order you are likely to touch them:
 | `org.command` | `cli-org` | The message board CLI; its tools appear only when it is on the PATH and a persona is set |
 | `persona.org`, `persona.definitions`, `persona.memory` | `.agents/org/org.json`, `.claude/agents`, `.agents/org/memory` | Where personas come from |
 | `rules`, `skills` | `["AGENTS.md"]`, `[".agents/skills", "~/.zen/skills"]` | The rules part (first file that exists) and the skill folders (earlier wins) |
+| `managedSkills` | `null` | `{ root, enforce, snapshots }`: the per-persona view the engine skills manager generates, pinned per run (see 3.7) |
 | `context.cap`, `context.keepTurns`, `context.parts` | 0.6, 6, caps per part | The compaction trigger, the tail kept, and the token cap of each prompt part (`thread` 2 000, `tracker` 1 500, `github` 1 500, `recall` 2 000 for the fetched parts) |
 | `context.fetchers` | `{}` | Context fetchers per card work type, team (`team:<slug>`) or `default`: `tracker`, `github`, `recall`. Off unless listed ([3.4](#34-a-bot-wake-end-to-end)) |
 | `org.command`, `tracker.command`, `github.command` | `cli-org`, `cli-areas`, `gh` | The commands behind the `org` tools and the `thread`, `recall`, `tracker` and `github` fetchers |
@@ -174,6 +175,14 @@ The traces land in the same `.zen/sessions/` folder as every other run, so the `
 
 ---
 
+### 3.7 Managed skills
+
+Managed skills (off by default). With `managedSkills: { "root": "~/.local/share/secondbrain/skills", "enforce": true, "snapshots": null }`, a run with a persona reads the view the engine's skills manager generated for it (`secondbrain skills sync`): `<root>/views/<persona>/zen-agent/manifest.json`. That view is the whole catalog; the `skills` folders are not also read. Every package is checked against its full digest (SKILL.md, scripts, references and assets), copied into a read-only snapshot `<snapshots or sessionsDir>/<session>.skills/`, checked again, and served from there until the run ends, so a sync during the run changes nothing it sees; a resumed session reuses its snapshot. A package whose digest does not match is left out and listed. Whenever `managedSkills` is configured, an absent persona or missing view gives no skills, regardless of `enforce`. The `enforce` boolean remains accepted for configuration compatibility; false does not restore legacy discovery. Only `managedSkills: null` (the default) uses legacy folders. The trace's meta line records `skills_mode` (`legacy`, `managed`, `managed-missing`), `skills_packages` (name, id, digest, Git revision), `skills_rejected` and `skills_snapshot`. `skills_packages` is the resolved catalog offered to the session; it is not loaded-use evidence. A successful `read_skill` produces a trace `message` whose `message.role` is `toolResult`, `message.toolName` is `read_skill`, `message.isError` is false, and `message.details` names the package, digest and revision actually read. Failed reads and unread catalog entries are not loads. Immediately before serving managed instructions, `read_skill` verifies the full snapshot package digest again and checks that the returned instruction bytes match that verification; changed packages are rejected.
+
+This filters the catalog and `read_skill` only (`skills_support: "catalog-filtered"`). It is not a sandbox: with the `fs` or `shell` tool sets a run can still read any file its user can, including other skill folders. Skill availability grants no tool, credential or publishing authority.
+
+A resumed session validates its existing snapshot before looking for a current view, even if that view has been removed or managed discovery has since been disabled. A damaged or mismatched snapshot fails closed instead of falling back to legacy folders. View manifests must name the requested persona and the `zen-agent` runtime. Every package must have a valid source-qualified identity (`private:report`, `engine:report`, `legacy:media/report` or `external:shared:report`); missing, bare or malformed identities reject the entire view or resumed snapshot. The original identity is retained exactly in the snapshot and trace. In managed mode `GET /zen/skills` returns an empty unscoped catalog; `GET /zen/chats/:id/skills` returns only that chat's verified snapshot catalog.
+
 ## 4. Architecture
 
 ### 4.1 The loop and its hooks
@@ -211,7 +220,8 @@ pi's `Agent` owns the transcript, the tool-call plumbing, steering and follow-up
 | `src/models.ts` | pi-ai catalogue plus custom providers; `pickModel('provider/model')`; `availableProviders` | 90 |
 | `src/machines.ts` | connected computers: `OLLAMA_MACHINES` parsing, `/api/tags` + `/api/show` discovery, one `ollama-<name>` provider each | 120 |
 | `src/persona.ts` | roster entry + definition + playbook → `Persona`; `personaHeader` | 130 |
-| `src/skills.ts` | Agent Skills discovery (frontmatter, first dir wins); `skillBody`, `skillsIndex` | 90 |
+| `src/skills.ts` | Agent Skills discovery (frontmatter, first dir wins); `skillBody`, `skillsIndex`; managed views and per-run snapshots (`resolveSkills`) | 300 |
+| `src/skillpkg.ts` | Package digest v1 over every file of a package; rejects escaping links and secret-like files | 110 |
 | `src/context.ts` | named parts with caps → prompt + per-part stats; `estimateTokens` (four characters per token) | 110 |
 | `src/guard.ts` | the Python guard, ported: `decide`, `checkShell`, `checkPath`, `loadLocalRules`; `toolPayload` maps zen tools to Claude names | 230 |
 | `src/hooks.ts` | hook commands (stdin JSON; exit 2 or `{"decision":"block"}` blocks; crash or timeout allows); a Claude-style transcript for Stop hooks | 100 |

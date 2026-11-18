@@ -459,6 +459,30 @@ const Settings = z.object({
       rawDir: z.string().min(1).optional(),
     })
     .prefault({}),
+  /**
+   * The skills addon (docs/skills.md). Every path is vault-relative unless absolute. No home folder or
+   * plugin cache is ever scanned unless listed under `externalRoots`.
+   */
+  skills: z
+    .object({
+      /** The Git-tracked assignment policy. Missing: legacy behaviour (every runtime keeps its own folders). */
+      policyFile: z.string().min(1).default('.agents/skills-policy.yaml'),
+      /** Shared private skills (the runtimes' first folder). */
+      privateRoot: z.string().min(1).default('.agents/skills'),
+      /** The older categorized tree (`<category>/<name>/SKILL.md`); null to leave it out. */
+      legacyRoot: z.string().min(1).nullable().default('.hermes/skills'),
+      /** Extra roots to catalogue, each named; lowest precedence, in this order. */
+      externalRoots: z.array(z.object({ id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/), path: z.string().min(1), label: z.string().max(80).optional() })).default([]),
+      /** Where drafts are edited (outside every skill root, so never active). */
+      draftsDir: z.string().min(1).default('.agents/skill-drafts'),
+      /** Where proposed changes are exported for review. */
+      changesDir: z.string().min(1).default('.agents/skill-changes'),
+      /** The machine-local managed root `secondbrain skills sync` deploys into; default `~/.local/share/secondbrain/skills`. */
+      managedRoot: z.string().min(1).optional(),
+      /** An acknowledgement older than this is shown as stale. */
+      staleAfterHours: z.number().positive().default(24),
+    })
+    .prefault({}),
   /** `secondbrain garden`: the nightly vault gardener (docs/garden.md). */
   garden: z
     .object({

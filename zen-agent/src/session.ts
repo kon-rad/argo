@@ -72,10 +72,13 @@ export class Session {
   }
 
   /** The messages of an earlier run, in order, for a resume; compactions are already applied by whoever wrote them. */
-  static load(dir: string, id: string): { meta: SessionLine | null; messages: unknown[] } {
+  static load(dir: string, id: string): { meta: SessionLine | null; messages: unknown[]; skillState: { managed: true; snapshot: string | null; snapshotSession: string } | null } {
     const text = readFileSync(join(dir, `${id}.jsonl`), 'utf8');
     let meta: SessionLine | null = null;
     const messages: unknown[] = [];
+    let managed = false;
+    let snapshot: string | null = null;
+    let snapshotSession = id;
     for (const raw of text.split('\n')) {
       if (!raw.trim()) continue;
       let line: SessionLine;
@@ -84,10 +87,18 @@ export class Session {
       } catch {
         continue;
       }
-      if (line.type === 'meta') meta = line;
+      if (line.type === 'meta') {
+        meta = line;
+        if (line.skills_mode === 'managed' || line.skills_mode === 'managed-missing') {
+          if (!managed) snapshotSession = line.id;
+          managed = true;
+          if (typeof line.skills_snapshot === 'string') snapshot = line.skills_snapshot;
+          if (typeof line.skills_snapshot_session === 'string') snapshotSession = line.skills_snapshot_session;
+        }
+      }
       else if (line.type === 'message') messages.push(line.message);
     }
-    return { meta, messages };
+    return { meta, messages, skillState: managed ? { managed: true, snapshot, snapshotSession } : null };
   }
 
   /**

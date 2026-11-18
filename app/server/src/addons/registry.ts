@@ -29,6 +29,7 @@ import uploads from './uploads/manifest.js';
 import voice from './voice/manifest.js';
 import desk from './desk/manifest.js';
 import observatory from './observatory/manifest.js';
+import skills from './skills/manifest.js';
 
 export const ADDON_MANIFESTS: readonly FeatureManifest[] = [
   ring,
@@ -44,6 +45,7 @@ export const ADDON_MANIFESTS: readonly FeatureManifest[] = [
   uploads,
   garden,
   warehouse,
+  skills,
   routing,
   classify,
   dispatch,

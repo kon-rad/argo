@@ -58,3 +58,42 @@ test('budget lines from a card contract', () => {
   assert.deepEqual(cardBudget('no contract here'), {});
   assert.deepEqual(cardBudget(null), {});
 });
+
+for (const [label, managedSkills] of [
+  ['missing root', {}],
+  ['numeric root', {root:42}],
+  ['empty root', {root:''}],
+  ['whitespace root', {root:'  \t'}],
+  ['array', []],
+  ['string', 'managed'],
+  ['false', false],
+  ['true', true],
+  ['numeric', 42],
+  ['string enforce', {root:'managed',enforce:'false'}],
+  ['numeric enforce', {root:'managed',enforce:0}],
+  ['null enforce', {root:'managed',enforce:null}],
+  ['numeric snapshots', {root:'managed',snapshots:42}],
+  ['empty snapshots', {root:'managed',snapshots:''}],
+  ['whitespace snapshots', {root:'managed',snapshots:' \n '}],
+  ['false snapshots', {root:'managed',snapshots:false}],
+] as const) test(`malformed managed skills config fails closed: ${label}`, () => {
+  const dir=mkdtempSync(join(tmpdir(),'zen-managed-config-'));
+  writeFileSync(join(dir,'zen.json'),JSON.stringify({managedSkills}));
+  assert.throws(()=>loadConfig({workdir:dir,env:{}}),/zen config managedSkills/);
+});
+
+test('managed skills accepts deliberate legacy configuration and normalizes valid paths', () => {
+  const dir=mkdtempSync(join(tmpdir(),'zen-managed-config-'));
+  const file=join(dir,'zen.json');
+  assert.equal(loadConfig({workdir:dir,env:{}}).managedSkills,null);
+  writeFileSync(file,JSON.stringify({managedSkills:null}));
+  assert.equal(loadConfig({workdir:dir,env:{}}).managedSkills,null);
+  writeFileSync(file,JSON.stringify({vault:'vault',managedSkills:{root:'./cache/../managed',snapshots:'./traces/../snapshots',enforce:true}}));
+  assert.deepEqual(loadConfig({workdir:dir,env:{}}).managedSkills,{root:join(dir,'vault','managed'),snapshots:join(dir,'vault','snapshots'),enforce:true});
+  writeFileSync(file,JSON.stringify({managedSkills:{root:'managed'}}));
+  assert.deepEqual(loadConfig({workdir:dir,env:{}}).managedSkills,{root:join(dir,'managed'),snapshots:null,enforce:false});
+  writeFileSync(file,JSON.stringify({managedSkills:{root:'managed',snapshots:null,enforce:false}}));
+  assert.deepEqual(loadConfig({workdir:dir,env:{}}).managedSkills,{root:join(dir,'managed'),snapshots:null,enforce:false});
+  assert.equal(loadConfig({workdir:dir,env:{},overrides:{managedSkills:null}}).managedSkills,null);
+  assert.throws(()=>loadConfig({workdir:dir,env:{},overrides:{managedSkills:false as any}}),/zen config managedSkills/);
+});
