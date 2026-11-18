@@ -532,13 +532,20 @@ export interface SummaryFact {
 /** One row of /usage/agent-sessions: a session from any harness and host. `cost_usd` only for non-Claude harnesses (Hermes's own estimate). */
 export interface AgentSessionRow {
   task_ids?: string[];
+  task_associations?: Array<{ task_id: string; evidence_id: string; provenance: string; confidence: string; reason: string }>;
+  task_unresolved_reason?: string | null;
+  runtime_entrypoint?: string | null;
+  outer_trigger?: string | null;
+  persona_status?: 'known' | 'unknown' | 'absent';
+  launches?: Array<{ v: 1; runId: string; sessionId: string | null; entrypoint: string | null; trigger: string | null; channel: string | null; persona: string | null; personaOrigin: string | null; taskIds: string[]; personaStatus: string }>;
+
   id: number; source: string; harness: string; profile: string | null; provider: string | null; host: string;
   external_id: string; parent_external_id: string | null; project: string | null; title: string | null; first_prompt: string | null;
   /** Where the prompts came from when not a keyboard: 'telegram', 'web', 'remote-control'; the bot's configured name. */
   channel: string | null; channel_bot: string | null;
   /** 'telegram', 'cli', 'headless', another channel's own name ('web', 'remote-control'), or 'unknown' when nothing recorded it. */
   session_type?: string | null;
-  /** The persona that ran it (run agent, zen persona, bot's persona, else the bot); null: none recorded. */
+  /** Validated launch, run or native persona; nullable with separate absent/unknown status. */
   persona?: string | null;
   /** One line under 100 characters, and where it came from; null when nothing usable was found. */
   display_title?: string | null; title_source?: 'task' | 'skill' | 'title' | 'prompt' | null;

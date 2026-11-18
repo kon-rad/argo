@@ -51,9 +51,9 @@ export function clampLine(s: string, max = 99): string {
 }
 
 /** The persona cell: the recorded persona, else `none` for a person at a terminal and `unknown` for anything else. */
-export function personaLabel(s: { persona?: string | null; session_type?: string | null }): { text: string; known: boolean } {
+export function personaLabel(s: { persona?: string | null; session_type?: string | null; persona_status?: string }): { text: string; known: boolean } {
   if (s.persona) return { text: s.persona, known: true };
-  return { text: s.session_type === 'cli' ? 'none' : 'unknown', known: false };
+  return { text: s.persona_status === 'unknown' ? 'unknown' : s.session_type === 'cli' ? 'none' : 'unknown', known: false };
 }
 
 /** Context at the latest call over the recorded window: "30.2k / 128.0k", "30.2k / ?", "? / 128.0k", or null when neither is known. */

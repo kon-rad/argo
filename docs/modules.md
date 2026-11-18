@@ -441,3 +441,20 @@ secrets embedded in prose. The collector never reads `.env` or authentication
 files. Server-local `secondbrain usage-sync` also discovers the same Codex home.
 
 The Running now tab lists all machines with observations in the last three minutes. The collector and server importer run every 60 seconds. Installing the collector preserves and wraps an existing Claude command status line to record quota observations; disable restores it if it has not been edited since. Unchanged quota readings refresh at least once per minute while Claude emits status updates.
+
+### Trusted launch and task provenance
+
+Usage task links now accept trusted launches and validated historical launch envelopes,
+independently of dispatcher wakes. Producers should use the versioned
+[launch contract](usage-provenance.md). Runtime entrypoint, outer trigger and original
+channel stay separate. Ticket cells link only verified associations; missing producer
+evidence is reported explicitly. A scoped historical replay defaults to dry-run:
+
+```bash
+secondbrain usage-backfill --provenance --sessions=101,102
+secondbrain usage-backfill --provenance --sessions=101,102 --apply
+```
+
+The replay writes only task associations. It never creates wakes or rewrites messages,
+token calls, counters or token identities. Unknown persona evidence stays unknown even
+if that name joins the roster later. Existing bot labels remain supported.
