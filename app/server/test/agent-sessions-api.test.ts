@@ -237,7 +237,7 @@ it.each(['codex', 'hermes'] as const)('%s replay agrees with list, filter and de
       rawOf('failed', { output: 'denied', exit_code: 255 }),
       rawOf('failed', { output: 'denied', exit_code: 255 }), // expanded rendering
       rawOf('retry', { output: 'denied', exit_code: 255 }), // distinct retry
-      rawOf('success', { stdout: 'error {"exit_code":255}', exit_code: 0 }),
+      rawOf('success', [{ type: 'text', text: 'ok' }, { type: 'text', text: '{"exit_code":0}' }]),
       rawOf('unknown', { output: 'partial timeout error' }),
     ];
     await archive.upsertMessages(tx, s.id, results.map((raw, i) => m(`result-${i}`, '2026-10-18T10:00:01Z', raw)));

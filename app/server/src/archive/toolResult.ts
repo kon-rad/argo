@@ -7,7 +7,7 @@ const LIMIT = 65536;
 const bounded = (s: string) => s.length > LIMIT ? s.slice(0, LIMIT - 14) + '\n[truncated]' : s;
 const json = (v: unknown) => bounded(JSON.stringify(v, null, 2) ?? '');
 const combine = (values: Array<boolean | null>): boolean | null => values.includes(true) ? true
-  : values.length && values.every(v => v === false) ? false : null;
+  : values.includes(false) ? false : null;
 
 function outcome(v: Obj): boolean | null {
   const codes = [v.exit_code, v.exitCode, v.returncode, v.return_code].filter(x => typeof x === 'number' && Number.isInteger(x)) as number[];
