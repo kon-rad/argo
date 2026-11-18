@@ -58,7 +58,8 @@ it('does not invent an engine root when neither supported location exists', asyn
 });
 it.each(['pin', 'skills', 'vault'] as const)('rejects a linked fallback %s ancestor without cataloging its target', async part => {
   const f = layout(), outside = join(f.base, 'outside'), target = part === 'vault' ? join(f.base, 'linked-vault') : part === 'pin' ? join(f.vault, '.secondbrain') : f.pinned;
-  write(join(outside, 'outside-report/SKILL.md'), skillMd('outside-report', 'Outside instructions.'));
+  const outsideSkills = part === 'vault' ? join(outside, '.secondbrain', 'skills') : part === 'pin' ? join(outside, 'skills') : outside;
+  write(join(outsideSkills, 'outside-report/SKILL.md'), skillMd('outside-report', 'Outside instructions.'));
   if (part === 'skills') mkdirSync(join(f.vault, '.secondbrain'));
   symlinkSync(outside, target); const vault = part === 'vault' ? target : f.vault;
   expect(defaultEngineSkills(vault, f.checkout)).toBeNull(); await simulateAppOnly();
