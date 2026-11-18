@@ -52,7 +52,7 @@ Rules the server enforces when it loads a file (a brand that breaks one becomes 
 
 ## Data
 
-Migration `1756000019210` adds `social_posts.card_id` and `social_posts.source_path` (both nullable) and an index on `(account_id, scheduled_for)`. `cli-social queue` takes `--card <id>` and `--source <vault path>`.
+Migration `1756000020100` adds `social_posts.card_id` and `social_posts.source_path` (both nullable) and an index on `(account_id, scheduled_for)`. `cli-social queue` takes `--card <id>` and `--source <vault path>`.
 
 ## Not in v1
 
