@@ -134,3 +134,18 @@ it('describes a merged change as awaiting machine sync, without claiming use', a
   expect(await screen.findByText('merged; awaiting machine sync')).toBeTruthy();
   expect(screen.queryByText(/merged and in use/)).toBeNull();
 });
+
+it('labels the effective catalog source without claiming use and shows failed view state',async()=>{
+ stub(()=>json({name:'report',row:row('report'),selected:candidate,instructions:'# Report',files:[],history:[],agents:[],dependents:[],hosts:[{host:'fixture-host',agent:'alpha',runtime:'codex',observed:candidate.digest,state:'unknown',viewStatus:'failed',receivedAt:'2026-01-01T00:00:00Z'}],drafts:[],changes:[],mode:'managed'}));
+ renderAt('detail','/skills/s/report');
+ expect(await screen.findByText('effective source')).toBeTruthy();
+ expect(screen.queryByText('in use')).toBeNull();
+ expect(await screen.findByText('view failed')).toBeTruthy();
+ expect(screen.queryByText('match')).toBeNull();
+});
+it('shows unresolved assigned-package reasons on a failed machine view',async()=>{
+ stub(()=>json({staleAfterHours:24,mode:'managed',notes:[],hosts:[{host:'fixture-host',display:'Fixture host',status:'failed',lastAck:'2026-01-01T00:00:00Z',views:[{agent:'alpha',runtime:'codex',viewDigest:null,generatedAt:null,receivedAt:'2026-01-01T00:00:00Z',status:'failed',error:'Unresolved assignments',excluded:[{name:'report',reason:'pinned package missing'}],skills:[],missing:[],dirty:[]}]}]}));
+ renderAt('machines','/skills/machines');
+ expect(await screen.findByText('report: pinned package missing')).toBeTruthy();
+ expect(screen.getByText('last sync failed')).toBeTruthy();
+});

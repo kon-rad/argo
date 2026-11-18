@@ -10,7 +10,7 @@ import { MANAGED_POLICY, SETTINGS, sh, skillMd, skillsFixture, write } from './h
 async function fixture(policy = MANAGED_POLICY) {
   const f = skillsFixture();
   write(join(f.vault, SETTINGS.policyFile), policy);
-  const service = new SkillsService(f.vault, SETTINGS, { engineSkills: f.engine, db: false });
+  const service = new SkillsService(f.vault, SETTINGS, { engineSkills: f.engine, db: false, observations: async () => ({ acks: [], hosts: [], lastSeen: new Map() }) });
   const state = await service.current();
   const plan = planViews(state.catalog, state.policy, state.roster, { agents: ['alpha'] });
   return { f, service, plan, root: join(f.base, 'managed') };

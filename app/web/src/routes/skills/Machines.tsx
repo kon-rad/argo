@@ -46,6 +46,7 @@ export default function Machines() {
                         <span className="text-[var(--ink-dim)]">view <Digest value={v.viewDigest} /> received {zoned(v.receivedAt)}</span>
                       </div>
                       {v.error && <p role="alert" className="text-[var(--warn)]">{v.error}</p>}
+                      {v.excluded?.map(e => <p role="alert" className="text-[var(--warn)]" key={e.name}>{e.name}: {e.reason}</p>)}
                       {v.dirty.length > 0 && <p className="text-amber-700 dark:text-amber-400">Modified on the machine: {v.dirty.join(', ')}</p>}
                       {v.missing.length > 0 && (
                         <ul className="text-amber-700 dark:text-amber-400">

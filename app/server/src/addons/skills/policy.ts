@@ -213,10 +213,16 @@ export function resolveAgent(agent: RosterAgent, loaded: LoadedPolicy, catalog: 
   return cells;
 }
 
-/** Skills that list `name` under metadata.depends (effective candidates only). */
-export function dependentsOf(catalog: Catalog, name: string): string[] {
+/** Unavailable assignments caused by invalid/missing packages or policy, excluding intentional revocations. */
+export function unresolvedAssignments(cells: Iterable<AssignmentCell>): { name: string; reason: string }[] {
+  return [...cells].filter(c => c.state === 'unavailable' && c.reasons.some(r => r.level === 'package' || r.level === 'policy'))
+    .map(c => ({ name: c.skill, reason: c.reasons.filter(r => r.kind === 'deny').map(r => r.detail).join('; ').slice(0, 1000) }));
+}
+
+/** Skills that list `name` under metadata.depends in the candidate selected by policy, including pins. */
+export function dependentsOf(catalog: Catalog, name: string, policy: Policy = EMPTY_POLICY): string[] {
   const out: string[] = [];
-  for (const [n, list] of catalog.byName) if (n !== name && list[0]?.metadata.depends.includes(name)) out.push(n);
+  for (const n of catalog.byName.keys()) if (n !== name && selectedCandidate(policy, catalog, n).candidate?.metadata.depends.includes(name)) out.push(n);
   return out.sort();
 }
 

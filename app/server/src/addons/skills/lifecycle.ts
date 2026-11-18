@@ -36,6 +36,7 @@ export interface LifecycleContext {
   roster: Roster;
   /** Hosts' acknowledged views, for "affected hosts". */
   observed: { host: string; agent: string; runtime: string; skills: string[] }[];
+  observationsAvailable?: boolean;
 }
 
 export const RUNNING_SESSIONS = 'Changes apply to new runs after the change is merged and machines are synced. Sessions already running keep what they loaded: zen-agent runs keep their pinned snapshot until they end, and other runtimes keep instructions already in context. Stop or restart a session to drop a revoked skill; a machine that is offline keeps its last deployment until it syncs.';
@@ -279,7 +280,7 @@ function affectedAgents(ctx: LifecycleContext, name: string, policyAfter: Policy
 export async function previewChange(ctx: LifecycleContext, req: ChangeRequest): Promise<{ preview: ChangePreview; target: Target; basePolicyDigest: string | null }> {
   const name = checkName(req.skill);
   const blocked: string[] = [];
-  const warnings: string[] = [];
+  const warnings: string[] = ctx.observationsAvailable === false ? ['Machine acknowledgement state is unavailable; affected machines are unknown.'] : [];
   const p = ctx.policy.policy;
   const current = selectedCandidate(p, ctx.catalog, name).candidate;
   let target: Target = { files: null, policy: null, targetPath: null };
@@ -359,7 +360,9 @@ export async function previewChange(ctx: LifecycleContext, req: ChangeRequest): 
       summary = `Restore ${name} to active (was ${life.status}).`;
     } else if (kind === 'remove') {
       const grants = grantsOf(p, name);
-      const deps = dependentsOf(ctx.catalog, name);
+      const deployments = ctx.observed.filter(o => o.skills.includes(name));
+      if (deployments.length && !req.resolve) blocked.push(`still deployed on ${deployments.map(o => `${o.host}/${o.agent}/${o.runtime}`).join(', ')}; explicitly confirm revoking managed deployments with this change`);
+      const deps = dependentsOf(ctx.catalog, name, ctx.policy.policy);
       if (deps.length) blocked.push(`skills that depend on ${name}: ${deps.join(', ')}; change them first`);
       if (grants.length && !req.resolve) blocked.push(`still granted or pinned by ${grants.join(', ')}; revoke those grants first or confirm revoking them with this change`);
       if (grants.length && req.resolve) {
@@ -383,7 +386,7 @@ export async function previewChange(ctx: LifecycleContext, req: ChangeRequest): 
   validation = { ...validation, warnings: [...validation.warnings, ...warnings] };
   const preview: ChangePreview = {
     kind, skill: name, summary, validation, files, policyDiff, targetDigest, baseDigest: current?.digest ?? null, baseRevision: current?.revision ?? null,
-    affectedAgents: agents, affectedHosts: hosts, dependents: dependentsOf(ctx.catalog, name), blocked, runningSessions: RUNNING_SESSIONS, rollbackTarget,
+    affectedAgents: agents, affectedHosts: hosts, dependents: dependentsOf(ctx.catalog, name, ctx.policy.policy), blocked, runningSessions: RUNNING_SESSIONS, rollbackTarget,
   };
   return { preview, target, basePolicyDigest: ctx.policy.digest };
 }
@@ -472,6 +475,10 @@ export function listChanges(ctx: LifecycleContext): Change[] {
  */
 export async function applyChange(ctx: LifecycleContext, id: string, opts: { message?: string } = {}): Promise<{ branch: string; commit: string; worktreeFiles: string[] }> {
   const stored = readStored(ctx, id);
+  if (stored.kind === 'remove') {
+    const current = await previewChange(ctx, stored.request);
+    if (current.preview.blocked.length) throw new LifecycleError(409, `not applied: ${current.preview.blocked.join('; ')}`);
+  }
   const change = toChange(ctx, stored);
   if (stored.branch) throw new LifecycleError(409, `already on branch ${stored.branch} (${stored.commit})`);
   if (change.status === 'stale') throw new LifecycleError(409, 'the change is stale: its base package or policy moved since it was proposed; propose it again');

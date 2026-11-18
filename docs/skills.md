@@ -98,7 +98,7 @@ pins:
 | Assigned | The policy offers it to the agent | policy + catalog |
 | Installed | The machine acknowledged that digest in the agent's view | acknowledgement |
 | Ready | Installed, and the machine reported no missing program or variable | acknowledgement |
-| Loaded | A session actually used it | only a recorded source: today, a `Skill` tool call in a session summary (name only; the revision is not recorded there), or a zen-agent trace's `skills_packages` |
+| Loaded | A session actually used it | only a recorded source: today, a `Skill` tool call in a session summary (name only; the revision is not recorded there), or a successful Zen trace `toolResult` for `read_skill`, whose details identify the package digest and revision |
 
 The app never shows "loaded" without one of those records.
 
@@ -282,3 +282,7 @@ Draft exports from the app carry the digest shown by the preview. Saving a draft
 A managed Zen session records its snapshot identity in its trace. Resume requires that original snapshot, including when management has been disabled or the current view has changed. A missing snapshot exposes no skills until the original is restored. A merge changes source and policy; machine adoption is established separately by sync acknowledgements.
 
 The acknowledgement protocol accepts at most 64 views per request. A root with more views fails acknowledgement explicitly; divide selected agents/runtimes into separate managed roots and acknowledge each. No view is silently omitted.
+
+`skills_packages` in Zen session metadata records the resolved catalog, not use. Only successful `read_skill` tool results prove a read. Managed instruction reads verify the full package again before returning bytes.
+
+Removal previews and proposals require authoritative deployment observations; unavailable operational state fails explicitly. Policy-selected pinned packages contribute dependencies. A failed sync retains unresolved assigned-package names and reasons in its report and acknowledgement and preserves the previous generation. Intentional denials and lifecycle revocations are omitted deliberately. Standalone acknowledgements preserve the last failed attempt until a successful sync.

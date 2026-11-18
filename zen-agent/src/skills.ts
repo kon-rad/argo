@@ -1,5 +1,6 @@
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
 import type { ZenConfig } from './config.js';
 import { isIgnoredName, packageDigest } from './skillpkg.js';
@@ -64,7 +65,17 @@ export function discoverSkills(dirs: string[]): Skill[] {
 }
 
 export function skillBody(skill: Skill): string {
-  return splitFrontmatter(readFileSync(skill.file, 'utf8')).body.trim();
+  if (!skill.digest) return splitFrontmatter(readFileSync(skill.file, 'utf8')).body.trim();
+  // A snapshot is read-only, but its owner can still change it. Recheck the full
+  // package and bind the bytes returned here to that verification, not a later read.
+  const checked = packageDigest(skill.dir);
+  if (!checked.ok || checked.digest !== skill.digest) throw new Error(`managed skill ${skill.name} changed or failed package verification`);
+  const instructions = checked.files.find(file => file.path === 'SKILL.md');
+  const bytes = readFileSync(join(skill.dir, 'SKILL.md'));
+  if (!instructions || createHash('sha256').update(bytes).digest('hex') !== instructions.sha256) {
+    throw new Error(`managed skill ${skill.name} changed while reading its instructions`);
+  }
+  return splitFrontmatter(bytes.toString('utf8')).body.trim();
 }
 
 /** One line per skill, descriptions clipped: this is what every turn pays for. */

@@ -19,6 +19,7 @@ CREATE TABLE skill_view_acks (
   skills        jsonb NOT NULL DEFAULT '[]',
   missing       jsonb NOT NULL DEFAULT '[]',
   dirty         jsonb NOT NULL DEFAULT '[]',
+  excluded      jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(excluded)='array' AND jsonb_array_length(excluded)<=500),
   PRIMARY KEY (host, agent, runtime)
 );
 

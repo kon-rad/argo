@@ -3,11 +3,11 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runReview, evidence, digest, type GateIO, type Job, type Snapshot, type Source, type Verdict } from '../src/review/gate.js';
-import { mergeVerdicts, partition, reviewInPasses, splitDiff, PASS_CHARS } from '../src/review/passes.js';
+import { mergeVerdicts, partition, reviewInPasses, splitDiff, PASS_CHARS, reviewTransportBytes } from '../src/review/passes.js';
 import { collectCode, type ChangedFile } from '../src/review/scope.js';
 import { notifyOwner, type HostConfig } from '../src/review/adapters.js';
 import { ownerNotice } from '../src/review/worker.js';
-import { source } from '../src/review/context.js';
+import { source, boardSources } from '../src/review/context.js';
 import { POLICY } from '../src/review/policy.js';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40);
@@ -70,14 +70,57 @@ describe('PR size never rejects a review', () => {
     expect(passes.find(p => p.files.includes('src/q1.ts'))!.files).not.toContain('src/q2.ts');
   });
 
-  it('gives a file larger than a whole pass its own pass, uncut', () => {
-    const s = large(2, 20);
-    s.sources.push(src(`github:source:${head}:src/huge.ts`, 'h'.repeat(PASS_CHARS + 5)));
+  it('transports a file larger than a whole pass in bounded identified Unicode-safe parts', () => {
+    const s = large(2, 20), ref = `github:source:${head}:src/huge.ts`;
+    const text = '\"\n😀'.repeat(130_000);
+    s.sources.push(src(ref, text));
+    const passes = partition(s), huge = passes.filter(p => p.files.includes('src/huge.ts'));
+    expect(huge.length).toBeGreaterThan(1);
+    const transported = huge.flatMap(p => p.snapshot.sources.filter(x => x.ref === ref));
+    expect(transported.map(x => x.text).join('')).toBe(text);
+    expect(transported.every(x => !x.truncated && !/[\uD800-\uDBFF]$/.test(x.text))).toBe(true);
+    expect(huge.flatMap(p => p.parts ?? []).map(p => p.index)).toEqual(transported.map((_, i) => i + 1));
+    expect(huge.flatMap(p => p.parts ?? []).every(p => p.ref === ref && p.total === transported.length)).toBe(true);
+    expect(passes.every(p => reviewTransportBytes(p.snapshot) <= PASS_CHARS)).toBe(true);
+  });
+
+  it('partitions complete large prior-finding histories once in order within every measured call bound', async () => {
+    const s = large(8, 40_000);
+    const history = Array.from({ length: 7 }, (_, round) => ({ round, pr: 7,
+      verdict: JSON.stringify({ findings: [{fix: (round % 2 ? '\"\n' : 'xx').repeat(24_900)}] }), truncated: false }));
+    const refs = boardSources('board:t_123abc:earlier_findings', history);
+    s.sources.splice(2, 0, ...refs);
+    expect(refs.length).toBeGreaterThan(1);
+    const calls: { part: Snapshot; index: number }[] = [];
+    const result = await reviewInPasses(s, evidence(s), async (part, bound, pass) => {
+      calls.push({part,index:pass.index});
+      expect(reviewTransportBytes(part) + Buffer.byteLength(JSON.stringify(pass))).toBeLessThanOrEqual(PASS_CHARS);
+      expect(part.sources.some(x => x.truncated)).toBe(false);
+      expect(pass.allHistory).toEqual(refs.map(x => x.ref));
+      expect(part.sources.map(x => x.ref)).toEqual(expect.arrayContaining(['ticket','note:t_123abc/RESULT.md']));
+      return verdict(bound);
+    });
+    expect(result.decision).toBe('accept'); expect(calls.length).toBeGreaterThan(1);
+    const delivered = calls.sort((a,b) => a.index-b.index).flatMap(p => p.part.sources.filter(x => x.ref.startsWith('board:t_123abc:earlier_findings')));
+    expect(delivered.map(x => x.ref)).toEqual(refs.map(x => x.ref));
+    expect(JSON.parse(delivered.map(x => x.text).join(''))).toEqual(history);
+    expect(new Set(calls.flatMap(p => p.part.sources.filter(x => x.ref.startsWith('github:source:')).map(x => x.ref))).size).toBe(9);
+  });
+
+  it('bounds a single huge diff without losing its text or source identity', () => {
+    const s = large(0, 0), ref = `github:diff:${head}`;
+    const diff = fileDiff('huge.ts', '+' + '\"\n'.repeat(300_000));
+    s.sources = [...s.sources.filter(x => !x.ref.startsWith('github:diff:')), src(ref,diff)];
     const passes = partition(s);
-    const huge = passes.filter(p => p.files.includes('src/huge.ts'));
-    expect(huge).toHaveLength(1);
-    expect(huge[0]!.files).toEqual(['src/huge.ts']);
-    expect(huge[0]!.snapshot.sources.find(x => x.ref.endsWith('src/huge.ts'))!.text).toHaveLength(PASS_CHARS + 5);
+    expect(passes.length).toBeGreaterThan(1);
+    expect(passes.flatMap(p => p.snapshot.sources.filter(x => x.ref === ref)).map(x => x.text).join('')).toBe(diff);
+    expect(passes.every(p => reviewTransportBytes(p.snapshot) <= PASS_CHARS && p.snapshot.sources.every(x => !x.truncated))).toBe(true);
+    expect(passes.flatMap(p => p.parts ?? []).filter(p => p.ref === ref).map(p => p.index)).toEqual(passes.map((_,i) => i+1));
+  });
+
+  it('fails explicitly when essential shared context alone cannot fit, instead of overflowing a call', () => {
+    const s = large(1, 20); s.sources.push(src('note:required.md','x'.repeat(PASS_CHARS)));
+    expect(() => partition(s)).toThrow(/Essential shared reviewer context exceeds/);
   });
 
   it('accepts only when every pass accepts, and one rejecting pass rejects the PR with its findings first by severity', async () => {

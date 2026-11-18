@@ -11,7 +11,7 @@ import { query, withTransaction } from '../../db.js';
 export interface AckRow {
   host: string; agent: string; runtime: string; status: 'current' | 'dirty' | 'failed'; error: string | null; view_digest: string | null;
   policy_digest: string | null; generated_at: Date | null; received_at: Date; skills: { name: string; id: string; digest: string }[];
-  missing: { skill: string; bins: string[]; env: string[] }[]; dirty: string[];
+  missing: { skill: string; bins: string[]; env: string[] }[]; dirty: string[]; excluded?: { name: string; reason: string }[];
 }
 
 export async function recordAck(device: { id: number; host: string }, body: AckRequest): Promise<{ accepted: number; receivedAt: string }> {
@@ -19,13 +19,13 @@ export async function recordAck(device: { id: number; host: string }, body: AckR
     const now = new Date();
     for (const v of body.views) {
       await db.query(
-        `INSERT INTO skill_view_acks (host, agent, runtime, status, error, view_digest, policy_digest, generated_at, received_at, device_id, engine, skills, missing, dirty)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        `INSERT INTO skill_view_acks (host, agent, runtime, status, error, view_digest, policy_digest, generated_at, received_at, device_id, engine, skills, missing, dirty, excluded)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
          ON CONFLICT (host, agent, runtime) DO UPDATE SET status=EXCLUDED.status, error=EXCLUDED.error, view_digest=EXCLUDED.view_digest,
            policy_digest=EXCLUDED.policy_digest, generated_at=EXCLUDED.generated_at, received_at=EXCLUDED.received_at, device_id=EXCLUDED.device_id,
-           engine=EXCLUDED.engine, skills=EXCLUDED.skills, missing=EXCLUDED.missing, dirty=EXCLUDED.dirty`,
+           engine=EXCLUDED.engine, skills=EXCLUDED.skills, missing=EXCLUDED.missing, dirty=EXCLUDED.dirty, excluded=EXCLUDED.excluded`,
         [device.host, v.agent, v.runtime, v.status, v.error, v.viewDigest, body.policyDigest, v.generatedAt, now, device.id, body.engine,
-          JSON.stringify(v.skills), JSON.stringify(v.missing), JSON.stringify(v.dirty)]);
+          JSON.stringify(v.skills), JSON.stringify(v.missing), JSON.stringify(v.dirty), JSON.stringify(v.excluded ?? [])]);
     }
     await db.query(`INSERT INTO skill_ack_log (host, received_at, views, failed, dirty, policy_digest) VALUES ($1,$2,$3,$4,$5,$6)`,
       [device.host, now, body.views.length, body.views.filter((v) => v.status === 'failed').length, body.views.filter((v) => v.status === 'dirty').length, body.policyDigest]);
@@ -36,7 +36,7 @@ export async function recordAck(device: { id: number; host: string }, body: AckR
 
 export async function readAcks(): Promise<{ acks: AckRow[]; hosts: { slug: string; display: string }[]; lastSeen: Map<string, Date> }> {
   const [acks, hosts, seen] = await Promise.all([
-    query<AckRow>(`SELECT host, agent, runtime, status, error, view_digest, policy_digest, generated_at, received_at, skills, missing, dirty FROM skill_view_acks ORDER BY host, agent, runtime`),
+    query<AckRow>(`SELECT host, agent, runtime, status, error, view_digest, policy_digest, generated_at, received_at, skills, missing, dirty, excluded FROM skill_view_acks ORDER BY host, agent, runtime`),
     query<{ slug: string; display: string }>(`SELECT slug, display FROM usage_hosts ORDER BY slug`),
     query<{ host: string; at: Date }>(`SELECT host, max(received_at) AS at FROM skill_ack_log GROUP BY host`),
   ]);
@@ -48,7 +48,7 @@ export async function readAcks(): Promise<{ acks: AckRow[]; hosts: { slug: strin
  * (name -> digest) or null when the policy is legacy (nothing is desired, only observed).
  */
 export function machineStates(
-  data: Awaited<ReturnType<typeof readAcks>>, desired: (agent: string) => Map<string, string> | null, staleAfterHours: number, now = new Date(), expectedPolicyDigest?: string | null,
+  data: Awaited<ReturnType<typeof readAcks>>, desired: (agent: string) => Map<string, string> | null, staleAfterHours: number, now = new Date(), expectedPolicyDigest?: string | null, unresolvedDesired?: (agent: string) => { name: string; reason: string }[],
 ): HostState[] {
   const staleMs = staleAfterHours * 3600_000;
   const out: HostState[] = [];
@@ -69,12 +69,13 @@ export function machineStates(
         const state = !want ? 'unknown' as const : d && o ? (d === o ? 'match' as const : 'drift' as const) : d ? 'missing' as const : 'extra' as const;
         return { name, desired: d, observed: o, state };
       });
+      const excluded = [...new Map([...(r.excluded ?? []), ...(unresolvedDesired?.(r.agent) ?? [])].map(e => [e.name, e])).values()];
       const stale = now.getTime() - new Date(r.received_at).getTime() > staleMs;
       const policyDrift = want !== null && expectedPolicyDigest !== undefined && r.policy_digest !== expectedPolicyDigest;
       const drift = policyDrift || skills.some((s) => s.state === 'drift' || s.state === 'missing' || s.state === 'extra');
-      const status: ViewState['status'] = r.status === 'failed' ? 'failed' : r.status === 'dirty' ? 'dirty' : stale ? 'stale' : drift ? 'drift' : 'current';
+      const status: ViewState['status'] = excluded.length || r.status === 'failed' ? 'failed' : r.status === 'dirty' ? 'dirty' : stale ? 'stale' : drift ? 'drift' : 'current';
       return { agent: r.agent, runtime: r.runtime, viewDigest: r.view_digest, generatedAt: r.generated_at ? new Date(r.generated_at).toISOString() : null,
-        receivedAt: new Date(r.received_at).toISOString(), status, error: r.error ?? (policyDrift ? 'Acknowledged policy differs from the current policy; synchronize this view again.' : null), skills, missing: r.missing, dirty: r.dirty };
+        receivedAt: new Date(r.received_at).toISOString(), status, error: excluded.length ? `Unresolved assignments: ${excluded.map(e => `${e.name}: ${e.reason}`).join('; ')}` : r.error ?? (policyDrift ? 'Acknowledged policy differs from the current policy; synchronize this view again.' : null), skills, missing: r.missing, dirty: r.dirty, excluded };
     });
     const last = data.lastSeen.get(h.slug) ?? rows.map((r) => new Date(r.received_at)).sort((a, b) => b.getTime() - a.getTime())[0]!;
     const rank = ['failed', 'dirty', 'stale', 'drift', 'current'] as const;

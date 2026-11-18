@@ -272,6 +272,8 @@ export class ZenAgent {
       tools: this.tools.map((t) => t.name),
       skills: this.skills.map((s) => s.name),
       skills_mode: this.skillResolution.mode,
+      // Catalog offered to the run, not proof that any skill was read. Successful
+      // read_skill toolResult messages carry the actual package identity used.
       skills_packages: this.skillResolution.packages,
       skills_rejected: this.skillResolution.rejected,
       skills_snapshot: this.skillResolution.snapshot,

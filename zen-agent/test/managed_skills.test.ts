@@ -296,3 +296,33 @@ for (const enforce of [false,true]) for (const current of ['changed','missing','
     assert.match(resumed.skillResolution.rejected[0]!.reason,/original managed snapshot is missing/);
   }
 });
+
+for (const member of ['SKILL.md', 'scripts/run.sh']) test(`read_skill refuses an active snapshot changed at ${member}`, async () => {
+  const root=managedRoot();
+  view(root,'writer',1,[{name:'report',digest:store(root,'report','Original verified instructions.')}]);
+  const resolved=resolveSkills(cfgFor(root,legacy(),true),'writer','changed-active-snapshot');
+  const [readSkill]=skillTools({skills:resolved.skills} as unknown as ToolContext);
+  const target=join(resolved.skills[0]!.dir,member);
+  chmodSync(target,0o644);writeFileSync(target,'Changed after resolution.');
+  await assert.rejects(()=>readSkill!.execute('tampered',{name:'report'}),/managed skill report changed|verification/);
+});
+
+test('managed catalog metadata lists both skills while successful loaded-use evidence records only the one read', async () => {
+  const vault=mkdtempSync(join(tmpdir(),'zen-skill-use-'));mkdirSync(join(vault,'defs'));
+  writeFileSync(join(vault,'defs','writer.md'),'You write.');
+  const root=managedRoot();
+  const report=store(root,'report'), unused=store(root,'unused');
+  view(root,'writer',1,[{name:'report',digest:report},{name:'unused',digest:unused}]);
+  const faux=fauxProvider(), models=createModels();models.setProvider(faux.provider);
+  const cfg=loadConfig({workdir:vault,env:{},overrides:{model:'faux/faux-1',tools:['skills'],managedSkills:{root,enforce:true,snapshots:null},persona:{org:join(vault,'none.json'),definitions:join(vault,'defs'),memory:join(vault,'mem')}}});
+  const zen=new ZenAgent({config:cfg,persona:'writer',models,env:{}});
+  faux.setResponses([
+    fauxAssistantMessage([fauxToolCall('read_skill',{name:'report'})],{stopReason:'toolUse'}),
+    fauxAssistantMessage([fauxText('done')]),
+  ]);
+  const result=await zen.run('Use report only.');
+  const trace=readFileSync(result.sessionPath,'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  assert.deepEqual(trace.find(line=>line.type==='meta').skills_packages.map((skill:{name:string})=>skill.name),['report','unused']);
+  const loaded=trace.filter(line=>line.type==='message'&&line.message.role==='toolResult'&&line.message.toolName==='read_skill'&&!line.message.isError);
+  assert.deepEqual(loaded.map(line=>line.message.details),[{name:'report',dir:zen.skills[0]!.dir,id:'private:report',digest:report,revision:'a'.repeat(40)}]);
+});

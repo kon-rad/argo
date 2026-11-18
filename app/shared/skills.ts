@@ -121,9 +121,11 @@ export const HostSkillSchema = z.object({
 export const RequirementSchema = z.object({ skill: z.string(), bins: z.array(z.string()), env: z.array(z.string()) });
 export type Requirement = z.infer<typeof RequirementSchema>;
 
+export const ExclusionSchema = z.object({ name: SkillNameSchema, reason: z.string().max(1000) });
 export const ViewStateSchema = z.object({
   agent: z.string(), runtime: z.string(), viewDigest: z.string().nullable(), generatedAt: z.string().nullable(), receivedAt: z.string(),
   status: z.enum(['current', 'drift', 'dirty', 'stale', 'failed']), error: z.string().nullable(),
+  excluded: z.array(ExclusionSchema).max(500).optional(),
   skills: z.array(HostSkillSchema), missing: z.array(RequirementSchema), dirty: z.array(z.string()),
 });
 export type ViewState = z.infer<typeof ViewStateSchema>;
@@ -176,7 +178,7 @@ export type Draft = z.infer<typeof DraftSchema>;
 export const SkillDetailResponseSchema = z.object({
   name: z.string(), row: SkillRowSchema, selected: SkillCandidateSchema.nullable(), instructions: z.string(),
   files: z.array(FileEntrySchema), history: z.array(HistoryEntrySchema), agents: z.array(AssignmentCellSchema),
-  dependents: z.array(z.string()), hosts: z.array(z.object({ host: z.string(), agent: z.string(), runtime: z.string(), observed: z.string().nullable(), state: z.enum(SKILL_HOST_STATES), receivedAt: z.string() })),
+  dependents: z.array(z.string()), hosts: z.array(z.object({ host: z.string(), agent: z.string(), runtime: z.string(), observed: z.string().nullable(), state: z.enum(SKILL_HOST_STATES), viewStatus: ViewStateSchema.shape.status.optional(), receivedAt: z.string() })),
   drafts: z.array(DraftSchema), changes: z.array(ChangeSchema), mode: ModeSchema,
 });
 export type SkillDetailResponse = z.infer<typeof SkillDetailResponseSchema>;
@@ -211,6 +213,7 @@ export const ACK_LIMITS = { bytes: 256 * 1024, views: 64, skillsPerView: 500 } a
 export const AckViewSchema = z.object({
   agent: AgentNameSchema, runtime: RuntimeSchema, viewDigest: DigestSchema.nullable(), generatedAt: z.string().datetime({ offset: true }).nullable(),
   status: z.enum(['current', 'dirty', 'failed']), error: z.string().max(500).nullable(),
+  excluded: z.array(ExclusionSchema).max(500).optional(),
   skills: z.array(z.object({ name: SkillNameSchema, id: SkillIdSchema, digest: DigestSchema })).max(ACK_LIMITS.skillsPerView),
   missing: z.array(z.object({ skill: SkillNameSchema, bins: z.array(z.string().max(64)).max(20), env: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]{0,63}$/)).max(20) })).max(ACK_LIMITS.skillsPerView),
   dirty: z.array(SkillNameSchema).max(ACK_LIMITS.skillsPerView),

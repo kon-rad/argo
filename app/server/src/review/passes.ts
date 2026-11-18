@@ -4,12 +4,14 @@ import { POLICY } from './policy.js';
 /** One reviewer call carries at most this much source text, measured as it is sent (JSON-escaped bytes), so a pass
  *  stays inside the reviewer transport's input bound. Size never rejects a PR: a larger one is reviewed in several passes. */
 export const PASS_CHARS = POLICY.combinedChars;
-const MIN_CODE_CHARS = 100_000, PARALLEL = 3;
+const PARALLEL = 3, PROMPT_RESERVE_BYTES = 12_000;
 const isDiff = (s: Source) => s.ref.startsWith('github:diff:');
 const isCode = (s: Source) => s.ref.startsWith('github:source:');
 /** `github:source:<40-hex revision>:<path>` */
 const codePath = (ref: string) => ref.slice('github:source:'.length + 41);
-const sent = (text: string) => Buffer.byteLength(JSON.stringify(text));
+const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+const isHistory = (s: Source) => /^board:[^:]+:earlier_findings(?::part-\d+-of-\d+)?$/.test(s.ref);
+export const reviewTransportBytes = (s: Snapshot): number => bytes(s);
 
 /** The aggregate diff as one chunk per file, in Git's order. Joining the chunks returns the input. */
 export function splitDiff(diff: string): { path: string; text: string }[] {
@@ -23,32 +25,71 @@ export function splitDiff(diff: string): { path: string; text: string }[] {
   });
 }
 
-type Unit = { path: string; chars: number; diff: string[]; code: Source[] };
+export type TransportPart = { ref: string; index: number; total: number; start: number; end: number };
+type Unit = { path: string | null; sources: Source[]; parts?: TransportPart[] };
 /**
- * Split one snapshot into reviewer passes. Ticket, notes and builder evidence go into every pass; each file's diff
- * travels with its source, and files are packed in path order so neighbours are read together. A snapshot that fits
- * one call is returned unchanged.
+ * Ticket, notes and builder evidence stay shared. Ordered prior-finding sources are reviewed once across
+ * passes, rather than repeated in every call. File diffs travel with their source when they fit; oversized
+ * units are transported in explicitly identified, Unicode-safe parts, never omitted or marked truncated.
  */
-export function partition(s: Snapshot, budget = PASS_CHARS): { snapshot: Snapshot; files: string[] }[] {
-  const size = (list: Source[]) => list.reduce((n, x) => n + sent(x.text), 0);
-  if (size(s.sources) <= budget) return [{ snapshot: s, files: [] }];
-  const context = s.sources.filter(x => !isDiff(x) && !isCode(x));
-  const room = Math.max(MIN_CODE_CHARS, budget - size(context));
+export function partition(s: Snapshot, budget = PASS_CHARS): { snapshot: Snapshot; files: string[]; parts?: TransportPart[] }[] {
+  const allPaths = new Set<string>();
   const units = new Map<string, Unit>();
-  const unit = (path: string) => { if (!units.has(path)) units.set(path, { path, chars: 0, diff: [], code: [] }); return units.get(path)!; };
-  for (const d of s.sources.filter(isDiff)) for (const chunk of splitDiff(d.text)) { const u = unit(chunk.path); u.diff.push(chunk.text); u.chars += sent(chunk.text); }
-  for (const c of s.sources.filter(isCode)) { const u = unit(codePath(c.ref)); u.code.push(c); u.chars += sent(c.text); }
-  const groups: Unit[][] = [];
-  let used = 0;
-  for (const u of [...units.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)) {
-    // A file larger than a pass still gets its own pass, whole: it is never cut or dropped.
-    if (!groups.length || used + u.chars > room) { groups.push([]); used = 0; }
-    groups.at(-1)!.push(u); used += u.chars;
+  const unit = (path: string) => {
+    allPaths.add(path);
+    if (!units.has(path)) units.set(path, { path, sources: [] });
+    return units.get(path)!;
+  };
+  for (const d of s.sources.filter(isDiff)) for (const chunk of splitDiff(d.text)) unit(chunk.path).sources.push({ ...d, text: chunk.text });
+  for (const c of s.sources.filter(isCode)) unit(codePath(c.ref)).sources.push(c);
+  // Reserve room for the fixed adapter instructions, binding and both file lists in its prompt.
+  const historyRefs = s.sources.filter(isHistory).map(x => x.ref);
+  const overhead = PROMPT_RESERVE_BYTES + 2 * bytes([...allPaths]) + 2 * bytes(historyRefs);
+  if (!Number.isSafeInteger(budget) || budget <= overhead) throw new Error('Reviewer transport budget cannot fit its identity and file-list metadata');
+  const payloadBudget = budget - overhead;
+  if (reviewTransportBytes(s) <= payloadBudget) return [{ snapshot: s, files: [] }];
+  const common = s.sources.filter(x => !isDiff(x) && !isCode(x) && !isHistory(x));
+  const snapshot = (items: Unit[]): Snapshot => ({ ...s, sources: [...common, ...items.flatMap(u => u.sources)] });
+  const fits = (items: Unit[]) => reviewTransportBytes(snapshot(items)) <= payloadBudget;
+  if (!fits([])) throw new Error('Essential shared reviewer context exceeds the transport budget; reduce registered shared context without dropping required evidence');
+  const ordered: Unit[] = [
+    ...s.sources.filter(isHistory).map(source => ({ path: null, sources: [source] })),
+    ...[...units.values()].sort((a, b) => a.path! < b.path! ? -1 : a.path! > b.path! ? 1 : 0),
+  ];
+  const pieces: Unit[] = [];
+  for (const u of ordered) {
+    if (fits([u])) { pieces.push(u); continue; }
+    for (const source of u.sources) {
+      const whole = { path: u.path, sources: [source] };
+      if (fits([whole])) { pieces.push(whole); continue; }
+      const fragments: { text: string; start: number; end: number }[] = [];
+      for (let start = 0; start < source.text.length;) {
+        let low = start, high = source.text.length;
+        while (low < high) {
+          const end = Math.ceil((low + high) / 2);
+          if (fits([{ path: u.path, sources: [{ ...source, text: source.text.slice(start, end) }] }])) low = end;
+          else high = end - 1;
+        }
+        let end = low;
+        const last = source.text.charCodeAt(end - 1);
+        if (end < source.text.length && last >= 0xd800 && last <= 0xdbff) end--;
+        if (end <= start) throw new Error(`Reviewer transport cannot fit source identity and a complete character: ${source.ref}`);
+        fragments.push({ text: source.text.slice(start, end), start, end }); start = end;
+      }
+      if (!fragments.length) throw new Error(`Reviewer transport cannot fit source identity: ${source.ref}`);
+      for (const [i, fragment] of fragments.entries()) pieces.push({ path: u.path, sources: [{ ...source, text: fragment.text }],
+        parts: [{ ref: source.ref, index: i + 1, total: fragments.length, start: fragment.start, end: fragment.end }] });
+    }
   }
-  const template = s.sources.find(isDiff);
+  const groups: Unit[][] = [];
+  for (const piece of pieces) {
+    if (!groups.length || !fits([...groups.at(-1)!, piece])) groups.push([]);
+    groups.at(-1)!.push(piece);
+  }
+  if (!groups.length) throw new Error('Reviewer transport has no reviewable units');
   return groups.map(group => {
-    const text = group.flatMap(u => u.diff).join('');
-    return { files: group.map(u => u.path), snapshot: { ...s, sources: [...context, ...(template && text ? [{ ...template, text }] : []), ...group.flatMap(u => u.code)] } };
+    const parts = group.flatMap(u => u.parts ?? []);
+    return { snapshot: snapshot(group), files: [...new Set(group.flatMap(u => u.path === null ? [] : [u.path]))], ...(parts.length ? { parts } : {}) };
   });
 }
 
@@ -77,15 +118,16 @@ export function mergeVerdicts(verdicts: Verdict[]): Verdict {
       scope: merged('scope'), placeholders: merged('placeholders'), tests: { ...merged('tests'), status: 'checked' } } });
 }
 
-export type Pass = { index: number; total: number; files: string[]; allFiles: string[] };
+export type Pass = { index: number; total: number; files: string[]; allFiles: string[]; allHistory?: string[]; parts?: TransportPart[] };
 export type ReviewPass = (snapshot: Snapshot, evidence: string, pass: Pass) => Promise<unknown>;
 /** Review a snapshot of any size. Passes run a few at a time; one failed pass fails the review, so nothing is accepted half-read. */
 export async function reviewInPasses(s: Snapshot, evidence: string, review: ReviewPass, budget = PASS_CHARS): Promise<Verdict> {
   const passes = partition(s, budget), verdicts: Verdict[] = new Array(passes.length);
-  const allFiles = passes.flatMap(p => p.files);
+  const allFiles = [...new Set(passes.flatMap(p => p.files))];
+  const allHistory = s.sources.filter(isHistory).map(x => x.ref);
   let next = 0;
   const worker = async () => {
-    for (let i = next++; i < passes.length; i = next++) verdicts[i] = Verdict.parse(await review(passes[i]!.snapshot, evidence, { index: i + 1, total: passes.length, files: passes[i]!.files, allFiles }));
+    for (let i = next++; i < passes.length; i = next++) verdicts[i] = Verdict.parse(await review(passes[i]!.snapshot, evidence, { index: i + 1, total: passes.length, files: passes[i]!.files, allFiles, ...(allHistory.length ? { allHistory } : {}), ...(passes[i]!.parts ? { parts: passes[i]!.parts } : {}) }));
   };
   await Promise.all(Array.from({ length: Math.min(PARALLEL, passes.length) }, worker));
   return mergeVerdicts(verdicts);

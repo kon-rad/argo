@@ -8,7 +8,7 @@ import { packBundle, planFromBundle, planViews, ReconcileError, syncViews, verif
 import { SkillsService } from '../src/addons/skills/service.js';
 import { MANAGED_POLICY, SETTINGS, sh, skillMd, skillsFixture, write } from './helpers/skills.js';
 
-const svc = (vault: string, engine: string | null) => new SkillsService(vault, SETTINGS, { engineSkills: engine, db: false });
+const svc = (vault: string, engine: string | null) => new SkillsService(vault, SETTINGS, { engineSkills: engine, db: false, observations: async () => ({ acks: [], hosts: [], lastSeen: new Map() }) });
 const policy = (vault: string, text: string) => write(join(vault, '.agents', 'skills-policy.yaml'), text);
 
 describe('skills catalog', () => {
@@ -261,8 +261,10 @@ describe('skills reconciliation', () => {
     const byAgent = Object.fromEntries(report.views.map((v) => [v.agent, v]));
     expect(byAgent['alpha']!.skills.map((x) => x.name)).toEqual(['clip', 'report']);
     expect(byAgent['beta']!.skills.map((x) => x.name)).toEqual(['ingest', 'report']);
-    expect(byAgent['gamma']!.skills.map((x) => x.name)).toEqual(['ingest', 'report']);
-    expect(Object.values(byAgent).every((v) => v.status === 'current')).toBe(true);
+    expect(byAgent['gamma']!.skills).toEqual([]);
+    expect(byAgent['gamma']!.status).toBe('failed');
+    expect(byAgent['gamma']!.excluded).toEqual([expect.objectContaining({name:'broken',reason:expect.stringContaining('invalid')})]);
+    expect([byAgent['alpha'], byAgent['beta']].every(v=>v!.status==='current')).toBe(true);
     // Missing requirements are reported by name; values are never read.
     expect(byAgent['alpha']!.missing).toEqual([{ skill: 'clip', bins: ['definitely-not-a-real-program-xyz'], env: ['FIXTURE_CLIP_KEY'] }]);
     const link = join(root, 'views', 'alpha', 'zen-agent');

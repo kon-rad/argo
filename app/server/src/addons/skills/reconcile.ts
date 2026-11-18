@@ -57,7 +57,11 @@ export function planViews(catalog: Catalog, policy: LoadedPolicy, roster: Roster
     const skills: PlannedSkill[] = [];
     const excluded: ViewPlan['excluded'] = [];
     for (const c of [...cells.values()].sort((a, b) => (a.skill < b.skill ? -1 : 1))) {
-      if (c.state !== 'assigned') { if (c.state === 'unavailable') excluded.push({ name: c.skill, reason: c.reasons.filter((r) => r.kind === 'deny').map((r) => r.detail).join('; ') }); continue; }
+      if (c.state !== 'assigned') {
+        // Explicit denials and lifecycle revocations are intentional omissions. Broken assigned packages are not.
+        if (c.state === 'unavailable' && c.reasons.some(r => r.level === 'package' || r.level === 'policy')) excluded.push({ name: c.skill, reason: c.reasons.filter(r => r.kind === 'deny').map(r => r.detail).join('; ').slice(0, 1000) });
+        continue;
+      }
       const cand = selectedCandidate(policy.policy, catalog, c.skill).candidate!;
       skills.push({ name: c.skill, id: cand.id, digest: cand.digest!, revision: cand.revision, dirty: cand.dirty === true, description: cand.description, requires: cand.metadata.requires });
       if (!packages.has(cand.digest!)) packages.set(cand.digest!, { files: cand.packageFiles.map((f) => ({ path: f.path, exec: f.exec, read: () => readFileSync(f.abs) })) });
@@ -268,10 +272,11 @@ export function syncViews(root: string, plan: Plan, opts: { repair?: boolean; ho
   mkdirSync(join(root, 'store'), { recursive: true });
   const views: AckView[] = [];
   for (const v of plan.views) {
-    const base = { agent: v.agent, runtime: v.runtime } as const;
+    const base = { agent: v.agent, runtime: v.runtime, excluded: v.excluded ?? [] } as const;
     const current = verifyView(root, v.agent, v.runtime);
     const missing = checkRequirements(v.skills, opts.env);
     try {
+      if (v.excluded?.length) throw new ReconcileError(`Unresolved assignments: ${v.excluded.map(e => `${e.name}: ${e.reason}`).join('; ')}`);
       if (current.unmanaged) throw new ReconcileError(`views/${v.agent}/${v.runtime} is not a manager-made link; refusing to replace it`);
       if (current.dirty.length && !opts.repair) {
         views.push({ ...base, viewDigest: current.manifest?.viewDigest ?? null, generatedAt: current.manifest?.generatedAt ?? null, status: 'dirty',
@@ -383,11 +388,13 @@ export function inspectRoot(root: string, env: NodeJS.ProcessEnv = process.env):
       }
       const missing = [...checkRequirements(checked, env), ...(last?.missing ?? []).filter((r) => unknown.has(r.skill))];
       const oldPolicy = previous !== null && previous.policyDigest !== v.manifest.policyDigest;
-      out.push({ agent, runtime, viewDigest: v.manifest.viewDigest, generatedAt: v.manifest.generatedAt, status: v.dirty.length ? 'dirty' : oldPolicy ? 'failed' : 'current',
-        error: v.dirty.length ? `modified on this machine: ${v.dirty.join(', ')}` : oldPolicy ? 'Active view uses an older policy than the last requested sync; sync it again.' : null,
-        skills: v.manifest.skills.map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: v.dirty });
+      const failed = last?.status === 'failed';
+      out.push({ agent, runtime, viewDigest: v.manifest.viewDigest, generatedAt: v.manifest.generatedAt, status: v.dirty.length ? 'dirty' : failed || oldPolicy ? 'failed' : 'current',
+        error: v.dirty.length ? `modified on this machine: ${v.dirty.join(', ')}` : failed ? last.error ?? 'The last synchronization failed; sync again.' : oldPolicy ? 'Active view uses an older policy than the last requested sync; sync it again.' : null,
+        skills: v.manifest.skills.map((s) => ({ name: s.name, id: s.id, digest: s.digest })), missing, dirty: v.dirty, excluded: last?.excluded ?? [] });
     }
   }
+  for (const last of previous?.views ?? []) if (last.status === 'failed' && !out.some(v => v.agent === last.agent && v.runtime === last.runtime)) out.push(last);
   return out;
 }
 

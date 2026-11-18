@@ -130,7 +130,6 @@ export function splitFrontmatter(text: string): Frontmatter {
   }
 }
 
-const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()) : []);
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : typeof v === 'number' ? String(v) : null);
 
 export interface SkillMeta {
@@ -161,13 +160,25 @@ export function readMeta(skillMd: string, folder: string): SkillMeta {
   const description = str(m['description']) ?? '';
   if (!description) errors.push('frontmatter has no description');
   else if (description.length > 1024) warnings.push('description is longer than 1024 characters');
+  if (m['metadata'] !== undefined && (!m['metadata'] || typeof m['metadata'] !== 'object' || Array.isArray(m['metadata']))) errors.push('metadata must be a mapping');
   const md = m['metadata'] && typeof m['metadata'] === 'object' && !Array.isArray(m['metadata']) ? (m['metadata'] as Record<string, unknown>) : {};
-  const req = md['requires'] && typeof md['requires'] === 'object' ? (md['requires'] as Record<string, unknown>) : {};
-  const env = strList(req['env']);
+  if (md['requires'] !== undefined && (!md['requires'] || typeof md['requires'] !== 'object' || Array.isArray(md['requires']))) errors.push('metadata.requires must be a mapping');
+  const req = md['requires'] && typeof md['requires'] === 'object' && !Array.isArray(md['requires']) ? (md['requires'] as Record<string, unknown>) : {};
+  const list = (value: unknown, label: string): string[] => {
+    if (value === undefined) return [];
+    if (!Array.isArray(value)) { errors.push(`${label} must be an array of non-empty strings`); return []; }
+    const result: string[] = [];
+    for (const [i, item] of value.entries()) {
+      if (typeof item !== 'string' || !item.trim()) errors.push(`${label}[${i}] must be a non-empty string`);
+      else result.push(item.trim());
+    }
+    return result;
+  };
+  const env = list(req['env'], 'metadata.requires.env');
   for (const e of env) if (!/^[A-Z_][A-Z0-9_]{0,63}$/.test(e)) errors.push(`metadata.requires.env: "${e}" is not an environment variable name`);
-  const bins = strList(req['bins']);
-  for (const b of bins) if (!/^[A-Za-z0-9._+-]{1,64}$/.test(b)) errors.push(`metadata.requires.bins: "${b}" is not a program name`);
-  const depends = strList(md['depends']);
+  const bins = list(req['bins'], 'metadata.requires.bins');
+  for (const bin of bins) if (!/^[A-Za-z0-9._+-]{1,64}$/.test(bin)) errors.push(`metadata.requires.bins: "${bin}" is not a program name`);
+  const depends = list(md['depends'], 'metadata.depends');
   for (const d of depends) if (!NAME_RE.test(d)) errors.push(`metadata.depends: "${d}" is not a skill name`);
   return {
     name, description, version: str(md['version'] ?? m['version']), owner: str(md['owner']), license: str(m['license']),

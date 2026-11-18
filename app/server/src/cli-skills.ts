@@ -6,10 +6,10 @@ import { pool } from './db.js';
 import { settings } from './settings.js';
 import { readBuildInfo } from './version.js';
 
-// `secondbrain skills ...` (docs/skills.md). Only `machines` and the detail views touch the database;
-// on a client machine without one, everything else still works from the vault checkout.
+// Lifecycle operations read authoritative deployment observations before removal. Offline
+// package inspection, draft editing and bundle reconciliation do not require a database.
 const argv = process.argv.slice(2);
-const usesDb = ['machines'].includes(argv[0] ?? '');
+const usesDb = ['machines', 'show', 'matrix', 'explain', 'preview', 'propose', 'apply', 'changes'].includes(argv[0] ?? '');
 const service = new SkillsService(config.vaultRoot, settings(config.vaultRoot).skills, { db: usesDb });
 let code = 1;
 try {

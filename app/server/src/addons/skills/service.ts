@@ -12,7 +12,7 @@ import { git, gitTop, history, lastRevision, toPosix } from './git.js';
 import * as life from './lifecycle.js';
 import { loadedEvidence, machineStates, readAcks } from './machines.js';
 import { isText, LIMITS, packageFileAllowed, splitFrontmatter } from './package.js';
-import { dependentsOf, lifecycleOf, loadPolicyFile, policyWarnings, resolveAgent, selectedCandidate, supportFor, type LoadedPolicy } from './policy.js';
+import { dependentsOf, lifecycleOf, loadPolicyFile, policyWarnings, resolveAgent, selectedCandidate, supportFor, unresolvedAssignments, type LoadedPolicy } from './policy.js';
 import { loadRoster, type Roster } from './roster.js';
 
 /**
@@ -38,6 +38,7 @@ export function expandPath(vaultRoot: string, p: string): string {
 }
 
 interface State { catalog: Catalog; policy: LoadedPolicy; roster: Roster; at: number }
+type AckData = Awaited<ReturnType<typeof readAcks>>;
 
 const TTL_MS = 30_000;
 const MAX_FILE_BYTES = 512 * 1024;
@@ -47,7 +48,7 @@ export class SkillsService {
   private loading: Promise<State> | null = null;
   readonly policyPath: string;
 
-  constructor(readonly vaultRoot: string, readonly settings: SkillsSettings, private readonly opts: { engineSkills?: string | null; git?: boolean; db?: boolean } = {}) {
+  constructor(readonly vaultRoot: string, readonly settings: SkillsSettings, private readonly opts: { engineSkills?: string | null; git?: boolean; db?: boolean; observations?: typeof readAcks } = {}) {
     this.policyPath = expandPath(vaultRoot, settings.policyFile);
   }
 
@@ -194,15 +195,15 @@ export class SkillsService {
       return c;
     });
     const hosts: SkillDetailResponse['hosts'] = [];
-    if (this.opts.db !== false) {
-      const data = await readAcks().catch(() => null);
-      const desired = s.policy.mode === 'managed' ? selectedCandidate(s.policy.policy, s.catalog, name).candidate?.digest ?? null : null;
-      for (const a of data?.acks ?? []) {
-        const o = a.skills.find((x) => x.name === name);
-        const assigned = cells.get(a.agent)?.get(name)?.state === 'assigned';
-        if (!o && !assigned) continue;
-        const state = s.policy.mode !== 'managed' ? 'unknown' as const : o && assigned ? (o.digest === desired ? 'match' as const : 'drift' as const) : o ? 'extra' as const : 'missing' as const;
-        hosts.push({ host: a.host, agent: a.agent, runtime: a.runtime, observed: o?.digest ?? null, state, receivedAt: new Date(a.received_at).toISOString() });
+    if (this.opts.db !== false || this.opts.observations) {
+      const data = await this.observations();
+      for (const host of data ? this.evaluateMachines(s, data) : []) for (const view of host.views) {
+        const observed = view.skills.find((x) => x.name === name);
+        if (!observed) continue;
+        // A matching package is not a current deployment when the view is failed, stale, dirty or on an older policy.
+        const state = view.status === 'current' ? observed.state : view.status === 'drift' ? 'drift' as const : 'unknown' as const;
+        hosts.push({ host: host.host, agent: view.agent, runtime: view.runtime, observed: observed.observed, state,
+          viewStatus: view.status, receivedAt: view.receivedAt });
       }
     }
     const ctx = await this.lifecycleContext();
@@ -210,7 +211,7 @@ export class SkillsService {
     const changes = life.listChanges(ctx).filter((c) => c.skill === name);
     return {
       name, row: this.row(s, name, list, cells), selected: sel ? publicCandidate(sel) : null, instructions, files, history: hist, agents,
-      dependents: dependentsOf(s.catalog, name), hosts, drafts, changes, mode: s.policy.mode,
+      dependents: dependentsOf(s.catalog, name, s.policy.policy), hosts, drafts, changes, mode: s.policy.mode,
     };
   }
 
@@ -230,7 +231,10 @@ export class SkillsService {
       if (!st.isFile() || st.size > LIMITS.fileBytes) { this.invalidate(); return null; }
       buf = readFileSync(real);
     } catch { this.invalidate(); return null; }
-    if (createHash('sha256').update(buf).digest('hex') !== f.sha256) this.invalidate(); // changed on disk since the scan; serve what is there now
+    if (createHash('sha256').update(buf).digest('hex') !== f.sha256) {
+      this.invalidate();
+      throw new life.LifecycleError(409, 'The package changed since the catalog scan; rescan it before inspecting its files.');
+    }
     const text = isText(buf);
     return { id: c.id, path, size: buf.length, kind: text ? 'text' : 'binary', content: text ? buf.subarray(0, MAX_FILE_BYTES).toString('utf8') : null, truncated: text && buf.length > MAX_FILE_BYTES };
   }
@@ -242,8 +246,13 @@ export class SkillsService {
       'Hosts that never acknowledged are unknown, and an offline host keeps its last deployment: revocation reaches it only when it syncs again.',
     ];
     if (s.policy.mode === 'legacy') notes.unshift('The policy is in legacy mode, so nothing is desired: observed digests are shown without a target.');
-    if (this.opts.db === false) return { staleAfterHours: this.settings.staleAfterHours, hosts: [], mode: s.policy.mode, notes: [...notes, 'No database on this machine.'] };
-    const data = await readAcks();
+    if (this.opts.db === false && !this.opts.observations) return { staleAfterHours: this.settings.staleAfterHours, hosts: [], mode: s.policy.mode, notes: [...notes, 'No database on this machine.'] };
+    const data = (await this.observations(true))!;
+    return { staleAfterHours: this.settings.staleAfterHours, hosts: this.evaluateMachines(s, data), mode: s.policy.mode, notes };
+  }
+
+  /** Both machine and detail views use exactly the same policy/status/age evaluation. */
+  private evaluateMachines(s: State, data: AckData): MachinesResponse['hosts'] {
     const desiredCache = new Map<string, Map<string, string> | null>();
     const desired = (agent: string) => {
       if (s.policy.mode !== 'managed' || !s.policy.valid) return null;
@@ -255,22 +264,38 @@ export class SkillsService {
       }
       return desiredCache.get(agent)!;
     };
-    return { staleAfterHours: this.settings.staleAfterHours, hosts: machineStates(data, desired, this.settings.staleAfterHours, new Date(), s.policy.digest), mode: s.policy.mode, notes };
+    const unresolved = (agent: string) => {
+      if (s.policy.mode !== 'managed') return [];
+      const a = s.roster.agents.find(x => x.name === agent);
+      return a ? unresolvedAssignments(resolveAgent(a, s.policy, s.catalog).values()) : [];
+    };
+    return machineStates(data, desired, this.settings.staleAfterHours, new Date(), s.policy.digest, unresolved);
+  }
+
+  /** Removal must never turn an unavailable operational read into an empty deployment list. */
+  private async observations(required = false): Promise<AckData | null> {
+    if (this.opts.db === false && !this.opts.observations) {
+      if (required) throw new life.LifecycleError(503, 'Machine acknowledgement state is unavailable; removal requires a database connection.');
+      return null;
+    }
+    try { return await (this.opts.observations ?? readAcks)(); }
+    catch {
+      if (required) throw new life.LifecycleError(503, 'Machine acknowledgement state could not be read; removal is refused until the database is available.');
+      return null;
+    }
   }
 
   // ---- lifecycle ----
 
-  async lifecycleContext(refresh = false): Promise<life.LifecycleContext> {
+  async lifecycleContext(refresh = false, requireObservations = false): Promise<life.LifecycleContext> {
     const s = await this.current(refresh);
     let observed: life.LifecycleContext['observed'] = [];
-    if (this.opts.db !== false) {
-      const data = await readAcks().catch(() => null);
-      observed = (data?.acks ?? []).map((a) => ({ host: a.host, agent: a.agent, runtime: a.runtime, skills: a.skills.map((x) => x.name) }));
-    }
+    const data = await this.observations(requireObservations);
+    observed = (data?.acks ?? []).map((a) => ({ host: a.host, agent: a.agent, runtime: a.runtime, skills: a.skills.map((x) => x.name) }));
     return {
       vaultRoot: this.vaultRoot, policyFile: this.policyPath, policyRel: toPosix(relative(this.vaultRoot, this.policyPath)),
       draftsDir: expandPath(this.vaultRoot, this.settings.draftsDir), changesDir: expandPath(this.vaultRoot, this.settings.changesDir),
-      privateRoot: expandPath(this.vaultRoot, this.settings.privateRoot), catalog: s.catalog, policy: s.policy, roster: s.roster, observed,
+      privateRoot: expandPath(this.vaultRoot, this.settings.privateRoot), catalog: s.catalog, policy: s.policy, roster: s.roster, observed, observationsAvailable: data !== null,
     };
   }
 
@@ -281,8 +306,12 @@ export class SkillsService {
   async readDraftFile(name: string, path: string) { return life.readDraftFile(await this.lifecycleContext(), name, path); }
   async deleteDraftFile(name: string, path: string): Promise<Draft> { return life.deleteDraftFile(await this.lifecycleContext(), name, path); }
   async deleteDraft(name: string): Promise<void> { life.deleteDraft(await this.lifecycleContext(), name); }
-  async preview(req: ChangeRequest): Promise<ChangePreview> { return (await life.previewChange(await this.lifecycleContext(true), req)).preview; }
-  async propose(req: ChangeRequest): Promise<Change> { return life.proposeChange(await this.lifecycleContext(true), req); }
+  async preview(req: ChangeRequest): Promise<ChangePreview> { return (await life.previewChange(await this.lifecycleContext(true, req.kind === 'remove'), req)).preview; }
+  async propose(req: ChangeRequest): Promise<Change> { return life.proposeChange(await this.lifecycleContext(true, req.kind === 'remove'), req); }
   async changes(): Promise<Change[]> { return life.listChanges(await this.lifecycleContext()); }
-  async apply(id: string) { const r = await life.applyChange(await this.lifecycleContext(true), id); this.invalidate(); return r; }
+  async apply(id: string) {
+    let ctx = await this.lifecycleContext(true);
+    if (life.listChanges(ctx).find(c => c.id === id)?.kind === 'remove') ctx = await this.lifecycleContext(false, true);
+    const r = await life.applyChange(ctx, id); this.invalidate(); return r;
+  }
 }

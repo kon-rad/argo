@@ -168,15 +168,16 @@ Behind or conflicting open PRs are readiness rejections, not endless tool-error 
 
 The gate does not reject a PR for its size. No count of changed files, gathered sources, source characters or diff characters produces a finding, and the reviewer is never handed cut text: the worker keeps the whole aggregate diff and every changed source with its immediate imports in the snapshot.
 
-One reviewer call holds at most 500,000 characters. When a snapshot is larger, `review/passes.ts` reviews it in several passes:
+One reviewer call holds at most 500,000 UTF-8 bytes of serialized input. `review/passes.ts` measures complete serialized snapshots and reserves room for adapter instructions, identity and file-list metadata; the adapter checks the final prompt before invoking the reviewer. When a snapshot is larger, it is reviewed in several bounded passes:
 
 | Part of the snapshot | Where it goes |
 |---|---|
 | Ticket, comments, conversations, notes, builder evidence, PR threads | Every pass |
-| A file's diff and its source | The same pass, together; files are packed in path order |
-| A file larger than a whole pass | Its own pass, uncut |
+| Prior findings | Ordered transport parts, reviewed exactly once across passes; concatenation in pass order reconstructs the complete collection |
+| A file's diff and its source | Together when they fit; files are packed in path order |
+| A file or diff larger than a whole pass | Unicode-safe parts with original source refs/revisions and explicit part numbers and character offsets; concatenation restores every character |
 
-Each pass is told which files it holds and the full list of files in the PR, and returns a verdict bound to the same reviewer, repository, PR, head, base and evidence hash as the whole snapshot. The verdicts are merged into one: any rejecting pass rejects the PR, findings are kept most severe first (30 at most, with a note when more exist), and each category's rationale is labelled by pass. A pass that fails, or answers for another revision, fails the review as a whole, so nothing is accepted half-read. A snapshot that fits one call is reviewed in one call, as before.
+Each pass is told which files and transport parts it holds, the full list of files in the PR and the ordered inventory of prior-finding source refs, and returns a verdict bound to the same reviewer, repository, PR, head, base and evidence hash as the whole snapshot. The verdicts are merged into one: any rejecting pass rejects the PR, findings are kept most severe first (30 at most, with a note when more exist), and each category's rationale is labelled by pass. A pass that fails, or answers for another revision, fails the review as a whole, so nothing is accepted half-read. A snapshot that fits one call is reviewed in one call, as before. Required shared context must itself fit the transport bound: if it does not, the worker stops with an explicit capacity error instead of truncating required evidence, dropping the review, or overflowing a call.
 
 Up to three passes run at a time. A very large PR costs more reviewer calls and takes longer; that is the trade for not sending builders back to split work that has to land together. A single Git read is bounded at 64 MB as a memory guard, which is not a review limit.
 

@@ -69,6 +69,7 @@ export default function SkillDetail() {
               <li key={`${h.host}/${h.agent}/${h.runtime}`} className="flex flex-wrap items-center gap-2">
                 <span className="font-medium">{h.host}</span> {h.agent} on {h.runtime}
                 <Chip tone={h.state === 'match' ? 'ok' : h.state === 'unknown' ? 'dim' : 'warn'}>{h.state}</Chip>
+                {h.viewStatus && h.viewStatus !== 'current' && <Chip tone="warn">view {h.viewStatus}</Chip>}
                 <Digest value={h.observed} /> <span className="text-[var(--ink-faint)]">acknowledged {zoned(h.receivedAt)}</span>
               </li>
             ))}
@@ -116,7 +117,7 @@ function Candidate({ c, selected, onSelect }: { c: SkillCandidate; selected: boo
     <li className={`rounded border p-2 text-xs ${selected ? 'border-[var(--accent)]' : 'border-[var(--rule)]'}`}>
       <div className="flex flex-wrap items-center gap-2">
         <code className="text-sm">{c.id}</code>
-        {c.effective ? <Chip tone="ok">in use</Chip> : c.shadowedBy ? <Chip title={`Replaced by ${c.shadowedBy}`}>shadowed by {c.shadowedBy}</Chip> : null}
+        {c.effective ? <Chip tone="ok">effective source</Chip> : c.shadowedBy ? <Chip title={`Replaced by ${c.shadowedBy}`}>shadowed by {c.shadowedBy}</Chip> : null}
         {c.linkOf && <Chip title="A link to another package, so the same files">link of {c.linkOf}</Chip>}
         {!c.valid && <Chip tone="bad">invalid</Chip>}
         {!selected && <button type="button" className={button} onClick={onSelect}>View</button>}
