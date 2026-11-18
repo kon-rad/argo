@@ -1,4 +1,4 @@
-import { mkdtempSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -105,6 +105,8 @@ it('an interrupted local batch rolls back both data and cursor before recovery',
 
 it('emits per-path no-change heartbeat without inventing source measurements', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'heartbeat-'));
+  mkdirSync(join(dir, '.claude', 'projects'), { recursive: true });
+  mkdirSync(join(dir, '.hermes'));
   const ledger = new Ledger(join(dir, 'ledger.db'));
   const received: unknown[] = [];
   const fetcher = vi.fn(async (_url, opts) => { received.push(JSON.parse(opts.body)); return new Response('{}'); });
@@ -112,7 +114,7 @@ it('emits per-path no-change heartbeat without inventing source measurements', a
   try {
     await reportLedgerHealth(ledger, { ...defaultConfig(dir), server: 'https://brain.example.com', token: 'synthetic' }, 'fixture-1', new Date().toISOString(), false, () => {});
     expect(received).toHaveLength(2);
-    expect(received[0]).toMatchObject({ outcome: 'ok', backlog: null, observedAt: null, importedAt: null, attemptSeq: 1 });
+    expect(received[0]).toMatchObject({ outcome: 'ok', backlog: 0, backlogUnit: 'records', observedAt: null, importedAt: null, attemptSeq: 1 });
     expect(ledger.headSeq).toBe(0);
   } finally { vi.unstubAllGlobals(); ledger.close(); }
 });
@@ -146,4 +148,111 @@ it('HTTP deadline keeps acknowledgement cursor pending for recovery', async () =
     expect(ledger.pending(0, 1000)).toHaveLength(1);
     expect(Date.now() - start).toBeLessThan(1000);
   } finally { ledger.close(); }
+});
+
+it('measures source time and pending units without receipt/mtime freshness on replay', async () => {
+  const { measureJsonl } = await import('../src/usage/sourceHealth.js');
+  const dir = mkdtempSync(join(tmpdir(), 'source-health-'));
+  const path = join(dir, 'session.jsonl');
+  const first = JSON.stringify({ timestamp: '2020-01-01T00:00:00Z' }) + '\n';
+  const second = JSON.stringify({ timestamp: '2020-01-02T00:00:00Z' }) + '\n';
+  writeFileSync(path, first + second + 'bad\n');
+  expect(measureJsonl(path, Buffer.byteLength(first))).toMatchObject({
+    observedAt: '2020-01-02T00:00:00.000Z', importedAt: '2020-01-01T00:00:00.000Z',
+    oldestPendingAt: '2020-01-02T00:00:00.000Z', backlog: Buffer.byteLength(second + 'bad\n'), backlogUnit: 'bytes', rejected: 1,
+  });
+  const done = measureJsonl(path, Buffer.byteLength(first + second + 'bad\n'));
+  writeFileSync(path, first + second + 'bad\n');
+  expect(measureJsonl(path, Buffer.byteLength(first + second + 'bad\n'))).toEqual(done);
+  expect(done).toMatchObject({ backlog: 0, oldestPendingAt: null, importedAt: '2020-01-02T00:00:00.000Z' });
+});
+
+it('ledger measures pending and quarantined records per path without changing source sequence on replay', () => {
+  const ledger = new Ledger(join(mkdtempSync(join(tmpdir(), 'ledger-health-')), 'ledger.db'));
+  try {
+    ledger.put('message', 'one', { text: 'first' }, { path: '/synthetic/one', ts: '2020-01-01T00:00:00.000Z' });
+    ledger.setMeta('acked_seq', 1);
+    ledger.put('message', 'two', { text: 'second' }, { path: '/synthetic/two', ts: '2020-01-02T00:00:00.000Z' });
+    expect(ledger.health('/synthetic/one')).toMatchObject({ backlog: 0, importedAt: '2020-01-01T00:00:00.000Z' });
+    expect(ledger.health('/synthetic/two')).toMatchObject({ backlog: 1, oldestPendingAt: '2020-01-02T00:00:00.000Z', importedAt: null });
+    ledger.quarantine(ledger.pending(1, 1000)[0]!, 'invalid-item');
+    ledger.setMeta('acked_seq', 2);
+    expect(ledger.health('/synthetic/two')).toMatchObject({ backlog: 0, quarantined: 1, rejected: 1, importedAt: null });
+    const seq = ledger.headSeq;
+    expect(ledger.put('message', 'two', { text: 'second' }, { path: '/synthetic/two' })).toBe(false);
+    expect(ledger.headSeq).toBe(seq);
+  } finally { ledger.close(); }
+});
+
+it('supervision interrupts a synchronous parser and removes private snapshots after deadline', async () => {
+  const { supervise } = await import('../src/usage/supervise.js');
+  const path = join(mkdtempSync(join(tmpdir(), 'supervisor-')), 'scratch-path');
+  const start = Date.now();
+  const result = await supervise(process.execPath, ['-e', `
+    const fs=require('node:fs'),os=require('node:os'),p=require('node:path');
+    fs.writeFileSync(${JSON.stringify(path)},os.tmpdir());
+    fs.writeFileSync(p.join(os.tmpdir(),'snapshot.db'),'synthetic private data');
+    while(true) JSON.parse('123');
+  `], 200);
+  const { readFileSync } = await import('node:fs');
+  expect(result).toEqual({ code: 1, reason: 'deadline' });
+  expect(existsSync(readFileSync(path, 'utf8'))).toBe(false);
+  console.info(`fixture synchronous-worker deadline=200ms elapsed=${Date.now() - start}ms`);
+  expect(Date.now() - start).toBeLessThan(2000);
+});
+
+
+it('a killed synchronous SQLite importer rolls back its unfinished cursor and accepts a retry', async () => {
+  const { supervise } = await import('../src/usage/supervise.js');
+  const { DatabaseSync } = await import('node:sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'worker-rollback-'));
+  const path = join(dir, 'state.db');
+  const init = new DatabaseSync(path);
+  init.exec('CREATE TABLE cursor (offset INTEGER); INSERT INTO cursor VALUES (0)');
+  init.close();
+  const result = await supervise(process.execPath, ['-e', `
+    const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(${JSON.stringify(path)});
+    db.exec('BEGIN IMMEDIATE; UPDATE cursor SET offset=99');while(true) {}
+  `], 200);
+  expect(result.reason).toBe('deadline');
+  const db = new DatabaseSync(path);
+  try {
+    expect(db.prepare('SELECT offset FROM cursor').get()).toEqual({ offset: 0 });
+    db.exec('BEGIN; UPDATE cursor SET offset=99; COMMIT');
+    expect(db.prepare('SELECT offset FROM cursor').get()).toEqual({ offset: 99 });
+  } finally { db.close(); }
+});
+
+it('reports queued and uncaptured Hermes source revisions, including no-change after pruning', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { collectHermes } = await import('../src/ledger/collect.js');
+  const dir = mkdtempSync(join(tmpdir(), 'hermes-health-'));
+  const src = join(dir, 'state.db');
+  const db = new DatabaseSync(src);
+  db.exec(`CREATE TABLE sessions (id TEXT, started_at REAL, ended_at REAL, input_tokens INTEGER, output_tokens INTEGER);
+    CREATE TABLE messages (id INTEGER, session_id TEXT, role TEXT, content TEXT, timestamp REAL);
+    INSERT INTO sessions VALUES ('fixture',1577836800,1577836801,10,2);
+    INSERT INTO messages VALUES (1,'fixture','assistant','reply',1577836801);`);
+  db.close();
+  const ledger = new Ledger(join(dir, 'ledger.db'));
+  const received: Record<string, unknown>[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (_url, opts) => { received.push(JSON.parse(opts.body)); return new Response('{}'); }));
+  const cfg = { ...defaultConfig(dir), claudeProjectsDir: null, hermesHomes: [{ dir, label: 'main' }], server: 'https://brain.example.com', token: 'synthetic' };
+  try {
+    const c = await collectHermes(ledger, cfg.hermesHomes);
+    expect(c.errors).toEqual([]);
+    ledger.setMeta('acked_seq', ledger.headSeq);
+    const seq = ledger.headSeq;
+    await reportLedgerHealth(ledger, cfg, 'fixture', new Date().toISOString(), false, () => {});
+    expect(received.at(-1)).toMatchObject({ backlog: 0, observedAt: '2020-01-01T00:00:01.000Z', importedAt: '2020-01-01T00:00:01.000Z' });
+    expect(ledger.prune(1)).toBe(1);
+    await reportLedgerHealth(ledger, cfg, 'fixture', new Date().toISOString(), false, () => {});
+    expect(received.at(-1)).toMatchObject({ backlog: 0 });
+    expect(ledger.headSeq).toBe(seq);
+    const writer = new DatabaseSync(src);
+    writer.exec(`UPDATE messages SET content='new revision', timestamp=1577836802`);
+    writer.close();
+    await reportLedgerHealth(ledger, cfg, 'fixture', new Date().toISOString(), true, () => {});
+    expect(received.at(-1)).toMatchObject({ backlog: 1, oldestPendingAt: '2020-01-01T00:00:02.000Z', importedAt: '2020-01-01T00:00:01.000Z' });
+  } finally { vi.unstubAllGlobals(); ledger.close(); }
 });

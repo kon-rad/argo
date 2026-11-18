@@ -18,15 +18,37 @@ oldestPendingAt, rejected, quarantined, reason and capabilities. Dates are ISO
 strings. Missing measurements are null. Receipt and last success use server time.
 Attempt sequence must strictly increase to update latest status. Repeating the
 same attempt does not refresh it. Source timestamps cannot move backwards.
-Attempts retain at most 1000 entries per stream and 30 days when it next reports.
-Latest state stays available for offline diagnosis. Inactive streams' history is
-not globally swept yet. Quarantine has no automatic deletion.
+Attempts retain at most 1000 entries per stream. Every report also expires at most
+1000 globally expired (30-day) attempts, including inactive streams. Run
+`secondbrain usage-quarantine cleanup` independently to drain expiry in bounded
+1000-row batches when no collectors are reporting. Latest state and unaccepted
+quarantine are never expired.
 
-Collectors currently advertise heartbeat capability only. Source-event, imported
-source-event and per-path backlog measurements remain null until a producer can
-measure them correctly. This is collection liveness, not a completeness guarantee.
-Health failure delivery is best effort; a network partition shows an overdue
-receipt and local stage logs rather than a remotely delivered network failure.
+Producers advertise source-time, backlog and quarantine capabilities. `backlogUnit`
+is additive and optional on version 1 health; older reporters keep an unknown unit.
+The API returns it as `backlog_unit`. The summary displays source observed/imported
+times, pending units and rejection/quarantine counts. Measurements are scoped:
+
+- usage-push and server usage-sync count pending **source bytes**, including an
+  incomplete tail. Imported time is the latest valid event in the acknowledged
+  complete prefix. Whole-file rewrites reconcile before claiming their new prefix.
+- Ledger counts pending **records**: queued local rows plus uncaptured source
+  lines or Hermes message/counter/call revisions. Imported time comes only from
+  acknowledged local records, excluding active quarantine. Provenance metadata
+  never changes content hashes, source IDs, token totals or source sequence.
+- agents-sync counts pending **records**: Hermes message revisions, calls and
+  session counter revisions compared with destination source keys/content. It
+  reports each home/profile separately, including no-change ticks. Plugin calls
+  retain the existing two-week file window; conversation SQLite has no such cutoff.
+
+JSONL event time comes from source timestamp, ts, observedAt or at fields (and a
+Zen message's timestamp), never mtime or import receipt. Hermes uses source message
+and session timestamps. Missing timestamps stay null. A pending record with no
+source timestamp cannot supply oldestPendingAt. SQLite has no malformed JSON lines;
+plugin/source JSONL rejection counts are measured and redacted poison is retained.
+A rejected wire prevents its trailing heartbeat from claiming imported freshness.
+Delivery is best effort: a network partition leaves local stage logs and an overdue
+remote receipt. Health does not certify files outside configured collector paths.
 
 Private `secondbrain.json` can declare `usage.expectedStreams` (default `[]`):
 
@@ -47,12 +69,14 @@ The installed usage-push collector reads process environment only and needs no
 node_modules or vault env file. Normal collection has a 30 second elapsed budget
 and a 20,000,000-byte soft transfer budget, configurable through
 `USAGE_PUSH_TICK_MS` and `USAGE_PUSH_MAX_BYTES`. A complete oversized record may
-exceed the soft budget once. Reads stop at 64 MiB; larger single records or Codex
-complete prefixes stay on disk with unchanged offsets. Their chunking is a
-follow-up, not permission to truncate them. Codex preserves complete-prefix
-reconciliation of identity and cumulative counters. A common least-recently
-processed queue gives old and active files across runtimes turns. Filesystem
-walking and synchronous parsers are not preemptible by the elapsed check.
+exceed the soft budget once. Whole Codex/Zen complete prefixes preserve the
+existing wire protocol; there is no 64 MiB source cutoff. Large JSON strings use
+an iterative redaction scan. Transport writes at most 64 KiB characters at a time
+with backpressure and a hard deadline. These are whole-prefix reads in worker
+memory, not constant-memory parsing. Allocation/parser errors fail explicitly and
+keep unacknowledged cursors. A 65 MiB complete-record/prefix regression verifies
+progress, stable IDs/counters, retry, metadata-only replay and bounded upload.
+A common least-recently processed queue gives files across runtimes turns.
 
 SSH has ConnectTimeout=15, ServerAliveInterval=15, ServerAliveCountMax=3 and an
 overall subprocess deadline. `USAGE_PUSH_DEADLINE_MS` defaults to 180000 for normal
@@ -78,7 +102,26 @@ write pragmas, migrations or directory creation. It sees committed state during
 a collector transaction. Collection and acknowledgement writes stay separate from
 network operations. Claude ledger reads rotate across files and stop between files
 after 30 seconds or 20 MB. Ledger HTTP sync has a 120 second total budget, including
-split rejection retries. Hermes whole-database reads remain a follow-up boundary.
+split rejection retries. Hermes backup/parsing and the entire CLI attempt now run in a supervised child.
+The same boundary covers synchronous filesystem walks, JSON parsing, SQLite work,
+Postgres import and shutdown in usage-sync and agents-sync. Defaults: usage-sync
+180 seconds, agents-sync and ledger run/collect 600 seconds, usage-push 600 seconds.
+`--deadline-ms <1..1800000>` overrides the whole-attempt limit. It is separate from
+usage-push's existing normal/backfill transport budgets. The parent kills only its
+child process group and removes its private temporary directory, including SQLite
+snapshots, after exit. Open SQLite/Postgres transactions roll back; completed
+idempotent per-file transactions/cursors remain committed. A retry resumes them.
+
+On timeout the parent logs `stage=attempt-end reason=deadline` and runs a separate
+best-effort health-only child with a 10-second cap. It reports retry/deadline without
+importing new data, replaying quarantine or advancing source cursors. Thus maximum
+CLI wall time is the selected worker budget plus up to 10 seconds of reporting and
+OS shutdown. If that report cannot reach storage, the previous retry/in-progress
+server report or last heartbeat ages offline; local deadline logs remain evidence.
+Server attempt sequences come from Postgres, independent of source event time.
+The ledger upgrades its local schema from v1 to v2 on a writable run to add record
+provenance; read-only status never performs that migration. Run the updated bundle
+once before using its status command against a v1 database.
 
 ## Diagnose before restarting
 
@@ -114,11 +157,25 @@ node /path/to/usage-push/cli-usage-push.js
 ```
 
 Record bundle revisions, collector IDs, acknowledged cursors and the per-stream
-Usage health response. Inspect quarantine through an authorized read-only database
-session (`SELECT host,digest,reason,received_at FROM usage_import_quarantine`). Do
-not print `wire` into shared logs. Recovery after an importer fix requires explicit
-operator replay of retained wire/source data; no automatic quarantine reprocessor
-is provided yet.
+Usage health response. Quarantine operations use the supported importer:
+
+```sh
+secondbrain usage-quarantine list laptop-a
+secondbrain usage-quarantine inspect laptop-a <digest>
+secondbrain usage-quarantine replay laptop-a <digest>
+secondbrain usage-quarantine replay laptop-a <digest> /private/operator/repaired-wire.json
+secondbrain usage-quarantine cleanup
+```
+
+List/inspect print bounded metadata only, never payloads. Replay submits one retained
+wire item, or one operator-repaired wire item, through the same validation,
+transactions and idempotent source IDs as normal ingestion. An invalid JSON/source
+fragment needs an operator-repaired supported wire item; blind replay retains it.
+Only explicit acceptance removes the original quarantine record. A rejection,
+timeout, empty input or database error retains it. There is no automatic source
+payload expiry. Run these as the root operator with the normal server environment;
+do not export retained payloads into shared logs. Ledger HTTP rejection recovery
+continues to use `ledger requeue` and its retained local rows.
 
 Observe 24 hours including sleep/offline periods, then canary the next laptop and
 server streams. Proposed awake/reachable event-to-import p95 targets are 180 seconds
@@ -128,7 +185,6 @@ exceptions. These are targets, not guarantees established by unit tests. No host
 canary or production soak runs in an isolated builder. Roll back only the collector
 bundle while keeping sources, cursors, acknowledged state and redaction enabled.
 
-Dependencies before claiming the full reliability card: measured per-path source
-and import event/backlog metrics; bounded Hermes backup and server sync loops;
-large-prefix chunk protocol above 64 MiB; explicit quarantine reprocessing command;
-global inactive-attempt cleanup; and the database/API checks and live soak.
+External acceptance still requires migration/API tests on an isolated Postgres with
+vector, then the operator canaries and soak. No production process inspection,
+network probe or restart is part of the isolated build.

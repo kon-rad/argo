@@ -162,3 +162,15 @@ path. Device authentication supplies host. Attempt receipt does not update sourc
 activity. SSH v2 acknowledgements distinguish accepted positions from durable
 `usage_import_quarantine` entries; failed acknowledgements retain local source
 cursors. See [collection health](collection-health.md) for compatibility and bounds.
+
+
+### Collection supervision and source health
+
+Session collectors run synchronous scanning, Hermes snapshot/parsing and import in
+supervised child process groups. A parent deadline covers the whole attempt and
+owns temporary snapshot cleanup. Committed per-file cursors survive; in-flight
+transactions roll back on termination. A separate bounded child reports timeout
+health. Source event timestamps and explicit pending byte/record units travel to
+Postgres independently of receipt time. Inactive attempt expiry is globally bounded;
+quarantine has explicit supported-importer replay and no automatic deletion.
+See [collection health](collection-health.md) for compatibility and operator commands.

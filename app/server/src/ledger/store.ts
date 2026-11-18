@@ -17,11 +17,11 @@ import type { RecordKind, WireRow } from './types.js';
 const BROTLI = { params: { [Z.BROTLI_PARAM_QUALITY]: 5, [Z.BROTLI_PARAM_LGWIN]: 22, [Z.BROTLI_PARAM_MODE]: Z.BROTLI_MODE_TEXT } };
 const pack = (json: string): Uint8Array => brotliCompressSync(json, BROTLI);
 const unpack = (blob: Uint8Array): string => brotliDecompressSync(blob).toString('utf8');
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const SCHEMA = `
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 CREATE TABLE records (
-  kind TEXT NOT NULL, key TEXT NOT NULL, source TEXT, session_key TEXT, ts TEXT,
+  kind TEXT NOT NULL, key TEXT NOT NULL, source TEXT, session_key TEXT, ts TEXT, origin_path TEXT,
   seq INTEGER NOT NULL, sha TEXT NOT NULL, data BLOB NOT NULL, pruned INTEGER NOT NULL DEFAULT 0,
   first_seen TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   PRIMARY KEY (kind, key));
@@ -32,7 +32,7 @@ CREATE TABLE quarantine (kind TEXT NOT NULL, key TEXT NOT NULL, seq INTEGER NOT 
   attempts INTEGER NOT NULL DEFAULT 1, requeued_at TEXT, PRIMARY KEY (kind, key));
 `;
 
-export interface PutOpts { source?: string | null; sessionKey?: string | null; ts?: string | null }
+export interface PutOpts { path?: string | null; source?: string | null; sessionKey?: string | null; ts?: string | null }
 export interface SyncState {
   ackedSeq: number; lastOkAt: string | null; lastError: string | null; fails: number; nextAttemptAt: string | null;
 }
@@ -59,6 +59,8 @@ export class Ledger {
       this.db.exec(`BEGIN; ${SCHEMA}
         INSERT INTO meta (k, v) VALUES ('seq', '0'), ('acked_seq', '0'), ('fails', '0'), ('ledger_id', '${randomUUID()}');
         PRAGMA user_version=${SCHEMA_VERSION}; COMMIT;`);
+    } else if (version === 1 && !opts.readOnly) {
+      this.db.exec('BEGIN; ALTER TABLE records ADD COLUMN origin_path TEXT; PRAGMA user_version=2; COMMIT;');
     } else if (version > SCHEMA_VERSION) {
       throw new Error(`ledger.db is schema v${version}, this build knows v${SCHEMA_VERSION}: update the ledger bundle`);
     }
@@ -66,9 +68,9 @@ export class Ledger {
       sha: this.db.prepare('SELECT sha FROM records WHERE kind=? AND key=?'),
       get: this.db.prepare('SELECT data FROM records WHERE kind=? AND key=? AND pruned=0'),
       seq: this.db.prepare(`UPDATE meta SET v = CAST(v AS INTEGER) + 1 WHERE k='seq' RETURNING v`),
-      put: this.db.prepare(`INSERT INTO records (kind, key, source, session_key, ts, seq, sha, data) VALUES (?,?,?,?,?,?,?,?)
+      put: this.db.prepare(`INSERT INTO records (kind, key, source, session_key, ts, seq, sha, data, origin_path) VALUES (?,?,?,?,?,?,?,?,?)
         ON CONFLICT (kind, key) DO UPDATE SET source=excluded.source, session_key=excluded.session_key, ts=excluded.ts,
-          seq=excluded.seq, sha=excluded.sha, data=excluded.data, pruned=0`),
+          seq=excluded.seq, sha=excluded.sha, data=excluded.data, pruned=0, origin_path=excluded.origin_path`),
       meta: this.db.prepare('SELECT v FROM meta WHERE k=?'),
       elsewhere: this.db.prepare(`SELECT 1 FROM records WHERE kind='session' AND source LIKE 'hermes%' AND source <> ?
         AND key = source || '|' || ? LIMIT 1`),
@@ -112,9 +114,12 @@ export class Ledger {
     const json = JSON.stringify(data);
     const sha = sha256(json);
     const prev = this.st.sha!.get(kind, key) as { sha: string } | undefined;
-    if (prev?.sha === sha) return false;
+    if (prev?.sha === sha) {
+      if (opts.path) this.db.prepare('UPDATE records SET origin_path=? WHERE kind=? AND key=? AND origin_path IS NULL').run(opts.path, kind, key);
+      return false;
+    }
     const { v } = this.st.seq!.get() as { v: string };
-    this.st.put!.run(kind, key, opts.source ?? null, opts.sessionKey ?? null, opts.ts ?? null, Number(v), sha, pack(json));
+    this.st.put!.run(kind, key, opts.source ?? null, opts.sessionKey ?? null, opts.ts ?? null, Number(v), sha, pack(json), opts.path ?? null);
     return true;
   }
 
@@ -126,6 +131,11 @@ export class Ledger {
   get<T = Record<string, unknown>>(kind: RecordKind, key: string): T | null {
     const row = this.st.get!.get(kind, key) as { data: Uint8Array } | undefined;
     return row ? (JSON.parse(unpack(row.data)) as T) : null;
+  }
+
+  matches(kind: RecordKind, key: string, data: Record<string, unknown>): boolean {
+    const row = this.st.sha!.get(kind, key) as { sha: string } | undefined;
+    return row?.sha === sha256(JSON.stringify(data));
   }
 
   cursor<T>(name: string): T | null {
@@ -207,6 +217,21 @@ export class Ledger {
       }
       return rows.length;
     });
+  }
+
+  /** Source timestamps survive retries; quarantine is excluded from imported progress. */
+  health(path: string) {
+    const ack = this.syncState().ackedSeq;
+    return this.db.prepare(`SELECT max(r.ts) observedAt,
+      max(CASE WHEN r.seq <= ? AND q.key IS NULL THEN r.ts END) importedAt,
+      count(CASE WHEN r.seq > ? THEN 1 END) backlog,
+      min(CASE WHEN r.seq > ? THEN r.ts END) oldestPendingAt,
+      count(q.key) rejected, count(q.key) quarantined
+      FROM records r LEFT JOIN quarantine q ON q.kind=r.kind AND q.key=r.key AND q.requeued_at IS NULL
+      WHERE r.origin_path=?`).get(ack, ack, ack, path) as {
+        observedAt: string | null; importedAt: string | null; backlog: number; oldestPendingAt: string | null;
+        rejected: number; quarantined: number;
+      };
   }
 
   stats(): Record<string, unknown> {

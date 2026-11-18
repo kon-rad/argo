@@ -49,3 +49,85 @@ it('keeps poison wire records durably and accepts later valid records without st
   await importLines(lines, 'test-box', { quarantine: true });
   expect((await query('SELECT wire FROM usage_import_quarantine')).rows).toEqual([{ wire: 'not json' }]);
 });
+
+it('global bounded expiry removes inactive attempts while retaining streams and unaccepted quarantine', async () => {
+  const { cleanupAttempts } = await import('../src/usage/health.js');
+  for (let seq = 1; seq <= 3; seq++) await recordHealth('test-box', health(seq));
+  await importLines(['poison'], 'test-box', { quarantine: true });
+  await query(`UPDATE collection_attempts SET received_at=now()-interval '40 days'`);
+  expect(await cleanupAttempts(2)).toBe(2);
+  expect((await query('SELECT count(*) n FROM collection_attempts')).rows[0]!.n).toBe(1);
+  expect(await cleanupAttempts(2)).toBe(1);
+  expect((await query('SELECT count(*) n FROM collection_streams')).rows[0]!.n).toBe(1);
+  expect((await query('SELECT count(*) n FROM usage_import_quarantine')).rows[0]!.n).toBe(1);
+});
+
+it('quarantine metadata inspection is redacted and replay deletes only a supported accepted item', async () => {
+  const { listQuarantine, inspectQuarantine, replayQuarantine } = await import('../src/usage/quarantine.js');
+  const poison = 'API_TOKEN=synthetic-value-long-enough not json';
+  await importLines([poison], 'test-box', { quarantine: true });
+  const listed = await listQuarantine('test-box');
+  expect(listed).toHaveLength(1);
+  const digest = listed[0]!.digest as string;
+  expect(JSON.stringify(await inspectQuarantine('test-box', digest))).not.toContain('synthetic-value');
+  expect((await query('SELECT wire FROM usage_import_quarantine')).rows[0]!.wire).not.toContain('synthetic-value');
+  expect(await replayQuarantine('test-box', digest)).toBe(false);
+  expect(await replayQuarantine('test-box', digest, JSON.stringify({ t: 'health', health: health() }))).toBe(true);
+  expect(await listQuarantine('test-box')).toEqual([]);
+});
+
+it('a rejected wire cannot claim imported freshness through the trailing health item', async () => {
+  const h = { ...health(), path: '/synthetic', backlog: 0, backlogUnit: 'bytes' };
+  const c = await importLines([
+    JSON.stringify({ t: 'unknown', path: '/synthetic/session.jsonl' }),
+    JSON.stringify({ t: 'health', health: h }),
+  ], 'test-box', { quarantine: true });
+  expect(c).toMatchObject({ accepted: [2], rejected: [1], quarantined: [1] });
+  const row = (await query(`SELECT imported_at,observed_at,outcome,reason,quarantined FROM collection_streams`)).rows[0]!;
+  expect(row).toMatchObject({ imported_at: null, outcome: 'retry', reason: 'rejected', quarantined: 1 });
+  expect(row.observed_at.toISOString()).toBe('2020-01-01T00:00:00.000Z');
+});
+
+it('replays quarantined calls through normal accounting without changing source identity or totals', async () => {
+  const { replayQuarantine, listQuarantine } = await import('../src/usage/quarantine.js');
+  const wire = JSON.stringify({ t: 'calls', calls: [{ source: 'codex', callId: 'stable-call', requestId: null,
+    sessionExternalId: 'stable-session', messageExternalId: null, ts: '2020-01-01T00:00:00Z', model: 'fixture',
+    entrypoint: 'cli', cwd: null, isSidechain: false, inputTokens: 80, outputTokens: 20, cacheWriteTokens: 0,
+    cacheReadTokens: 0, thinkingTokens: 0, webSearchRequests: 0 }] });
+  await importLines([wire], 'test-box');
+  const before = (await query('SELECT call_id,input_tokens,output_tokens,ts FROM usage_calls')).rows;
+  await importLines(['bad source'], 'test-box', { quarantine: true });
+  const digest = String((await listQuarantine('test-box'))[0]!.digest);
+  expect(await replayQuarantine('test-box', digest, wire)).toBe(true);
+  expect((await query('SELECT call_id,input_tokens,output_tokens,ts FROM usage_calls')).rows).toEqual(before);
+});
+
+it('imports and retries a supported prefix above 64MiB without changing IDs or token totals', async () => {
+  const { mkdtempSync, writeFileSync, rmSync, utimesSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const { buildPush } = await import('../src/usage/push.js');
+  const dir = mkdtempSync(join(tmpdir(), 'large-import-'));
+  try {
+    const path = join(dir, 'source.jsonl');
+    const timestamp = '2020-01-01T00:00:00Z';
+    writeFileSync(path, [
+      { type: 'session_meta', timestamp, payload: { id: 'large-session', source: 'exec', model: 'fixture' } },
+      { type: 'extension', timestamp, padding: 'x'.repeat(65 * 1024 * 1024) },
+      { type: 'event_msg', timestamp, payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 80, output_tokens: 20 } } } },
+    ].map(x => JSON.stringify(x)).join('\n') + '\n');
+    const input = { claudeProjectsDir: join(dir, 'missing'), codexSessionsDir: dir, planLog: null, maxBytes: 100 };
+    const push = buildPush(input, { files: {} });
+    expect(push.bytes).toBeGreaterThan(64 * 1024 * 1024);
+    expect((await importLines(push.lines, 'test-box', { quarantine: true })).rejected).toEqual([]);
+    const calls = (await query('SELECT call_id,input_tokens,output_tokens,ts FROM usage_calls')).rows;
+    const sessions = (await query('SELECT id,external_id,input_tokens,output_tokens FROM archive_sessions')).rows;
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ input_tokens: 80, output_tokens: 20 });
+    expect((await importLines(push.lines, 'test-box', { quarantine: true })).calls).toBe(0);
+    utimesSync(path, new Date(), new Date());
+    expect(buildPush(input, push.next).lines).toEqual([]);
+    expect((await query('SELECT call_id,input_tokens,output_tokens,ts FROM usage_calls')).rows).toEqual(calls);
+    expect((await query('SELECT id,external_id,input_tokens,output_tokens FROM archive_sessions')).rows).toEqual(sessions);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}, 60_000);

@@ -1062,7 +1062,7 @@ export const api = {
       json('PUT', { path, content, base_hash: baseHash }),
     ),
   usageHealth: () => request<{ streams: Array<{ host: string; collector_instance: string; runtime: string; path: string; state: string;
-    ended_at?: string | null; received_at?: string | null; last_success_at?: string | null; backlog?: number | null; reason?: string | null }> }>('/usage/health'),
+    ended_at?: string | null; received_at?: string | null; last_success_at?: string | null; backlog?: number | null; backlog_unit?: 'bytes' | 'records' | null; observed_at?: string | null; imported_at?: string | null; oldest_pending_at?: string | null; rejected?: number | null; quarantined?: number | null; reason?: string | null }> }>('/usage/health'),
   usageConfig: () => request<UsageConfig>('/usage/config'),
   usageSubscriptions: () => request<UsageSubscriptions>('/usage/subscriptions'),
   usagePlan: (from?: string, to?: string) => request<UsagePlan>('/usage/plan', { from, to }),

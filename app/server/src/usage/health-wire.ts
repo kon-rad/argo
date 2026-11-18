@@ -8,6 +8,7 @@ export const healthSchema = z.object({
   collectorVersion: z.string().min(1).max(128), startedAt: time, endedAt: time,
   outcome: z.enum(['ok', 'retry', 'auth', 'unsupported']),
   observedAt: time.nullable(), importedAt: time.nullable(), backlog: measurement,
+  backlogUnit: z.enum(['bytes', 'records']).nullable().optional(),
   oldestPendingAt: time.nullable(), rejected: measurement, quarantined: measurement,
   reason: z.enum(['deadline', 'stdin', 'spawn', 'ack', 'sqlite-busy', 'route', 'network', 'auth', 'rejected', 'collection', 'unsupported']).nullable(),
   capabilities: z.array(z.enum(['heartbeat', 'backlog', 'source-time', 'quarantine'])).max(4),

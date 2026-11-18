@@ -78,7 +78,7 @@ NODE="$(command -v node)"
 (cd "$APP_ROOT" && npm run -w server build >/dev/null)
 mkdir -p "$BUNDLE/usage" "$BUNDLE/archive" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 cp "$APP_ROOT/server/dist/cli-usage-push.js" "$BUNDLE/"
-for f in push readFrom walkFiles lines statusline types wire upload; do cp "$APP_ROOT/server/dist/usage/$f.js" "$BUNDLE/usage/"; done
+for f in push readFrom walkFiles lines statusline types wire upload supervise sourceHealth; do cp "$APP_ROOT/server/dist/usage/$f.js" "$BUNDLE/usage/"; done
 for f in stage clean redact; do cp "$APP_ROOT/server/dist/archive/$f.js" "$BUNDLE/archive/"; done
 printf '{"type":"module"}\n' > "$BUNDLE/package.json"
 cp "$APP_ROOT/bin/statusline-usage.mjs" "$DEST/statusline-usage.mjs"

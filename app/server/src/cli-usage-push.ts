@@ -1,6 +1,11 @@
+import { superviseSelf } from './usage/supervise.js';
+import { fileURLToPath } from 'node:url';
 // Laptop -> server, every minute from the LaunchAgent bin/install-usage-push-mac.sh installs. One SSH
 // connection per run, to USAGE_PUSH_HOST (an ~/.ssh/config alias with root on the server).
 // The cursor moves only after a complete versioned acknowledgement (including durable quarantine).
+import { measureJsonl, combineMeasurements } from './usage/sourceHealth.js';
+import { fingerprintOf } from './archive/stage.js';
+import { statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { runUpload } from './usage/upload.js';
 import type { CollectionHealth } from './usage/health-wire.js';
@@ -10,6 +15,9 @@ import { dirname, join } from 'node:path';
 import { walkFiles } from './usage/walkFiles.js';
 import { buildPush, type PushCursor } from './usage/push.js';
 // Standalone installed collector: process environment only, never a vault .env.
+const supervisorCode = await superviseSelf(fileURLToPath(import.meta.url), 600_000, true);
+if (supervisorCode !== null) process.exit(supervisorCode);
+
 const env = process.env;
 const budget = (key: string, fallback: number, ceiling: number) => {
   const n = Number(env[key] ?? fallback);
@@ -72,7 +80,8 @@ cursor.attemptSeq = (cursor.attemptSeq ?? 0) + 1;
 try {
   save(cursor);
   console.log(`${startedAt} usage-push stage=collect-start mode=${backfill ? 'backfill' : 'tick'}`);
-  const push = buildPush({
+  const timedOut = process.argv.includes('--health-timeout');
+  const push = timedOut ? { lines: [] as string[], next: cursor, bytes: 0 } : buildPush({
     claudeProjectsDir: env.CLAUDE_PROJECTS_DIR ?? join(home, '.claude', 'projects'),
     codexSessionsDir: join(env.CODEX_HOME ?? join(home, '.codex'), 'sessions'),
     // zen-agent chats on this machine: the vault's .zen/sessions is gitignored, so they reach the server only from here.
@@ -90,15 +99,24 @@ try {
     ...(zenSessionsDir ? [['zen', zenSessionsDir]] : []),
   ];
   for (const [runtime, path] of roots) {
+    const measurement = combineMeasurements(walkFiles(path!).filter(p => p.endsWith('.jsonl')).map(p => {
+      const prev = push.next.files[p];
+      const st = statSync(p);
+      const same = runtime === 'claude-code' ? prev?.fingerprint === fingerprintOf(p) && st.size >= prev.offset
+        : prev?.size === st.size && prev.mtimeMs === st.mtimeMs;
+      const measured = measureJsonl(p, same ? prev!.offset : 0, 'bytes', true);
+      // Malformed complete lines are explicitly submitted as quarantine before this health line.
+      return measured;
+    }));
     const health: CollectionHealth = {
       v: 1, collectorInstance: cursor.instanceId!, attemptSeq: cursor.attemptSeq!, collectorVersion: 'usage-push-2',
-      runtime: runtime!, path: path!, startedAt, endedAt: new Date().toISOString(), outcome: existsSync(path!) ? 'ok' : 'unsupported',
-      observedAt: null, importedAt: null, backlog: null, oldestPendingAt: null, rejected: null, quarantined: null,
-      reason: existsSync(path!) ? null : 'unsupported', capabilities: ['heartbeat'],
+      runtime: runtime!, path: path!, startedAt, endedAt: new Date().toISOString(), outcome: timedOut ? 'retry' : existsSync(path!) ? 'ok' : 'unsupported',
+      ...measurement,
+      reason: timedOut ? 'deadline' : existsSync(path!) ? null : 'unsupported', capabilities: ['heartbeat', 'backlog', 'source-time', 'quarantine'],
     };
     push.lines.push(JSON.stringify({ t: 'health', health }));
   }
-  const deadline = backfill ? budget('USAGE_PUSH_BACKFILL_MS', 600_000, 1_800_000) : budget('USAGE_PUSH_DEADLINE_MS', 180_000, 600_000);
+  const deadline = timedOut ? 8000 : backfill ? budget('USAGE_PUSH_BACKFILL_MS', 600_000, 1_800_000) : budget('USAGE_PUSH_DEADLINE_MS', 180_000, 600_000);
   console.log(`${new Date().toISOString()} usage-push stage=upload-start deadlineMs=${deadline}`);
   const result = await runUpload('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15',
     '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', sshHost,

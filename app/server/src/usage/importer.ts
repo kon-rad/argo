@@ -1,3 +1,4 @@
+import { buildRedactor } from '../archive/redact.js';
 import { createHash } from 'node:crypto';
 import { query, withTransaction } from '../db.js';
 import { recordHealth } from './health.js';
@@ -12,12 +13,15 @@ export interface ImportCounts { lines: number; calls: number; sessions: number; 
 export async function importLines(input: AsyncIterable<string> | Iterable<string>, host: Host, opts: { quarantine?: boolean } = {}): Promise<ImportCounts> {
   if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(host)) throw new Error('invalid usage host');
   const c: ImportCounts = { lines: 0, calls: 0, sessions: 0, messages: 0, plan: 0, errors: [], accepted: [], rejected: [], quarantined: [] };
-  const reject = async (raw: string, reason: string) => {
+  const failedPaths = new Set<string>();
+  const redact = buildRedactor({ env: process.env });
+  const reject = async (raw: string, reason: string, path: string | null = null) => {
+    failedPaths.add(path ?? '');
     c.errors.push(`line ${c.lines}: ${reason}`);
     c.rejected.push(c.lines);
     if (opts.quarantine) {
-      await query(`INSERT INTO usage_import_quarantine (host, digest, wire, reason) VALUES ($1,$2,$3,$4) ON CONFLICT (host,digest) DO NOTHING`,
-        [host, createHash('sha256').update(raw).digest('hex'), raw, reason]);
+      await query(`INSERT INTO usage_import_quarantine (host, digest, wire, reason, origin_path) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (host,digest) DO NOTHING`,
+        [host, createHash('sha256').update(raw).digest('hex'), redact.text(raw), reason, path]);
       c.quarantined.push(c.lines);
     }
   };
@@ -35,7 +39,16 @@ export async function importLines(input: AsyncIterable<string> | Iterable<string
     // CLI exits 1 and the client keeps its cursor and resends.
     try {
       if (w?.t === 'health') {
-        await recordHealth(host, w.health);
+        const path = w.health.path;
+        const affected = [...failedPaths].some(p => !p || p === path || p.startsWith(path + '/'));
+        const q = await query(`SELECT count(*) n FROM usage_import_quarantine WHERE host=$1
+          AND (origin_path=$2 OR left(origin_path,length($2)+1)=$2||'/')`, [host, path]);
+        const quarantined = Number(q.rows[0]!.n);
+        await recordHealth(host, { ...w.health,
+          importedAt: affected || quarantined ? null : w.health.importedAt,
+          quarantined, rejected: Math.max(w.health.rejected ?? 0, quarantined),
+          outcome: affected || quarantined ? 'retry' : w.health.outcome,
+          reason: affected || quarantined ? 'rejected' : w.health.reason });
       } else if (w?.t === 'transcript' && typeof w.path === 'string' && typeof w.text === 'string') {
         await withTransaction(async (tx) => {
           await tx.query('INSERT INTO usage_hosts (slug, display, kind) VALUES ($1,$1,\'laptop\') ON CONFLICT DO NOTHING', [host]);
@@ -67,14 +80,15 @@ export async function importLines(input: AsyncIterable<string> | Iterable<string
           c.calls += await store.upsertCalls(tx, w.calls.map((x) => ({ ...x, host, ts: new Date(x.ts) })));
         });
       } else {
-        await reject(raw, 'invalid-wire');
+        const p = (w as unknown as { path?: unknown })?.path;
+        await reject(raw, 'invalid-wire', typeof p === 'string' ? p : null);
         continue;
       }
       c.accepted.push(c.lines);
     } catch (err) {
       const code = (err as { code?: string }).code;
       if ((code && /^2[23]/.test(code)) || err instanceof RangeError || (err as Error).name === 'ZodError') {
-        await reject(raw, 'invalid-item');
+        await reject(raw, 'invalid-item', 'path' in w && typeof w.path === 'string' ? w.path : null);
       } else throw err; // interrupted imports and operational failures always retain the cursor
     }
   }
