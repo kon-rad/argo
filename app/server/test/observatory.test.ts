@@ -29,6 +29,15 @@ describe('observatory replay', () => {
   });
 });
 describe('archive evidence adapter', () => {
+  it('exposes bounded structured path attempts without arguments, shell guesses or file contents', () => {
+    const row = (id: number, tool: string, args: unknown) => ({ id, session_id: 1, seq: id, ts: new Date(id), role: 'assistant', kind: 'assistant', raw: { role: 'assistant', session_id: 's', tool_calls: [{ id: String(id), function: { name: tool, arguments: JSON.stringify(args) } }] }, text: '', host: 'lab', source: 'hermes', external_id: 's', harness: 'hermes', observed_at: null });
+    const events = archiveEvents([row(1, 'read_file', { path: 'src/demo.ts' }), row(2, 'Write', { file_path: 'src/new.ts', content: 'SECRET_CONTENT' }), row(3, 'Bash', { command: 'cat src/demo.ts', path: 'guessed' })]);
+    expect(events[0]?.target).toEqual({ path: 'src/demo.ts', operation: 'read' });
+    expect(events[1]?.target).toEqual({ path: 'src/new.ts', operation: 'write' });
+    expect(events[2]?.target).toBeUndefined();
+    expect(JSON.stringify(events)).not.toMatch(/SECRET_CONTENT|cat src/);
+  });
+
   it('expands parts, scopes reused IDs by session and occurrence, excludes text and human guesses', () => {
     const row = (id: number, session_id: number, seq: number, raw: unknown, role = 'assistant') => ({ id, session_id, seq, ts: new Date(id * 1000), role, kind: role, raw, text: 'private text', host: 'test-host', source: 'hermes', external_id: String(id), harness: 'hermes', observed_at: null });
     const call = { role: 'assistant', session_id: 's', tool_calls: [{ id: 'reuse', function: { name: 'read', arguments: '{}' } }] };
@@ -70,7 +79,7 @@ describe('boundary, pagination and authorization', () => {
     for (let i = 0; i < 8; i++) cache.put('a', exportFixture());
     expect(() => cache.get('a', token)).toThrow(/expired/);
   });
-  it('does not mount disabled module or advertise a UI', () => {
+  it('does not mount disabled module', () => {
     expect(moduleSet('')).not.toContain('observatory');
     expect(addonRoutes(new Set(), {} as never)).toEqual([]);
     const routes = addonRoutes(new Set(['observatory']), { opts: { modules: new Set(['observatory']) } } as never);

@@ -10,6 +10,18 @@ export function envelope(table: EvidenceEvent['source']['table'], id: string, at
     source: { table, id, part: '0' }, precision: 'unknown', confidence: 'recorded',
     actor: { kind: 'unknown', sender: null, channel: null, evidence: 'unrecorded' } };
 }
+/** Retain explicit file targets, never argument bodies or guessed shell targets. */
+function fileTarget(tool: string | null, text: string): EvidenceEvent['target'] {
+  const operations: Record<string, 'read' | 'write' | 'edit'> = { read: 'read', read_file: 'read', Read: 'read', write_file: 'write', Write: 'write', edit_file: 'edit', Edit: 'edit' };
+  const operation = tool && Object.hasOwn(operations, tool) ? operations[tool] : undefined;
+  if (!operation || text.length > 1000000) return undefined;
+  try {
+    const input = JSON.parse(text) as Record<string, unknown>;
+    const path = input.file_path ?? input.path;
+    if (typeof path === 'string' && path.length > 0 && path.length <= 1024 && !/[\x00-\x1f]/.test(path)) return { path, operation };
+  } catch { /* Non-JSON input is not structured path evidence. */ }
+  return undefined;
+}
 /** Pair only within a numeric archive session, in recorded sequence order. A repeated ID starts a new occurrence. */
 export function archiveEvents(rows: ArchiveRow[]): EvidenceEvent[] {
   const pending = new Map<string, EvidenceEvent[]>();
@@ -23,6 +35,7 @@ export function archiveEvents(rows: ArchiveRow[]): EvidenceEvent[] {
       if (['response', 'thinking', 'tool_call', 'tool_result'].includes(part.step)) e.actor = { kind: 'agent', sender: null, channel: null, evidence: 'archive-step' };
       if (part.step === 'thinking') e.thinking = 'available-in-source';
       if (part.toolName) e.tool = part.toolName;
+      if (part.step === 'tool_call') e.target = fileTarget(part.toolName, part.text);
       const scope = `${row.session_id}:${part.toolCallId}`;
       if (part.step === 'tool_call') { e.occurrence = e.id; if (part.toolCallId) pending.set(scope, [...(pending.get(scope) ?? []), e]); }
       if (part.step === 'tool_result') {
