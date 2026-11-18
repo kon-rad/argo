@@ -2,8 +2,10 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { search } from '../search.js';
 import { hybridSearch, semanticSearch } from '../semantic.js';
+import { globalSearch, SCOPES, type Scope } from '../globalSearch.js';
 import type { EmbeddingProvider } from '../embeddings/provider.js';
 import { HttpError, parseOr400, wrap } from './http.js';
+import type { GlobalSearchResponse, SearchResponse } from '@secondbrain/contracts/search';
 
 const Q = z.object({
   q: z.string().trim().min(1, 'a search term is required'),
@@ -15,8 +17,36 @@ const Q = z.object({
 
 export type ProviderFactory = () => EmbeddingProvider;
 
-export function searchRouter(embeddingProvider?: ProviderFactory): Router {
+const Global = z.object({
+  q: z.string().trim().min(1, 'a search term is required'),
+  scopes: z.string().optional(),
+  mode: z.enum(['keyword', 'semantic', 'hybrid']).default('hybrid'),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  offset: z.coerce.number().int().min(0).default(0),
+  harness: z.string().trim().max(40).optional(),
+  host: z.string().trim().max(40).optional(),
+});
+
+export function searchRouter(embeddingProvider?: ProviderFactory, available: readonly Scope[] = SCOPES): Router {
   const router = Router();
+
+  /** One box over notes, database records and agent logs; each section fails alone. */
+  router.get(
+    '/global',
+    wrap(async (req, res) => {
+      const q = parseOr400(Global, req.query);
+      const asked = q.scopes ? q.scopes.split(',').map((s) => s.trim()) : [...available];
+      const bad = asked.filter((s) => !(SCOPES as readonly string[]).includes(s));
+      if (bad.length) throw new HttpError(400, `unknown scope: ${bad.join(', ')}`);
+      const scopes = (asked as Scope[]).filter((s) => available.includes(s));
+      const result = await globalSearch(q.q, {
+        scopes, mode: q.mode, limit: q.limit, offset: q.offset, harness: q.harness, host: q.host,
+        provider: embeddingProvider,
+      });
+      const response = { ...result, available: [...available] } satisfies GlobalSearchResponse;
+      res.json(response);
+    }),
+  );
 
   /**
    * Building the provider throws when there is no API key. That is a
@@ -42,37 +72,40 @@ export function searchRouter(embeddingProvider?: ProviderFactory): Router {
 
       if (q.mode === 'keyword') {
         const { results, total } = await search(q.q, base);
-        res.json({
+        const response = {
           q: q.q,
           mode: q.mode,
           results,
           total,
           has_more: q.offset + results.length < total,
-        });
+        } satisfies SearchResponse;
+        res.json(response);
         return;
       }
 
       if (q.mode === 'semantic') {
         const { results, total } = await semanticSearch(q.q, { ...base, provider: provider() });
-        res.json({
+        const response = {
           q: q.q,
           mode: q.mode,
           results,
           total,
           has_more: q.offset + results.length < total,
-        });
+        } satisfies SearchResponse;
+        res.json(response);
         return;
       }
 
       const { results, total, degraded } = await hybridSearch(q.q, { ...base, provider: provider() });
-      res.json({
+      const response = {
         q: q.q,
         mode: q.mode,
         results,
         total,
         degraded,
         has_more: q.offset + results.length < total,
-      });
+      } satisfies SearchResponse;
+      res.json(response);
     }),
   );
 

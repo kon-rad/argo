@@ -10,7 +10,7 @@ import { addDevice } from '../src/ingest/devices.js';
 import { routeDirect, routeState, routeThroughProxy, watchProxy } from '../src/ledger/claudeSettings.js';
 import { defaultConfig } from '../src/ledger/config.js';
 import { buildRedactor, type Redactor } from '../src/archive/redact.js';
-import { assembleSse, captureQueue, HEALTH_PATH, recordExchange, redactCaptures, sessionFromMetadata, startProxy, type Captured } from '../src/ledger/proxy.js';
+import { assembleOllama, assembleSse, captureQueue, HEALTH_PATH, recordExchange, redactCaptures, sessionFromMetadata, startProxy, type Captured } from '../src/ledger/proxy.js';
 import { Ledger } from '../src/ledger/store.js';
 import { syncOnce } from '../src/ledger/sync.js';
 import { truncateAll } from './helpers.js';
@@ -55,6 +55,26 @@ describe('assembleSse', () => {
     expect(sessionFromMetadata(JSON.stringify({ device_id: 'd', account_uuid: 'a', session_id: SID }))).toBe(SID);
     expect(sessionFromMetadata(`user_abc_account_x_session_${SID}`)).toBe(SID);
     expect(sessionFromMetadata('nope')).toBeNull();
+  });
+});
+
+describe('assembleOllama', () => {
+  it('joins native chunks and takes usage from the final one', () => {
+    expect(assembleOllama(
+      '{"message":{"role":"assistant","content":"hel"},"done":false}\n'
+      + '{"message":{"role":"assistant","content":"lo"},"done":true,"prompt_eval_count":11,"eval_count":5}\n',
+      '/api/chat',
+    )).toMatchObject({ message: { content: 'hello' }, done: true, prompt_eval_count: 11, eval_count: 5 });
+  });
+
+  it('joins OpenAI-compatible SSE chunks and takes final usage', () => {
+    expect(assembleOllama(
+      'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"hel"}}]}\n\n'
+      + 'data: {"choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":"stop"}]}\n\n'
+      + 'data: {"choices":[],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}\n\n'
+      + 'data: [DONE]\n\n',
+      '/v1/chat/completions',
+    )).toMatchObject({ choices: [{ message: { content: 'hello' }, finish_reason: 'stop' }], usage: { total_tokens: 10 } });
   });
 });
 
@@ -236,6 +256,127 @@ describe('capture proxy', () => {
       // Byte for byte as sent, except this machine's key, which never leaves it.
       expect(rebuilt.rows.map((r) => r.body)).toEqual(red.deep(sent.messages));
     });
+  });
+});
+
+describe('Ollama capture proxy', () => {
+  let upstream: Server;
+  let proxy: Server;
+  let ledger: Ledger;
+  let proxyUrl: string;
+  let seen: Array<{ url: string; body: Buffer }>;
+
+  beforeEach(async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ledger-ollama-proxy-'));
+    ledger = new Ledger(join(root, 'ledger.db'));
+    seen = [];
+    upstream = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        const body = Buffer.concat(chunks);
+        seen.push({ url: req.url ?? '', body });
+        if (req.url === '/api/chat?stream=false') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end('{"model":"qwen3:8b","message":{"role":"assistant","content":"hello"},"done":true,"prompt_eval_count":7,"eval_count":3}');
+        } else if (req.url === '/api/chat') {
+          res.writeHead(200, { 'content-type': 'application/x-ndjson' });
+          res.write('{"model":"qwen3:8b","message":{"role":"assistant","content":"hel"},"done":false}\n');
+          res.end('{"model":"qwen3:8b","message":{"role":"assistant","content":"lo"},"done":true,"prompt_eval_count":11,"eval_count":5}\n');
+        } else if (req.url === '/v1/chat/completions') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end('{"id":"chatcmpl-1","model":"qwen3:8b","choices":[{"message":{"role":"assistant","content":"hello"}}],"usage":{"prompt_tokens":13,"completion_tokens":4,"total_tokens":17}}');
+        } else if (req.url === '/api/chat?error=true') {
+          res.writeHead(503, { 'content-type': 'application/json' });
+          res.end('{"error":"model unavailable"}');
+        } else {
+          res.writeHead(200, { 'content-type': 'application/octet-stream' });
+          res.end(Buffer.from([0, 1, 2, 255]));
+        }
+      });
+    });
+    await new Promise<void>((ok) => upstream.listen(0, '127.0.0.1', ok));
+    proxy = await startProxy({
+      provider: 'ollama', port: 0, upstream: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`,
+      onCapture: (c) => recordExchange(ledger, c, 'ollama', buildRedactor({ env: {} })),
+    });
+    proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+  });
+
+  afterEach(async () => {
+    await new Promise((ok) => proxy.close(ok));
+    await new Promise((ok) => upstream.close(ok));
+    ledger.close();
+  });
+
+  const post = (path: string, body: Buffer) => fetch(`${proxyUrl}${path}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body,
+  });
+  const settle = () => new Promise((ok) => setTimeout(ok, 50));
+  const exchanges = () => ledger.pending(0, 1e9).filter((r) => r.kind === 'exchange').map((r) => r.data as Record<string, any>);
+
+  it('forwards and records non-streaming native chat byte for byte', async () => {
+    const body = Buffer.from('{"model":"qwen3:8b","messages":[{"role":"user","content":"hi"}],"stream":false}');
+    const expected = '{"model":"qwen3:8b","message":{"role":"assistant","content":"hello"},"done":true,"prompt_eval_count":7,"eval_count":3}';
+    const res = await post('/api/chat?stream=false', body);
+    expect(Buffer.from(await res.arrayBuffer())).toEqual(Buffer.from(expected));
+    await settle();
+    expect(seen[0]).toEqual({ url: '/api/chat?stream=false', body });
+    expect(exchanges()).toHaveLength(1);
+    expect(exchanges()[0]).toMatchObject({
+      provider: 'ollama', path: '/api/chat?stream=false', model: 'qwen3:8b', status: 200,
+      params: { stream: false }, usage: { prompt_eval_count: 7, eval_count: 3 }, error: null,
+    });
+    expect(exchanges()[0]!.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('forwards a native stream byte for byte and records the final counts', async () => {
+    const body = Buffer.from('{"model":"qwen3:8b","messages":[{"role":"user","content":"hi"}],"stream":true}');
+    const expected = '{"model":"qwen3:8b","message":{"role":"assistant","content":"hel"},"done":false}\n'
+      + '{"model":"qwen3:8b","message":{"role":"assistant","content":"lo"},"done":true,"prompt_eval_count":11,"eval_count":5}\n';
+    const res = await post('/api/chat', body);
+    expect(Buffer.from(await res.arrayBuffer())).toEqual(Buffer.from(expected));
+    await settle();
+    expect(seen[0]).toEqual({ url: '/api/chat', body });
+    expect(exchanges()).toHaveLength(1);
+    expect(exchanges()[0]).toMatchObject({
+      provider: 'ollama', model: 'qwen3:8b', status: 200,
+      response: { message: { role: 'assistant', content: 'hello' }, done: true },
+      usage: { prompt_eval_count: 11, eval_count: 5 }, error: null,
+    });
+    expect(exchanges()[0]!.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('forwards and records an OpenAI-compatible chat completion', async () => {
+    const body = Buffer.from('{"model":"qwen3:8b","messages":[{"role":"user","content":"hi"}]}');
+    const expected = '{"id":"chatcmpl-1","model":"qwen3:8b","choices":[{"message":{"role":"assistant","content":"hello"}}],"usage":{"prompt_tokens":13,"completion_tokens":4,"total_tokens":17}}';
+    const res = await post('/v1/chat/completions', body);
+    expect(Buffer.from(await res.arrayBuffer())).toEqual(Buffer.from(expected));
+    await settle();
+    expect(seen[0]).toEqual({ url: '/v1/chat/completions', body });
+    expect(exchanges()).toHaveLength(1);
+    expect(exchanges()[0]).toMatchObject({ provider: 'ollama', model: 'qwen3:8b', status: 200, usage: { total_tokens: 17 } });
+    expect(exchanges()[0]!.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('passes an unlisted path through without recording it', async () => {
+    const body = Buffer.from([9, 8, 7]);
+    const res = await post('/api/tags', body);
+    expect(Buffer.from(await res.arrayBuffer())).toEqual(Buffer.from([0, 1, 2, 255]));
+    await settle();
+    expect(seen[0]).toEqual({ url: '/api/tags', body });
+    expect(exchanges()).toHaveLength(0);
+  });
+
+  it('passes an upstream error through and records its status', async () => {
+    const body = Buffer.from('{"model":"missing"}');
+    const res = await post('/api/chat?error=true', body);
+    expect(res.status).toBe(503);
+    expect(await res.text()).toBe('{"error":"model unavailable"}');
+    await settle();
+    expect(exchanges()).toHaveLength(1);
+    expect(exchanges()[0]).toMatchObject({ provider: 'ollama', status: 503, model: 'missing', error: '{"error":"model unavailable"}' });
+    expect(exchanges()[0]!.durationMs).toBeGreaterThanOrEqual(0);
   });
 });
 

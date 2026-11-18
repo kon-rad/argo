@@ -27,6 +27,10 @@ export const PATTERNS: Array<{ name: string; js: RegExp; pg: string; keep?: numb
   { name: 'google', js: /(?<![A-Za-z0-9])AIza[0-9A-Za-z_-]{35}/g, pg: 'AIza[0-9A-Za-z_-]{35}' },
   // Keep the scheme word: "Bearer [redacted:bearer]" still says what it was.
   { name: 'bearer', js: /(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/g, pg: 'Bearer\\s+[A-Za-z0-9._~+/=-]{20}', keep: 1 },
+  { name: 'truncated-provider-token', js: /(?<![A-Za-z0-9-])sk-(?:proj-|ant-)[A-Za-z0-9_-]{1,}/g, pg: 'sk-(proj-|ant-)[A-Za-z0-9_-]+' },
+  // Also cover truncated error messages, where the host / closing @ never arrived.
+  { name: 'connection-credential', js: /(\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s:/@"'\\]{1,256}:)[^\s@/"'\\]{1,256}(?=@|$|[\s"'])/gi, pg: '[a-z][a-z0-9+.-]*://[^[:space:]:/@]+:', keep: 1 },
+  { name: 'token-assignment', js: /((?:[A-Z][A-Z0-9_]*(?:TOKEN|PASSWORD|SECRET|API_KEY)|password|token|api_key)\s*[=:]\s*)[^\s"'\\,;]{1,512}/g, pg: '(TOKEN|PASSWORD|SECRET|API_KEY)[[:space:]]*[=:]', keep: 1 },
   // The password in scheme://user:password@host.
   // Every class is bounded: unbounded ones made this quadratic on long runs of plain characters.
   { name: 'url-password', js: /(\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s:/@"'\\]{1,256}:)[^\s@/"'\\]{6,256}(@)/gi, pg: '[a-z][a-z0-9+.-]*://[^[:space:]:/@]+:[^[:space:]@/]{6,}@', keep: 2 },

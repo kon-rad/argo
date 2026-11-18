@@ -1,5 +1,7 @@
 # The agent harness
 
+Status: **works** - the guard (`harness/hooks/guard.py`) and dev-log gate (`harness/hooks/devlog_gate.py`) ship in the engine and run under Claude Code, Hermes and zen-agent.
+
 AI agents work in your vault the way you do: they read and write markdown, run commands, and edit skills and scripts. The harness gives every agent the same rules and the same two hooks, whichever agent it is.
 
 | Piece | File | Runs |
@@ -78,7 +80,11 @@ The point is a record a person can read: what changed, why, how it was tested. T
 
 - `PreToolUse` on `Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit` runs `guard.py`;
 - `Stop` runs `devlog_gate.py`;
-- `permissions.deny` also blocks reading or editing `.env`, `.env.*`, `auth.json` and `.credentials.json` at the Claude Code level.
+- `permissions.deny` also blocks reading or editing `.env`, `.env.*`, `auth.json` and `.credentials.json` at the Claude Code level;
+- `permissions.deny` keeps Read, Grep and Glob out of `node_modules/`, `dist/`, `build/`, `.git/objects/`, virtualenvs, caches, minified bundles, source maps and database files (Claude Code has no `.claudeignore`; this is how it ignores paths);
+- `env` caps a Bash result at 12,000 characters (`BASH_MAX_OUTPUT_LENGTH`) and an MCP result at 10,000 tokens (`MAX_MCP_OUTPUT_TOKENS`). Each turn re-sends the whole conversation, so one big output costs again on every later turn.
+
+`init` copies the file only into a new vault. An existing vault picks up these rules by copying `harness/claude/settings.json` over its `.claude/settings.json` again (keep any lines you added).
 
 The commands use `$CLAUDE_PROJECT_DIR/.secondbrain/harness/hooks/`, so they follow your engine pin.
 
@@ -103,6 +109,10 @@ skills:
 
 Hermes asks for consent to each exact hook command once per machine and records it in `~/.hermes/shell-hooks-allowlist.json`. **If the command string in the config and the allowlist differ, Hermes skips the hook silently.** Update both together, and test with a command the guard should block.
 
+### zen-agent
+
+[zen-agent](https://github.com/kon-rad/argo/blob/main/zen-agent/README.md) runs the guard in process (the same built-in rules and the same `guard.local.json`, ported to TypeScript) and runs `guard.py` and `devlog_gate.py` as hook commands when `zen.json` lists them under `guard.hooks.preToolUse` and `guard.hooks.stop`. Its skills come from the same `.agents/skills`. Every block is appended to the same `~/.cache/agent-guard.log`. Running the bots on it is described in [zen-agent.md](zen-agent.md).
+
 ### Other agents
 
 Any agent that can run a command before a tool call and pass it a JSON payload can use the guard. The payload shape is in the docstring at the top of `guard.py`; the tests show real examples.
@@ -114,3 +124,7 @@ python3 -m pytest .secondbrain/harness
 ```
 
 Then, inside the agent, ask it to `cat .env`. It should be refused with a reason that starts with `guard:`.
+
+## Automatic code review
+
+The disabled-by-default board review gate turns coding completion into a durable review submission. Its dedicated trusted worker gathers bounded evidence, dispatches a read-only subscription reviewer, returns findings to the original builder, or merges and deploys the exact reviewed revision through registered adapters. [Setup, fixture, commands and rollout](automatic-review.md).

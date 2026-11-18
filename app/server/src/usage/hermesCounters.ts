@@ -8,7 +8,7 @@ const opt = (v: unknown): number | null => (typeof v === 'number' ? v : typeof v
 const s = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
 const epoch = (v: unknown): Date | null => { const x = opt(v); return x === null ? null : new Date(x * 1000); };
 
-/** Hermes keeps running token totals on each session row. SELECT * because the Mac and droplet versions differ. */
+/** Hermes keeps running token totals on each session row. SELECT * because machine versions differ. */
 export function readHermesCounters(dbPath: string, host: Host, profile: string): HermesCounters[] {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {

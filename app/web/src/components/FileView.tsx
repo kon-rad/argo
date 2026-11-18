@@ -219,7 +219,7 @@ function Frontmatter({ data }: { data: Record<string, unknown> }) {
         <tbody>
           {Object.entries(data).map(([key, value]) => (
             <tr key={key} className="align-top">
-              <th className="py-1 pr-4 text-left font-medium text-[var(--ink-dim)]">{key}</th>
+              <th className="py-1 pr-4 text-left font-medium text-[var(--ink-dim)] max-md:whitespace-nowrap">{key}</th>
               <td className="py-1 font-mono break-all">
                 {typeof value === 'string' ? value : JSON.stringify(value)}
               </td>

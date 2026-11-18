@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db.js';
 import { redactor } from '../archive/redact.js';
+import { sessionTitle } from '../archive/sessionTitle.js';
 import { expandSteps, hermesResponse, type StepPart } from '../archive/steps.js';
 import { hermesMatchKey } from '../usage/hermesCalls.js';
 import { HttpError, parseOr400, wrap } from './http.js';
@@ -20,7 +21,7 @@ const flag = z.enum(['0', '1']).optional().transform((v) => v === '1');
 
 const listQuery = z.object({
   from: iso.optional(), to: iso.optional(),
-  harness: csv, host: csv, profile: csv, provider: csv, tool: csv,
+  harness: csv, host: csv, profile: csv, provider: csv, tool: csv, channel: csv, type: csv, persona: csv,
   q: z.string().trim().max(200).optional(), errors: flag, subagents: flag,
   offset: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(200).default(100),
 });
@@ -28,12 +29,56 @@ export type ListQuery = z.infer<typeof listQuery>;
 
 interface Only { id: number }
 
-/** `c` is a Claude Code subagent of `p`. */
-const CHILD_OF = (c: string, p: string) => `${c}.harness = 'claude-code' AND ${c}.host = ${p}.host AND ${c}.source = ${p}.source
+/** `c` is a native Claude Code or Codex subagent of `p`. */
+const CHILD_OF = (c: string, p: string) => `${c}.harness IN ('claude-code', 'codex') AND ${c}.host = ${p}.host AND ${c}.source = ${p}.source
   AND ${c}.parent_external_id = ${p}.external_id AND ${c}.id <> ${p}.id`;
-/** `a` is a Claude Code subagent whose parent is archived (so it shows inside the parent, not as a row). */
-const IS_CHILD = (a: string) => `${a}.harness = 'claude-code' AND ${a}.parent_external_id IS NOT NULL AND EXISTS (
+/** `a` is a native subagent whose parent is archived (so it shows inside the parent, not as a row). */
+const IS_CHILD = (a: string) => `${a}.harness IN ('claude-code', 'codex') AND ${a}.parent_external_id IS NOT NULL AND EXISTS (
   SELECT 1 FROM archive_sessions pa WHERE pa.host = ${a}.host AND pa.source = ${a}.source AND pa.external_id = ${a}.parent_external_id)`;
+
+/** The usage_runs rows a session was a run of (a card wake, a lane, a dispatched job); Hermes profiles never match. */
+const RUNS_OF = (a: string) => `FROM usage_runs r WHERE r.host = ${a}.host AND r.session_id = ${a}.external_id
+  AND coalesce(r.runtime, 'claude-code') = ${a}.harness AND ${a}.source = ${a}.harness`;
+
+/**
+ * How the harness was started, as it recorded it: Claude Code's `entrypoint` (`cli`, `sdk-cli`, ...) from session
+ * meta or, for rows stored before meta carried it, from its calls; zen-agent's trace `entrypoint`; Codex's call
+ * entrypoint. zen-agent's calls all say `zen-agent` and Hermes's say the platform, so neither is read here.
+ */
+const ENTRY = (a: string) => `CASE WHEN ${a}.harness = 'codex' AND ${a}.meta ->> 'native_source' IS NOT NULL THEN
+  CASE ${a}.meta ->> 'native_source' WHEN 'cli' THEN 'cli' WHEN 'vscode' THEN 'cli' WHEN 'desktop' THEN 'cli' WHEN 'exec' THEN 'exec' WHEN 'subagent' THEN 'subagent' END
+  ELSE coalesce(nullif(${a}.meta ->> 'entrypoint', ''), (SELECT u.entrypoint FROM usage_calls u
+  WHERE u.host = ${a}.host AND u.source = ${a}.source AND u.session_external_id = ${a}.external_id AND ${a}.harness IN ('claude-code', 'codex')
+    AND u.entrypoint IS NOT NULL ORDER BY u.ts LIMIT 1)) END`;
+
+/**
+ * The session's type: `telegram`, `cli` (a person at a terminal) or `headless` (`claude -p`, a card wake, a cron job),
+ * and any other channel as its own name (`web`, `remote-control`, a Hermes platform). Read from what the harness and the
+ * dispatcher recorded, never from the machine; `unknown` when nothing says.
+ */
+export const TYPE_SQL = (a: string) => `CASE
+  WHEN ${a}.channel IS NOT NULL THEN ${a}.channel
+  WHEN EXISTS (SELECT 1 ${RUNS_OF(a)}) THEN 'headless'
+  WHEN ${a}.harness = 'hermes' THEN CASE coalesce(nullif(${a}.meta ->> 'source', ''), 'unknown')
+    WHEN 'cli' THEN 'cli' WHEN 'cron' THEN 'headless' WHEN 'api_server' THEN 'web' ELSE coalesce(nullif(${a}.meta ->> 'source', ''), 'unknown') END
+  WHEN ${a}.harness = 'zen-agent' AND ${a}.meta ->> 'entrypoint' IS NULL
+    THEN 'unknown'
+  ELSE (SELECT CASE WHEN e IS NULL THEN 'unknown' WHEN e IN ('cli', 'chat') THEN 'cli'
+      WHEN e LIKE 'sdk%' OR e IN ('run', 'wake', 'subagent', 'exec') THEN 'headless' WHEN e = 'serve' THEN 'web' ELSE e END
+    FROM (SELECT ${ENTRY(a)} AS e) x)
+  END`;
+
+/** The persona that ran the session: the run's agent, the roster bot a person chose (archive_sessions.bot), the zen-agent persona, the Telegram bot's configured persona, else the bot itself. Null: none recorded. */
+export const PERSONA_SQL = (a: string) => `coalesce(
+  (SELECT r.agent_name ${RUNS_OF(a)} AND r.agent_name IS NOT NULL ORDER BY r.started_at DESC NULLS LAST LIMIT 1),
+  ${a}.bot, nullif(${a}.meta ->> 'persona', ''), nullif(${a}.meta ->> 'channel_persona', ''), nullif(${a}.meta ->> 'channel_bot', ''))`;
+
+/** The persona facet value: a person at a terminal has none; anything else without a record is unknown, said so. */
+const PERSONA_FACET = (a: string) => `coalesce(${PERSONA_SQL(a)}, CASE WHEN (${TYPE_SQL(a)}) = 'cli' THEN 'none' ELSE 'unknown' END)`;
+
+/** A context window recorded with the session (zen-agent writes `context_window`); never inferred from the model name. */
+const CAPACITY = (a: string) => `(SELECT CASE WHEN v ~ '^[0-9]{3,9}$' THEN v::bigint END FROM (SELECT coalesce(
+  ${a}.meta ->> 'context_window', ${a}.meta ->> 'context_length', ${a}.meta ->> 'model_context_window') AS v) c)`;
 
 /**
  * One row per session. Without `subagents`, a Claude Code session's subagents are folded
@@ -58,6 +103,9 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
   if (q.host) add(`a.host = ANY ($?::text[])`, q.host);
   if (q.profile) add(`coalesce(a.profile, 'none') = ANY ($?::text[])`, q.profile);
   if (q.provider) add(`coalesce(a.provider, 'unknown') = ANY ($?::text[])`, q.provider);
+  if (q.channel) add(`coalesce(a.channel, 'none') = ANY ($?::text[])`, q.channel);
+  if (q.type) add(`(${TYPE_SQL('a')}) = ANY ($?::text[])`, q.type);
+  if (q.persona) add(`${PERSONA_FACET('a')} = ANY ($?::text[])`, q.persona);
   // Content filters look at the session and, when folded, its subagents.
   const famOf = `SELECT c.id FROM archive_sessions c WHERE c.id = a.id OR (NOT $3 AND ${CHILD_OF('c', 'a')})`;
   if (q.tool) add(`EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id IN (${famOf}) AND m.tool_names && $?::text[])`, q.tool);
@@ -82,29 +130,54 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
        SELECT f.root, count(*)::int AS calls, sum(u.input_tokens)::bigint AS input, sum(u.cache_write_tokens)::bigint AS cache_write,
               sum(u.cache_read_tokens)::bigint AS cache_read, sum(u.output_tokens)::bigint AS output,
               sum(u.thinking_tokens)::bigint AS reasoning, array_agg(DISTINCT u.model) AS models
-       FROM fam f JOIN usage_calls u ON u.host = f.host AND u.session_external_id = f.external_id AND f.source = 'claude-code'
-       GROUP BY f.root)
+       FROM fam f JOIN usage_calls u ON u.host = f.host AND u.session_external_id = f.external_id AND f.source IN ('claude-code', 'codex') AND u.source = f.source
+       GROUP BY f.root),
+     -- The session's own latest main call: the prompt it sent is what the context held then. Not a sum over calls.
+     lc AS (
+       SELECT DISTINCT ON (p.id) p.id AS root, u.ts, u.model,
+              (coalesce(u.input_tokens, 0) + coalesce(u.cache_write_tokens, 0) + coalesce(u.cache_read_tokens, 0))::bigint AS tokens
+       FROM page p JOIN usage_calls u ON u.host = p.host AND u.source = p.source AND u.session_external_id = p.external_id
+       WHERE u.source = 'claude-code' AND NOT coalesce(u.is_sidechain, false) AND coalesce(u.entrypoint, '') NOT LIKE 'aux:%'
+       ORDER BY p.id, u.ts DESC, u.id DESC)
      SELECT p.id, p.source, p.harness, p.profile, p.provider, p.host, p.external_id, p.parent_external_id, p.project, p.title,
+            coalesce((SELECT array_agg(DISTINCT r.task_id ORDER BY r.task_id) FROM usage_runs r
+              WHERE r.host = p.host AND r.session_id = p.external_id AND r.task_id IS NOT NULL
+                AND coalesce(r.runtime, 'claude-code') = p.harness AND p.source = p.harness), '{}'::text[]) AS task_ids,
+            p.channel, p.meta ->> 'channel_bot' AS channel_bot,
+            ${TYPE_SQL('p')} AS session_type, ${PERSONA_SQL('p')} AS persona,
+            (SELECT tl.title FROM task_links tl WHERE tl.task_id = (SELECT r.task_id ${RUNS_OF('p')} AND r.task_id IS NOT NULL
+               ORDER BY r.started_at NULLS LAST LIMIT 1)) AS task_title,
             (SELECT left(m.content_text, 160) FROM archive_messages m WHERE m.session_id = p.id AND m.step = 'prompt'
                AND m.content_text <> '' ORDER BY m.seq LIMIT 1) AS first_prompt,
+            -- The first few things a person (or a harness on their behalf) sent: the title skips the boilerplate among them.
+            (SELECT array_agg(t ORDER BY seq) FROM (SELECT left(m.content_text, 2000) AS t, m.seq FROM archive_messages m
+               WHERE m.session_id = p.id AND m.role = 'user' AND m.step IN ('prompt', 'meta') AND m.content_text <> ''
+               ORDER BY m.seq LIMIT 8) f) AS opening,
+            lc.tokens AS context_tokens, lc.ts AS context_at, ${CAPACITY('p')} AS context_window,
             p.started_at, p.ended_at, p.total,
             st.steps, st.tool_calls, st.errors, st.subagents,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.models, CASE WHEN p.model IS NULL THEN '{}'::text[] ELSE ARRAY[p.model] END)
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.models, CASE WHEN p.model IS NULL THEN '{}'::text[] ELSE ARRAY[p.model] END)
                  ELSE CASE WHEN p.model IS NULL THEN '{}'::text[] ELSE ARRAY[p.model] END END AS models,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.calls, 0) ELSE coalesce((p.meta ->> 'api_call_count')::int, 0) END AS calls,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.input, 0) ELSE coalesce(p.input_tokens, 0) END AS input,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.cache_write, 0) ELSE coalesce((p.meta ->> 'cache_write_tokens')::bigint, 0) END AS cache_write,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.cache_read, 0) ELSE coalesce((p.meta ->> 'cache_read_tokens')::bigint, 0) END AS cache_read,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.output, 0) ELSE coalesce(p.output_tokens, 0) END AS output,
-            CASE WHEN p.harness = 'claude-code' THEN coalesce(ca.reasoning, 0) ELSE coalesce((p.meta ->> 'reasoning_tokens')::bigint, 0) END AS reasoning,
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.calls, 0) ELSE coalesce((p.meta ->> 'api_call_count')::int, 0) END AS calls,
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.input, 0) ELSE coalesce(p.input_tokens, 0) END AS input,
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.cache_write, 0) ELSE coalesce((p.meta ->> 'cache_write_tokens')::bigint, 0) END AS cache_write,
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.cache_read, 0) ELSE coalesce((p.meta ->> 'cache_read_tokens')::bigint, 0) END AS cache_read,
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.output, 0) ELSE coalesce(p.output_tokens, 0) END AS output,
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN coalesce(ca.reasoning, 0) ELSE coalesce((p.meta ->> 'reasoning_tokens')::bigint, 0) END AS reasoning,
             -- Hermes's own estimate in USD; Claude Code never shows dollars.
-            CASE WHEN p.harness = 'claude-code' THEN NULL ELSE p.cost_usd END AS cost_usd
-     FROM page p LEFT JOIN st ON st.root = p.id LEFT JOIN ca ON ca.root = p.id
+            CASE WHEN p.harness IN ('claude-code', 'codex') THEN NULL ELSE p.cost_usd END AS cost_usd
+     FROM page p LEFT JOIN st ON st.root = p.id LEFT JOIN ca ON ca.root = p.id LEFT JOIN lc ON lc.root = p.id
      ORDER BY coalesce(p.started_at, p.first_seen_at) DESC, p.id DESC`, params);
   const total = rows[0] ? Number(rows[0].total) : 0;
   for (const r of rows) {
     delete r.total;
     for (const k of ['calls', 'input', 'cache_write', 'cache_read', 'output', 'reasoning']) r[k] = Number(r[k] ?? 0);
+    // Context: null when nothing recorded it. A number only from the latest call or a recorded window, never from totals.
+    for (const k of ['context_tokens', 'context_window']) r[k] = r[k] == null ? null : Number(r[k]);
+    const named = sessionTitle({ taskTitle: r.task_title as string | null, title: r.title as string | null, prompts: r.opening as string[] | null });
+    r.display_title = named?.text ?? null;
+    r.title_source = named?.source ?? null;
+    delete r.opening;
     if (r.harness === 'claude-code') delete r.cost_usd;   // no dollar field at all for Claude Code
   }
   return { rows, total };
@@ -186,9 +259,12 @@ export function agentSessionsRouter(): Router {
        UNION ALL SELECT 'host', a.host, count(*) FROM archive_sessions a WHERE ${range} GROUP BY 2
        UNION ALL SELECT 'profile', coalesce(a.profile, 'none'), count(*) FROM archive_sessions a WHERE ${range} GROUP BY 2
        UNION ALL SELECT 'provider', coalesce(a.provider, 'unknown'), count(*) FROM archive_sessions a WHERE ${range} GROUP BY 2
+       UNION ALL SELECT 'channel', coalesce(a.channel, 'none'), count(*) FROM archive_sessions a WHERE ${range} GROUP BY 2
+       UNION ALL SELECT 'type', ${TYPE_SQL('a')}, count(*) FROM archive_sessions a WHERE ${range} GROUP BY 2
+       UNION ALL SELECT 'persona', ${PERSONA_FACET('a')}, count(*) FROM archive_sessions a WHERE ${range} GROUP BY 2
        UNION ALL SELECT * FROM (SELECT 'tool', t, count(*) FROM archive_sessions a JOIN archive_messages m ON m.session_id = a.id
          CROSS JOIN unnest(m.tool_names) t WHERE ${range} AND m.step = 'tool_call' GROUP BY 2 ORDER BY 3 DESC LIMIT 30) tools`, [from, to]);
-    const facets: Record<string, Array<{ value: string; n: number }>> = { harness: [], host: [], profile: [], provider: [], tool: [] };
+    const facets: Record<string, Array<{ value: string; n: number }>> = { harness: [], host: [], profile: [], provider: [], channel: [], type: [], persona: [], tool: [] };
     for (const r of rows) facets[r.dimension]!.push({ value: r.value, n: Number(r.n) });
     for (const k of Object.keys(facets)) facets[k]!.sort((a, b) => b.n - a.n || a.value.localeCompare(b.value));
     res.json({ facets });
@@ -221,7 +297,7 @@ export function agentSessionsRouter(): Router {
                 'cache_write', u.cache_write_tokens, 'cache_read', u.cache_read_tokens, 'output', u.output_tokens,
                 'reasoning', u.thinking_tokens) END AS call
        FROM fam f JOIN archive_messages m ON m.session_id = f.id
-       LEFT JOIN usage_calls u ON f.source = 'claude-code' AND u.host = f.host AND u.session_external_id = f.external_id
+       LEFT JOIN usage_calls u ON f.source IN ('claude-code', 'codex') AND u.source = f.source AND u.host = f.host AND u.session_external_id = f.external_id
          AND u.message_external_id = m.external_id
        WHERE ($2 OR m.step IS DISTINCT FROM 'meta')
        ORDER BY m.ts NULLS FIRST, f.own DESC, m.session_id, m.seq
@@ -242,7 +318,7 @@ export function agentSessionsRouter(): Router {
     }
     const runs = await query(
       `SELECT run_id, agent_name, task_id, lane, started_at, num_turns, subtype, verify_name, verify_passed, verify_metric, verify_output
-       FROM usage_runs WHERE host = $1 AND session_id = $2 ORDER BY started_at`, [host, sid]);
+       FROM usage_runs WHERE host = $1 AND session_id = $2 AND coalesce(runtime, 'claude-code') = $3 AND $4 = $3 ORDER BY started_at`, [host, sid, session.harness, session.source]);
     const red = redactor();
     for (const r of runs.rows as Array<{ verify_output: string | null }>) if (r.verify_output) r.verify_output = red.text(r.verify_output);
     res.json({ session, runs: runs.rows, steps, next: more ? q.offset + q.limit : null });

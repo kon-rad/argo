@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -20,6 +20,14 @@ describe('statusline-usage wrapper', () => {
     const lines = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     expect(lines.map((l) => l.rate_limits.five_hour.used_percentage)).toEqual([23.5, 24]);
     expect(lines[0].session_id).toBe('s1');
+  });
+
+  it('refreshes unchanged readings after one minute', () => {
+    const log = join(mkdtempSync(join(tmpdir(), 'sl-')), 'plan.ndjson');
+    const limits = { seven_day: { used_percentage: 12, resets_at: 1891900000 } };
+    writeFileSync(log, JSON.stringify({ at: new Date(Date.now() - 61_000).toISOString(), rate_limits: limits }) + '\n');
+    expect(run(log, input(limits))).toBe('SL:Opus');
+    expect(readFileSync(log, 'utf8').trim().split('\n')).toHaveLength(2);
   });
 
   it('writes nothing without rate limits and never breaks the status line on bad input', () => {

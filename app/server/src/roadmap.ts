@@ -1,11 +1,10 @@
-import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { promisify } from 'node:util';
-import type { Board, FeatureView } from './projects.js';
+import { query } from './db.js';
+import type { Board, ProjectView } from './projects.js';
 import type { SecondBrainSettings } from './settings.js';
 
 /**
- * The roadmap view: kanban cards and tracker features joined by theme.
+ * The roadmap view: kanban cards and tracker projects joined by theme.
  * Themes come from `roadmap.themes` in secondbrain.json, so the engine knows
  * none of them. The file is generated and carries a marker line; a file
  * without the marker is somebody's notes and is never overwritten.
@@ -31,19 +30,18 @@ export interface Card {
 
 export class RoadmapError extends Error {}
 
-const run = promisify(execFile);
-
-/** Cards from `hermes kanban --board B list --json`. Throws when the board is unreachable or unreadable, so no empty file is written. */
+/** Read the master board tables. An unknown board fails before any file is written. */
 export async function fetchCards(s: RoadmapSettings): Promise<Card[]> {
   const out: Card[] = [];
   for (const board of s.boards) {
-    let stdout: string;
-    try {
-      ({ stdout } = await run(s.hermesBin, ['kanban', '--board', board, 'list', '--json'], { maxBuffer: 64 * 1024 * 1024, timeout: 30_000 }));
-    } catch (err) {
-      throw new RoadmapError(`kanban board "${board}" unreachable: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);
-    }
-    out.push(...parseCards(stdout, board));
+    const exists = await query('SELECT slug FROM boards WHERE slug = $1', [board]);
+    if (!exists.rowCount) throw new RoadmapError(`kanban board "${board}" does not exist`);
+    const { rows } = await query(`SELECT id, title, body, status, assignee,
+      extract(epoch from created_at)::float8 AS created_at,
+      extract(epoch from started_at)::float8 AS started_at,
+      extract(epoch from completed_at)::float8 AS completed_at
+      FROM cards WHERE board_slug = $1`, [board]);
+    out.push(...parseCards(JSON.stringify(rows), board));
   }
   return out;
 }
@@ -79,8 +77,8 @@ export function cardInTheme(c: Card, t: Theme): boolean {
   return t.keywords.some((k) => k && title.includes(k.toLowerCase()));
 }
 
-export function featureInTheme(project: string, f: FeatureView, t: Theme): boolean {
-  return t.projects.includes(project) || t.features.includes(`${project}/${f.slug}`);
+export function projectInTheme(area: string, f: ProjectView, t: Theme): boolean {
+  return t.areas.includes(area) || t.projects.includes(`${area}/${f.slug}`);
 }
 
 const cell = (s: string | null | undefined): string => (s ?? '').replace(/\|/g, '\\|').replace(/\n+/g, ' ').trim();
@@ -89,7 +87,7 @@ const date = (sec: number): string => (sec ? new Date(sec * 1000).toISOString().
 export interface ThemeCounts {
   id: string;
   cards: number;
-  features: number;
+  projects: number;
 }
 
 export function renderRoadmap(
@@ -100,7 +98,7 @@ export function renderRoadmap(
 ): { text: string; counts: ThemeCounts[] } {
   const out: string[] = [
     '# Roadmap',
-    '### Kanban cards and tracker features by theme',
+    '### Kanban cards and tracker projects by theme',
     '',
     GENERATED_MARKER,
     `**Generated at:** ${now.toISOString()} · **Tracker data as of:** ${board.as_of ?? 'no data'} · **Boards:** ${s.boards.join(', ')}`,
@@ -109,14 +107,14 @@ export function renderRoadmap(
   const counts: ThemeCounts[] = [];
   for (const t of s.themes) {
     const tc = cards.filter((c) => cardInTheme(c, t)).sort((a, b) => lastChange(b) - lastChange(a));
-    const tf: { p: string; f: FeatureView }[] = [];
-    for (const p of board.projects) for (const f of p.features) if (featureInTheme(p.slug, f, t)) tf.push({ p: p.slug, f });
+    const tf: { p: string; f: ProjectView }[] = [];
+    for (const p of board.areas) for (const f of p.projects) if (projectInTheme(p.slug, f, t)) tf.push({ p: p.slug, f });
     tf.sort((a, b) => a.f.days_in_stage - b.f.days_in_stage);
-    counts.push({ id: t.id, cards: tc.length, features: tf.length });
+    counts.push({ id: t.id, cards: tc.length, projects: tf.length });
 
-    out.push('---', '', `## ${t.title}`, '', `${tf.length} features, ${tc.length} tickets.`, '', '### Features', '');
+    out.push('---', '', `## ${t.title}`, '', `${tf.length} projects, ${tc.length} tickets.`, '', '### Projects', '');
     if (tf.length) {
-      out.push('| Project | Feature | Stage | Days in stage | Needs you |', '|---|---|---|---|---|');
+      out.push('| Area | Project | Stage | Days in stage | Needs you |', '|---|---|---|---|---|');
       for (const { p, f } of tf) out.push(`| ${p} | ${cell(f.title)} | ${f.stage} | ${f.days_in_stage} | ${cell(f.needs_owner)} |`);
     } else out.push('None.');
     out.push('', '### Tickets (newest change first)', '');

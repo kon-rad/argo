@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import DataTable from '../components/DataTable.js';
+import { VaultMarkdown } from '../components/VaultMarkdown.js';
 import { api, type CronJob } from '../lib/api.js';
 import { ago, zoned } from '../lib/time.js';
 
 /**
  * Hermes cron jobs from every profile (active, paused, finished, removed),
  * each with its full run history and every output it produced, plus the
- * droplet's systemd timers. Data comes from `secondbrain agents-sync`.
+ * server's systemd timers. Data comes from `secondbrain agents-sync`.
  */
 
 function stateLabel(j: CronJob): string {
@@ -26,7 +26,8 @@ export default function Cron() {
 
   return (
     <div className="flex h-full min-h-0">
-      <aside className="w-96 shrink-0 overflow-y-auto border-r border-[var(--rule)]">
+      {/* Phone width: the job list OR one job, never both squeezed side by side. */}
+      <aside className={`w-full shrink-0 overflow-y-auto border-r border-[var(--rule)] md:block md:w-96 ${jobId ? 'max-md:hidden' : ''}`}>
         <div className="border-b border-[var(--rule)] px-3 py-2">
           <h1 className="font-semibold tracking-tight">Cron jobs</h1>
           <div className="text-xs text-[var(--ink-faint)]">
@@ -39,14 +40,16 @@ export default function Cron() {
             {jobs.data?.jobs.map((j) => {
               const label = stateLabel(j);
               const sel = j.profile === profile && j.job_id === jobId;
+              const href = `/cron/${encodeURIComponent(j.profile)}/${encodeURIComponent(j.job_id)}`;
               return (
                 <tr
                   key={`${j.profile}/${j.job_id}`}
-                  onClick={() => navigate(`/cron/${encodeURIComponent(j.profile)}/${encodeURIComponent(j.job_id)}`)}
+                  // The whole row is the pointer target; the name is the link a keyboard or a screen reader lands on.
+                  onClick={(e) => { if (!(e.target as HTMLElement).closest('a')) navigate(href); }}
                   className={`cursor-pointer border-b border-[var(--rule)] hover:bg-[var(--paper-sunk)] ${sel ? 'bg-[var(--paper-sunk)]' : ''}`}
                 >
                   <td className="px-3 py-2">
-                    <div className="font-medium">{j.name}</div>
+                    <Link to={href} aria-current={sel ? 'page' : undefined} className="block font-medium">{j.name}</Link>
                     <div className="text-xs text-[var(--ink-dim)]">
                       {j.profile} · <code>{j.schedule ?? '—'}</code> · {j.runs ?? 0} runs · {j.outputs ?? 0} outputs
                     </div>
@@ -54,7 +57,7 @@ export default function Cron() {
                       {label === 'active' ? `next ${zoned(j.next_run_at, j.timezone)}` : `last ${zoned(j.last_run_at, j.timezone)}`}
                     </div>
                   </td>
-                  <td className="pr-3 text-right align-top text-xs">
+                  <td className="pr-3 text-right align-top text-xs max-md:whitespace-nowrap">
                     {/* State is spelled out, never color alone. */}
                     <span className={`inline-block rounded border px-1.5 py-0.5 ${label === 'active' ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-[var(--rule)] text-[var(--ink-dim)]'}`}>
                       {label === 'active' ? '● active' : label === 'paused' ? '❚❚ paused' : label}
@@ -69,7 +72,7 @@ export default function Cron() {
         <div className="border-t border-[var(--rule)] px-3 py-2">
           <h2 className="text-sm font-medium">systemd timers on this server</h2>
           {timers.data && !timers.data.available && (
-            <p className="text-xs text-[var(--ink-dim)]">Not available here (the Mac has no systemd).</p>
+            <p className="text-xs text-[var(--ink-dim)]">Not available here (a local install has no systemd).</p>
           )}
           <ul className="mt-1 space-y-1 text-xs">
             {timers.data?.timers.map((t) => (
@@ -81,7 +84,8 @@ export default function Cron() {
           </ul>
         </div>
       </aside>
-      <section className="min-w-0 flex-1 overflow-y-auto">
+      <section className={`min-w-0 flex-1 overflow-y-auto ${jobId ? '' : 'max-md:hidden'}`}>
+        {jobId && <Link to="/cron" className="inline-flex min-h-11 items-center px-3 text-sm text-[var(--accent)] md:hidden">← All jobs</Link>}
         {profile && jobId ? <JobView profile={profile} jobId={jobId} /> : (
           <p className="p-6 text-sm text-[var(--ink-dim)]">Pick a job to see every run and what it produced.</p>
         )}
@@ -158,7 +162,7 @@ function JobView({ profile, jobId }: { profile: string; jobId: string }) {
       </ol>
 
       <h2 className="mt-6 text-sm font-medium">Runs ({runs.length})</h2>
-      <table className="mt-2 w-full text-sm tabular-nums">
+      <DataTable label="Runs" phone="cards" className="mt-2 w-full text-sm tabular-nums">
         <thead className="text-left text-xs text-[var(--ink-dim)]">
           <tr>
             <th className="py-1 pr-3 font-normal">Started</th>
@@ -177,7 +181,7 @@ function JobView({ profile, jobId }: { profile: string; jobId: string }) {
               <tr key={r.id} className="border-t border-[var(--rule)]">
                 <td className="py-1 pr-3">{zoned(r.started_at ?? r.claimed_at, tz)}</td>
                 <td className="pr-3">{took}</td>
-                <td className="pr-3">{r.status === 'completed' ? '✓ completed' : r.status === 'failed' ? `⚠ failed${r.error ? `: ${r.error}` : ''}` : r.status}</td>
+                <td className="pr-3 max-md:col-span-2">{r.status === 'completed' ? '✓ completed' : r.status === 'failed' ? `⚠ failed${r.error ? `: ${r.error}` : ''}` : r.status}</td>
                 <td className="pr-3">
                   {s ? <Link className="text-[var(--accent)] underline" to={`/agents/history/${s.id}`}>{s.message_count} msgs</Link> : '—'}
                 </td>
@@ -185,7 +189,7 @@ function JobView({ profile, jobId }: { profile: string; jobId: string }) {
             );
           })}
         </tbody>
-      </table>
+      </DataTable>
       {runs.length === 0 && <p className="text-sm text-[var(--ink-dim)]">No recorded runs (Hermes started logging executions on 2026-09-30).</p>}
     </div>
   );
@@ -201,9 +205,7 @@ function Output({ profile, jobId, file }: { profile: string; jobId: string; file
   const prompt = at >= 0 ? out.data.content.slice(0, at) : null;
   return (
     <div className="border-t border-[var(--rule)] px-3 py-2 text-sm">
-      <div className="prose max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{response}</ReactMarkdown>
-      </div>
+      <VaultMarkdown text={response} className="prose max-w-none" />
       {prompt && (
         <details className="mt-2 text-xs text-[var(--ink-dim)]">
           <summary className="cursor-pointer">Header and prompt sent to the agent</summary>

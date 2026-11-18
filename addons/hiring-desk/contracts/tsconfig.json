@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2023", "lib": ["ES2023", "DOM"], "module": "NodeNext", "moduleResolution": "NodeNext", "strict": true, "skipLibCheck": true,
+    "rootDir": ".",
+    "outDir": "dist",
+    "declaration": true
+  },
+  "include": [
+    "index.ts",
+    "desk/**/*.ts"
+  ],
+  "exclude": [
+    "desk/**/*.test.ts",
+    "desk/**/*.spec.ts",
+    "desk/**/vitest.config.ts"
+  ]
+}

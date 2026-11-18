@@ -6,7 +6,7 @@ import type { UsageCall } from './types.js';
 
 /**
  * Per-request token lines from the engine's Hermes plugin (harness/hermes/usage-ledger), one file per UTC
- * day in `<hermes home>/usage/calls-YYYY-MM-DD.jsonl`. Pure: the droplet's agents-sync, the Mac archive run
+ * day in `<hermes home>/usage/calls-YYYY-MM-DD.jsonl`. Pure: the server's agents-sync, the laptop archive run
  * and the agent ledger all read them through here. Every row is keyed by its request id, so reading a file
  * again changes nothing.
  */

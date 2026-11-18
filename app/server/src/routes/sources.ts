@@ -84,10 +84,10 @@ export function sourcesRouter(connectors: ConnectorRegistry): Router {
       const id = intParam(req.params.id, 'source id');
       const source = await getSource(id);
       if (!source.enabled) throw new HttpError(409, `source ${id} is disabled`);
-      // A client of the droplet's master database never indexes: the droplet
+      // A client of the server's master database never indexes: the server
       // scans and embeds its own checkout (config.ts, INDEXER).
       if (!config.indexer && (source.kind === 'vault' || source.kind === 'embeddings')) {
-        throw new HttpError(409, `${source.kind} runs on the droplet (INDEXER=off): this app is a client of the master database`);
+        throw new HttpError(409, `${source.kind} runs on the server (INDEXER=off): this app is a client of the master database`);
       }
 
       const connector = connectors[source.kind];

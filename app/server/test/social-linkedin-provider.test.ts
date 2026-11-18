@@ -30,13 +30,13 @@ describe('linkedinProvider.exchangeCode', () => {
   it('exchanges the code, reads userinfo, and reports no refresh token when LinkedIn gives none', async () => {
     const f = fakeFetch({
       'oauth/v2/accessToken': () => Response.json({ access_token: 'AQAtoken', expires_in: 5_184_000 }),
-      'v2/userinfo': () => Response.json({ sub: 'abc123', name: 'Konrad Gnat' }),
+      'v2/userinfo': () => Response.json({ sub: 'abc123', name: 'Jane Example' }),
     });
     const provider = linkedinProvider({ ...OPTS, fetchFn: f }, () => T0);
     const account = await provider.exchangeCode('authcode', 'https://x/callback');
     expect(account).toEqual({
       providerAccountId: 'urn:li:person:abc123',
-      displayName: 'Konrad Gnat',
+      displayName: 'Jane Example',
       tokens: {
         accessToken: 'AQAtoken',
         accessTokenExpiresAt: new Date(T0.getTime() + 5_184_000_000),
@@ -50,7 +50,7 @@ describe('linkedinProvider.exchangeCode', () => {
     const f = fakeFetch({
       'oauth/v2/accessToken': () =>
         Response.json({ access_token: 'AQAtoken', expires_in: 5_184_000, refresh_token: 'refresh1', refresh_token_expires_in: 31_536_000 }),
-      'v2/userinfo': () => Response.json({ sub: 'abc123', name: 'Konrad Gnat' }),
+      'v2/userinfo': () => Response.json({ sub: 'abc123', name: 'Jane Example' }),
     });
     const provider = linkedinProvider({ ...OPTS, fetchFn: f }, () => T0);
     const account = await provider.exchangeCode('authcode', 'https://x/callback');
@@ -63,7 +63,7 @@ describe('linkedinProvider.refresh', () => {
   it('throws NoRefreshTokenError when the stored account has none', async () => {
     const provider = linkedinProvider(OPTS);
     const account = {
-      id: 1, provider: 'linkedin' as const, providerAccountId: 'urn:li:person:abc123', displayName: 'Konrad',
+      id: 1, provider: 'linkedin' as const, providerAccountId: 'urn:li:person:abc123', displayName: 'Jane',
       accessToken: 'old', accessTokenExpiresAt: T0, refreshToken: null, refreshTokenExpiresAt: null,
     };
     await expect(provider.refresh(account)).rejects.toThrow(NoRefreshTokenError);
@@ -73,7 +73,7 @@ describe('linkedinProvider.refresh', () => {
     const f = fakeFetch({ 'oauth/v2/accessToken': () => Response.json({ access_token: 'newtoken', expires_in: 5_184_000 }) });
     const provider = linkedinProvider({ ...OPTS, fetchFn: f }, () => T0);
     const account = {
-      id: 1, provider: 'linkedin' as const, providerAccountId: 'urn:li:person:abc123', displayName: 'Konrad',
+      id: 1, provider: 'linkedin' as const, providerAccountId: 'urn:li:person:abc123', displayName: 'Jane',
       accessToken: 'old', accessTokenExpiresAt: T0, refreshToken: 'refresh1', refreshTokenExpiresAt: new Date(T0.getTime() + 1e9),
     };
     const tokens = await provider.refresh(account);
@@ -84,7 +84,7 @@ describe('linkedinProvider.refresh', () => {
 
 describe('linkedinProvider.publish', () => {
   const account = {
-    id: 1, provider: 'linkedin' as const, providerAccountId: 'urn:li:person:abc123', displayName: 'Konrad',
+    id: 1, provider: 'linkedin' as const, providerAccountId: 'urn:li:person:abc123', displayName: 'Jane',
     accessToken: 'tok', accessTokenExpiresAt: T0, refreshToken: null, refreshTokenExpiresAt: null,
   };
 

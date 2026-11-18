@@ -63,6 +63,12 @@ export interface PostOptions {
   instagramType?: 'post' | 'reel' | 'story';
   /** Instagram: also show a reel on the profile grid (default true). */
   shareToFeed?: boolean;
+  /**
+   * Instagram reel: the second of the video to use as its cover on the profile grid
+   * (Buffer's thumbnailOffset). Unset, Instagram takes the first frame, which for a
+   * reel that opens on a dark hook shot is a near-black tile.
+   */
+  coverAt?: number;
   /** Instagram (and LinkedIn through a relay): a first comment. */
   firstComment?: string;
   /** YouTube: the video's title (required, 100 characters at most); the post body is its description. */
