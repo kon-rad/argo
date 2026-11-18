@@ -83,7 +83,49 @@ import { mkdtemp, writeFile, readFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { vi } from 'vitest';
-import { source, note } from '../src/review/context.js';
+import { source, note, boardSource, boardSources } from '../src/review/context.js';
+import { POLICY } from '../src/review/policy.js';
+
+it.each([
+  ['source budget', 'comments', [{ verdict: 'x'.repeat(POLICY.sourceChars), truncated: false }]],
+  ['database truncation', 'earlier_findings', [{ verdict: 'partial', truncated: true }]],
+  ['history overflow', 'earlier_findings', Array.from({ length: 101 }, () => ({ verdict: null, truncated: null }))],
+] as const)('blocks incomplete context before model dispatch: %s', async (_, key, raw) => {
+  const f = fixture(), s = snapshot();
+  const collected = boardSources(`board:t_123abc:${key}`, raw);
+  expect(collected.every(s => s.truncated)).toBe(true);
+  s.sources.push(...collected); f.setCurrent(s);
+  await runReview(f.job, ['test'], f.io);
+  expect(f.job.state).toBe('blocked');
+  expect(f.counts()).toEqual({ reviews: 0, merges: 0, deploys: 0, completions: 0 });
+});
+
+it('preserves an explicit empty prior-findings source and its original identity', () => {
+  const ref = 'board:t_123abc:earlier_findings';
+  expect(boardSources(ref, [])).toEqual([source(ref, [])]);
+  expect(boardSources(ref, [])[0]).toMatchObject({ ref, text: '[]', missing: false, truncated: false });
+});
+
+it.each([20, POLICY.sourceChars * 3])('retains original revision for a complete %i-character prior collection', size => {
+  const ref = 'board:t_123abc:earlier_findings', raw = [{ verdict: '界'.repeat(size), truncated: false }];
+  const original = source(ref, raw, true, Number.MAX_SAFE_INTEGER), parts = boardSources(ref, raw);
+  expect(parts.map(part => part.text).join('')).toBe(original.text);
+  expect(parts.every(part => part.revision === source(ref, raw).revision && !part.missing && !part.truncated)).toBe(true);
+  if (parts.length === 1) expect(parts[0]!.ref).toBe(ref);
+  else expect(parts.map(part => part.ref)).toEqual(parts.map((_, index) => `${ref}:part-${index + 1}-of-${parts.length}`));
+});
+
+it('dispatches complete prior findings above the former database limit', async () => {
+  const f = fixture(), s = snapshot();
+  const raw = [{ verdict: JSON.stringify({ findings: [{ fix: 'x'.repeat(12_000) }] }), truncated: false }];
+  const collected = boardSource('board:t_123abc:earlier_findings', raw);
+  expect(collected.truncated).toBe(false);
+  expect(JSON.parse(collected.text)).toEqual(raw);
+  s.sources.push(collected); f.setCurrent(s);
+  await runReview(f.job, ['test'], f.io);
+  expect(f.counts().reviews).toBe(1);
+  expect(f.job.state).toBe('done');
+});
 import { childEnv, command, correctionLookupDisposition, SafeProcessError } from '../src/review/process.js';
 import { targetMain } from '../src/review/target.js';
 import { GitHub, type HostConfig } from '../src/review/adapters.js';
@@ -358,4 +400,26 @@ describe('reviewer output schema', () => {
     expect(Verdict.safeParse(answer).success).toBe(true);
     expect(ReviewerVerdict.safeParse({ ...answer, findings: [{ ...answer.findings[0], code: 'ci-failure' }] }).success).toBe(false);
   });
+});
+
+it('dispatches complete supported verdicts in bounded transport parts, and blocks database truncation', async () => {
+  const raw = [{round: 0, verdict: JSON.stringify({findings: [{fix: 'x'.repeat(99_900)}]}), truncated: false}];
+  const parts = boardSources('board:t_123abc:earlier_findings', raw);
+  expect(parts.length).toBeGreaterThan(1);
+  expect(parts.every(s => !s.truncated && s.text.length <= POLICY.sourceChars)).toBe(true);
+  expect(JSON.parse(parts.map(s => s.text).join(''))).toEqual(raw);
+  const f = fixture(), s = snapshot(); s.sources.push(...parts); f.setCurrent(s);
+  await runReview(f.job, ['test'], f.io); expect(f.counts().reviews).toBe(1); expect(f.job.state).toBe('done');
+  raw[0]!.truncated = true;
+  const g = fixture(), bad = snapshot(); bad.sources.push(...boardSources('board:t_123abc:earlier_findings', raw)); g.setCurrent(bad);
+  await runReview(g.job, ['test'], g.io); expect(g.counts().reviews).toBe(0); expect(g.job.state).toBe('blocked');
+});
+
+it('keeps Unicode characters intact at a prior-findings transport boundary', () => {
+  const prefix = JSON.stringify([{verdict:'',truncated:false}]).indexOf('","truncated');
+  const raw = [{verdict:'x'.repeat(POLICY.sourceChars-1-prefix)+'😀'+'y'.repeat(100),truncated:false}];
+  const parts=boardSources('board:t_123abc:earlier_findings',raw);
+  expect(parts.length).toBe(2);
+  expect(JSON.parse(parts.map(p=>p.text).join(''))).toEqual(raw);
+  expect(parts.every(p=>!/[\uD800-\uDBFF]$/.test(p.text))).toBe(true);
 });

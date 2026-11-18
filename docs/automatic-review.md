@@ -166,17 +166,19 @@ Behind or conflicting open PRs are readiness rejections, not endless tool-error 
 
 ## PR size is never a finding
 
-The gate does not reject a PR for its size. No count of changed files, gathered sources, source characters or diff characters produces a finding, and the reviewer is never handed cut text: the worker keeps the whole aggregate diff and every changed source with its immediate imports in the snapshot.
+The gate does not reject a PR for its size. No count of changed files, gathered sources, source characters or diff characters produces a finding, and the reviewer is never handed silently truncated text: the worker keeps the whole aggregate diff and every changed source with its immediate imports in the snapshot.
 
-One reviewer call holds at most 500,000 characters. When a snapshot is larger, `review/passes.ts` reviews it in several passes:
+One reviewer call holds at most 500,000 UTF-8 bytes of serialized input. `review/passes.ts` measures complete serialized snapshots and reserves room for adapter instructions, identity and file-list metadata; the adapter checks the final prompt before invoking the reviewer. When a snapshot is larger, it is reviewed in several bounded passes:
 
 | Part of the snapshot | Where it goes |
 |---|---|
-| Ticket, comments, conversations, notes, builder evidence, PR threads | Every pass |
-| A file's diff and its source | The same pass, together; files are packed in path order |
-| A file larger than a whole pass | Its own pass, uncut |
+| Complete ticket within the bounded shared-core allowance | Every pass; it remains actual ticket evidence, never a generated authority summary |
+| Notes, builder evidence, comments, conversations, PR threads and oversized tickets | Complete ordered sources across passes; oversized sources use explicit transport parts |
+| Prior findings | Ordered transport parts, reviewed exactly once across passes; concatenation in pass order reconstructs the complete collection |
+| A file's diff and its source | Together when they fit; files are packed in path order |
+| A file or diff larger than a whole pass | Unicode-safe parts with original source refs/revisions and explicit part numbers, file paths and UTF-16 character offsets; diff offsets are relative to the named file chunk, while other offsets are relative to their original source; concatenation restores every character |
 
-Each pass is told which files it holds and the full list of files in the PR, and returns a verdict bound to the same reviewer, repository, PR, head, base and evidence hash as the whole snapshot. The verdicts are merged into one: any rejecting pass rejects the PR, findings are kept most severe first (30 at most, with a note when more exist), and each category's rationale is labelled by pass. A pass that fails, or answers for another revision, fails the review as a whole, so nothing is accepted half-read. A snapshot that fits one call is reviewed in one call, as before.
+Each pass is told which files and transport parts it holds, the ordered inventory of source refs, files and prior-finding parts, and returns a verdict bound to the same reviewer, repository, PR, head, base and evidence hash as the whole snapshot. The verdicts are merged into one: any rejecting pass rejects the PR, findings are kept most severe first (30 at most, with a note when more exist), and each category's rationale is labelled by pass. A pass that fails, or answers for another revision, fails the review as a whole, so nothing is accepted half-read. A snapshot that fits one call is reviewed in one call, as before. An aggregate of individually complete context sources never becomes a capacity rejection: complete notes, builder evidence and conversations are distributed instead of being copied into every call. A ticket larger than the shared-core allowance is also transported completely in ordered parts. If the inventories themselves become large, each call carries a stable inventory digest and counts while ordered inventory parts carry the complete JSON lists across calls. Concatenating those parts reconstructs the full original inventory. Metadata-only inventory calls retain actual original source evidence; if no bounded shared ticket exists, an unchanged original unit is repeated and explicitly marked `repeatedEvidence`, rather than inventing an authority summary. No generated summary grants authority, and no evidence is silently omitted or marked complete after truncation.
 
 Up to three passes run at a time. A very large PR costs more reviewer calls and takes longer; that is the trade for not sending builders back to split work that has to land together. A single Git read is bounded at 64 MB as a memory guard, which is not a review limit.
 
@@ -278,3 +280,5 @@ Every result has `status` (`pass`, `decompose`, `invalid`), `phase`, policy vers
 For decomposition, retain every original requirement and planned path in proposed slices. Each slice declares `id`, `requirements`, `paths`, full `base`, `dependencies`, `diffChars`, `otherContextChars` and nonempty `verification`. The validator checks coverage, dependency references/cycles and estimated slice capacities. This is a proposal: admit each child with its own complete plan, margins and independent checks, preserve migration order, then verify parent integration acceptance. Do not remove tests/docs or narrow acceptance to fit a cap.
 
 Private coordinator integration, runtime installation, scheduled repair, correction feedback/state changes and reusable lessons are separate phases. Passing scope tests proves none of those are installed or running. Existing independent exact-revision review and registered shipping authority remain required.
+
+Prior-findings transport redacts the complete collection before splitting it into ordered sources within the per-source budget. Concatenating those parts retains the full verdict JSON, including a supported 100,000-byte stored verdict. Database truncation flags and history overflow still block, as do incomplete generic transport sources. The worker does not discard a transport truncation flag when adding database completeness signals.

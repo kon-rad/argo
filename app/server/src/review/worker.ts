@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { evidence, runReview, type Job, type Snapshot, type Source } from './gate.js';
 import { GitHub, codexReview, deploy, notifyOwner, type HostConfig } from './adapters.js';
-import { note, source, linkedNote, hasAcceptance, repositoryKey, builderIsReviewer } from './context.js';
+import { note, source, boardSources, linkedNote, hasAcceptance, repositoryKey, builderIsReviewer } from './context.js';
 import { reviewInPasses } from './passes.js';
 
 type CheckRollup = { name?: string | null; context?: string | null; status?: string | null; conclusion?: string | null; state?: string | null };
@@ -76,7 +76,7 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
       }
       const gather = async (): Promise<Snapshot> => {
         const context = (await client.query('SELECT review_context($1) AS context',[job.id])).rows[0]!.context as Record<string,unknown>;
-        const sources: Source[] = Object.entries(context).map(([key,value]) => ({ ...source(`board:${job.card}:${key}`,value),truncated:Array.isArray(value) && (value.length>100 || value.some(v=>v && typeof v==='object' && v.truncated===true)) }));
+        const sources: Source[] = Object.entries(context).flatMap(([key,value]) => boardSources(`board:${job.card}:${key}`,value));
         // Empty collections are valid, absent ticket/body/acceptance or builder evidence is not.
         const ticket = context.ticket as Record<string,unknown>;
         if (!hasAcceptance(ticket)) sources.push(source('missing:ticket-acceptance',''));
