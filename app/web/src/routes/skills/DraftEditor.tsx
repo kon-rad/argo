@@ -15,6 +15,7 @@ export function DraftEditor({ name, onDeleted }: { name: string; onDeleted?: () 
   const [newPath, setNewPath] = useState('');
   const [publishing, setPublishing] = useState(false);
   const setDraft = (d: Draft) => {
+    setPublishing(false);
     qc.setQueryData(['skills', 'draft', name], { draft: d });
     void qc.invalidateQueries({ queryKey: ['skills', 'drafts'] });
   };
@@ -63,7 +64,7 @@ export function DraftEditor({ name, onDeleted }: { name: string; onDeleted?: () 
         <button type="button" className={button} disabled={remove.isPending} onClick={() => { if (window.confirm(`Delete draft ${name}? Its files are discarded.`)) remove.mutate(); }}>Delete draft</button>
         {remove.isError && <span className="text-xs text-[var(--warn)]">{remove.error.message}</span>}
       </div>
-      {publishing && <ChangeFlow request={{ kind: d.base ? 'update' : 'create', skill: d.name, draft: d.name }} onDone={() => setPublishing(false)} />}
+      {publishing && <ChangeFlow key={d.digest} request={{ kind: d.base ? 'update' : 'create', skill: d.name, draft: d.name }} onDone={() => setPublishing(false)} />}
     </section>
   );
 }

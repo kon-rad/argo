@@ -190,12 +190,14 @@ function frontmatterOf(dir: string, fallback: ManifestEntry): Skill {
  * every package is verified against its full digest and copied into `<snapshots>/<sessionId>.skills/`, made
  * read-only, verified again, and served from there for the rest of the run. A resumed session reuses its snapshot.
  */
-export function resolveSkills(cfg: Pick<ZenConfig, 'skills' | 'sessionsDir'> & { managedSkills?: ZenConfig['managedSkills'] }, persona: string | null, sessionId: string): ResolvedSkills {
+export function resolveSkills(cfg: Pick<ZenConfig, 'skills' | 'sessionsDir'> & { managedSkills?: ZenConfig['managedSkills'] }, persona: string | null, sessionId: string, resume?: { managed: boolean; snapshot: string | null; snapshotSession: string } | null): ResolvedSkills {
   const m = cfg.managedSkills ?? null;
   const legacy = (): ResolvedSkills => ({ skills: discoverSkills(cfg.skills), mode: 'legacy', packages: [], rejected: [], snapshot: null, support: null });
   const missing = (reason: string): ResolvedSkills => ({ skills: [], mode: 'managed-missing', packages: [], rejected: reason ? [{ name: '*', reason }] : [], snapshot: null, support: 'catalog-filtered' });
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(sessionId)) return m ? missing('invalid session identity') : legacy();
-  const snapDir = join(m?.snapshots ?? cfg.sessionsDir, `${sessionId}.skills`);
+  const snapshotSession = resume?.managed ? resume.snapshotSession : sessionId;
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(snapshotSession)) return missing('invalid managed snapshot session identity');
+  const snapDir = resume?.managed && resume.snapshot ? resume.snapshot : join(m?.snapshots ?? cfg.sessionsDir, `${snapshotSession}.skills`);
   // Resumed: the snapshot the session started with, unchanged by later syncs.
   let hasSnapshot = false;
   try {
@@ -210,7 +212,7 @@ export function resolveSkills(cfg: Pick<ZenConfig, 'skills' | 'sessionsDir'> & {
       const recordStat = lstatSync(snapshotRecord(snapDir));
       if (!recordStat.isFile() || recordStat.isSymbolicLink() || recordStat.size > 1_000_000) throw new Error('snapshot record is not a bounded regular file');
       const rec = JSON.parse(readFileSync(snapshotRecord(snapDir), 'utf8')) as Record<string, unknown>;
-      if (rec['format'] !== 'zen-skills-snapshot/1' || rec['persona'] !== persona || rec['sessionId'] !== sessionId) throw new Error('snapshot identity does not match this session and persona');
+      if (rec['format'] !== 'zen-skills-snapshot/1' || rec['persona'] !== persona || rec['sessionId'] !== snapshotSession) throw new Error('snapshot identity does not match this session and persona');
       const entries = manifestEntries(rec['packages']);
       if (!Array.isArray(rec['rejected']) || rec['rejected'].some((r) => !r || typeof r.name !== 'string' || typeof r.reason !== 'string')) throw new Error('invalid snapshot rejection record');
       const skills: Skill[] = [];
@@ -225,6 +227,7 @@ export function resolveSkills(cfg: Pick<ZenConfig, 'skills' | 'sessionsDir'> & {
     } catch (err) { return missing(`managed snapshot is invalid: ${(err as Error).message}`); }
   }
 
+  if (resume?.managed) return missing('original managed snapshot is missing; restore it before resuming this session');
   if (!m) return legacy();
   if (!persona) return m.enforce ? missing('no persona: a managed run needs one') : legacy();
   const view = join(m.root, 'views', persona, 'zen-agent');

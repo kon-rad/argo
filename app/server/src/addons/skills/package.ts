@@ -59,7 +59,7 @@ export function packageFileAllowed(root: string, path: string): boolean {
  * Walk and hash a package. Rejects (never follows out of the package) symlinks that resolve outside it,
  * directory symlinks, special files and secret-like files; bounded by LIMITS.
  */
-export function scanPackage(dir: string): PackageScan {
+export function scanPackage(dir: string, opts: { rejectIgnored?: boolean } = {}): PackageScan {
   let root: string;
   try {
     root = realpathSync(dir);
@@ -74,7 +74,10 @@ export function scanPackage(dir: string): PackageScan {
     let entries: string[];
     try { entries = readdirSync(abs).sort(); } catch { return `unreadable folder ${relative(root, abs) || '.'}`; }
     for (const name of entries) {
-      if (isIgnoredName(name)) continue;
+      if (isIgnoredName(name)) {
+        if (opts.rejectIgnored) return `ignored package member ${relative(root, join(abs, name))}`;
+        continue;
+      }
       const p = join(abs, name);
       const rel = relative(root, p).split(sep).join('/');
       if (rel.length > LIMITS.pathLength) return `path too long: ${rel.slice(0, 60)}...`;

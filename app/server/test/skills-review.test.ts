@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { runSkillsCli } from '../src/addons/skills/cli.js';
 import { machineStates, type AckRow } from '../src/addons/skills/machines.js';
-import { inspectRoot, packBundle, planFromBundle, planViews, readCurrent, sendAck, syncViews, verifyView } from '../src/addons/skills/reconcile.js';
+import { ackPayload, inspectRoot, packBundle, planFromBundle, planViews, readCurrent, sendAck, syncViews, verifyView } from '../src/addons/skills/reconcile.js';
 import { SkillsService } from '../src/addons/skills/service.js';
 import { MANAGED_POLICY, SETTINGS, sh, skillMd, skillsFixture, write } from './helpers/skills.js';
 
@@ -116,4 +116,31 @@ it('reports policy drift even when the acknowledged package digests still match,
   expect(hosts[0]!.views[0]!.error).toMatch(/policy/i);
   expect(machineStates(data, desired, 24, now, row.policy_digest)[0]!.status).toBe('current');
   expect(machineStates({ ...data, hosts: [] }, desired, 24, now, row.policy_digest)[0]!.host).toBe('new-host');
+});
+
+it('binds an exported draft to the digest that was previewed', async () => {
+  const {service} = await fixture();
+  await service.createDraft('report', 'report');
+  const preview = await service.preview({kind: 'update', skill: 'report', draft: 'report'});
+  await service.writeDraftFile('report', 'SKILL.md', skillMd('report', 'Changed after preview.'));
+  await expect(service.propose({kind: 'update', skill: 'report', draft: 'report', expectedDraftDigest: preview.targetDigest!})).rejects.toThrow(/changed after preview/);
+  expect(await service.changes()).toEqual([]);
+  const next = await service.preview({kind: 'update', skill: 'report', draft: 'report'});
+  const change = await service.propose({kind: 'update', skill: 'report', draft: 'report', expectedDraftDigest: next.targetDigest!});
+  expect(change.preview.targetDigest).toBe(next.targetDigest);
+});
+it.each(['node_modules/helper.js', 'cache.pyc'])('explicitly refuses ignored draft content: %s', async path => {
+  const {f,service} = await fixture(); await service.createDraft('report', 'report');
+  await expect(service.writeDraftFile('report', path, 'ignored')).rejects.toThrow(/ignored/);
+  write(join(f.vault, SETTINGS.draftsDir, 'report', path), 'previously saved ignored content');
+  const draft = await service.draft('report'); expect(draft.validation.valid).toBe(false);
+  expect(draft.validation.errors.join(' ')).toMatch(/ignored/);
+  await expect(service.propose({kind: 'update', skill: 'report', draft: 'report'})).rejects.toThrow(/does not validate/);
+});
+it('fails acknowledgement explicitly when 65 deployed views exceed the protocol limit', async () => {
+  const {plan,root}=await fixture();
+  plan.views=Array.from({length:65}, (_,i)=>({...plan.views[0]!,agent:`agent-${i}`}));
+  const report=syncViews(root,plan,{env:{PATH:''}});
+  expect(report.views).toHaveLength(65); expect(report.views.every(v=>v.status==='current')).toBe(true);
+  expect(()=>ackPayload(report,null)).toThrow(/65 views.*64/);
 });

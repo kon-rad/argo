@@ -392,7 +392,8 @@ export function inspectRoot(root: string, env: NodeJS.ProcessEnv = process.env):
 }
 
 export function ackPayload(report: { policyDigest: string | null; views: AckView[] }, engine: string | null): AckRequest {
-  return { v: 1, engine, policyDigest: report.policyDigest, views: report.views.slice(0, 64) };
+  if (report.views.length > 64) throw new ReconcileError(`Cannot acknowledge ${report.views.length} views: the limit is 64. Sync selected agents/runtimes into separate managed roots and acknowledge each root separately.`);
+  return { v: 1, engine, policyDigest: report.policyDigest, views: report.views };
 }
 
 /** POST the acknowledgement with the machine's device token. Only digests, names and requirement names leave the machine. */

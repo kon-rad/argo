@@ -7,7 +7,7 @@ import type { Change, ChangeKind, ChangePreview, ChangeRequest, Draft, FileDiff,
 import type { Candidate, Catalog } from './catalog.js';
 import { unifiedDiff } from './diff.js';
 import { blob, git, gitTop, toPosix, treeAt } from './git.js';
-import { digestOf, isSecretLike, isText, NAME_RE, readMeta, scanPackage } from './package.js';
+import { digestOf, isIgnoredName, isSecretLike, isText, NAME_RE, readMeta, scanPackage } from './package.js';
 import { dependentsOf, grantsOf, lifecycleOf, parsePolicy, resolveAgent, selectedCandidate, type LoadedPolicy, type Policy } from './policy.js';
 import type { Roster } from './roster.js';
 
@@ -56,6 +56,7 @@ export function safeRel(path: string): string {
     throw new LifecycleError(400, `unsafe package path "${path}"`);
   }
   if (segs.some((s) => isSecretLike(s))) throw new LifecycleError(400, `"${path}" looks like a credential file; packages must not carry secrets`);
+  if (segs.some(isIgnoredName)) throw new LifecycleError(400, `ignored package path "${path}" cannot be saved in a draft`);
   if (segs.length > 12) throw new LifecycleError(400, 'path nests too deeply');
   return segs.join('/');
 }
@@ -101,7 +102,7 @@ function fileEntries(files: { path: string; size: number; exec: boolean; sha256:
 }
 
 export function validatePackage(dir: string, folder: string): { validation: Validation; digest: string | null; files: FileEntry[] } {
-  const scan = scanPackage(dir);
+  const scan = scanPackage(dir, { rejectIgnored: true });
   const errors: string[] = [];
   const warnings: string[] = [];
   if (!scan.ok) errors.push(scan.error);
@@ -297,7 +298,8 @@ export async function previewChange(ctx: LifecycleContext, req: ChangeRequest): 
     validation = draft.validation;
     if (!validation.valid) blocked.push('the draft does not validate');
     const after = readDir(draftDir(ctx, req.draft));
-    targetDigest = draft.digest;
+    targetDigest = digestOf([...after].map(([path, f]) => ({ path, size: f.data.length, exec: f.exec, sha256: createSha(f.data) })));
+    if (targetDigest !== draft.digest) blocked.push('the draft changed while previewing; retry the preview');
     if (kind === 'create') {
       const privateExisting = ctx.catalog.byName.get(name)?.find((c) => c.source === 'private');
       if (privateExisting) blocked.push(`${privateExisting.id} already exists; use update`);
@@ -406,6 +408,7 @@ function changeDir(ctx: LifecycleContext, id: string): string {
 
 export async function proposeChange(ctx: LifecycleContext, req: ChangeRequest): Promise<Change> {
   const { preview, target, basePolicyDigest } = await previewChange(ctx, req);
+  if (req.expectedDraftDigest && req.expectedDraftDigest !== preview.targetDigest) throw new LifecycleError(409, 'The draft changed after preview; preview the new draft before exporting.');
   if (preview.blocked.length) throw new LifecycleError(409, `not exported: ${preview.blocked.join('; ')}`);
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
   const id = `${stamp}-${req.kind}-${req.skill}-${randomBytes(3).toString('hex')}`;

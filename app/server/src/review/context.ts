@@ -16,6 +16,18 @@ export function boardSource(ref: string, raw: unknown): Source {
   const incomplete = Array.isArray(raw) && (raw.length > 100 || raw.some(row => row && typeof row === 'object' && row.truncated === true));
   return { ...collected, truncated: collected.truncated || incomplete };
 }
+/** A complete prior-verdict collection may exceed one transport source. Redact before splitting. */
+export function boardSources(ref: string, raw: unknown): Source[] {
+  if (!ref.endsWith(':earlier_findings') || !Array.isArray(raw) || raw.length > 100) return [boardSource(ref, raw)];
+  const full = source(ref, raw, true, Number.MAX_SAFE_INTEGER);
+  const incomplete = raw.some(row => row && typeof row === 'object' && row.truncated === true);
+  const count = Math.max(1, Math.ceil(full.text.length / POLICY.sourceChars));
+  return Array.from({ length: count }, (_, part) => {
+    const text = full.text.slice(part * POLICY.sourceChars, (part + 1) * POLICY.sourceChars);
+    return { ...full, ref: count === 1 ? ref : `${ref}:part-${part + 1}-of-${count}`, text,
+      revision: digest(`${full.revision}\0${part}\0${text}`), truncated: incomplete };
+  });
+}
 export function excluded(path: string, exclusions: string[]): boolean {
   const parts = path.split(/[\\/]/);
   return parts.some(p => p.startsWith('.') || /^(?:credentials?|secrets?|CURRENT)$/i.test(p) || /\.(?:pem|key)$/i.test(p)) ||

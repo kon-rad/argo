@@ -3,6 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import Skills from '../src/routes/skills/Skills.js';
+import { DraftEditor } from '../src/routes/skills/DraftEditor.js';
+import { skillsApi } from '../src/routes/skills/api.js';
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
 
@@ -28,7 +30,7 @@ function renderAt(view: Parameters<typeof Skills>[0]['view'], path = '/skills') 
   return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><Routes><Route path={route} element={<Skills view={view} />} /></Routes></MemoryRouter></QueryClientProvider>);
 }
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('Skills library', () => {
   it('shows a failed forced rescan while retaining stale data, and retries a forced rescan', async () => {
@@ -100,4 +102,35 @@ describe('Skills machines', () => {
     expect(await screen.findByText(/No machines yet/)).toBeTruthy();
     expect(screen.getByText(/Pushing to Git is not a sync/)).toBeTruthy();
   });
+});
+
+it('requires a fresh preview after saving draft content, and binds export to the new digest', async () => {
+  let digest=`sha256:${'a'.repeat(64)}`;
+  const draft=()=>({name:'report',base:{id:'private:report',digest:null},files:[{path:'SKILL.md',size:10,exec:false,sha256:'a'.repeat(64),kind:'text' as const}],updatedAt:'2026-01-01T00:00:00Z',validation:{valid:true,errors:[],warnings:[]},digest});
+  vi.spyOn(skillsApi,'draft').mockImplementation(async()=>({draft:draft()}));
+  vi.spyOn(skillsApi,'draftFile').mockResolvedValue({name:'report',id:'draft:report',path:'SKILL.md',content:'Original content',kind:'text',truncated:false} as any);
+  vi.spyOn(skillsApi,'writeDraftFile').mockImplementation(async()=>{digest=`sha256:${'b'.repeat(64)}`;return{draft:draft()};});
+  const preview=vi.spyOn(skillsApi,'preview').mockImplementation(async()=>({preview:{kind:'update',skill:'report',summary:'Update report',baseDigest:null,baseRevision:null,targetDigest:digest,validation:{valid:true,errors:[],warnings:[]},affectedAgents:[],affectedHosts:[],dependents:[],blocked:[],files:[],policyDiff:null,runningSessions:'After sync',rollbackTarget:null} as any}));
+  const propose=vi.spyOn(skillsApi,'propose').mockImplementation(async()=>({change:{id:'fixture-change'} as any}));
+  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+  render(<QueryClientProvider client={client}><DraftEditor name="report" /></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole('button',{name:'Prepare update'}));
+  fireEvent.click(screen.getByRole('button',{name:'Show what would change'}));
+  await screen.findByRole('button',{name:'Export for review'});
+  fireEvent.change(screen.getByRole('textbox',{name:'SKILL.md'}),{target:{value:'Changed after preview'}});
+  fireEvent.click(screen.getByRole('button',{name:'Save draft file'}));
+  await waitFor(()=>expect(screen.queryByRole('button',{name:'Export for review'})).toBeNull());
+  expect(propose).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button',{name:'Prepare update'}));
+  fireEvent.click(screen.getByRole('button',{name:'Show what would change'}));
+  fireEvent.click(await screen.findByRole('button',{name:'Export for review'}));
+  await waitFor(()=>expect(propose).toHaveBeenCalledWith(expect.objectContaining({expectedDraftDigest:digest})));
+  expect(preview).toHaveBeenCalledTimes(2);
+  expect(await screen.findByText(/Machines receive it only after they sync/)).toBeTruthy();
+});
+it('describes a merged change as awaiting machine sync, without claiming use', async () => {
+  stub(url=>url.includes('/drafts')?json({drafts:[]}):json({changes:[{id:'fixture',kind:'update',skill:'report',status:'live',createdAt:'2026-01-01T00:00:00Z',preview:{summary:'Update report'}}]}));
+  renderAt('changes','/skills/changes');
+  expect(await screen.findByText('merged; awaiting machine sync')).toBeTruthy();
+  expect(screen.queryByText(/merged and in use/)).toBeNull();
 });

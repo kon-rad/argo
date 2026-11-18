@@ -274,3 +274,11 @@ The `full` vault has a private override with engine and legacy duplicates, a lin
 - Claude Code and Hermes get a generated folder; pointing them at it is a per-machine configuration step, and their other skill folders remain visible.
 - "Loaded" evidence for Claude Code is name-only (session summaries); zen-agent traces record exact digests but are not yet ingested into the app.
 - External acquisition (marketplaces, publisher verification) is out of scope; the optional skillreg design is a possible future adapter.
+
+### Review and resume guarantees
+
+Draft exports from the app carry the digest shown by the preview. Saving a draft dismisses that preview; an export with an older digest is refused. Ignored package members cannot be saved to drafts, and an existing ignored member makes a draft invalid instead of silently disappearing.
+
+A managed Zen session records its snapshot identity in its trace. Resume requires that original snapshot, including when management has been disabled or the current view has changed. A missing snapshot exposes no skills until the original is restored. A merge changes source and policy; machine adoption is established separately by sync acknowledgements.
+
+The acknowledgement protocol accepts at most 64 views per request. A root with more views fails acknowledgement explicitly; divide selected agents/runtimes into separate managed roots and acknowledge each. No view is silently omitted.

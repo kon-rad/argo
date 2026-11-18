@@ -208,6 +208,10 @@ test('a managed run pins a stable snapshot: a later sync does not change it, and
   assert.deepEqual(resumed.packages.map((p) => p.digest), [v1]);
   // A new session gets the new version.
   assert.deepEqual(resolveSkills(cfg, 'writer', 'fresh').packages.map((p) => p.digest), [v2]);
+  const fork = new ZenAgent({config:cfg, persona:'writer', models, env:{}, resume:r.sessionId, sessionId:'fork-from-managed'});
+  assert.deepEqual(fork.skillResolution.packages.map(p=>p.digest),[v1]);
+  const forkResume = new ZenAgent({config:{...cfg,managedSkills:null}, persona:'writer', models, env:{}, resume:'fork-from-managed'});
+  assert.deepEqual(forkResume.skillResolution.packages.map(p=>p.digest),[v1]);
 });
 
 for (const enforce of [false, true]) test(`resume survives view removal (enforce=${enforce})`, () => {
@@ -272,4 +276,23 @@ test('managed chat HTTP catalogs are scoped to their verified snapshots', async 
       assert.deepEqual(scoped.skills.map((s) => s.name), [name]);
     }
   } finally { await new Promise<void>((resolve) => started.server.close(() => resolve())); }
+});
+
+for (const enforce of [false,true]) for (const current of ['changed','missing','disabled']) test(`managed resume with missing snapshot fails closed: enforce=${enforce}, current=${current}`, () => {
+  const vault=mkdtempSync(join(tmpdir(),'zen-lost-snapshot-')); mkdirSync(join(vault,'defs'));
+  writeFileSync(join(vault,'defs','writer.md'),'You write.');
+  const root=managedRoot(); view(root,'writer',1,[{name:'report',digest:store(root,'report','Original')}]);
+  const models=createModels(); models.setProvider(fauxProvider().provider);
+  const cfg=loadConfig({workdir:vault,env:{},overrides:{model:'faux/faux-1',tools:['skills'],skills:[legacy()],managedSkills:{root,enforce,snapshots:null},persona:{org:join(vault,'none.json'),definitions:join(vault,'defs'),memory:join(vault,'mem')}}});
+  const first=new ZenAgent({config:cfg,persona:'writer',models,env:{},sessionId:'lost-snapshot'});
+  assert.equal(first.skillResolution.mode,'managed');
+  renameSync(first.skillResolution.snapshot!,first.skillResolution.snapshot!+'.removed');
+  if(current==='changed')view(root,'writer',2,[{name:'report',digest:store(root,'report','New assignments')}]);
+  if(current==='missing')rmSync(join(root,'views'),{recursive:true,force:true});
+  const next=current==='disabled'?{...cfg,managedSkills:null}:cfg;
+  for(let attempt=0;attempt<2;attempt++) {
+    const resumed=new ZenAgent({config:next,persona:'writer',models,env:{},resume:'lost-snapshot'});
+    assert.equal(resumed.skillResolution.mode,'managed-missing'); assert.deepEqual(resumed.skills,[]);
+    assert.match(resumed.skillResolution.rejected[0]!.reason,/original managed snapshot is missing/);
+  }
 });

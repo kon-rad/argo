@@ -10,7 +10,7 @@ export function ChangeFlow({ request, onDone }: { request: ChangeRequest; onDone
   const qc = useQueryClient();
   const preview = useMutation({ mutationFn: () => skillsApi.preview(request) });
   const propose = useMutation({
-    mutationFn: () => skillsApi.propose(request),
+    mutationFn: () => skillsApi.propose({ ...request, ...(request.draft && preview.data?.preview.targetDigest ? { expectedDraftDigest: preview.data.preview.targetDigest } : {}) }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['skills'] }),
   });
   const p = preview.data?.preview;
@@ -43,7 +43,7 @@ export function Exported({ change }: { change: Change }) {
     <div role="status" className="rounded border border-[var(--accent)] p-2 text-sm">
       <p>
         Exported for review as change <code>{change.id}</code>. Nothing is active until the change is applied with{' '}
-        <code>secondbrain skills apply {change.id}</code> and merged.
+        <code>secondbrain skills apply {change.id}</code> and merged. Machines receive it only after they sync; check their acknowledgements separately.
       </p>
     </div>
   );

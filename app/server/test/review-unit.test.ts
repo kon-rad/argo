@@ -83,18 +83,18 @@ import { mkdtemp, writeFile, readFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { vi } from 'vitest';
-import { source, note, boardSource } from '../src/review/context.js';
+import { source, note, boardSource, boardSources } from '../src/review/context.js';
 import { POLICY } from '../src/review/policy.js';
 
 it.each([
-  ['source budget', [{ verdict: 'x'.repeat(POLICY.sourceChars), truncated: false }]],
-  ['database truncation', [{ verdict: 'partial', truncated: true }]],
-  ['history overflow', Array.from({ length: 101 }, () => ({ verdict: null, truncated: null }))],
-] as const)('blocks incomplete prior findings before model dispatch: %s', async (_, raw) => {
+  ['source budget', 'comments', [{ verdict: 'x'.repeat(POLICY.sourceChars), truncated: false }]],
+  ['database truncation', 'earlier_findings', [{ verdict: 'partial', truncated: true }]],
+  ['history overflow', 'earlier_findings', Array.from({ length: 101 }, () => ({ verdict: null, truncated: null }))],
+] as const)('blocks incomplete context before model dispatch: %s', async (_, key, raw) => {
   const f = fixture(), s = snapshot();
-  const collected = boardSource('board:t_123abc:earlier_findings', raw);
-  expect(collected.truncated).toBe(true);
-  s.sources.push(collected); f.setCurrent(s);
+  const collected = boardSources(`board:t_123abc:${key}`, raw);
+  expect(collected.every(s => s.truncated)).toBe(true);
+  s.sources.push(...collected); f.setCurrent(s);
   await runReview(f.job, ['test'], f.io);
   expect(f.job.state).toBe('blocked');
   expect(f.counts()).toEqual({ reviews: 0, merges: 0, deploys: 0, completions: 0 });
@@ -385,4 +385,17 @@ describe('reviewer output schema', () => {
     expect(Verdict.safeParse(answer).success).toBe(true);
     expect(ReviewerVerdict.safeParse({ ...answer, findings: [{ ...answer.findings[0], code: 'ci-failure' }] }).success).toBe(false);
   });
+});
+
+it('dispatches complete supported verdicts in bounded transport parts, and blocks database truncation', async () => {
+  const raw = [{round: 0, verdict: JSON.stringify({findings: [{fix: 'x'.repeat(99_900)}]}), truncated: false}];
+  const parts = boardSources('board:t_123abc:earlier_findings', raw);
+  expect(parts.length).toBeGreaterThan(1);
+  expect(parts.every(s => !s.truncated && s.text.length <= POLICY.sourceChars)).toBe(true);
+  expect(JSON.parse(parts.map(s => s.text).join(''))).toEqual(raw);
+  const f = fixture(), s = snapshot(); s.sources.push(...parts); f.setCurrent(s);
+  await runReview(f.job, ['test'], f.io); expect(f.counts().reviews).toBe(1); expect(f.job.state).toBe('done');
+  raw[0]!.truncated = true;
+  const g = fixture(), bad = snapshot(); bad.sources.push(...boardSources('board:t_123abc:earlier_findings', raw)); g.setCurrent(bad);
+  await runReview(g.job, ['test'], g.io); expect(g.counts().reviews).toBe(0); expect(g.job.state).toBe('blocked');
 });

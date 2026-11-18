@@ -161,7 +161,8 @@ export class ZenAgent {
     this.rules = loadLocalRules(findLocalRules(cfg.workdir, cfg.guard.local, this.env));
 
     const id = opts.sessionId ?? opts.resume ?? newSessionId(this.persona?.name ?? null);
-    this.skillResolution = resolveSkills(cfg, this.persona?.name ?? null, id);
+    const resumedSession = opts.resume ? Session.load(cfg.sessionsDir, opts.resume) : null;
+    this.skillResolution = resolveSkills(cfg, this.persona?.name ?? null, id, resumedSession?.skillState);
     this.skills = this.skillResolution.skills;
     this.session = new Session(cfg.sessionsDir, id);
 
@@ -195,7 +196,7 @@ export class ZenAgent {
     };
     this.tools = opts.tools ?? buildTools(toolCtx, opts.toolSets ?? cfg.tools);
 
-    const resumed = opts.resume ? Session.load(cfg.sessionsDir, opts.resume).messages : [];
+    const resumed = resumedSession?.messages ?? [];
     this.agent = new Agent({
       initialState: {
         systemPrompt: this.prompt.prompt,
@@ -274,6 +275,7 @@ export class ZenAgent {
       skills_packages: this.skillResolution.packages,
       skills_rejected: this.skillResolution.rejected,
       skills_snapshot: this.skillResolution.snapshot,
+      skills_snapshot_session: resumedSession?.skillState?.snapshotSession ?? id,
       ...(this.skillResolution.support ? { skills_support: this.skillResolution.support } : {}),
       resumed: opts.resume ?? null,
       workdir: cfg.workdir,
