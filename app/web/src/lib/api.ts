@@ -452,12 +452,12 @@ export interface UsageCredits {
 }
 export interface UsageSeriesRow { bucket: string; key: string; input: number; cache_write: number; cache_read: number; output: number; calls: number }
 /** The labels every call carries (usage_facts); a filter is `dimension=a,b` and a group is one dimension. */
-export const USAGE_DIMENSIONS = ['agent', 'team', 'reason', 'action', 'work_type', 'area', 'project', 'task', 'host', 'headless', 'surface', 'lane', 'model', 'provider', 'source'] as const;
+export const USAGE_DIMENSIONS = ['agent', 'team', 'reason', 'action', 'work_type', 'area', 'project', 'task', 'host', 'headless', 'surface', 'lane', 'model', 'provider', 'source', 'job'] as const;
 export type UsageDimension = (typeof USAGE_DIMENSIONS)[number];
 export type UsageFilters = Partial<Record<UsageDimension, string[]>>;
 export const USAGE_DIMENSION_LABELS: Record<UsageDimension, string> = {
   agent: 'bot', team: 'team', reason: 'woken by', action: 'action', work_type: 'work', area: 'area', project: 'project', task: 'card',
-  host: 'host', headless: 'headless', surface: 'surface', lane: 'lane', model: 'model', provider: 'provider', source: 'runtime',
+  host: 'host', headless: 'headless', surface: 'surface', lane: 'lane', model: 'model', provider: 'provider', source: 'runtime', job: 'Hermes job or chat',
 };
 export function usageFilterParams(f: UsageFilters): Record<string, string> {
   return Object.fromEntries(USAGE_DIMENSIONS.filter((d) => f[d]?.length).map((d) => [d, f[d]!.join(',')]));
