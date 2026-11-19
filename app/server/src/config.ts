@@ -178,6 +178,13 @@ const Schema = z.object({
   DESK_MAX_RESPONSE_BYTES: z.string().optional(),
   DESK_MAX_ARTIFACT_BYTES: z.string().optional(),
   DESK_PUBLICATION_DESTINATION: z.string().optional(),
+  // Optional addon configuration is validated only when the market is enabled.
+  CYBA_MARKET_ENABLED: z.string().optional(),
+  CYBA_ENVELOPE_SECRET: z.string().optional(),
+  CYBA_ARTIFACT_ROOT: z.string().optional(),
+  CYBA_BASE_RPC_URL: z.string().optional(),
+  CYBA_PROFILES_JSON: z.string().optional(),
+  CYBA_EXECUTION_AGENT: z.string().optional(),
   // Deprecated (one release): `SUMMARIES=on` used to install the summaries timer; `summaries` is a module now.
   SUMMARIES: z.string().optional(),
   // Shown in the TOTP app and as the comment author on the Agents board.
@@ -431,6 +438,12 @@ export const config = {
     maxResponseBytes: parsed.data.DESK_MAX_RESPONSE_BYTES,
     maxArtifactBytes: parsed.data.DESK_MAX_ARTIFACT_BYTES,
     publicationDestination: parsed.data.DESK_PUBLICATION_DESTINATION,
+    marketEnabled: parsed.data.CYBA_MARKET_ENABLED,
+    marketEnvelopeSecret: parsed.data.CYBA_ENVELOPE_SECRET,
+    marketArtifactRoot: parsed.data.CYBA_ARTIFACT_ROOT,
+    marketBaseRpcUrl: parsed.data.CYBA_BASE_RPC_URL,
+    marketProfiles: parsed.data.CYBA_PROFILES_JSON,
+    marketExecutionAgent: parsed.data.CYBA_EXECUTION_AGENT,
   },
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,

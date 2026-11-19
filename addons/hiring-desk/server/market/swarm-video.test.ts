@@ -1,0 +1,8 @@
+import {describe,expect,it} from 'vitest';
+import {BeeHttpSwarmGateway} from '../desk/publishing/swarm.js';
+const ref='a'.repeat(64),bytes=new Uint8Array([0,0,0,16,102,116,121,112]);
+describe('bounded MP4 Swarm transport',()=>{
+ it('uploads MP4 and independently downloads expected media bytes',async()=>{const calls:RequestInit[]=[];const gateway=new BeeHttpSwarmGateway('https://bee.example.test','b'.repeat(64),async(_url,init)=>{calls.push(init!);return init?.method==='POST'?Response.json({reference:ref}):new Response(bytes,{headers:{'content-type':'video/mp4'}});});expect(await gateway.upload(bytes,'video/mp4')).toBe(ref);expect(await gateway.download(ref,'video/mp4')).toEqual(bytes);expect((calls[0]?.headers as Record<string,string>)['Content-Type']).toBe('video/mp4');expect(calls.every(c=>c.redirect==='error')).toBe(true);});
+ it('preserves Markdown default and refuses MIME substitutions',async()=>{const gateway=new BeeHttpSwarmGateway('https://bee.example.test','b'.repeat(64),async()=>new Response(bytes,{headers:{'content-type':'video/mp4'}}));await expect(gateway.download(ref)).rejects.toThrow('content type');});
+ it('rejects oversized content and encrypted references',async()=>{const gateway=new BeeHttpSwarmGateway('https://bee.example.test','b'.repeat(64),async()=>new Response(bytes,{headers:{'content-type':'video/mp4','content-length':'100'}}),1000,8);await expect(gateway.upload(new Uint8Array(9),'video/mp4')).rejects.toThrow('size');await expect(gateway.download(ref,'video/mp4')).rejects.toThrow('limit');await expect(gateway.download(ref+ref,'video/mp4')).rejects.toThrow('encrypted');});
+});

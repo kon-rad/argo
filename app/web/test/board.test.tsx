@@ -146,6 +146,7 @@ describe('Board page', () => {
     await within(panel).findByText('Stuck');
     expect(within(panel).getByText('Cybazaar')).toBeTruthy();
     expect(within(panel).queryByRole('link', { name: 'Open Desk job' })).toBeNull();
+    expect(within(panel).getByRole('link', { name: 'Open commission' }).getAttribute('href')).toBe('/desk?marketJob=market-job-43');
   });
 
   it('creates a card for a roster bot, tagged with an area and a project', async () => {

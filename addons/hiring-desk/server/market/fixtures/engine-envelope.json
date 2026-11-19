@@ -1,0 +1,13 @@
+{
+  "description": "Synthetic interop fixture; this is not a deployed service secret",
+  "secret": "fixture-secret-fixture-secret-32bytes",
+  "input": {
+    "method": "POST",
+    "path": "/api/desk/market/jobs",
+    "body": "{\"providerId\":\"fixture-provider\",\"title\":\"Fixture job\",\"brief\":\"Public fixture\",\"requestKey\":\"fixture-request\"}",
+    "wallet": "0x0000000000000000000000000000000000000001",
+    "timestamp": 1700000000000
+  },
+  "canonical": "[\"cybazaar-envelope/v1\",\"POST\",\"/api/desk/market/jobs\",\"9b34e3b9b8a6b94bf4a8f6da3b70d7567621ffe8092a91e23cbb5172828e7d28\",\"0x0000000000000000000000000000000000000001\",\"1700000000000\"]",
+  "signature": "e87ff266b01e71dbc9e94bc76166a939b11cbfc89bb8c5d9d7ddf219a653a23a"
+}
