@@ -6,3 +6,9 @@ d84c10b6effb2e49ab3fbee17f2669cd835dbf7c:app/server/test/provider.test.ts:generi
 28fa8e5afea5d466634dab54c86459f6d13b62a7:addons/desk-client/test/wire.test.mjs:generic-api-key:7
 cd159563124e7325932c41d6c497e42e21d01c0d:addons/desk-client/test/wire.test.mjs:generic-api-key:7
 c8e67d9e8745c5b4118dd431283c5101eb87cb3c:app/server/test/provider.test.ts:generic-api-key:18
+# Public synthetic HMAC interoperability fixture; intentionally shared by both test suites, never a deployment secret.
+846ca4f71242e2d204f436df6c2031d43bfd025c:addons/hiring-desk/server/market/fixtures/engine-envelope.json:generic-api-key:3
+# Synthetic boot-test envelope secret; the real runtime requires server configuration and does not use this value.
+846ca4f71242e2d204f436df6c2031d43bfd025c:addons/hiring-desk/server/market/runtime.test.ts:generic-api-key:7
+# Circle's public native Base USDC contract address, misclassified by the BASE_TOKEN constant name.
+846ca4f71242e2d204f436df6c2031d43bfd025c:addons/hiring-desk/server/market/store.ts:generic-api-key:11
