@@ -33,15 +33,7 @@ export async function bootDesk(modules: ReadonlySet<string>, settings: DeskBootS
     throw new Error(`Hiring desk is enabled but ${packageName} is not installed. Run npm install ${packageName} in app, rebuild, and run secondbrain doctor.`, { cause: error });
   }
   externalRoutes = addon.routes;
-  return addon.bootDesk(modules, {
-    ...settings,
-    marketEnabled: process.env.CYBA_MARKET_ENABLED,
-    marketEnvelopeSecret: process.env.CYBA_ENVELOPE_SECRET,
-    marketArtifactRoot: process.env.CYBA_ARTIFACT_ROOT,
-    marketBaseRpcUrl: process.env.CYBA_BASE_RPC_URL,
-    marketProfiles: process.env.CYBA_PROFILES_JSON,
-    marketExecutionAgent: process.env.CYBA_EXECUTION_AGENT,
-  }, undefined, {
+  return addon.bootDesk(modules, settings, undefined, {
     query,
     transact: <T>(fn: (run: typeof query) => Promise<T>) => withTransaction(client => fn(client.query as typeof query)),
     marketBoard: {
