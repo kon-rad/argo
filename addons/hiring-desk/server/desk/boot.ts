@@ -1,3 +1,7 @@
+import { createMarketEnsResolver } from '../market/ens.js';
+import { createMarketRuntime, marketConfigSchema, type MarketOperationalDependencies } from '../market/runtime.js';
+import type { MarketControls } from '../market/routes.js';
+import type { MarketBoardAdapter } from '../market/board.js';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
@@ -13,6 +17,7 @@ import type { DeskPrivateControls } from './operator/routes.js';
 import { createCybazaarBackend, cybazaarConfigSchema, type CybazaarOperationalDependencies } from './runtime.js';
 
 export interface DeskBootSettings {
+  marketEnabled?: string; marketEnvelopeSecret?: string; marketArtifactRoot?: string; marketBaseRpcUrl?: string; marketProfiles?: string; marketExecutionAgent?: string;
   domain?: string; chainId?: string; paymentInterface?: string; usdcAddress?: string;
   rpcUrl?: string; publicOrigin?: string; runtimeModule?: string;
   arkivRpcUrl?: string; arkivChainId?: string; arkivPrivateKey?: string; arkivLifetimeBlocks?: string;
@@ -36,12 +41,14 @@ const settingsSchema = z.object({
 /** The host supplies real identity/marketplace/worker services, never browser input. */
 export type DeskHostRuntime = Omit<DeskServiceOptions, 'store' | 'settlement'>;
 export interface DeskRuntimeModule {
+  createCybaMarketDependencies?(context:{domain:string;ensRpcUrl:string;ensChainId:string}):Promise<MarketOperationalDependencies>|MarketOperationalDependencies;
   createDeskRuntime?(context: { domain: string; persistence: PgDeskPersistence }): Promise<DeskHostRuntime> | DeskHostRuntime;
   createCybazaarDependencies?(context: { domain: string; persistence: PgDeskPersistence }): Promise<CybazaarOperationalDependencies> | CybazaarOperationalDependencies;
 }
-export interface DeskBoot { public: DeskPublicControls; operator: DeskPrivateControls }
+export interface DeskBoot { public?: DeskPublicControls; operator?: DeskPrivateControls; market?: MarketControls }
 type Query = <T extends Record<string, unknown> = Record<string, unknown>>(sql: string, params?: readonly unknown[]) => Promise<{ rows: T[]; rowCount: number | null }>;
 export interface DeskDatabase {
+  marketBoard?: MarketBoardAdapter;
   query: Query;
   transact<T>(fn: (query: Query) => Promise<T>): Promise<T>;
 }
@@ -82,6 +89,23 @@ export async function bootDesk(
   database?: DeskDatabase,
 ): Promise<DeskBoot | undefined> {
   if (!modules.has('desk')) return undefined;
+  if (raw.marketEnabled && !['true','false'].includes(raw.marketEnabled)) throw new Error('Invalid CYBA_MARKET_ENABLED');
+  let market: MarketControls | undefined;
+  if (raw.marketEnabled === 'true') {
+    if (!database?.marketBoard) throw new Error('Market requires the durable database and host board adapter');
+    if (raw.runtimeModule && !isAbsolute(raw.runtimeModule)) throw new Error('DESK_RUNTIME_MODULE must be an absolute trusted module path');
+    let profiles: unknown;try { profiles=JSON.parse(raw.marketProfiles??''); } catch { throw new Error('Invalid CYBA_PROFILES_JSON'); }
+    const configured=marketConfigSchema.safeParse({domain:raw.domain,envelopeSecret:raw.marketEnvelopeSecret,artifactRoot:raw.marketArtifactRoot,baseRpcUrl:raw.marketBaseRpcUrl,executionAgent:raw.marketExecutionAgent,profiles,
+      arkivRpcUrl:raw.arkivRpcUrl,arkivChainId:raw.arkivChainId,arkivPrivateKey:raw.arkivPrivateKey,arkivLifetimeBlocks:raw.arkivLifetimeBlocks,beeUrl:raw.beeUrl,beePostageBatchId:raw.beePostageBatchId,identityRpcUrl:raw.identityRpcUrl,identityChainId:raw.identityChainId,erc8004RegistryAddress:raw.erc8004RegistryAddress,ensRpcUrl:raw.ensRpcUrl,ensChainId:raw.ensChainId,metadataHosts:raw.metadataHosts?.split(',').map(x=>x.trim()).filter(Boolean)??[],timeoutMs:raw.timeoutMs,maxResponseBytes:raw.maxResponseBytes,maxArtifactBytes:raw.maxArtifactBytes});
+    if(!configured.success)throw new Error('Market production configuration missing or invalid: '+configured.error.issues.map(i=>i.path.join('.')).join(', '));
+    const module=raw.runtimeModule ? await load(pathToFileURL(raw.runtimeModule).href) : undefined;
+    const operational=module?.createCybaMarketDependencies
+      ? await module.createCybaMarketDependencies({domain:configured.data.domain,ensRpcUrl:configured.data.ensRpcUrl,ensChainId:configured.data.ensChainId})
+      : {ens:createMarketEnsResolver({rpcUrl:configured.data.ensRpcUrl,chainId:configured.data.ensChainId,timeoutMs:configured.data.timeoutMs,maxResponseBytes:configured.data.maxResponseBytes})};
+    market=createMarketRuntime({config:configured.data,database,board:database.marketBoard,operational});
+    // The Base marketplace is a separate protocol and does not require legacy Arc settings.
+    if (![raw.chainId,raw.paymentInterface,raw.rpcUrl].some(Boolean)) return { market };
+  }
   const parsed = settingsSchema.safeParse(raw);
   if (!parsed.success) {
     // Development may keep the rest of the server available while this optional
@@ -128,6 +152,7 @@ export async function bootDesk(
     : new ArcNativeUsdcSettlement(reader, reserve);
   const orchestrator = new DeskOrchestrator({ ...host, store: persistence, settlement });
   return {
+    ...(market ? { market } : {}),
     public: {
       store: host.publicStore, identity: host.identity, settlement, snapshots: host.snapshots, paymentReader: reader,
       persistence, orchestrator, publicOrigin: settings.publicOrigin,

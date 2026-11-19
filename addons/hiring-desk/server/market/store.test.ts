@@ -1,0 +1,62 @@
+import { beforeAll, afterAll, describe, it, expect } from 'vitest';
+import { scratchMarketStore } from './test-support.js';
+import { publicJob } from './types.js';
+const wallet = '0x' + 'a'.repeat(40), other = '0x' + 'b'.repeat(40), sha = 'c'.repeat(64), hash = '0x' + 'd'.repeat(64), ref = 'swarm://' + 'e'.repeat(64);
+describe.skipIf(!process.env.CYBA_TEST_DB_URL)('durable market authority (real scratch PostgreSQL)', () => {
+    let db: Awaited<ReturnType<typeof scratchMarketStore>>;
+    beforeAll(async () => { db = await scratchMarketStore(); await db.store.configureProfile({ id: 'test-provider', name: 'Test provider', serviceTitle: 'Test service', description: 'Controlled fixture', priceAtomic: '10000', payoutWallet: other, ensName: 'fixture.eth', agentId: '1', identityBound: true }); });
+    afterAll(async () => { await db?.close(); });
+    const input = (key: string) => ({ providerId: 'test-provider', title: 'Review public document', brief: 'Summarize the supplied public text.', requestKey: key });
+    it('concurrent idempotency creates one durable job and rejects cross-wallet substitution', async () => {
+        const jobs = await Promise.all(Array.from({ length: 5 }, () => db.store.createJob(wallet, input('request-test-one'))));
+        expect(new Set(jobs.map(j => j.id)).size).toBe(1);
+        await expect(db.store.createJob(other, input('request-test-one'))).rejects.toMatchObject({ status: 409 });
+        await expect(db.store.createJob(wallet, { ...input('request-test-one'), brief: 'changed' })).rejects.toMatchObject({ status: 409 });
+        expect((await db.store.getJob(jobs[0]!.id))?.brief).toBe(input('request-test-one').brief);
+    });
+    it('enforces Release hash/state, durable pending tx and no unpaid file leak', async () => {
+        let j = await db.store.createJob(wallet, input('request-test-two'));
+        await expect(db.store.releaseJob(j.id, sha, 'Reviewed summary')).rejects.toMatchObject({ status: 409 });
+        await db.store.bindCard(j.id, 't_12345678');
+        await db.store.approveJob(j.id);
+        j = await db.store.stageArtifact(j.id, { path: '/private/staging/fixture.mp4', sha256: sha, summary: 'Reviewed summary' });
+        expect(publicJob(j).artifactSha256).toBeNull();
+        await expect(db.store.releaseJob(j.id, 'f'.repeat(64), 'Reviewed summary')).rejects.toMatchObject({ status: 409 });
+        await expect(db.store.releaseJob(j.id, sha, 'Stale summary')).rejects.toMatchObject({ status: 409 });
+        j = await db.store.releaseJob(j.id, sha, 'Reviewed summary');
+        expect(JSON.stringify(publicJob(j))).not.toContain('/private/');
+        expect(publicJob(j).downloadRef).toBeUndefined();
+        await db.store.rememberPendingPayment(j.id, hash);
+        await expect(db.store.rememberPendingPayment(j.id, '0x' + 'e'.repeat(64))).rejects.toMatchObject({ status: 409 });
+        await expect(db.store.cancelJob(j.id)).rejects.toMatchObject({ status: 409 });
+        expect((await db.store.getJob(j.id))?.pendingPaymentTx).toBe(hash);
+        j = await db.store.reservePayment(j.id, hash);
+        expect(j.pendingPaymentTx).toBeNull();
+        expect(publicJob(j).deliveryPending).toBe(true);
+        const uploads = await Promise.all([db.store.beginUpload(j.id), db.store.beginUpload(j.id)]);
+        expect(uploads.filter(x => x.started)).toHaveLength(1);
+        await db.store.checkpointSwarm(j.id, ref);
+        j = await db.store.completeDelivery(j.id, ref);
+        expect(publicJob(j).downloadRef).toBe(ref);
+    });
+    it('reserves a transaction for exactly one released job', async () => {
+        const jobs = await Promise.all(['payment-race-one', 'payment-race-two'].map(async (key) => { const j = await db.store.createJob(wallet, input(key)); await db.store.bindCard(j.id, key === 'payment-race-one' ? 't_22345678' : 't_32345678'); await db.store.approveJob(j.id); await db.store.stageArtifact(j.id, { path: '/private/file.mp4', sha256: sha, summary: 'fixture' }); return db.store.releaseJob(j.id, sha, 'fixture'); }));
+        const results = await Promise.allSettled(jobs.map(j => db.store.reservePayment(j.id, '0x' + 'f'.repeat(64))));
+        expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    });
+    it('keeps uncertain external publication write find-only after restart', async () => {
+        const j = await db.store.createJob(wallet, input('outbox-request-one'));
+        const event = { kind: 'job-accepted', jobId: j.id, termsDigest: sha }, key = 'job-accepted:' + j.id;
+        expect(await db.store.reservePublication(key, sha, event)).toEqual({ kind: 'acquired' });
+        expect(await db.store.reservePublication(key, sha, event)).toEqual({ kind: 'busy' });
+        await db.store.abortBeforeWrite(key, sha);
+        expect(await db.store.reservePublication(key, sha, event)).toEqual({ kind: 'acquired' });
+        await db.store.retryPublication(key, sha);
+        expect(await db.store.reservePublication(key, sha, event)).toEqual({ kind: 'uncertain' });
+        await expect(db.store.reservePublication(key, 'd'.repeat(64), event)).rejects.toMatchObject({ status: 409 });
+        await db.store.recordPublication(key, sha, 'arkiv:1/0x' + 'a'.repeat(64));
+        expect(await db.store.reservePublication(key, sha, event)).toMatchObject({ kind: 'existing' });
+    });
+    it('rejects zero payout and amounts outside uint256', async () => { const p = (await db.store.getProfile('test-provider'))!; await expect(db.store.configureProfile({ ...p, priceAtomic: (1n << 256n).toString() })).rejects.toMatchObject({ status: 400 }); await expect(db.store.configureProfile({ ...p, payoutWallet: '0x' + '0'.repeat(40) })).rejects.toMatchObject({ status: 400 }); });
+    it('rejects premature public references and terminal cancellation replay', async () => { const j = await db.store.createJob(wallet, input('cancel-test-request')); await expect(db.store.enqueuePublication(j.id, 'released-hash', { swarmRef: ref })).rejects.toMatchObject({ status: 409 }); await db.store.cancelJob(j.id); await expect(db.store.approveJob(j.id)).rejects.toMatchObject({ status: 409 }); expect((await db.store.getJob(j.id))?.status).toBe('cancelled'); });
+});

@@ -1,3 +1,4 @@
+import { marketRouter, marketOperatorRouter, type MarketControls } from '../market/routes.js';
 import { json, Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { isEntityRef, parseRecord, type DeskRecord } from '@secondbrain/desk-contracts/desk';
@@ -89,6 +90,13 @@ export const publicDeskRouter = (app: { locals: Record<string, unknown> }): Rout
 export const routes: DeskRoutes = ({ app, sessionGate, opts }) => {
   if (opts.desk) { app.locals.deskPublic = opts.desk.public; app.locals.deskOperator = opts.desk.operator; }
   const mounted: ReturnType<DeskRoutes> = [{ path: '/api/desk/public', router: publicDeskRouter(app), mount: 'raw' }];
+  const market = opts.desk?.market ?? app.locals.cybaMarket as MarketControls | undefined;
+  if (market) {
+    app.locals.cybaMarket = market;
+    if (sessionGate) mounted.push({path:'/api/desk/market/operator',router:marketOperatorRouter(market,sessionGate),mount:'raw'});
+    else { const unavailable=Router();unavailable.use((_req,res)=>{res.status(503).json({error:{code:'unavailable',message:'Owner session gate is required.'}});});mounted.push({path:'/api/desk/market/operator',router:unavailable,mount:'raw'}); }
+    mounted.push({path:'/api/desk/market',router:marketRouter(market),mount:'raw'});
+  }
   const operator = app.locals.deskOperator as DeskPrivateControls | undefined;
   if (operator && sessionGate) {
     mounted.push({ path: '/api/desk', router: deskOperatorRouter(operator, sessionGate), mount: 'session' });
