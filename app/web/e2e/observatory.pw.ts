@@ -104,3 +104,34 @@ test('Brain Map exact note overlay, unresolved evidence and shared replay naviga
   // Historical operation evidence may remain on the map; ended executions must not remain active.
   await expect(page.getByText(/Current topology is context only/)).toBeVisible();
 });
+
+test('records synthetic 500-node/1500-edge seek and frame budgets', async ({ page }, testInfo) => {
+  test.setTimeout(120000);
+  await page.goto('/e2e/observatory-benchmark.html');
+  await expect(page.locator('canvas').first()).toBeVisible();
+  await expect(page.locator('body')).toHaveAttribute('data-ready', '0');
+  const measurement = await page.evaluate(async () => {
+    const raf = () => new Promise<number>(resolve => requestAnimationFrame(resolve));
+    const wake = () => document.querySelector('[aria-label="3D execution workspace"]')!.dispatchEvent(new PointerEvent('pointermove', { bubbles: true }));
+    const seek = (window as unknown as { syntheticSeek: (tick: number) => void }).syntheticSeek;
+    // Warm GPU programs and graph internals before sampling.
+    for (let i = 1; i <= 10; i++) { seek(i); await raf(); await raf(); }
+    const seekMs: number[] = [];
+    for (let i = 11; i <= 50; i++) {
+      const start = performance.now(); seek(i); await raf(); await raf(); seekMs.push(performance.now() - start);
+    }
+    const frames: number[] = []; let previous = await raf();
+    for (let i = 0; i < 120; i++) { wake(); const now = await raf(); frames.push(now - previous); previous = now; }
+    const p95 = (samples: number[]) => [...samples].sort((a, b) => a - b)[Math.ceil(samples.length * .95) - 1]!;
+    const canvas = document.querySelector('canvas')!;
+    const gl = canvas.getContext('webgl2');
+    const debug = gl?.getExtension('WEBGL_debug_renderer_info');
+    return { synthetic: true, nodes: 500, edges: 1500, seekMs, frameIntervalsMs: frames, p95SeekMs: p95(seekMs), rafFps: 1000 * frames.length / frames.reduce((a, b) => a + b, 0),
+      browser: navigator.userAgent, renderer: gl?.getParameter(debug?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER), pixelRatio: 1, viewport: { width: innerWidth, height: innerHeight },
+      method: '40 synchronous React scene updates plus two animation frames; 120 interaction-awake requestAnimationFrame intervals. Not GPU completion timing or production workload.' };
+  });
+  await testInfo.attach('synthetic-performance.json', { body: JSON.stringify(measurement, null, 2), contentType: 'application/json' });
+  console.log(JSON.stringify(measurement));
+  expect(measurement.p95SeekMs, 'p95 seek target <100ms').toBeLessThan(100);
+  expect(measurement.rafFps, 'requestAnimationFrame baseline target >=30fps').toBeGreaterThanOrEqual(30);
+});

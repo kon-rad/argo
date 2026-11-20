@@ -135,7 +135,7 @@ it('links to Observatory only when enabled and anchors the requested recorded pa
   const href = link.getAttribute('href')!;
   expect(href).toContain('/observatory?');
   expect(new URLSearchParams(href.split('?')[1]).get('session')).toBe('12');
-  expect(new URLSearchParams(href.split('?')[1]).get('cursor')).toBe(String(Date.parse(SESSION.started_at)));
+  expect(new URLSearchParams(href.split('?')[1]).get('cursor')).toBe(String(Date.parse(SESSION.ended_at)));
   expect(document.getElementById('step-3')).toBeTruthy();
 });
 
@@ -152,4 +152,11 @@ it('labels unknown, success and recorded run failure separately from tool failur
   expect(screen.queryByText('✗ error')).toBeNull();
   expect(document.body.textContent).toContain('1 tool outcomes unknown');
   expect(document.body.textContent).toContain('1 recorded run failures (separate from tools)');
+});
+
+it('shows unknown activity time without a fabricated current-hour link', async () => {
+  renderWith({ session: { ...SESSION, started_at: null, ended_at: null }, runs: [], steps: [], next: null }, '/usage/session/mac/s1',
+    u => u === '/api/meta' ? { modules: ['observatory'], timezone: 'UTC' } : null);
+  await screen.findByText('Activity time unknown: no recorded timestamp.');
+  expect(screen.queryByRole('link', { name: 'Show activity' })).toBeNull();
 });

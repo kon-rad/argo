@@ -10,6 +10,8 @@ import { contextLabel, formatTokens, personaLabel } from './format.js';
 import { sessionName } from './AgentSessions.js';
 import { duration, groupTurns, toolSummary, type ToolPair } from './steps.js';
 
+import { activityWindow } from './activity.js';
+
 const SHOW_KEY = 'usage-session-show';
 type Show = { thinking: boolean; results: boolean; system: boolean };
 const DEFAULT_SHOW: Show = { thinking: false, results: false, system: false };
@@ -186,12 +188,11 @@ export default function UsageSession() {
   const dur = span(s.started_at, s.ended_at);
   const persona = personaLabel(s);
   const ctx = contextLabel(s);
-  const activityStart = s.started_at ? Date.parse(s.started_at) : Date.now() - 3600000;
-  const activityLink = `/observatory?${new URLSearchParams({ from: String(activityStart), to: String(activityStart + 3600000), cursor: String(activityStart), session: String(s.id), host: s.host })}`;
+  const activityLink = activityWindow(s, steps);
   return (
     <div className="h-full overflow-auto break-words p-4">
       <Link to="/usage?view=sessions" className="text-xs underline">Back to Usage</Link>
-      {meta.data?.modules?.includes('observatory') && <Link className="ml-3 text-xs underline" to={activityLink}>Show activity</Link>}
+      {meta.data?.modules?.includes('observatory') && (activityLink ? <Link className="ml-3 text-xs underline" to={activityLink}>Show activity</Link> : <span className="ml-3 text-xs">Activity time unknown: no recorded timestamp.</span>)}
       {requestedPart && !steps.some(step => step.key === requestedPart) && !q.isFetchingNextPage && <p>Recorded part is unavailable in the loaded pages.</p>}
       <h1 className="mt-1 text-lg font-semibold">{sessionName(s, tz) ?? s.external_id}</h1>
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs sm:grid-cols-[auto_1fr_auto_1fr]" aria-label="Session summary">

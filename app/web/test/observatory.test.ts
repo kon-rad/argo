@@ -39,3 +39,39 @@ describe('Observatory workspace evidence', () => {
     expect(eventLink(demoWindow.events.find(e => e.id === 'human')!)).toBeNull();
   });
 });
+
+it.each([{ ticket: 'demo-ticket' }, { persona: 'builder' }, { model: 'fixture-model' }])('retains historical events after end under %j', filters => {
+  const w = structuredClone(demoWindow);
+  w.events.push({ ...w.events[2]!, id: 'usage', kind: 'usage', at: w.from + 1500, usage: { model: 'fixture-model', input: 0, output: 0, reasoning: 0 } });
+  for (const offset of [4999, 7000]) {
+    const scene = sceneAt(w, w.from + offset, filters);
+    expect(scene.events.some(e => e.id === 'call')).toBe(true);
+    if (offset === 7000) { expect(scene.active).toEqual([]); expect(scene.links).toEqual([]); }
+  }
+});
+
+import { activityWindow } from '../src/routes/usage/activity.js';
+it('opens later session evidence and uses recorded steps when start is missing', () => {
+  const start = '2026-01-01T00:00:00Z', end = '2026-01-01T03:00:00Z';
+  for (const started_at of [start, null]) {
+    const link = activityWindow({ id: 12, host: 'lab', started_at, ended_at: null }, [{ ts: end }])!;
+    const state = readState(new URLSearchParams(link.split('?')[1]), 9999);
+    expect(state.cursor).toBe(Date.parse(end)); expect(state.to).toBeGreaterThan(Date.parse(end));
+    expect(state.to - state.from).toBeLessThanOrEqual(86400000);
+    const evidence = { ...demoWindow.events[2]!, at: Date.parse(end) };
+    expect(sceneAt({ ...demoWindow, from: state.from, to: state.to, events: [evidence] }, state.cursor, { session: state.session }).events).toEqual([evidence]);
+  }
+  expect(activityWindow({ id: 12, host: 'lab', started_at: null, ended_at: null }, [])).toBeNull();
+});
+
+it('renders evidenced human input without inventing an active agent', () => {
+  const time = demoWindow.from + 7000;
+  const human = { ...demoWindow.events.find(e => e.id === 'human')!, at: time, execution: null, ticket: 'recorded-ticket' };
+  const window = { ...demoWindow, events: [human] };
+  const scene = sceneAt(window, time, { origin: 'human' });
+  expect(scene.active).toEqual([]);
+  expect(scene.nodes.some(n => n.id === human.id && n.kind === 'event' && n.origin === 'human')).toBe(true);
+  expect(scene.nodes.some(n => n.kind === 'execution' || n.kind === 'machine')).toBe(false);
+  expect(scene.links).toContainEqual({ source: human.id, target: 'ticket:recorded-ticket' });
+  expect(sceneAt(window, time + 2001, {}).nodes).toEqual([]);
+});

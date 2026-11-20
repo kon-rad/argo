@@ -160,3 +160,24 @@ describe('recorded ordering', () => {
     expect(() => replay(window(), 100)).toThrow(/outside/);
   });
 });
+
+describe('recorded sender provenance', () => {
+  it('exports explicit archive senders and keeps role-only prompts unknown', () => {
+    const rows = ['human', 'agent', 'unknown'].map((kind, i) => ({ id: i + 1, session_id: 1, seq: i, ts: new Date(10 + i), role: 'user', kind: 'user', raw: { type: 'user', sender: { kind, id: 'fixture-sender', channel: 'fixture' }, message: { content: 'private prompt' } }, text: '', host: 'lab', source: 'claude-code', external_id: 's', harness: 'claude-code', observed_at: null }));
+    expect(archiveEvents(rows).map(e => e.actor.kind)).toEqual(['human', 'agent', 'unknown']);
+  });
+  it('uses org sender kind recorded at insertion, never current roster', async () => {
+    const db = dbFixture(() => ['human', 'agent', null].map((author_kind, id) => ({ id, created_at: new Date(10), author: 'fixture', author_kind, channel_slug: 'fixture', thread_id: null, task_id: null })));
+    const data = await loadWindow(db, { from: 0, to: 100 }, new Set(['org']));
+    expect(data.window.events.map(e => e.actor.kind)).toEqual(['human', 'agent', 'unknown']);
+  });
+});
+
+import { thinkingDetail } from '../src/addons/observatory/adapters.js';
+it('returns existing Codex summary only and distinguishes hidden from unavailable', () => {
+  expect(thinkingDetail({ harness: 'codex', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'Synthetic authorized summary' }], encrypted_content: 'secret' } })).toEqual({ availability: 'authorized-summary', summary: 'Synthetic authorized summary' });
+  expect(thinkingDetail({ harness: 'codex', payload: { type: 'reasoning', encrypted_content: 'secret' } })).toEqual({ availability: 'hidden' });
+  expect(thinkingDetail({ harness: 'codex', payload: { type: 'reasoning', summary: [] } })).toEqual({ availability: 'unavailable' });
+  expect(thinkingDetail({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'secret' }] } })).toEqual({ availability: 'unavailable' });
+  expect(thinkingDetail({ message: { content: [{ type: 'redacted_thinking' }] } })).toEqual({ availability: 'hidden' });
+});

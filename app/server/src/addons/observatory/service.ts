@@ -99,13 +99,13 @@ export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySe
     }
   }
   if (!host && !session && modules.has('org')) {
-    const rows = bounded((await db.query<{ id: number; created_at: Date; author: string; channel_slug: string; thread_id: number | null; task_id: string | null }>(
-      `SELECT id, created_at, author, channel_slug, thread_id, task_id FROM org_messages
+    const rows = bounded((await db.query<{ id: number; created_at: Date; author: string; author_kind: 'human' | 'agent' | 'unknown' | null; channel_slug: string; thread_id: number | null; task_id: string | null }>(
+      `SELECT id, created_at, author, author_kind, channel_slug, thread_id, task_id FROM org_messages
        WHERE created_at >= $1 AND created_at < $2 ORDER BY created_at, id LIMIT 5001`, args.slice(0, 2))).rows);
     for (const row of rows) {
       const e = envelope('org_messages', String(row.id), instant(row.created_at), 'message');
-      // Current roster runtime cannot prove historical human origin.
-      e.actor = { kind: 'unknown', sender: row.author, channel: row.channel_slug, evidence: 'recorded-author; historical-kind-unknown' };
+      // Only the insertion-time snapshot proves historical sender kind.
+      e.actor = { kind: row.author_kind ?? 'unknown', sender: row.author, channel: row.channel_slug, evidence: row.author_kind ? 'org-insertion-sender-kind' : 'recorded-author; historical-kind-unknown' };
       if (row.thread_id) e.parent = `org_messages:${row.thread_id}`;
       if (row.task_id) e.ticket = row.task_id; events.push(e);
     }

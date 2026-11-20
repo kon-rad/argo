@@ -40,3 +40,25 @@ describe('observatory scratch schema and join cardinalities', () => {
     expect(data.diagnostics.historicalCompleteness).toBe('unknown');
   });
 });
+
+it('captures org sender at insertion and never rewrites history from a changed roster', async () => {
+  const { withTransaction } = await import('../src/db.js');
+  // Roll back all synthetic org rows, even if an assertion fails.
+  const rollback = new Error('fixture rollback');
+  try {
+    await withTransaction(async db => {
+      await db.query("INSERT INTO org_agents(name,runtime,role,org_version) VALUES('fixture-human','human','fixture','fixture'),('fixture-agent','codex','fixture','fixture')");
+      await db.query("INSERT INTO org_channels(slug,kind) VALUES('fixture-observatory','shared')");
+      const insert = (author: string) => db.query("INSERT INTO org_messages(channel_slug,author,kind,body) VALUES('fixture-observatory',$1,'message','Synthetic') RETURNING id,author_kind", [author]);
+      const human = (await insert('fixture-human')).rows[0]!;
+      const agent = (await insert('fixture-agent')).rows[0]!;
+      expect(human.author_kind).toBe('human'); expect(agent.author_kind).toBe('agent');
+      await db.query("UPDATE org_agents SET runtime='codex' WHERE name='fixture-human'");
+      await db.query("UPDATE org_messages SET author_kind='agent',body='Synthetic edit' WHERE id=$1", [human.id]);
+      const historical = await db.query('SELECT author_kind FROM org_messages WHERE id=$1', [human.id]);
+      expect(historical.rows[0]!.author_kind).toBe('human');
+      expect((await insert('fixture-human')).rows[0]!.author_kind).toBe('agent');
+      throw rollback;
+    });
+  } catch (error) { if (error !== rollback) throw error; }
+});

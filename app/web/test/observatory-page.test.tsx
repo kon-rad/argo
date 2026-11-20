@@ -63,3 +63,32 @@ it('assembles all immutable pages and preserves the export token', async () => {
   expect(snapshot.window.events).toEqual(demoWindow.events);
   expect(snapshot.export).toBe('same');
 });
+
+it.each(['authorized-summary', 'hidden', 'unavailable'])('displays lazy thinking state %s', async availability => {
+  const thinking = demoWindow.events.find(e => e.id === 'thinking')!;
+  setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 4500}&event=thinking`, url => url.includes('/events/') ? { event: thinking, detail: { thinking: { availability, ...(availability === 'authorized-summary' ? { summary: 'Synthetic permitted summary' } : {}) } } } : { window: demoWindow, export: 'thinking-token', total: 6, next: null, diagnostics: {} });
+  await screen.findByText(/Thinking: not checked/);
+  expect(screen.queryByLabelText('Authorized thinking summary')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Verify source detail' }));
+  await screen.findByText(`Thinking: ${availability}. No reasoning reconstructed.`);
+  if (availability === 'authorized-summary') expect(screen.getByLabelText('Authorized thinking summary').textContent).toBe('Synthetic permitted summary');
+  else expect(screen.queryByLabelText('Authorized thinking summary')).toBeNull();
+});
+
+import type { EvidenceEvent } from '@secondbrain/contracts/observatory';
+it('renders evidenced source origins under human, agent and unknown filters', async () => {
+  // Adapter sender extraction is covered by server tests; exercise the browser transport contract here.
+  const events: EvidenceEvent[] = (['human', 'agent', 'unknown'] as const).map((kind, id) => ({
+    ...demoWindow.events[0]!, id: `origin:${id}`, at: demoWindow.from + id,
+    actor: { kind, sender: 'fixture-sender', channel: null, evidence: 'archive-recorded-sender' },
+  }));
+  const window = { ...demoWindow, events };
+  setup(`/observatory?from=${window.from}&to=${window.to}&cursor=${window.from + 100}`, () => ({ window, export: 'origin-token', total: 3, next: null, diagnostics: {} }));
+  await screen.findByText('Events through cursor (3; latest 200 shown)');
+  for (const [kind, glyph] of [['human', '◆ H'], ['agent', '● A'], ['unknown', '◇ unknown']]) {
+    fireEvent.change(screen.getByLabelText('Origin'), { target: { value: kind } });
+    await screen.findByText('Events through cursor (1; latest 200 shown)');
+    const timeline = screen.getByRole('region', { name: 'Recorded event timeline' });
+    expect(timeline.textContent).toContain(glyph);
+  }
+});

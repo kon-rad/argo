@@ -52,6 +52,30 @@ Software rendering was materially slower and remains a documented limit: Headles
 
 Host zen-agent checks report 94 passed. Isolated Python checks report 278 passed and 2 skipped. Pre-integration app tests had three unrelated route/response failures; fresh CI at a6dfd36 passed every required check after integration. Corrections for the independent review findings still require renewed exact-head CI and rendered checks before acceptance. No author approval, merge or deployment is claimed by this log.
 
+## Review 109 correction
+
+Card: `t_2693489d`. Source-only correction in the isolated engine worktree.
+
+- Human provenance now has a real recorded path: org message insertion snapshots sender kind without backfilling history. Archive adapters accept explicit recorded sender metadata, never roles or channel labels. Fixture exports exercise human, agent and unknown, including HTML origin filtering.
+- Ticket/persona/model filters retain historical events after execution end. Active markers and attached edges still disappear at the exact half-open end. Immutable window indexes, direct association maps and a single through-cursor pass remove repeated sorts and nested scans.
+- Usage links use recorded session and loaded-step times, including activity after the first hour. No time anchor produces an explicit unknown state; sessions longer than one day open the latest bounded day.
+- Lazy thinking detail displays only existing authorized Codex summary_text blocks after permission checks, bounded and redacted. Hidden and unavailable have distinct labels. Overview responses still contain no summary bodies.
+- Renderer shares shape resources, retains surviving data-object identity and meshes, skips identical scenes, uses pixel ratio 1 and disables antialiasing. Idle/unmount cleanup remains covered. These changes reduce work but do not prove the performance target.
+- Regression baseline: new adapter tests failed 2 cases (18 passed); historical-filter tests failed 3 cases (5 passed) before fixes. Final fixture and web totals are recorded in the runner RESULT.md.
+
+Remaining coordinator evidence is required. This sandbox cannot connect to PostgreSQL or serve a browser. The exact attempted app check was `cd app && SB_TEST_DB=sb_card_2693489d_test npm test`, refused with `Operation not permitted` on localhost port 5433. The new forward migration and insertion-time provenance integration fixture have not executed here. Python pytest is absent. Zen-agent's 16 loopback-listener tests fail with EPERM; 156 tests pass. Run these checks with the required capabilities before approval.
+
+The browser scenario now contains a deterministic 500-node/1,500-edge renderer benchmark with raw JSON samples and explicit 100 ms/30 fps gates. Listing the two Playwright tests is not execution evidence. Review 109 reports earlier synthetic measurements of p95 seek 427.1 ms and 8.88 fps; those remain a reported baseline, not measurements of this correction. No current rendered pass, new performance number, production audit or completeness claim is available. The coordinator must execute acceptance and benchmark on this correction's exact commit and attach the revision and device/browser/GPU evidence.
+
+Local correction verification: `cd app && npm run build` exits 0, with the existing bundle-size warning; `cd app && npx vitest run --project web` reports `41 passed` files and `313 passed` tests; the database-free Observatory config reports `21 passed` tests. `npm run e2e:observatory -w web -- --list` lists two scenarios without rendering. `git diff --check` passes. The public leak script passes with exit 0 over all tracked and new nonignored source files. A whole-directory scan also traversed ignored build/cache artifacts and flagged bundled Three.js and pytest cache data, so it is not reported as a clean whole-directory scan.
+
+
+## Coordinator acceptance after correction
+
+The coordinator executed both rendered Playwright scenarios after the review corrections, not merely test discovery. Native Chrome confirmed ANGLE Metal on Apple M1 Max. The synthetic 500-node/1,500-edge harness sampled 40 synchronous scene updates plus two animation frames and 120 awake frame intervals: p95 33.8 ms and 60.0 requestAnimationFrame fps. The ordinary replay/source-navigation scenario also passed. This supersedes earlier worker-only browser limitations; exact-head receipts remain with the PR handoff.
+
+Dedicated migrated-database fixtures pass all three tests, including insertion-time sender snapshots and historical roster changes. The sender migration's missing Up Migration header was repaired before deployment. All 315 web tests pass, including first-empty-to-active camera framing, explicit refit and standalone human input without a fabricated execution. The engine build passes. Source/detail authorization and hidden/unavailable summary cases remain covered by the correction fixtures. No self-approval, merge, deployment or universal production-history claim is made here.
+
 ## 2026-11-20 Observatory 3 map overlay, card t_82a4e471
 
 Stacked on `card/t_2693489d-observatory-2-browser-3d-workspace-human`. Its parent advanced during this run; fast-forwarded to `c487032` to preserve the workspace WebGL fallback fix. This card adds only map activity/shared navigation work. No matching catalog row was supplied; the authorized card is the implementation unit. The private vault remains read-only.
@@ -71,3 +95,9 @@ Remaining checks need coordinator capabilities:
 - `cd app && npm run e2e:observatory -w web` requires a browser/loopback host. Run both scenarios, inspect the map screenshot and measure actual seek/frame-rate/heap/resource behavior using the protocol in [Observatory](observatory.md#coordinator-map-scenario-and-measurements). Rendering and performance remain unmeasured for this overlay. Run the separate production audit under the effective source role; no completeness claim is made.
 
 Needs browser, scratch-database/loopback checks and missing check tools before approval. The runner owns pushing/PR creation; the registered review gate owns acceptance and shipping. The engine log and runner RESULT.md hand off the implementation and exact limitations without modifying private tracker/dev-log notes.
+
+## Coordinator integration of map activity and corrected workspace
+
+Merged the corrected workspace parent into the map activity branch, preserving pinned layouts, note/execution focus, overlay origin colors and lifecycle handling alongside insertion-time sender provenance, authorized summaries, historical filters, first-nonempty camera framing and standalone human input pulses. The browser origin fixture now uses the typed transport contract rather than importing the server adapter, avoiding a Node-only path dependency in the web TypeScript build; server adapter regressions remain separate.
+
+Integrated verification: 44 web files and 326 tests passed. Shared/server/web build passed with the existing large-chunk warning. All three native Chrome Playwright scenarios passed: workspace source navigation, pinned Brain Map replay and actual WebGL context-loss fallback, and synthetic renderer stress. The renderer fixture used 500 nodes and 1,500 edges, 40 synchronous updates plus two frames, and 120 awake frame intervals at 1280x720. Chrome 159 reported ANGLE Metal on Apple M1 Max; p95 update latency was 33.9 ms and animation scheduling was 60.0 fps. These remain synthetic renderer measurements, not production workload or GPU-completion measurements. No source database or production audit was run as part of this merge verification.
