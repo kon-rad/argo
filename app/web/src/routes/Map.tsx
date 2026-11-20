@@ -52,8 +52,8 @@ function MetricCard({ m }: { m: MapMetric }) {
   );
 }
 
-function SidePanel({ id, metrics, onClose, onPick }: { id: string; metrics: MapMetric[]; onClose: () => void; onPick: (id: string) => void }) {
-  const q = useQuery({ queryKey: ['map-node', id], queryFn: () => mapApi.node(id) });
+function SidePanel({ id, version, metrics, onClose, onPick }: { id: string; version: number; metrics: MapMetric[]; onClose: () => void; onPick: (id: string) => void }) {
+  const q = useQuery({ queryKey: ['map-node', id, version], queryFn: () => mapApi.node(id, version) });
   const d = q.data;
   const metric = d?.node.kind === 'metric' ? metrics.find((m) => m.key === d.node.ref) : undefined;
   const open = d?.node.kind === 'note' && d.node.ref
@@ -70,11 +70,12 @@ function SidePanel({ id, metrics, onClose, onPick }: { id: string; metrics: MapM
         </div>
         <button type="button" onClick={onClose} className="text-sm text-[var(--ink-dim)] hover:text-[var(--ink)]" aria-label="Close">✕</button>
       </div>
+      {q.isError && <p role="alert">Node detail unavailable for layout v{version}: {(q.error as Error).message}</p>}
       {open && <Link to={open} className="self-start rounded bg-[var(--accent)] px-3 py-1 text-sm text-white">Open</Link>}
       {d?.node.meta['stage'] !== undefined && <div className="text-sm">Stage: <b>{String(d.node.meta['stage'])}</b></div>}
       {d?.node.meta['status'] !== undefined && <div className="text-sm">Status: {String(d.node.meta['status'])}</div>}
       {metric && <MetricCard m={metric} />}
-      {d?.preview && <pre className="max-h-64 overflow-hidden whitespace-pre-wrap rounded bg-[var(--paper-sunk)] p-2 text-xs text-[var(--ink-dim)]">{d.preview}</pre>}
+      {d?.preview && <div><p className="text-xs text-[var(--ink-dim)]">Current vault content</p><pre className="max-h-64 overflow-hidden whitespace-pre-wrap rounded bg-[var(--paper-sunk)] p-2 text-xs text-[var(--ink-dim)]">{d.preview}</pre></div>}
       {d && d.neighbours.length > 0 && (
         <div>
           <div className="mb-1 text-xs uppercase tracking-wide text-[var(--ink-dim)]">Connected ({d.neighbours.length})</div>
@@ -96,8 +97,8 @@ function SidePanel({ id, metrics, onClose, onPick }: { id: string; metrics: MapM
 export default function MapPage() {
   const [params] = useSearchParams();
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta });
-  if (params.get('activity') === '1' && meta.isPending) return <p>Loading map modules…</p>;
   if (params.get('kiosk') === '1') return <Suspense fallback={null}><KioskMap /></Suspense>;
+  if (params.get('activity') === '1' && meta.isPending) return <p>Loading map modules…</p>;
   if (params.get('activity') === '1' && meta.data?.modules?.includes('observatory')) return <Suspense fallback={null}><Observatory mode="map" /></Suspense>;
   return <FullMapPage observatory={meta.data?.modules?.includes('observatory') ?? false} />;
 }
@@ -184,7 +185,7 @@ function FullMapPage({ observatory }: { observatory: boolean }) {
             {headline.map((m) => <MetricCard key={m.key} m={m} />)}
           </div>
         )}
-        {selected && <SidePanel id={selected} metrics={metrics.data?.metrics ?? []} onClose={() => setSelected(null)} onPick={pick} />}
+        {selected && graph.data && <SidePanel id={selected} version={graph.data.version} metrics={metrics.data?.metrics ?? []} onClose={() => setSelected(null)} onPick={pick} />}
       </div>
     </div>
   );

@@ -161,6 +161,14 @@ The HTML note activity list shows the latest 200 operations through the cursor. 
 
 ### Coordinator map scenario and measurements
 
+Actual integrated-map production measurements are recorded in [the browser measurement record](audits/observatory-map-browser.md). This supersedes the earlier renderer-only baseline; the exact submitted head still requires its own revision-bound coordinator receipt.
+
 `cd app && npm run e2e:observatory -w web` includes a synthetic map scenario alongside workspace replay and renderer stress using `web/test/fixtures/observatoryMap.ts`. It supplies a pinned note, explicit read/write operations, a missing note and a separate repository target. It checks a real canvas, layout metadata/disclaimer, retained unresolved rows, selected-execution highlights, note filtering, workspace/map navigation, cursor/selection restoration, reload and exact execution ends. It saves `web/e2e/test-results/observatory-map-overlay.png`. Inspect that screenshot for the circle/triangle distinction and the pinned note placement. This scenario requires the coordinator's browser and loopback capabilities. Listing it is not a rendered pass.
 
 On the exact review revision, measure the existing budgets on the agreed baseline device with 500 map nodes, 1,500 edges and 5,000 synthetic events. Record device/browser/GPU, exact counts, transferred bytes, browser heap, at least 100 forward/backward seek samples and their p95, frame-rate samples during playback/camera interaction, idle rendering, and repeated mode-switch resource growth. Check keyboard/HTML mode, mobile layout, browser back/forward, denied source detail, missing pinned layout and the disabled-module normal map separately. No browser performance numbers or production coverage are claimed by the sandbox fixture tests. Run migrated-database and production authorization/coverage audits separately.
+
+### Layout detail and existing map controls
+
+Node details use the displayed graph version (`GET /api/map/node/:id?version=N`), including neighbours. An omitted version selects the newest layout for existing callers; an invalid version returns 400 and an unavailable version returns 404 without substitution. Preview text is fetched from the current vault index and labelled **Current vault content**. Neither pinned node details nor a preview establish historical topology or historical file contents.
+
+The notes layer hides both note nodes and their activity glyphs and restores them together. Kiosk mode renders independently of Observatory metadata, including URLs carrying both `kiosk=1` and `activity=1`.

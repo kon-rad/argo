@@ -145,6 +145,7 @@ export const FullMap = forwardRef<FullMapHandle, Props>(function FullMap({ graph
     if (!g || !activity) return;
     if (!activityGroup.current) { activityGroup.current = new Group(); g.scene().add(activityGroup.current); }
     const group = activityGroup.current, seen = new Set<string>();
+    group.visible = layers.notes;
     for (const item of activity) {
       if (!item.node || !item.event.target) continue;
       const read = item.event.target.operation === 'read', key = `${item.node.id}:${read}:${item.event.actor.kind}`;
@@ -166,7 +167,7 @@ export const FullMap = forwardRef<FullMapHandle, Props>(function FullMap({ graph
     }
     for (const [key, mesh] of activityMeshes.current) if (!seen.has(key)) { group.remove(mesh); activityMeshes.current.delete(key); }
     wake.current();
-  }, [activity]);
+  }, [activity, layers.notes]);
 
   // Highlight, visibility.
   useEffect(() => {

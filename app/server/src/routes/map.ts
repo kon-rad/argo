@@ -20,11 +20,13 @@ export function kioskSafe(m: MetricView): MetricView {
   return { ...m, value: null, series: [], target: null, currency: null };
 }
 
+const layoutQuery = z.object({ version: z.coerce.number().int().positive().max(2147483647).optional() }).strict();
+
 export function mapRouter(): Router {
   const router = Router();
 
   router.get('/graph', wrap(async (req, res) => {
-    const requested = parseOr400(z.object({ version: z.coerce.number().int().positive().max(2147483647).optional() }).strict(), req.query).version;
+    const requested = parseOr400(layoutQuery, req.query).version;
     const { rows: v } = await query<{ version: number; built_at: string }>(
       `SELECT version, built_at::text FROM map_layouts WHERE ($1::integer IS NULL OR version = $1) ORDER BY version DESC LIMIT 1`, [requested ?? null]);
     if (!v[0]) {
@@ -62,9 +64,11 @@ export function mapRouter(): Router {
 
   router.get('/node/:id', wrap(async (req, res) => {
     const id = String(req.params['id']);
-    const { rows: v } = await query<{ version: number }>(`SELECT MAX(version) AS version FROM map_layouts`);
+    const requested = parseOr400(layoutQuery, req.query).version;
+    const { rows: v } = await query<{ version: number }>(
+      `SELECT version FROM map_layouts WHERE ($1::integer IS NULL OR version = $1) ORDER BY version DESC LIMIT 1`, [requested ?? null]);
     const version = v[0]?.version;
-    if (!version) { res.status(404).json({ error: 'no layout yet' }); return; }
+    if (!version) { res.status(404).json({ error: requested ? 'requested layout unavailable; select a new layout explicitly' : 'no layout yet' }); return; }
     const { rows } = await query<NodeRow>(
       `SELECT id, kind, label, ref, parent, color_key, size, x, y, z, meta FROM map_nodes WHERE version = $1 AND id = $2`, [version, id]);
     const node = rows[0];
@@ -90,8 +94,10 @@ export function mapRouter(): Router {
     }
     res.json({
       node: { id: node.id, kind: node.kind, label: node.label, ref: node.ref, parent: node.parent, color: node.color_key, meta: node.meta ?? {} },
+      version,
       neighbours: nbrs,
       preview,
+      previewContext: 'current-vault-content',
     });
   }));
 
