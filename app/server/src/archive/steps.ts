@@ -44,7 +44,7 @@ function zenFields(raw: Obj): StepFields {
   if (m.role === 'user') return { ...none, step: 'prompt' };
   if (m.role === 'toolResult') {
     const name = str(m.toolName);
-    return { step: 'tool_result', toolNames: name ? [name] : [], toolCallId: str(m.toolCallId), isError: m.isError === true ? true : null };
+    return { step: 'tool_result', toolNames: name ? [name] : [], toolCallId: str(m.toolCallId), isError: m.isError === true ? true : m.isError === false ? false : null };
   }
   if (m.role !== 'assistant') return { ...none, step: 'system' };
   const calls = zenBlocks(raw).filter((b) => b.type === 'toolCall');
@@ -157,7 +157,7 @@ export function expandSteps(row: StepRow): StepPart[] {
     if (raw.type !== 'message' || !isObj(raw.message)) return [{ key: k, step: zenFields(raw).step, text: row.text, ...base }];
     const m = raw.message;
     if (m.role === 'toolResult') {
-      return [{ key: k, step: 'tool_result', text: resultText(m.content), toolName: str(m.toolName), toolCallId: str(m.toolCallId), isError: m.isError === true ? true : null }];
+      return [{ key: k, step: 'tool_result', text: resultText(m.content), toolName: str(m.toolName), toolCallId: str(m.toolCallId), isError: m.isError === true ? true : m.isError === false ? false : null }];
     }
     const blocks = zenBlocks(raw);
     const parts: StepPart[] = [];

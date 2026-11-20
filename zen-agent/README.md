@@ -230,3 +230,17 @@ The package has no path that points back into the engine; `zen.example.json` ref
 ## License
 
 MIT.
+
+### Unattributed file observations
+
+write_file and edit_file preserve normal success/overwrite behavior but emit no new details.change or verified transition claim. Optional details.fileObservation records observedBefore/observedAfter hashes, repository/worktree/path identity, ownership=unknown and a bounded redacted diff. These snapshots may include concurrent writers; even observedBefore=null is not exclusive proof that this tool created the file. No exclusive creation protocol, external writer lock, atomic CAS or isolated-writer boundary is implemented.
+
+Before/after canonical, lstat, no-follow and inode guards suppress unsupported observations. A final pre-write byte check and edit-input comparison can detect obvious conflict, but a peer can race afterward. Failed or inconsistent observation leaves ordinary tool behavior unchanged. Symlinks, non-Git paths and files/content above 16 MiB have no observational provenance. Same observed bytes produce no diff observation. No shell mutation or other worktree file is attributed to this tool.
+
+Changed-line diffs have zero unchanged context, numbered added/deleted lines and best-effort sensitive-line redaction before result/session persistence. Bounds: 64 KiB each input, 512 lines each, 4,096 bytes per line, 16 KiB serialized diff. Sensitive lines are replaced whole; known multiline secrets/private-key blocks, binary/invalid UTF-8 or bounds failures keep hashes with explicit unavailable reason. Hashes describe observed original bytes, not redacted display text. There is no secret-free trace guarantee.
+
+Source-only captureRequest retains the exact requested path and canonical resolvedPath (bounded 1,024 characters/4,096 bytes); its legacy name does not imply a captured transition. Structured result paths must agree with the request or validated resolution. The archive validates that binding before assigning result scope, never rewrites the earlier call's scope, and emits only body-free fileObservation metadata. Legacy change records are legacy-reported observations, never retroactively verified writes. Authorized /observation detail rechecks source/export/parent/request/tool/path/size/metadata and exposes already-redacted snapshots under ownership unknown. Legacy /diff is a compatibility alias with observational semantics.
+
+inspect_change_commit keeps its name and capture argument for compatibility. The handle now refers to an observation from this tool instance. Exact local parent/commit blob matching returns fileObservation.commitMatch, with authorship and transition ownership unknown. It is a separate content fact, never a new file mutation, write-grade promotion, PR review or merge receipt. Handles are bounded to 128 and expire with the tool instance.
+
+Assistant tool-call messages and dedicated tool trace args remain content-bearing, retaining write content/edit old/new and resume inputs. Existing private source permissions and archive redaction still apply. No protected content store, new daemon, model call or credentials are added. After both packages are built, test/observatory_roundtrip.mjs (also --nested) verifies actual ./ tool requests through JSONL/resume, sanctioned migrated scratch-DB upsert, metadata-only window and authorized observation detail with zero transition captures.

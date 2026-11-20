@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { agentSessions } from '../test/fixtures/tables.js';
 import { demoWindow } from '../src/routes/observatory/demo.js';
+import { fileObservationOf } from '../src/routes/observatory/fileEvidence.js';
 
 test('synthetic Observatory replay, restoration and recorded-part navigation', async ({ page }) => {
   const from = demoWindow.from, to = demoWindow.to;
@@ -46,6 +47,110 @@ test('synthetic Observatory replay, restoration and recorded-part navigation', a
   await expect(page.getByRole('heading', { name: 'Synthetic recorded detail' })).toBeVisible();
   await expect(page.locator('[id="step-2:call"]')).toHaveCount(1);
   await expect(page).toHaveURL(/part=2%3Acall/);
+});
+
+test('synthetic write reports, unattributed snapshots, Git content facts and verified gate receipts stay distinct under reverse seek', async ({ page }) => {
+  const { mapGraph } = await import('../test/fixtures/observatoryMap.js');
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    await route.fulfill({ json: path === '/api/auth/me' ? { required: false, authenticated: true }
+      : path === '/api/meta' ? { modules: ['usage', 'map', 'observatory'], nav: [], timezone: 'UTC', owner: 'owner', version: 'test' }
+      : path === '/api/sources' ? { sources: [] }
+      : path === '/api/sync' ? { installed: false }
+      : path === '/api/map/graph' ? mapGraph : {} });
+  });
+  const t = demoWindow.from;
+  await page.goto(`/observatory?demo=1&from=${t}&to=${demoWindow.to}&cursor=${t + 12000}&event=write-call`);
+  await expect(page.getByText(/Outcome at cursor: pending/)).toBeVisible();
+  await expect(page.getByLabel('File observation evidence')).toHaveCount(0);
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12500));
+  await expect(page.getByRole('button', { name: /tool_result/ })).toHaveCount(2);
+  await page.getByRole('button', { name: /tool_result/ }).last().click();
+  await expect(page.getByLabel('File observation evidence')).toContainText('ownership');
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /^file:/ })).toHaveCount(1);
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /\(tool-reported-success\)/ })).toHaveCount(1);
+  await expect(page.getByLabel('File observation evidence')).toContainText('Projects/demo.md');
+  await page.getByRole('link', { name: 'Brain Map replay', exact: true }).click();
+  const capturedNote = page.getByLabel('Note activity').getByRole('button', { name: '▲ W write tool-reported-success: Projects/demo.md', exact: true });
+  await expect(capturedNote).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Filter note Projects/demo.md', exact: true }).first()).toBeVisible();
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12499));
+  await expect(capturedNote).toHaveCount(0);
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12500));
+  await expect(capturedNote).toBeVisible();
+  await page.getByRole('link', { name: 'Workspace replay', exact: true }).click();
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 14000));
+  await expect(page.getByRole('button', { name: /tool_result/ })).toHaveCount(3);
+  await page.getByRole('button', { name: /tool_result/ }).last().click();
+  await expect(page.getByLabel('File observation evidence')).toContainText('local-object');
+  await expect(page.getByLabel('File observation evidence')).toContainText('unknown');
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /\(commit\)/ })).toHaveCount(0);
+  await expect(page.getByLabel('Git content comparison')).toBeVisible();
+  await page.getByRole('link', { name: 'Brain Map replay', exact: true }).click();
+  await expect(page.getByLabel('Note activity').getByRole('button', { name: /commit/ })).toHaveCount(0);
+  await expect(page.getByLabel('Note activity').getByRole('button', { name: '▲ W write tool-reported-success: Projects/demo.md', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Workspace replay', exact: true }).click();
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 18500));
+  await expect(page.getByRole('button', { name: /artifact/ })).toHaveCount(4);
+  await page.getByRole('button', { name: /artifact/ }).last().click();
+  await expect(page.getByLabel('PR evidence')).toContainText('merge-verified');
+  await expect(page.getByText('No evidenced active executions at this cursor.')).toBeVisible();
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12000));
+  await expect(page.getByLabel('File observation evidence')).toHaveCount(0);
+  await expect(page.getByLabel('PR evidence')).toHaveCount(0);
+  // A successful write without capture must stay tool-reported evidence in both views.
+  const reportedWindow = { ...demoWindow, events: demoWindow.events.map(event => event.id === 'write-result' ? { ...event, change: undefined } : event) };
+  await page.route('**/api/observatory/window*', route => route.fulfill({ json: { window: reportedWindow, total: reportedWindow.events.length, next: null, export: 'reported-fixture', diagnostics: { synthetic: true } } }));
+  await page.goto(`/observatory?from=${t}&to=${demoWindow.to}&cursor=${t + 12499}&event=write-call`);
+  const targets = page.getByLabel('Workspace targets');
+  await expect(targets.getByRole('button', { name: 'file: write: Projects/demo.md (attempt)', exact: true })).toBeVisible();
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12500));
+  await expect(targets.getByRole('button', { name: 'file: write: Projects/demo.md (tool-reported-success)', exact: true })).toBeVisible();
+  await expect(page.getByLabel('File observation evidence')).toHaveCount(0);
+  await page.getByRole('link', { name: 'Brain Map replay', exact: true }).click();
+  const reportedNote = page.getByLabel('Note activity').getByRole('button', { name: '▲ W write tool-reported-success: Projects/demo.md', exact: true });
+  await expect(reportedNote).toBeVisible();
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12499));
+  await expect(reportedNote).toHaveCount(0);
+  await expect(page.getByLabel('Note activity').getByRole('button', { name: '▲ W write attempt: Projects/demo.md', exact: true })).toBeVisible();
+  // A failed but valid pair stays one attempt target; no captured/success promotion.
+  const failedWindow = { ...reportedWindow, events: reportedWindow.events.map(event => event.id === 'write-result' ? { ...event, outcome: 'error' } : event) };
+  await page.route('**/api/observatory/window*', route => route.fulfill({ json: { window: failedWindow, total: failedWindow.events.length, next: null, export: 'failed-fixture', diagnostics: { synthetic: true } } }));
+  await page.goto(`/observatory?from=${t}&to=${demoWindow.to}&cursor=${t + 12500}&event=write-result`);
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /^file:/ })).toHaveCount(1);
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /\(attempt\)/ })).toHaveCount(1);
+  await expect(page.getByLabel('File observation evidence')).toHaveCount(0);
+  // Contradictory capture metadata cannot turn an unknown result into captured evidence.
+  const unknownWindow = { ...demoWindow, events: demoWindow.events.map(event => event.id === 'write-result' ? { ...event, outcome: 'unknown' } : event) };
+  await page.route('**/api/observatory/window*', route => route.fulfill({ json: { window: unknownWindow, total: unknownWindow.events.length, next: null, export: 'unknown-fixture', diagnostics: { synthetic: true } } }));
+  await page.goto(`/observatory?from=${t}&to=${demoWindow.to}&cursor=${t + 12500}&event=write-result`);
+  await expect(page.getByText('Outcome at cursor: unknown')).toBeVisible();
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /^file:/ })).toHaveCount(1);
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /\(attempt\)/ })).toHaveCount(1);
+  await expect(page.getByLabel('File observation evidence')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Load observed diff' })).toHaveCount(0);
+  await page.getByRole('link', { name: 'Brain Map replay', exact: true }).click();
+  await expect(page.getByText('Outcome at cursor: unknown')).toBeVisible();
+  await expect(page.getByLabel('Note activity').getByRole('button', { name: '▲ W write attempt: Projects/demo.md', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Note activity').getByRole('button', { name: /captured|commit|tool-reported-success/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Load observed diff' })).toHaveCount(0);
+  // Authorized lazy-detail rendering uses changed-line observations, never replacement text.
+  const writeResult = demoWindow.events.find(event => event.id === 'write-result')!;
+  const hunkEvent = { ...writeResult, change: undefined, fileObservation: { ...fileObservationOf(writeResult)!, origin: 'runtime-observation', diff: { format: 'changed-lines', context: 0, redacted: true, truncated: false } } };
+  const hunkWindow = { ...demoWindow, events: demoWindow.events.map(event => event.id === hunkEvent.id ? hunkEvent : event) };
+  await page.route('**/api/observatory/window*', route => route.fulfill({ json: { window: hunkWindow, total: hunkWindow.events.length, next: null, export: 'hunk-fixture', diagnostics: { synthetic: true } } }));
+  await page.route('**/api/observatory/events/*/observation*', route => route.fulfill({ json: { event: hunkEvent, detail: { representation: 'redacted-observation-source', ownership: 'unknown', diff: { format: 'changed-lines', context: 0, redacted: true, truncated: false,
+    hunks: [{ oldStart: 2, newStart: 2, deleted: ['old public\n', '[redacted:sensitive-line]\n'], added: ['new public\n', '[redacted:sensitive-line]\n'] }] } } } }));
+  await page.goto(`/observatory?from=${t}&to=${demoWindow.to}&cursor=${t + 12500}&event=${hunkEvent.id}`);
+  await expect(page.getByRole('button', { name: 'Load observed diff' })).toBeVisible();
+  await expect(page.getByLabel('Observed diff detail')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Load observed diff' }).click();
+  await expect(page.getByLabel('Observed diff detail')).toContainText('zero unchanged context');
+  await expect(page.getByLabel('Observed diff detail')).toContainText('- old public');
+  await expect(page.getByLabel('Observed diff detail')).toContainText('+ new public');
+  await expect(page.getByLabel('Observed diff detail')).toContainText('[redacted:sensitive-line]');
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12499));
+  await expect(page.getByLabel('Observed diff detail')).toHaveCount(0);
 });
 
 // Coordinator-only rendered scenario. API fixtures do not establish source permissions or production coverage.

@@ -26,6 +26,7 @@ export const ReviewerVerdict = Verdict.extend({ findings: z.array(Finding.omit({
 export interface Job {
   id: number; card: string; builder: string; reviewer: string; target: string; round: number;
   state: 'queued' | 'reviewing' | 'approved' | 'merging' | 'merged' | 'deploying' | 'deployed' | 'blocked' | 'rejected' | 'done';
+  mergeVerified?: string;
   snapshot: Snapshot | null; verdict: Verdict | null; merged: string | null; deployed: string | null; error?: string | null; health?: string | null;
 }
 export interface GateIO {
@@ -173,6 +174,8 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
       s = current;
     }
     await io.verifyMerge(job.snapshot!,job.merged!);
+    // Prospective receipt in review_attempts, separate from a recorded merge or a failed reconciliation.
+    if (job.mergeVerified !== job.merged) await save({ mergeVerified: job.merged! });
     if (!job.deployed) {
       if (io.mayShip && !(await io.mayShip())) { await save({state:'merged',error:'Merge recorded; owner has deployment paused'}); return; }
       // The target must still attest merge-disabled flags are off immediately before deployment.

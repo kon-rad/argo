@@ -54,13 +54,17 @@ describe('secondbrain doctor', () => {
   });
 
   it('fails on a schema-invalid settings file and names the section and field', () => {
-    const vault = mkdtempSync(join(tmpdir(), 'sb-doctor-'));
-    writeFileSync(join(vault, 'secondbrain.json'), JSON.stringify({ socialMetrics: { staleHours: -1 } }));
+    const vault = mkdtempSync(join(tmpdir(), 'sb-doctor-1-'));
+    const settingsPath = join(vault, 'secondbrain.json');
+    writeFileSync(settingsPath, JSON.stringify({ socialMetrics: { staleHours: -1 } }));
     const check = checkSettings(vault);
     expect(check.ok).toBe(false);
     expect(healthy([check])).toBe(false);
-    expect(check.detail).toContain('socialMetrics.staleHours');
-    expect(check.detail).not.toContain('-1');
+    expect(check.detail.startsWith(`${settingsPath} has invalid settings: `)).toBe(true);
+    // A path may contain the invalid value by coincidence; only the diagnostic must omit it.
+    const diagnostic = check.detail.slice(settingsPath.length);
+    expect(diagnostic).toContain('socialMetrics.staleHours');
+    expect(diagnostic).not.toContain('-1');
   });
 
   it('passes when the optional settings file is missing', () => {

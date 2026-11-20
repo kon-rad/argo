@@ -52,7 +52,7 @@ test('dispatch labels, the format version, the tool sets and the thinking level 
     toolSets: ['fs'], thinking: 'low', handoff: 'Last run ended with budget after 3 turns.',
     dispatch: { run_id: 'r-1', reasons: [{ reason: 'dm', ref: '42' }], tier: 'flash-low' },
   });
-  assert.deepEqual(zen.tools.map((t) => t.name), ['read_file', 'write_file', 'edit_file', 'list_dir']); // --tools fs: no bash
+  assert.deepEqual(zen.tools.map((t) => t.name), ['read_file', 'write_file', 'edit_file', 'list_dir', 'inspect_change_commit']); // --tools fs: no bash
   assert.equal(zen.agent.state.thinkingLevel, 'low');
   const r = await zen.run('Anything for me?');
   assert.equal(r.model, 'faux/faux-1');
@@ -60,7 +60,7 @@ test('dispatch labels, the format version, the tool sets and the thinking level 
   const meta = JSON.parse(readFileSync(r.sessionPath, 'utf8').split('\n')[0]!) as Record<string, unknown>;
   assert.equal(meta['version'], 1);
   assert.deepEqual(meta['dispatch'], { run_id: 'r-1', reasons: [{ reason: 'dm', ref: '42' }], tier: 'flash-low' });
-  assert.deepEqual(meta['tools'], ['read_file', 'write_file', 'edit_file', 'list_dir']);
+  assert.deepEqual(meta['tools'], ['read_file', 'write_file', 'edit_file', 'list_dir', 'inspect_change_commit']);
   assert.deepEqual((meta['parts'] as { name: string }[]).map((p) => p.name), r.parts.map((p) => p.name));
 });
 

@@ -1,3 +1,4 @@
+import { fileEvidenceLevel, fileEvidenceRank, fileTargets, pairedFileCall, fileObservationOf, successfulFileResult, observationNotes } from './fileEvidence.js';
 import { ordered, applyEvent, type EvidenceEvent, type ReplayWindow } from '@secondbrain/contracts/observatory';
 import { sessionLink } from '../usage/AgentSessions.js';
 export type Origin = EvidenceEvent['actor']['kind'];
@@ -66,9 +67,40 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
       (!filters.persona || i?.persona === filters.persona) && (!filters.model || e.usage?.model === filters.model || (e.execution && models.get(e.execution)?.has(filters.model))) &&
       (!filters.origin || e.actor.kind === filters.origin);
   });
-  const targets = new Map(through.filter(e => e.target).map(e => [e.id, e.target!]));
-  const filteredEvents = filters.note ? events.filter(e => (e.target ?? targets.get(e.parent ?? ''))?.vaultPath === filters.note) : events;
+  const evidenceContext = { boundary: window.boundary, from: window.from };
+  const targets = fileTargets(through, evidenceContext);
+  const observationScope = observationNotes(through, evidenceContext, targets);
+  const filteredEvents = filters.note ? events.filter(e => targets.get(e.id)?.vaultPath === filters.note || observationScope.get(e.id) === filters.note) : events;
+  const recordedHost = (e: EvidenceEvent): string | undefined => e.context?.host ?? (e.execution ? index!.intervals.get(e.execution)?.host : undefined);
+  const capturedFiles = new Map<string, string>(), pairedFiles = new Map<string, Set<string>>(), pairedHosts = new Map<string, Set<string>>();
+  // Only a validated, currently visible result can resolve its exact parent chain.
+  // Never consult a later cursor, join by path alone, or borrow a filtered-out capture.
+  for (const e of filteredEvents) {
+    const parent = pairedFileCall(e, byId);
+    if (parent) {
+      const hosts = pairedHosts.get(parent.id) ?? new Set<string>();
+      for (const known of [recordedHost(parent), recordedHost(e)]) if (known) hosts.add(known);
+      pairedHosts.set(parent.id, hosts);
+    }
+    const observation = fileObservationOf(e);
+    if (!observation || !successfulFileResult(e, byId, evidenceContext) || e.tool === 'inspect_change_commit' || parent?.tool === 'inspect_change_commit') continue;
+    const host = recordedHost(e) ?? (parent ? recordedHost(parent) : undefined) ?? e.session ?? e.id;
+    const id = `file:${host}:${observation.repository}:${observation.worktree}:${observation.path}:observation:${observation.id}`;
+    capturedFiles.set(e.id, id);
+    if (parent?.kind === 'tool_call' && (!recordedHost(parent) || !recordedHost(e) || recordedHost(parent) === recordedHost(e))) {
+      const candidates = pairedFiles.get(parent.id) ?? new Set<string>(); candidates.add(id); pairedFiles.set(parent.id, candidates);
+    }
+  }
+  const fileId = (e: EvidenceEvent, path: string): string => {
+    const canonical = capturedFiles.get(e.id); if (canonical) return canonical;
+    const paired = pairedFileCall(e, byId)?.id;
+    const chain = paired ?? e.id, candidates = pairedFiles.get(chain);
+    if (candidates?.size === 1) return [...candidates][0]!;
+    const hosts = pairedHosts.get(chain), host = hosts?.size === 1 ? [...hosts][0] : recordedHost(e);
+    return `file:${host ?? e.session ?? chain}:${chain}:${path}`;
+  };
   const nodes: SceneNode[] = []; const links: SceneLink[] = []; const nodeMap = new Map<string, SceneNode>();
+  const fileRanks = new Map<string, number>();
   const add = (id: string, label: string, kind: SceneNode['kind'], origin: Origin, x: number, y: number, z: number) => {
     if (!nodeMap.has(id)) { const n = { id, label, kind, origin, fx: x, fy: y, fz: z }; nodeMap.set(id, n); nodes.push(n); }
   };
@@ -87,8 +119,16 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
     const owner = nodeMap.get(e.execution!)!;
     add(e.id, `${originStyle(e.actor.kind).glyph} ${e.kind} ${e.tool ?? ''}`, 'event', e.actor.kind, owner.fx + (hash(e.id) % 60) - 30, 55, owner.fz + 20);
     links.push({ source: e.execution!, target: e.id, result: e.kind === 'tool_result' });
-    const target = e.target ?? (e.parent ? byId.get(e.parent)?.target : undefined);
-    if (target) { const id = `file:${target.path}`; add(id, `${target.operation}: ${target.path} (attempt)`, 'file', e.actor.kind, owner.fx + 85, 70, owner.fz); links.push({ source: e.id, target: id }); }
+    const target = targets.get(e.id);
+    if (target) {
+      const level = fileEvidenceLevel(e, byId, evidenceContext), rank = fileEvidenceRank(level);
+      const id = fileId(e, target.path);
+      const observation = successfulFileResult(e, byId, evidenceContext) ? fileObservationOf(e) : undefined;
+      const label = `${target.operation}: ${target.path} (${level})${observation ? ` · observation ${observation.id}, ownership unknown` : ''}`;
+      add(id, label, 'file', e.actor.kind, owner.fx + 85, 70, owner.fz);
+      if (rank > (fileRanks.get(id) ?? -1)) { nodeMap.get(id)!.label = label; fileRanks.set(id, rank); }
+      links.push({ source: e.id, target: id });
+    }
   }
   // A recorded human input is an event, not proof of an executing agent/session.
   // Keep its own short pulse visible even when no execution can be established.
@@ -103,5 +143,5 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
   }
   const limitedNodes = nodes.slice(0, 500), shown = new Set(limitedNodes.map(n => n.id));
   const limitedLinks = links.filter(l => shown.has(l.source) && shown.has(l.target)).slice(0, 1500);
-  return { ...state, active, events: filteredEvents, nodes: limitedNodes, links: limitedLinks, omittedNodes: nodes.length - limitedNodes.length, omittedLinks: links.length - limitedLinks.length };
+  return { ...state, active, events: filteredEvents, contextEvents: through, evidenceContext, nodes: limitedNodes, links: limitedLinks, omittedNodes: nodes.length - limitedNodes.length, omittedLinks: links.length - limitedLinks.length };
 }

@@ -28,7 +28,18 @@ describe('automatic contextual shipping gate', () => {
   it('accepts only exact evidence and completes after merge, deployment and health; retries do not merge twice', async () => {
     const f = fixture(); await runReview(f.job, ['test'], f.io); await runReview(f.job, ['test'], f.io);
     expect(f.counts()).toEqual({ reviews: 1, merges: 1, deploys: 1, completions: 1 });
-    expect(f.events).toEqual(['reviewing', 'approved', 'merging', 'merged', 'deploying', 'deployed', 'save', 'done']);
+    expect(f.events).toEqual(['reviewing', 'approved', 'merging', 'merged', 'save', 'deploying', 'deployed', 'save', 'done']);
+  });
+  it('records merge verification only after trusted confirmation succeeds', async () => {
+    const f = fixture();
+    f.io.verifyMerge = async () => { throw new Error('unverified merge'); };
+    await runReview(f.job, ['test'], f.io);
+    expect(f.job.merged).toBe(merged);
+    expect(f.job.mergeVerified).toBeUndefined();
+    expect(f.job.state).toBe('blocked');
+    f.io.verifyMerge = async () => {};
+    await runReview(f.job, ['test'], f.io);
+    expect(f.job.mergeVerified).toBe(merged);
   });
   it.each(['missing', 'truncated'] as const)('blocks %s essential context before dispatch', async (field) => {
     const f = fixture(), s = snapshot(); s.sources[0]![field] = true; f.setCurrent(s);
@@ -79,7 +90,7 @@ describe('automatic contextual shipping gate', () => {
   });
 });
 
-import { mkdtemp, writeFile, readFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { vi } from 'vitest';
@@ -219,6 +230,43 @@ describe('bounded context and concrete adapters',()=>{
       await expect(targetMain([policy,'deploy',sha,'2'])).rejects.toThrow(/Earlier target/);
       expect(await readFile(count,'utf8')).toBe('called\n');
     }finally{await rm(dir,{recursive:true,force:true});}
+  });
+  it.each(['healthy','missing'] as const)('reconciles matching inflight with a %s prior receipt before allowing a new key',async receipt=>{
+    const dir=await mkdtemp(join(tmpdir(),'review-healthy-cleanup-')), log=vi.spyOn(console,'log').mockImplementation(()=>{});
+    try {
+      const script=join(dir,'bridge.mjs'),state=join(dir,'applied.json'),policy=join(dir,'target.json'),ledger=join(dir,'ledger');
+      await writeFile(script,`import{readFileSync,writeFileSync}from'node:fs';const[action,file,revision]=process.argv.slice(2);const old=JSON.parse(readFileSync(file));if(action==='deploy')writeFileSync(file,JSON.stringify({revision,n:old.n+1}));else console.log(JSON.stringify({revision:old.revision,healthy:true}));`);
+      await writeFile(policy,JSON.stringify({stateDir:ledger,cwd:dir,home:dir,deployArgv:[process.execPath,script,'deploy',state],healthArgv:[process.execPath,script,'health',state]}),{mode:0o600});
+      await writeFile(state,JSON.stringify({revision:merged,n:1}));
+      await mkdir(ledger);
+      // Crash windows: barrier alone, or healthy receipt durable but unlink not reached.
+      if(receipt==='healthy') await writeFile(join(ledger,'1.json'),JSON.stringify({revision:merged,state:'healthy'}));
+      await writeFile(join(ledger,'inflight.json'),JSON.stringify({key:'1',revision:merged}));
+      await expect(targetMain([policy,'deploy',sha,'2'])).rejects.toThrow(/Earlier target/);
+      await targetMain([policy,'health',merged,'1']);
+      expect(JSON.parse(await readFile(join(ledger,'1.json'),'utf8'))).toEqual({revision:merged,state:'healthy'});
+      await expect(readFile(join(ledger,'inflight.json'),'utf8')).rejects.toHaveProperty('code','ENOENT');
+      expect(JSON.parse(await readFile(state,'utf8')).n).toBe(1); // Reconciliation did not redeploy.
+      await targetMain([policy,'deploy',sha,'2']);
+      expect(JSON.parse(await readFile(state,'utf8'))).toEqual({revision:sha,n:2});
+    } finally { log.mockRestore();await rm(dir,{recursive:true,force:true}); }
+  });
+  it.each(['unhealthy','wrong-revision'] as const)('retains a healthy-receipt barrier when current health is %s',async failure=>{
+    const dir=await mkdtemp(join(tmpdir(),'review-unresolved-cleanup-'));
+    try {
+      const script=join(dir,'health.mjs'),policy=join(dir,'target.json'),ledger=join(dir,'ledger');
+      await writeFile(script,`console.log(JSON.stringify({revision:'${failure==='wrong-revision'?sha:merged}',healthy:${failure!=='unhealthy'}}));`);
+      await writeFile(policy,JSON.stringify({stateDir:ledger,cwd:dir,home:dir,deployArgv:[process.execPath,script],healthArgv:[process.execPath,script]}),{mode:0o600});
+      await mkdir(ledger);
+      const barrier={key:'1',revision:merged};
+      await writeFile(join(ledger,'1.json'),JSON.stringify({revision:merged,state:'healthy'}));
+      await writeFile(join(ledger,'inflight.json'),JSON.stringify(barrier));
+      await expect(targetMain([policy,'health',merged,'1'])).rejects.toThrow(/does not attest exact revision/);
+      expect(JSON.parse(await readFile(join(ledger,'inflight.json'),'utf8'))).toEqual(barrier);
+      await expect(targetMain([policy,'health',merged,'2'])).rejects.toThrow(/Earlier target/);
+      await expect(targetMain([policy,'deploy',sha,'2'])).rejects.toThrow(/Earlier target/);
+      expect(JSON.parse(await readFile(join(ledger,'inflight.json'),'utf8'))).toEqual(barrier);
+    } finally { await rm(dir,{recursive:true,force:true}); }
   });
 });
 

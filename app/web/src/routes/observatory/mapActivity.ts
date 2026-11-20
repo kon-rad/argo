@@ -1,3 +1,4 @@
+import { fileEvidenceLevel, fileTargets, type BoundaryContext } from './fileEvidence.js';
 import type { EvidenceEvent } from '@secondbrain/contracts/observatory';
 import type { MapGraph, MapNodeData } from '../../lib/mapData.js';
 export function operationStyle(operation: 'read' | 'write' | 'edit', origin: EvidenceEvent['actor']['kind'] = 'unknown') {
@@ -6,10 +7,14 @@ export function operationStyle(operation: 'read' | 'write' | 'edit', origin: Evi
 }
 export interface NoteActivity { event: EvidenceEvent; node?: MapNodeData; reason?: string }
 /** No basename, suffix, case-folding or inferred move resolution. Raw paths retain their evidence. */
-export function mapActivity(graph: MapGraph, events: EvidenceEvent[]): NoteActivity[] {
+export function mapActivity(graph: MapGraph, events: EvidenceEvent[], contextEvents: EvidenceEvent[] = events, context: BoundaryContext = {}): NoteActivity[] {
   const refs = new Map<string, MapNodeData[]>();
   for (const node of graph.nodes) if (node.kind === 'note' && node.ref) refs.set(node.ref, [...(refs.get(node.ref) ?? []), node]);
-  return events.filter(e => e.kind === 'tool_call' && e.target).map(event => {
+  const byId = new Map(contextEvents.map(event => [event.id, event]));
+  const targets = fileTargets(contextEvents, context);
+  return events.filter(e => (e.kind === 'tool_call' || fileEvidenceLevel(e, byId, context) !== 'attempt') && targets.has(e.id)).map(source => {
+    const target = targets.get(source.id)!;
+    const event = target === source.target ? source : { ...source, target };
     const path = event.target!.vaultPath;
     const candidates = path ? refs.get(path) ?? [] : [];
     return { event, node: candidates.length === 1 ? candidates[0] : undefined,

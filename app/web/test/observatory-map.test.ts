@@ -1,3 +1,5 @@
+import { fileTargets } from '../src/routes/observatory/fileEvidence.js';
+import { fileObservationOf, successfulFileResult } from '../src/routes/observatory/fileEvidence.js';
 import { expect, it } from 'vitest';
 import { demoWindow } from '../src/routes/observatory/demo.js';
 import { mapActivity, operationStyle } from '../src/routes/observatory/mapActivity.js';
@@ -54,4 +56,144 @@ it('keeps origin colors consistent across read and write glyphs', () => {
   expect(operationStyle('write', 'agent').color).toBe(operationStyle('read', 'agent').color);
   expect(operationStyle('read', 'human').color).not.toBe(operationStyle('read', 'agent').color);
   expect(operationStyle('write', 'unknown').color).toBe(operationStyle('read', 'unknown').color);
+});
+
+import { mapGraph } from './fixtures/observatoryMap.js';
+it('replays the synthetic captured write on the exact pinned note and removes it on reverse seek', () => {
+  const at = (offset: number) => mapActivity(mapGraph, sceneAt(demoWindow, demoWindow.from + offset, { note: 'Projects/demo.md' }).events);
+  expect(at(12500).find(a => a.event.id === 'write-result')).toMatchObject({ node: { id: 'note:1', ref: 'Projects/demo.md' }, event: { change: { level: 'captured-diff' } } });
+  expect(at(12499).some(a => a.event.change)).toBe(false);
+  expect(at(11999)).toEqual([]);
+  expect(at(12500).find(a => a.event.id === 'write-result')?.node?.id).toBe('note:1');
+});
+
+it('shows paired reported-success without capture, including inherited targets, and reverses honestly', () => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const result = { ...demoWindow.events.find(e => e.id === 'write-result')!, change: undefined };
+  const window = { ...demoWindow, events: [call, result] };
+  const at = (offset: number) => mapActivity(mapGraph, sceneAt(window, window.from + offset, {}).events);
+  expect(at(12499).map(a => a.event.id)).toEqual([call.id]);
+  expect(at(12500).find(a => a.event.id === result.id)).toMatchObject({ node: { id: 'note:1' }, event: { writeEvidence: 'tool-reported-success' } });
+  expect(at(12500).every(a => !a.event.change)).toBe(true);
+  expect(at(12499).map(a => a.event.id)).toEqual([call.id]);
+  const inherited = mapActivity(mapGraph, [call, { ...result, target: undefined }]);
+  expect(inherited.find(a => a.event.id === result.id)?.node?.id).toBe('note:1');
+  for (const bad of [{ ...result, outcome: 'error' as const }, { ...result, parent: undefined }, { ...result, parent: 'unrecorded-call' }])
+    expect(mapActivity(mapGraph, [call, bad]).map(a => a.event.id)).toEqual([call.id]);
+});
+
+it('never turns a read-only Git content comparison into a new map write target', () => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const result = demoWindow.events.find(e => e.id === 'write-result')!;
+  const inspect = demoWindow.events.find(e => e.id === 'commit-call')!;
+  const commit = { ...demoWindow.events.find(e => e.id === 'commit-result')!, target: { path: result.change!.path, operation: 'edit' as const } };
+  const events = [call, result, inspect, commit];
+  expect(mapActivity(mapGraph, events).find(a => a.event.id === commit.id)).toBeUndefined();
+  for (const changed of [
+    { ...commit, change: { ...commit.change!, id: 'unrelated-capture' } },
+    { ...commit, change: { ...commit.change!, worktree: '9'.repeat(64) } },
+    { ...commit, context: { ...commit.context!, host: 'other-host' } },
+    { ...commit, target: { path: 'Projects/other.md', operation: 'edit' as const } },
+  ]) expect(mapActivity(mapGraph, [call, result, inspect, changed]).find(a => a.event.id === commit.id)?.node).toBeUndefined();
+  // The earlier cursor cannot borrow the scope of a later captured write result.
+  expect(mapActivity(mapGraph, [inspect, commit]).find(a => a.event.id === commit.id)?.node).toBeUndefined();
+  expect(mapActivity(mapGraph, [call, result, inspect]).some(a => a.event.id === commit.id)).toBe(false);
+});
+
+it('keeps validated causal context for a note-filtered commit without displaying unrelated parents', () => {
+  const scene = sceneAt(demoWindow, demoWindow.from + 14000, { note: 'Projects/demo.md' });
+  expect(scene.events.some(e => e.id === 'commit-call')).toBe(false);
+  const activity = mapActivity(mapGraph, scene.events, scene.contextEvents);
+  expect(activity.find(a => a.event.id === 'commit-result')).toBeUndefined();
+  const contentFact = scene.events.find(e => e.id === 'commit-result')!;
+  expect(fileObservationOf(contentFact)?.commitMatch?.authorship).toBe('unknown');
+  expect(successfulFileResult(contentFact, new Map(scene.contextEvents.map(e => [e.id, e])), scene.evidenceContext)).toBe(true);
+  const before = sceneAt(demoWindow, demoWindow.from + 13999, { note: 'Projects/demo.md' });
+  expect(mapActivity(mapGraph, before.events, before.contextEvents).some(a => a.event.id === 'commit-result')).toBe(false);
+});
+
+it('preserves an authoritative paired result whose call precedes the requested window', () => {
+  const original = demoWindow.events.find(e => e.id === 'write-call')!;
+  const parent = `${original.source.table}:${original.source.id}:${original.source.part}`;
+  const result = { ...demoWindow.events.find(e => e.id === 'write-result')!, parent, occurrence: parent, change: undefined };
+  const boundary = { tickets: {}, tools: { [parent]: 'pending' }, provenance: { [`tool:${parent}`]: { event: parent, source: original.source, at: original.at } } };
+  const window = { ...demoWindow, from: demoWindow.from + 12100, boundary, events: [result] };
+  const before = sceneAt(window, demoWindow.from + 12499, {});
+  expect(before.tools[parent]).toBe('pending');
+  expect(mapActivity(mapGraph, before.events, before.contextEvents, before.evidenceContext)).toEqual([]);
+  const after = sceneAt(window, result.at!, {});
+  expect(after.nodes.find(n => n.kind === 'file')?.label).toContain('(tool-reported-success)');
+  expect(mapActivity(mapGraph, after.events, after.contextEvents, after.evidenceContext)[0]?.node?.id).toBe('note:1');
+  const reversed = sceneAt(window, demoWindow.from + 12499, {});
+  expect(reversed.tools[parent]).toBe('pending');
+  expect(reversed.nodes.some(n => n.kind === 'file')).toBe(false);
+  for (const badBoundary of [
+    { ...boundary, provenance: {} },
+    { ...boundary, tools: {} },
+    { ...boundary, provenance: { [`tool:${parent}`]: { event: 'different-call', source: original.source, at: original.at } } },
+  ]) {
+    const bad = sceneAt({ ...window, boundary: badBoundary }, result.at!, {});
+    expect(bad.nodes.some(n => n.label.includes('tool-reported-success'))).toBe(false);
+    expect(mapActivity(mapGraph, bad.events, bad.contextEvents, bad.evidenceContext)).toEqual([]);
+  }
+});
+
+it.each(['tool-reported-success', 'captured-hashes', 'captured-diff', 'commit'] as const)('does not promote paired unknown-outcome %s metadata in map replay', level => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const source = demoWindow.events.find(e => e.id === 'write-result')!;
+  const result = { ...source, outcome: 'unknown' as const, change: level === 'tool-reported-success' ? undefined : { ...source.change!, level }, writeEvidence: 'tool-reported-success' as const };
+  const window = { ...demoWindow, events: [call, result] };
+  const before = sceneAt(window, window.from + 12499, {}), after = sceneAt(window, window.from + 12500, {});
+  expect(after.tools[call.id]).toBe('unknown');
+  const activity = mapActivity(mapGraph, after.events, after.contextEvents, after.evidenceContext);
+  expect(activity.map(a => a.event.id)).toEqual([call.id]);
+  expect(activity.every(a => !a.event.change && a.event.writeEvidence !== 'tool-reported-success')).toBe(true);
+  expect(sceneAt(window, window.from + 12499, {})).toEqual(before);
+});
+
+it('maps only a validated relative result scope and never retroactively scopes its earlier call', () => {
+  const sourceCall = demoWindow.events.find(e => e.id === 'write-call')!;
+  const sourceResult = demoWindow.events.find(e => e.id === 'write-result')!;
+  const call = { ...sourceCall, target: { path: './Projects/demo.md', operation: 'write' as const } };
+  const result = { ...sourceResult, target: { ...call.target, vaultPath: 'Projects/demo.md' } };
+  const window = { ...demoWindow, events: [call, result] };
+  const before = sceneAt(window, window.from + 12499, {});
+  expect(mapActivity(mapGraph, before.events, before.contextEvents)[0]?.node).toBeUndefined();
+  const after = sceneAt(window, window.from + 12500, {});
+  const activity = mapActivity(mapGraph, after.events, after.contextEvents);
+  expect(activity.find(a => a.event.id === result.id)?.node?.id).toBe('note:1');
+  expect(activity.find(a => a.event.id === call.id)?.node).toBeUndefined();
+  expect(call.target).not.toHaveProperty('vaultPath');
+  expect(sceneAt(window, window.from + 12499, {})).toEqual(before);
+});
+
+it.each([true, false])('does not inherit a target or promote a cross-execution result (recorded target %s)', recordedTarget => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const original = demoWindow.events.find(e => e.id === 'write-result')!;
+  const result = { ...original, target: recordedTarget ? original.target : undefined, execution: 'run:lab:different' };
+  const window = { ...demoWindow, events: [call, result] };
+  const through = sceneAt(window, window.from + 12500, {});
+  expect(through.nodes.filter(n => n.kind === 'file').every(n => !n.label.includes('tool-reported-success'))).toBe(true);
+  expect(fileTargets(window.events).has(result.id)).toBe(false);
+  expect(mapActivity(mapGraph, through.events, through.contextEvents, through.evidenceContext).map(a => a.event.id)).toEqual([call.id]);
+  expect(successfulFileResult(result, new Map(window.events.map(e => [e.id, e])))).toBe(false);
+});
+
+it('rejects contradictory boundary execution but leaves absent execution identity unassigned', () => {
+ const original=demoWindow.events.find(e=>e.id==='write-call')!;
+ const call={...original,id:`${original.source.table}:${original.source.id}:${original.source.part}`};
+ const result={...demoWindow.events.find(e=>e.id==='write-result')!,execution:'run:lab:different',parent:call.id};
+ const from=demoWindow.from+12400;
+ const boundary={tickets:{},tools:{[call.id]:'pending'},provenance:{[`tool:${call.id}`]:{event:call.id,source:call.source,at:call.at,execution:call.execution,session:call.session,host:call.context!.host}}};
+ const context={boundary,from};
+ expect(successfulFileResult(result,new Map(),context)).toBe(false);
+ expect(fileTargets([result],context).has(result.id)).toBe(false);
+ const visibleBad=new Map([[call.id,call],[result.id,result]]);
+ expect(successfulFileResult(result,visibleBad,context)).toBe(false);
+ expect(successfulFileResult(result,new Map([[call.id,{...call,execution:null}]]),context)).toBe(false);
+ const missing={...result,execution:null};
+ expect(successfulFileResult(missing,new Map(),context)).toBe(true);
+ expect(missing.execution).toBeNull();
+ const window={...demoWindow,from,boundary,events:[result]};
+ expect(sceneAt(window,result.at!,{}).tools[call.id]).toBe('pending');
 });

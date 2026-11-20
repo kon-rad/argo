@@ -1,3 +1,4 @@
+import { reviewEvents, type ReviewRow } from './reviews.js';
 import type { EvidenceEvent, ExecutionInterval, ReplayWindow, SourceTable } from '@secondbrain/contracts/observatory';
 import { withTransaction, type TxClient } from '../../db.js';
 import { HttpError } from '../../routes/http.js';
@@ -8,9 +9,9 @@ export interface Diagnostics {
   sessionsWithoutIntervals?: number; untimed: number; unknownIntervals: number; ambiguousSessions: number; unpairedResults: number;
   humanOrigin: 'unknown'; liveExecutions: 'unsupported'; historicalCompleteness: 'unknown'; truncated: number;
 }
-export interface ExportData { window: ReplayWindow; diagnostics: Diagnostics; refs: Partial<Record<SourceTable, string[]>> }
+export interface ExportData { window: ReplayWindow; diagnostics: Diagnostics; refs: Partial<Record<SourceTable, string[]>>; executionRefs?: { host: string; run: string }[] }
 const LIMIT = 5000;
-const sources: Record<SourceTable, string> = { archive_messages: 'usage', usage_calls: 'usage', usage_runs: 'usage', card_events: 'board', org_messages: 'org' };
+const sources: Record<SourceTable, string> = { archive_messages: 'usage', usage_calls: 'usage', usage_runs: 'usage', card_events: 'board', org_messages: 'org', review_attempts: 'board' };
 export const sourceEnabled = (table: SourceTable, modules: ReadonlySet<string>): boolean => modules.has(sources[table]);
 function bounded<T>(rows: T[]): T[] {
   if (rows.length > LIMIT) throw new HttpError(413, 'evidence exceeds 5000 records; narrow range or select a session');
@@ -36,35 +37,43 @@ export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySe
   const args = [new Date(from), new Date(to), host ?? null, session ?? null];
   const events: EvidenceEvent[] = [];
   const intervals: ExecutionInterval[] = [];
+  const contextIntervals: ExecutionInterval[] = [];
   const diagnostics: Diagnostics = { untimed: 0, unknownIntervals: 0, ambiguousSessions: 0, unpairedResults: 0,
     humanOrigin: 'unknown', liveExecutions: 'unsupported', historicalCompleteness: 'unknown', truncated: 0 };
   if (modules.has('usage')) {
     // Read the complete bounded history of sessions touching the window for pairing and boundary state.
     // EXISTS prevents the archive x run x call multiplication found in a naive session join.
     const messages = bounded((await db.query<ArchiveRow>(`SELECT m.id, m.session_id, m.seq, m.ts, m.role, m.kind, CASE WHEN sum(octet_length(m.raw::text)) OVER () <= 4194304 THEN m.raw ELSE '{"observatory_oversized":true}'::jsonb END AS raw,
-        ''::text AS text, a.host, a.source, a.external_id, a.harness, NULL::timestamptz AS observed_at
+        ''::text AS text, m.change_evidence, m.file_observation, a.host, a.source, a.external_id, a.harness, NULL::timestamptz AS observed_at
       FROM archive_messages m JOIN archive_sessions a ON a.id = m.session_id
       WHERE ($3::text IS NULL OR a.host = $3) AND ($4::bigint IS NULL OR a.id = $4)
-        AND (m.ts < $2 OR m.ts IS NULL)
+        AND (m.ts < $2 OR m.ts IS NULL OR m.seq <= (
+          SELECT max(w.seq) FROM archive_messages w WHERE w.session_id=m.session_id AND w.ts >= $1 AND w.ts < $2))
         AND (EXISTS (SELECT 1 FROM archive_messages w WHERE w.session_id = a.id AND w.ts >= $1 AND w.ts < $2)
           OR EXISTS (SELECT 1 FROM usage_runs r WHERE r.host = a.host AND r.session_id = a.external_id
             AND coalesce(r.runtime, 'claude-code') = a.source AND r.started_at < $2 AND r.ended_at > $1))
       ORDER BY m.session_id, m.seq, m.id LIMIT 5001`, args)).rows);
     if (messages.some(m => (m.raw as { observatory_oversized?: boolean })?.observatory_oversized)) throw new HttpError(413, 'archive source exceeds 4 MiB; narrow range or select a session');
     events.push(...archiveEvents(messages, vaultRoot));
+    const causal = events.filter(e => e.source.table === 'archive_messages' && e.session && e.at !== null && e.at < from);
     const runs = bounded((await db.query<{ host: string; run_id: string; session_id: string; runtime: string; agent_name: string | null; task_id: string | null; started_at: Date | null; ended_at: Date | null; archive_ids: number[] }>(
       `SELECT r.host, r.run_id, r.session_id, coalesce(r.runtime, 'claude-code') AS runtime, r.agent_name, r.task_id, r.started_at, r.ended_at,
         ARRAY(SELECT a.id FROM archive_sessions a WHERE a.host = r.host AND a.source = coalesce(r.runtime, 'claude-code') AND a.external_id = r.session_id) AS archive_ids
        FROM usage_runs r WHERE ($3::text IS NULL OR r.host = $3)
         AND ($4::bigint IS NULL OR EXISTS (SELECT 1 FROM archive_sessions a WHERE a.id = $4 AND a.host = r.host AND a.source = coalesce(r.runtime, 'claude-code') AND a.external_id = r.session_id))
-        AND (r.started_at IS NULL OR r.started_at < $2) AND (r.ended_at IS NULL OR r.ended_at > $1)
-       ORDER BY r.host, r.run_id LIMIT 5001`, args)).rows);
+        AND (r.started_at IS NULL OR r.started_at < $2) AND (r.ended_at IS NULL OR r.ended_at > $1 OR EXISTS (
+          SELECT 1 FROM unnest($5::bigint[], $6::timestamptz[]) causal(session_id, at)
+          JOIN archive_sessions a ON a.id=causal.session_id
+          WHERE a.host=r.host AND a.source=coalesce(r.runtime,'claude-code') AND a.external_id=r.session_id
+            AND r.started_at <= causal.at AND causal.at < r.ended_at))
+       ORDER BY r.host, r.run_id LIMIT 5001`, [...args, causal.map(e => Number(e.session!.slice(8))), causal.map(e => new Date(e.at!))])).rows);
     for (const r of runs) {
       const start = instant(r.started_at), end = instant(r.ended_at);
       if (r.archive_ids.length > 1) diagnostics.ambiguousSessions++;
       if (start === null || end === null || end <= start) { diagnostics.unknownIntervals++; continue; }
-      intervals.push({ id: `run:${encodeURIComponent(r.host)}:${encodeURIComponent(r.run_id)}`, session: r.archive_ids.length === 1 ? `archive:${r.archive_ids[0]}` : null,
+      contextIntervals.push({ id: `run:${encodeURIComponent(r.host)}:${encodeURIComponent(r.run_id)}`, session: r.archive_ids.length === 1 ? `archive:${r.archive_ids[0]}` : null,
         start, end, host: r.host, runtime: r.runtime, persona: r.agent_name, ticket: r.task_id, evidence: 'usage_runs' });
+      if (start < to && end > from) intervals.push(contextIntervals[contextIntervals.length - 1]!);
     }
     const calls = bounded((await db.query<{ id: number; ts: Date; model: string; input_tokens: number; output_tokens: number; thinking_tokens: number; archive_ids: number[]; host: string; run_id: string | null }>(
       `SELECT u.id, u.ts, u.model, u.input_tokens, u.output_tokens, u.thinking_tokens, u.host, u.run_id,
@@ -110,27 +119,46 @@ export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySe
       if (row.task_id) e.ticket = row.task_id; events.push(e);
     }
   }
+  if (!host && !session && modules.has('board')) {
+    const reviews = bounded((await db.query<ReviewRow>(`SELECT a.id, a.job, a.at, j.card, j.reviewer,
+        CASE WHEN sum(octet_length(a.patch::text)) OVER () <= 4194304 THEN a.patch ELSE '{"observatory_oversized":true}'::jsonb END AS patch
+      FROM review_attempts a JOIN review_jobs j ON j.id = a.job
+      WHERE a.at < $2 AND EXISTS (SELECT 1 FROM review_attempts w WHERE w.job = a.job AND w.at >= $1 AND w.at < $2)
+      ORDER BY a.at, a.id LIMIT 5001`, args.slice(0, 2))).rows);
+    if (reviews.some(r => (r.patch as { observatory_oversized?: boolean })?.observatory_oversized)) throw new HttpError(413, 'review source exceeds 4 MiB; narrow range');
+    events.push(...reviewEvents(reviews));
+  }
   bounded(events);
   diagnostics.sessionsWithoutIntervals = new Set(events.filter(e => e.session && !intervals.some(i => i.session === e.session)).map(e => e.session)).size;
   diagnostics.untimed = events.filter(e => e.at === null).length;
   diagnostics.unpairedResults = events.filter(e => e.kind === 'tool_result' && !e.parent).length;
   // Session execution is explicit only if exactly one recorded interval contains this event.
   for (const e of events) if (e.session && e.at !== null && !e.execution) {
-    const matches = intervals.filter(i => i.session === e.session && i.start <= e.at! && e.at! < i.end);
+    const matches = contextIntervals.filter(i => i.session === e.session && i.start <= e.at! && e.at! < i.end);
     if (matches.length === 1) e.execution = matches[0]!.id;
   }
+  // Pairing precedes interval association. Contradictory recorded runs must invalidate inherited facts before export/boundary replay.
+  const byId = new Map(events.map(event => [event.id, event]));
+  for (const event of events) {
+    const parent = event.parent ? byId.get(event.parent) : undefined;
+    if (parent?.execution && event.execution && parent.execution !== event.execution) {
+      delete event.parent; delete event.occurrence; delete event.target; delete event.fileObservation; delete event.writeEvidence;
+    }
+  }
+  diagnostics.unpairedResults = events.filter(e => e.kind === 'tool_result' && !e.parent).length;
   const refs: ExportData['refs'] = {};
   for (const e of events) (refs[e.source.table] ??= []).push(e.source.id);
   for (const table of Object.keys(refs) as SourceTable[]) refs[table] = [...new Set(refs[table])];
-  return { window: makeWindow(from, to, events, intervals), diagnostics, refs };
+  return { window: makeWindow(from, to, events, intervals), diagnostics, refs, executionRefs: contextIntervals.map(i => { const [host, run] = i.id.split(':').slice(1).map(decodeURIComponent); return { host: host!, run: run! }; }) };
 }
 
 export async function coverage(db: TxClient, range: Range, modules: ReadonlySet<string>) {
   const specs = [
-    { table: 'archive_messages', time: 'ts', group: "a.host, a.harness AS runtime", join: 'JOIN archive_sessions a ON a.id = t.session_id', filter: 'a.host', session: 't.session_id', extra: 'count(*) FILTER (WHERE t.ts IS NULL)::int AS untimed, max(a.updated_at) AS session_updated_at' },
+    { table: 'archive_messages', time: 'ts', group: "a.host, a.harness AS runtime", join: 'JOIN archive_sessions a ON a.id = t.session_id', filter: 'a.host', session: 't.session_id', extra: 'count(*) FILTER (WHERE t.ts IS NULL)::int AS untimed, max(a.updated_at) AS session_updated_at, count(*) FILTER (WHERE t.file_observation IS NOT NULL)::int AS file_observations' },
     { table: 'usage_calls', time: 'ts', group: 't.host, t.source AS runtime', join: '', filter: 't.host', session: `(SELECT a.id FROM archive_sessions a WHERE a.host=t.host AND a.source=t.source AND a.external_id=t.session_external_id)`, extra: '0 AS untimed' },
     { table: 'usage_runs', time: 'started_at', group: "t.host, coalesce(t.runtime, 'claude-code') AS runtime", join: '', filter: 't.host', session: `(SELECT a.id FROM archive_sessions a WHERE a.host=t.host AND a.source=coalesce(t.runtime, 'claude-code') AND a.external_id=t.session_id)`, extra: 'count(*) FILTER (WHERE t.ended_at IS NULL OR t.started_at IS NULL OR t.ended_at <= t.started_at)::int AS unknown_intervals' },
     { table: 'card_events', time: 'at', group: 'NULL::text AS host, NULL::text AS runtime', join: '', filter: 'NULL::text', session: 'NULL::bigint', extra: '0 AS untimed' },
+    { table: 'review_attempts', time: 'at', group: 'NULL::text AS host, NULL::text AS runtime', join: 'JOIN review_jobs j ON j.id=t.job', filter: 'NULL::text', session: 'NULL::bigint', extra: '0 AS untimed' },
     { table: 'org_messages', time: 'created_at', group: 'NULL::text AS host, NULL::text AS runtime', join: '', filter: 'NULL::text', session: 'NULL::bigint', extra: '0 AS untimed' },
   ] as const;
   const result = [];
@@ -147,13 +175,13 @@ export async function coverage(db: TxClient, range: Range, modules: ReadonlySet<
     result.push({ source: s.table, status: 'authorized-visible-subset', groups: rows.rows.slice(0, 200), truncatedGroups: rows.rows.length > 200 ? null : 0, hasMoreGroups: rows.rows.length > 200, policy,
       ingestionFreshness: 'unknown', historicalCompleteness: 'unknown', senderProvenance: 'unknown' });
   }
-  return { version: 1, from: range.from, to: range.to, sources: result, liveExecutions: 'unsupported', productionAudit: 'not-performed' };
+  return { version: 1, from: range.from, to: range.to, sources: result, liveExecutions: 'unsupported', productionAudit: 'not-performed', fileChanges: 'prospective zen-agent structured tools only; historical coverage unknown', reviewEvidence: 'visible trusted gate attempts only; no shared-checkout authorship' };
 }
 
 export async function authorizeDetail(db: TxClient, event: EvidenceEvent, modules: ReadonlySet<string>): Promise<void> {
   if (!sourceEnabled(event.source.table, modules)) throw new HttpError(403, 'source module disabled');
   // Table comes only from the pinned server-generated event, never from a request parameter.
-  const result = await db.query(`SELECT 1 FROM ${event.source.table} WHERE id = $1`, [event.source.id]);
+  const result = await db.query(event.source.table === 'review_attempts' ? 'SELECT 1 FROM review_attempts a JOIN review_jobs j ON j.id=a.job WHERE a.id=$1' : `SELECT 1 FROM ${event.source.table} WHERE id = $1`, [event.source.id]);
   if (!result.rows.length) throw new HttpError(404, 'source no longer visible');
 }
 
@@ -161,12 +189,12 @@ export async function authorizeDetail(db: TxClient, event: EvidenceEvent, module
 export async function authorizeExport(db: TxClient, data: ExportData, modules: ReadonlySet<string>): Promise<void> {
   for (const [table, ids] of Object.entries(data.refs) as [SourceTable, string[]][]) {
     if (!sourceEnabled(table, modules)) throw new HttpError(403, 'source module disabled');
-    const found = await db.query(`SELECT id FROM ${table} WHERE id = ANY($1::bigint[])`, [ids]);
+    const found = await db.query(table === 'review_attempts' ? 'SELECT a.id FROM review_attempts a JOIN review_jobs j ON j.id=a.job WHERE a.id=ANY($1::bigint[])' : `SELECT id FROM ${table} WHERE id = ANY($1::bigint[])`, [ids]);
     if (found.rows.length !== ids.length) throw new HttpError(403, 'export source visibility changed; restart window');
   }
-  if (data.window.intervals.length) {
+  if (data.window.intervals.length || data.executionRefs?.length) {
     if (!modules.has('usage')) throw new HttpError(403, 'source module disabled');
-    const keys = data.window.intervals.map(i => i.id.split(':').slice(1).map(decodeURIComponent));
+    const keys = [...new Map([...data.window.intervals.map(i => i.id.split(':').slice(1).map(decodeURIComponent)), ...(data.executionRefs ?? []).map(r => [r.host, r.run])].map(key => [JSON.stringify(key), key])).values()];
     const found = await db.query(`SELECT r.run_id FROM usage_runs r JOIN unnest($1::text[], $2::text[]) k(host, run_id)
       ON r.host = k.host AND r.run_id = k.run_id`, [keys.map(k => k[0]), keys.map(k => k[1])]);
     if (found.rows.length !== keys.length) throw new HttpError(403, 'execution visibility changed; restart window');

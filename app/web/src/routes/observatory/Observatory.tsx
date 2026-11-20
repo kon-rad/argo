@@ -1,3 +1,4 @@
+import { fileEvidenceLevel, fileTargets, fileObservationOf, successfulFileResult } from './fileEvidence.js';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAppTimezone } from '../../lib/useTimezone.js';
@@ -7,6 +8,7 @@ import { api } from '../../lib/api.js';
 import { request } from '../../lib/http.js';
 import { demoWindow } from './demo.js';
 import { loadDetail, loadSnapshot, type Snapshot } from './api.js';
+import { ChangedDiff, type DiffDetail } from './ChangedDiff.js';
 import { eventLink, originStyle, readState, sceneAt, stepCursor, writeState, replayHref, type ViewState } from './model.js';
 const MapActivity = lazy(() => import('./BrainActivity.js'));
 const Workspace = lazy(() => import('./Workspace.js'));
@@ -19,7 +21,7 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
   const state = readState(params, initialNow), stateKey = params.toString();
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [error, setError] = useState(''), [coverage, setCoverage] = useState<unknown>();
-  const [detail, setDetail] = useState<{ event?: unknown; error?: string; detail?: { thinking?: { availability: string; summary?: string } } | string }>();
+  const [detail, setDetail] = useState<{ event?: unknown; error?: string; detail?: { diff?: DiffDetail; thinking?: { availability: string; summary?: string } } | string }>();
   const detailRequest = useRef<AbortController | null>(null);
   const [play, setPlay] = useState<0 | 1 | -1>(0), [live, setLive] = useState(false), [refresh, setRefresh] = useState(0);
   const [webgl, setWebgl] = useState(true);
@@ -66,14 +68,18 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
   const select = useCallback((id: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('event', id); return next; }), [setParams]);
   useEffect(() => { setDetail(undefined); detailRequest.current?.abort(); return () => detailRequest.current?.abort(); }, [state.event, snapshot]);
   const selected = scene?.events.find(e => e.id === state.event);
+  const inspectedTarget = selected && scene ? fileTargets(scene.contextEvents, scene.evidenceContext).get(selected.id) : undefined;
+  const inspectedLevel = selected && scene ? fileEvidenceLevel(selected, new Map(scene.contextEvents.map(event => [event.id, event])), scene.evidenceContext) : 'attempt';
+  const selectedObservation = selected ? fileObservationOf(selected) : undefined;
+  const visibleObservation = !!selected && !!scene && !!selectedObservation && successfulFileResult(selected, new Map(scene.contextEvents.map(event => [event.id, event])), scene.evidenceContext);
   const execution = scene?.active.find(i => i.id === state.event);
   const selectedNode = scene?.nodes.find(n => n.id === state.event);
-  const showDetail = async () => {
-    if (!selected || !snapshot) return;
+  const showDetail = async (diff = false) => {
+    if (!selected || !snapshot || diff && !visibleObservation) return;
     if (state.demo === '1') { setDetail({ event: selected, detail: 'Synthetic only, no recorded source exists' }); return; }
     detailRequest.current?.abort();
     const abort = new AbortController(); detailRequest.current = abort;
-    try { const data = await loadDetail(selected.id, snapshot.export, abort.signal); if (!abort.signal.aborted) setDetail(data); } catch (e) { if (!abort.signal.aborted) setDetail({ error: (e as Error).message }); }
+    try { const data = await loadDetail(selected.id, snapshot.export, abort.signal, diff); if (!abort.signal.aborted) setDetail(data); } catch (e) { if (!abort.signal.aborted) setDetail({ error: (e as Error).message }); }
   };
   const seek = (next: number) => { setPlay(0); setLive(false); update({ cursor: next, event: undefined }, true); };
   return <main className="h-full overflow-auto p-4 space-y-3">
@@ -111,11 +117,12 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
       <label className="block">Seek: <output>{zoned(new Date(cursor).toISOString(), tz)} ({tz})</output>
         <input aria-label="Replay cursor" type="range" className="block w-full" min={snapshot.window.from} max={snapshot.window.to - 1} step="1" value={cursor} onChange={e => seek(Number(e.target.value))} /></label>
       <label><input type="checkbox" checked={webgl} onChange={e => setWebgl(e.target.checked)} />Show 3D {mode === 'map' ? 'map' : 'workspace'}</label>
-      {mode === 'map' && <Suspense fallback={<p>Loading map activity…</p>}><MapActivity events={scene.events} selected={state.event} note={state.note} layout={state.layout} pin={pinLayout} onNote={note => update({ note })} onSelect={select} show3d={webgl} /></Suspense>}
+      {mode === 'map' && <Suspense fallback={<p>Loading map activity…</p>}><MapActivity events={scene.events} contextEvents={scene.contextEvents} evidenceContext={scene.evidenceContext} selected={state.event} note={state.note} layout={state.layout} pin={pinLayout} onNote={note => update({ note })} onSelect={select} show3d={webgl} /></Suspense>}
       {mode === 'workspace' && webgl && <Suspense fallback={<p>Loading 3D renderer…</p>}><Workspace nodes={scene.nodes} links={scene.links} onSelect={select} /></Suspense>}
       <p>Origins filter event markers. Execution markers retain their recorded agent identity.</p>
       <p>{scene.active.length} active executions · {scene.nodes.length} nodes · {scene.links.length} edges · {scene.omittedNodes} nodes / {scene.omittedLinks} edges omitted at display budget</p>
       <ul aria-label="Active executions" className="space-y-1">{scene.active.map(i => <li key={i.id}><button className="underline" onClick={() => select(i.id)}>● A {i.persona ?? 'persona unknown'} · {i.host} · {i.runtime} · {i.id}</button> · {i.ticket ?? 'ticket unknown'} · {scene.nodes.find(n => n.id === i.id)?.label}</li>)}</ul>
+      <p>File targets are per operation/observation. Tool-reported success does not prove an owned transition; snapshot diffs and Git content comparisons do not increase the write grade.</p>
       <ul aria-label="Workspace targets">{scene.nodes.filter(n => n.kind === 'ticket' || n.kind === 'file').map(n => <li key={n.id}><button className="underline" onClick={() => select(n.id)}>{n.kind}: {n.label}</button></li>)}</ul>
       {!scene.active.length && <p>No evidenced active executions at this cursor.</p>}
       <section aria-label="Evidence inspector" className="border border-[var(--rule)] p-3">
@@ -127,11 +134,17 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
           <p>Provenance: {selected.actor.evidence} · sender {selected.actor.sender ?? 'unknown'} · channel {selected.actor.channel ?? 'unknown'}</p>
           <p>Source {selected.source.table}:{selected.source.id} part {selected.source.part}</p>
           <p>Outcome at cursor: {scene.tools[selected.occurrence ?? selected.parent ?? ''] ?? 'unknown'}</p>
-          {selected.target && <p>{selected.target.operation} attempt: {selected.target.path}</p>}
+          {inspectedTarget && <p>{inspectedTarget.operation}: {inspectedTarget.path} ({inspectedLevel})</p>}
+          {visibleObservation && <div aria-label="File observation evidence"><p>Unattributed file snapshots. Transition ownership is unknown. {selectedObservation!.origin === 'legacy-reported' ? 'Legacy-reported source claim; not retroactively verified.' : 'Runtime observations; concurrent writers may be included.'}</p><pre className="whitespace-pre-wrap break-all">{JSON.stringify({ ...selectedObservation, diffSource: selected.source }, null, 2)}</pre></div>}
+          {visibleObservation && selectedObservation!.commitMatch && <p aria-label="Git content comparison">{selectedObservation!.origin === 'legacy-reported' ? 'Legacy source reports a Git byte-pair match' : 'Runtime reports an observed byte-pair match'} at {selectedObservation!.commitMatch.sha}. This content comparison establishes neither authorship nor ownership of a file transition and is not a new write.</p>}
+          {selectedObservation && !visibleObservation && <p>Recorded file metadata is unverified at this cursor. No observation detail is available.</p>}
+          {selected.artifact && <pre className="whitespace-pre-wrap break-all" aria-label="PR evidence">{JSON.stringify(selected.artifact, null, 2)}</pre>}
           {selected.kind === 'thinking' && <p>Thinking: {typeof detail?.detail === 'object' && detail.detail.thinking ? detail.detail.thinking.availability : 'not checked; verify source detail'}. No reasoning reconstructed.</p>}
           {typeof detail?.detail === 'object' && detail.detail.thinking?.availability === 'authorized-summary' && <div aria-label="Authorized thinking summary" className="whitespace-pre-wrap">{detail.detail.thinking.summary}</div>}
           <button className={field} onClick={() => void showDetail()}>Verify source detail</button>
-          {detail !== undefined && <><pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(detail, null, 2)}</pre>{detail.event && !detail.error && eventLink(selected) && state.demo !== '1' && <Link className="underline" to={eventLink(selected)!}>Open recorded session part</Link>}</>}
+          {visibleObservation && <button className={field} onClick={() => void showDetail(true)}>Load observed diff</button>}
+          {visibleObservation && typeof detail?.detail === 'object' && detail.detail.diff && <ChangedDiff diff={detail.detail.diff} />}
+          {detail !== undefined && <>{!(typeof detail.detail === 'object' && detail.detail.diff) && <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(detail, null, 2)}</pre>}{detail.event && !detail.error && eventLink(selected) && state.demo !== '1' && <Link className="underline" to={eventLink(selected)!}>Open recorded session part</Link>}</>}
         </> : !execution && <p>Select an execution or recorded event. File targets require structured source evidence.</p>}
       </section>
       <section aria-label="Recorded event timeline"><h2>Events through cursor ({scene.events.length}; latest 200 shown)</h2>

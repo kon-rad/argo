@@ -41,7 +41,7 @@ describe('archive evidence adapter', () => {
   it('expands parts, scopes reused IDs by session and occurrence, excludes text and human guesses', () => {
     const row = (id: number, session_id: number, seq: number, raw: unknown, role = 'assistant') => ({ id, session_id, seq, ts: new Date(id * 1000), role, kind: role, raw, text: 'private text', host: 'test-host', source: 'hermes', external_id: String(id), harness: 'hermes', observed_at: null });
     const call = { role: 'assistant', session_id: 's', tool_calls: [{ id: 'reuse', function: { name: 'read', arguments: '{}' } }] };
-    const result = { role: 'tool', session_id: 's', tool_call_id: 'reuse', content: 'secret result' };
+    const result = { role: 'tool', tool_name: 'read', session_id: 's', tool_call_id: 'reuse', content: 'secret result' };
     const events = archiveEvents([row(1, 1, 1, call), row(2, 2, 1, call), row(3, 1, 2, result, 'tool'), row(4, 1, 3, call), row(5, 1, 4, result, 'tool'), row(6, 1, 5, { role: 'user', session_id: 's', content: 'scheduled prompt' }, 'user')]);
     const calls = events.filter(e => e.kind === 'tool_call'); const results = events.filter(e => e.kind === 'tool_result');
     expect(new Set(calls.map(e => e.occurrence)).size).toBe(3); expect(results.map(e => e.parent)).toEqual([calls[0]!.id, calls[2]!.id]);
@@ -96,7 +96,7 @@ describe('boundary, pagination and authorization', () => {
   it('marks disabled sources without querying them', async () => {
     const db = dbFixture(() => { throw new Error('unexpected source read'); });
     const result = await coverage(db, { from: 0, to: 100 }, new Set());
-    expect(result.sources.map(s => s.status)).toEqual(Array(5).fill('disabled'));
+    expect(result.sources.map(s => s.status)).toEqual(Array(6).fill('disabled'));
   });
   it('keeps usage rows separate from tools and rejects unknown execution ends', async () => {
     const db = dbFixture(sql => {

@@ -1,3 +1,5 @@
+import { fileTargets, successfulFileResult } from '../src/routes/observatory/fileEvidence.js';
+import { fileObservationOf } from '../src/routes/observatory/fileEvidence.js';
 import { describe, it, expect } from 'vitest';
 import { readState, writeState, sceneAt, originStyle, eventLink, stepCursor } from '../src/routes/observatory/model.js';
 import { demoWindow } from '../src/routes/observatory/demo.js';
@@ -40,6 +42,29 @@ describe('Observatory workspace evidence', () => {
   });
 });
 
+it('seeks the full synthetic human, execution, ticket, write, commit and gate trace in both directions', () => {
+  const t = demoWindow.from;
+  const before = sceneAt(demoWindow, t + 12000, {});
+  expect(before.events.find(e => e.id === 'write-call')?.parent).toBe('human');
+  expect(before.active.find(i => i.id === 'run:lab:resumed')?.ticket).toBe('demo-ticket');
+  expect(before.events.find(e => e.id === 'write-result')).toBeUndefined();
+  const captured = sceneAt(demoWindow, t + 12500, {});
+  expect(captured.events.find(e => e.id === 'write-result')?.change?.path).toBe('Projects/demo.md');
+  expect(captured.nodes.some(n => n.kind === 'file' && n.label.includes('ownership unknown'))).toBe(true);
+  expect(captured.events.some(e => e.change?.commit)).toBe(false);
+  expect(sceneAt(demoWindow, t + 14000, {}).events.find(e => e.id === 'commit-result')?.change?.commit?.authorship).toBe('unknown');
+  expect(sceneAt(demoWindow, t + 18500, {}).events.at(-1)?.artifact?.stage).toBe('merge-verified');
+  expect(sceneAt(demoWindow, t + 18500, {}).active).toEqual([]);
+  expect(sceneAt(demoWindow, t + 12000, {})).toEqual(before);
+});
+
+it('separates identically named files in two recorded worktrees', () => {
+  const result = demoWindow.events.find(e => e.id === 'write-result')!;
+  const w = { ...demoWindow, events: [...demoWindow.events, { ...result, id: 'peer-result', change: { ...result.change!, worktree: '9'.repeat(64) } }] };
+  const files = sceneAt(w, demoWindow.from + 12500, {}).nodes.filter(n => n.kind === 'file' && n.label.includes('ownership unknown'));
+  expect(new Set(files.map(n => n.id)).size).toBe(2);
+});
+
 it.each([{ ticket: 'demo-ticket' }, { persona: 'builder' }, { model: 'fixture-model' }])('retains historical events after end under %j', filters => {
   const w = structuredClone(demoWindow);
   w.events.push({ ...w.events[2]!, id: 'usage', kind: 'usage', at: w.from + 1500, usage: { model: 'fixture-model', input: 0, output: 0, reasoning: 0 } });
@@ -64,6 +89,17 @@ it('opens later session evidence and uses recorded steps when start is missing',
   expect(activityWindow({ id: 12, host: 'lab', started_at: null, ended_at: null }, [])).toBeNull();
 });
 
+it('namespaces opaque local worktree identities by recorded host', () => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const result = demoWindow.events.find(e => e.id === 'write-result')!;
+  const peerCall = { ...call, id: 'other-host-call', execution: 'run:other:resumed', context: { ...call.context!, host: 'other' } };
+  const peer = { ...result, id: 'other-host-result', parent: peerCall.id, execution: peerCall.execution, context: { ...result.context!, host: 'other' } };
+  const interval = { ...demoWindow.intervals.find(i => i.id === 'run:lab:resumed')!, id: peer.execution, host: 'other' };
+  const w = { ...demoWindow, intervals: [...demoWindow.intervals, interval], events: [...demoWindow.events, peerCall, peer] };
+  expect(sceneAt(w, w.from + 12500, {}).nodes.filter(n => n.kind === 'file' && n.label.includes('ownership unknown'))).toHaveLength(2);
+});
+
+
 it('renders evidenced human input without inventing an active agent', () => {
   const time = demoWindow.from + 7000;
   const human = { ...demoWindow.events.find(e => e.id === 'human')!, at: time, execution: null, ticket: 'recorded-ticket' };
@@ -74,4 +110,140 @@ it('renders evidenced human input without inventing an active agent', () => {
   expect(scene.nodes.some(n => n.kind === 'execution' || n.kind === 'machine')).toBe(false);
   expect(scene.links).toContainEqual({ source: human.id, target: 'ticket:recorded-ticket' });
   expect(sceneAt(window, time + 2001, {}).nodes).toEqual([]);
+});
+
+it('upgrades an uncaptured file only at its paired reported-success result and reverses to attempt', () => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const result = { ...demoWindow.events.find(e => e.id === 'write-result')!, change: undefined };
+  const window = { ...demoWindow, events: [call, result] };
+  const files = (offset: number) => sceneAt(window, window.from + offset, {}).nodes.filter(n => n.kind === 'file');
+  const before = files(12499);
+  expect(before).toHaveLength(1); expect(before[0]!.label).toContain('(attempt)');
+  const after = files(12500);
+  expect(after).toHaveLength(1); expect(after[0]!.id).toBe(before[0]!.id);
+  expect(after[0]!.label).toContain('(tool-reported-success)');
+  expect(after[0]!.label).not.toContain('captured');
+  expect(files(12499)).toEqual(before);
+  for (const bad of [{ ...result, outcome: 'error' as const }, { ...result, parent: undefined }, { ...result, parent: 'unrecorded-call' }]) {
+    expect(sceneAt({ ...window, events: [call, bad] }, window.from + 12500, {}).nodes.filter(n => n.kind === 'file').every(n => !n.label.includes('tool-reported-success'))).toBe(true);
+  }
+});
+it('keeps snapshot availability and Git content matches separate from write grade and worktree identity', () => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const result = demoWindow.events.find(e => e.id === 'write-result')!;
+  const hashes = { ...result, id: 'hashes', at: demoWindow.from + 12200, change: { ...result.change!, level: 'captured-hashes' as const } };
+  const diff = { ...result, id: 'diff', at: demoWindow.from + 12400 };
+  const inspect = { ...call, id: 'inspect-file', at: demoWindow.from + 12500, tool: 'inspect_change_commit', target: undefined };
+  const commit = { ...result, id: 'commit-file', parent: inspect.id, at: demoWindow.from + 12600, target: { ...result.target!, path: '/srv/fixture/Projects/demo.md' }, change: { ...result.change!, level: 'commit' as const, commit: { sha: 'c'.repeat(40), verification: 'local-object' as const, authorship: 'unknown' as const } } };
+  const peer = { ...diff, id: 'peer', change: { ...diff.change!, worktree: '9'.repeat(64) } };
+  const window = { ...demoWindow, events: [call, hashes, diff, inspect, commit, peer] };
+  for (const offset of [12200, 12400, 12600]) {
+    const scene = sceneAt(window, window.from + offset, {});
+    const own = scene.nodes.filter(n => n.kind === 'file' && n.id.includes(result.change!.worktree));
+    expect(own).toHaveLength(1); expect(own[0]!.label).toContain('(tool-reported-success)'); expect(own[0]!.label).toContain('ownership unknown');
+  }
+  const end = sceneAt(window, window.from + 12600, {}).nodes.filter(n => n.kind === 'file' && n.id.includes(result.change!.repository));
+  expect(end).toHaveLength(2);
+  expect(end.find(n => n.id.includes(peer.change!.worktree))!.label).toContain('(tool-reported-success)');
+  expect(sceneAt(window, window.from + 12200, {}).nodes.some(n => n.label.includes('(commit)'))).toBe(false);
+});
+
+it('keeps one paired captured target at the real demo cursor and restores only the attempt on reverse', () => {
+  const files = (offset: number) => sceneAt(demoWindow, demoWindow.from + offset, {}).nodes.filter(node => node.kind === 'file');
+  expect(files(12499)).toHaveLength(1); expect(files(12499)[0]!.label).toContain('(attempt)');
+  expect(files(12499)[0]!.id).not.toContain('b'.repeat(64));
+  expect(files(12500)).toHaveLength(1); expect(files(12500)[0]!.label).toContain('(tool-reported-success)');
+  expect(files(12500)[0]!.id).toContain('b'.repeat(64));
+  expect(files(12499)).toHaveLength(1); expect(files(12499)[0]!.label).toContain('(attempt)');
+});
+it('binds captured file identity to exact visible parent even when call host comes only from its execution', () => {
+  const original = demoWindow.events.find(e => e.id === 'write-call')!;
+  const call = { ...original, context: undefined };
+  const result = demoWindow.events.find(e => e.id === 'write-result')!;
+  const peerCall = { ...call, id: 'peer-call', at: demoWindow.from + 12100 };
+  const peerResult = { ...result, id: 'peer-result', parent: peerCall.id, change: { ...result.change!, worktree: '9'.repeat(64) } };
+  const window = { ...demoWindow, events: [call, result, peerCall, peerResult] };
+  const files = sceneAt(window, window.from + 12500, {}).nodes.filter(n => n.kind === 'file');
+  expect(files).toHaveLength(2); expect(files.every(n => n.label.includes('(tool-reported-success)'))).toBe(true);
+  expect(new Set(files.map(n => n.id)).size).toBe(2);
+  const prior = sceneAt(window, window.from + 12499, {}).nodes.filter(n => n.kind === 'file');
+  expect(prior).toHaveLength(2); expect(prior.every(n => n.label.includes('(attempt)'))).toBe(true);
+  expect(prior.some(n => n.id.includes(result.change!.worktree))).toBe(false);
+});
+
+it('retains one attempt target for a valid failed pair without joining contradictory or unpaired results', () => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const result = { ...demoWindow.events.find(e => e.id === 'write-result')!, change: undefined, outcome: 'error' as const };
+  const window = { ...demoWindow, events: [call, result] };
+  const before = sceneAt(window, window.from + 12499, {}).nodes.filter(n => n.kind === 'file');
+  const failed = sceneAt(window, window.from + 12500, {}).nodes.filter(n => n.kind === 'file');
+  expect(failed).toHaveLength(1); expect(failed[0]!.id).toBe(before[0]!.id); expect(failed[0]!.label).toContain('(attempt)');
+  expect(sceneAt(window, window.from + 12499, {}).nodes.filter(n => n.kind === 'file')).toEqual(before);
+  for (const bad of [{ ...result, parent: undefined }, { ...result, tool: 'read_file' }, { ...result, target: { ...result.target!, path: 'other.md' } }]) {
+    const files = sceneAt({ ...window, events: [call, bad] }, window.from + 12500, {}).nodes.filter(n => n.kind === 'file');
+    expect(files).toHaveLength(2); expect(files.every(n => n.label.includes('(attempt)'))).toBe(true);
+  }
+});
+
+it.each(['tool-reported-success', 'captured-hashes', 'captured-diff', 'commit'] as const)('does not promote paired unknown-outcome %s metadata in workspace replay', level => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const source = demoWindow.events.find(e => e.id === 'write-result')!;
+  const result = { ...source, outcome: 'unknown' as const, change: level === 'tool-reported-success' ? undefined : { ...source.change!, level }, writeEvidence: 'tool-reported-success' as const };
+  const window = { ...demoWindow, events: [call, result] };
+  const before = sceneAt(window, window.from + 12499, {}), after = sceneAt(window, window.from + 12500, {});
+  expect(after.tools[call.id]).toBe('unknown');
+  const files = after.nodes.filter(n => n.kind === 'file');
+  expect(files).toHaveLength(1); expect(files[0]!.label).toContain('(attempt)');
+  expect(files[0]!.id).toBe(before.nodes.find(n => n.kind === 'file')!.id);
+  expect(files.some(n => /tool-reported-success|captured-hashes|captured-diff|commit/.test(n.label))).toBe(false);
+  expect(sceneAt(window, window.from + 12499, {})).toEqual(before);
+});
+
+it('keeps an older commit grade on its own change instead of upgrading a later hashes-only write', () => {
+  const firstCall = demoWindow.events.find(e => e.id === 'write-call')!;
+  const firstResult = demoWindow.events.find(e => e.id === 'write-result')!;
+  const inspect = demoWindow.events.find(e => e.id === 'commit-call')!;
+  const commit = demoWindow.events.find(e => e.id === 'commit-result')!;
+  const secondCall = { ...firstCall, id: 'second-call', at: demoWindow.from + 14100 };
+  const secondResult = { ...firstResult, id: 'second-result', parent: secondCall.id, at: demoWindow.from + 14200,
+    change: { ...firstResult.change!, id: 'second-change', before: firstResult.change!.after, after: '9'.repeat(64), level: 'captured-hashes' as const, diff: { format: 'changed-lines' as const, context: 0 as const, redacted: true as const, truncated: true, reason: 'input-limit' as const } } };
+  const window = { ...demoWindow, events: [firstCall, firstResult, inspect, commit, secondCall, secondResult] };
+  const files = sceneAt(window, window.from + 14200, {}).nodes.filter(n => n.kind === 'file');
+  expect(files).toHaveLength(2);
+  const second = files.find(n => n.id.includes('second-change'))!;
+  expect(second.label).toContain('(tool-reported-success)'); expect(second.label).not.toContain('(commit)');
+  expect(second.label).toContain('observation second-change');
+  expect(files.find(n => n.id.includes(firstResult.change!.id))!.label).toContain('(tool-reported-success)');
+  expect(fileObservationOf(commit)?.commitMatch?.authorship).toBe('unknown');
+  expect(files.every(n => !n.label.includes('(commit)'))).toBe(true);
+  const reversed = sceneAt(window, window.from + 14199, {}).nodes.filter(n => n.kind === 'file');
+  expect(reversed.some(n => n.id.includes('second-change'))).toBe(false);
+  expect(reversed.some(n => n.label.includes('(attempt)'))).toBe(true);
+  expect(reversed.some(n => n.label.includes('(commit)'))).toBe(false);
+});
+
+it('does not recreate a write target or write edge for a read-only Git content comparison', () => {
+  const inspect = demoWindow.events.find(e => e.id === 'commit-call')!;
+  const source = demoWindow.events.find(e => e.id === 'commit-result')!;
+  const legacyFallback = { ...source, target: { path: 'Projects/demo.md', vaultPath: 'Projects/demo.md', operation: 'edit' as const } };
+  const onlyInspection = { ...demoWindow, events: [inspect, legacyFallback] };
+  const inspected = sceneAt(onlyInspection, onlyInspection.from + 14000, {});
+  expect(inspected.nodes.filter(n => n.kind === 'file')).toEqual([]);
+  expect(inspected.links.some(link => link.source === source.id && link.target.startsWith('file:'))).toBe(false);
+  expect(fileObservationOf(legacyFallback)?.commitMatch?.authorship).toBe('unknown');
+  const withPrior = sceneAt({ ...demoWindow, events: demoWindow.events.map(e => e.id === source.id ? legacyFallback : e) }, demoWindow.from + 14000, {});
+  expect(withPrior.nodes.filter(n => n.kind === 'file')).toHaveLength(1);
+  expect(withPrior.links.some(link => link.source === source.id && link.target.startsWith('file:'))).toBe(false);
+  expect(withPrior.nodes.filter(n => n.kind === 'file').every(n => !n.label.includes('(commit)'))).toBe(true);
+});
+
+it.each([true, false])('does not inherit a target or promote a cross-execution result (recorded target %s)', recordedTarget => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const original = demoWindow.events.find(e => e.id === 'write-result')!;
+  const result = { ...original, target: recordedTarget ? original.target : undefined, execution: 'run:lab:different' };
+  const window = { ...demoWindow, events: [call, result] };
+  const through = sceneAt(window, window.from + 12500, {});
+  expect(through.nodes.filter(n => n.kind === 'file').every(n => !n.label.includes('tool-reported-success'))).toBe(true);
+  expect(fileTargets(window.events).has(result.id)).toBe(false);
+  expect(successfulFileResult(result, new Map(window.events.map(e => [e.id, e])))).toBe(false);
 });

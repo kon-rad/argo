@@ -1,17 +1,39 @@
 /** Versioned, content-free evidence contract. Pure replay: no clock, IO or model calls. */
-export type SourceTable = 'archive_messages' | 'usage_calls' | 'usage_runs' | 'card_events' | 'org_messages';
+export type SourceTable = 'archive_messages' | 'usage_calls' | 'usage_runs' | 'card_events' | 'org_messages' | 'review_attempts';
+export interface ChangeEvidence {
+  version: 1; id: string; repository: string; worktree: string; path: string;
+  before: string | null; after: string; level: 'captured-hashes' | 'captured-diff' | 'commit';
+  diff: { format: 'replacement'; truncated: boolean } | { format: 'changed-lines'; context: 0; redacted: true; truncated: boolean; reason?: 'input-limit' | 'line-limit' | 'output-limit' | 'binary' | 'unsafe-text' | 'empty-change' };
+  commit?: { sha: string; verification: 'local-object'; authorship: 'unknown' };
+}
+/** Snapshots/content comparison only. Never proof that this tool owned a file transition. */
+export interface FileObservation {
+  version: 1; id: string; repository: string; worktree: string; path: string;
+  observedBefore: string | null; observedAfter: string; ownership: 'unknown';
+  origin: 'runtime-observation' | 'legacy-reported';
+  diff: ChangeEvidence['diff'];
+  commitMatch?: { sha: string; verification: 'local-object'; authorship: 'unknown' };
+  /** SHA-256 binding of the validated redacted diff representation; absent on old metadata until canonical reingestion. */
+  detailDigest?: string;
+}
 export interface EvidenceEvent {
   version: 1; id: string; at: number | null; observedAt: number | null; sequence: number; part: number;
-  kind: 'prompt' | 'response' | 'thinking' | 'tool_call' | 'tool_result' | 'system' | 'meta' | 'usage' | 'ticket' | 'message';
+  kind: 'prompt' | 'response' | 'thinking' | 'tool_call' | 'tool_result' | 'system' | 'meta' | 'usage' | 'ticket' | 'message' | 'artifact';
   session: string | null; execution: string | null;
   context?: { host: string; runtime: string; source: string; externalSession: string };
   actor: { kind: 'human' | 'agent' | 'automation' | 'unknown'; sender: string | null; channel: string | null; evidence: string };
   source: { table: SourceTable; id: string; part: string }; precision: 'millisecond' | 'unknown'; confidence: 'recorded';
   parent?: string; occurrence?: string; tool?: string; outcome?: 'success' | 'error' | 'unknown';
-  /** Explicit structured path only; operation attempt, never proof of changed bytes.
-   * vaultPath is present only for absolute paths within the configured vault root.
-   * Raw path is retained; relative cwd, symlinks and historical moves are not inferred. */
+  /** Explicit structured path only; operation attempt, never proof of changed bytes. */
   target?: { path: string; vaultPath?: string; operation: 'read' | 'write' | 'edit' };
+  /** @deprecated Legacy source claim only. Never proof of ownership or a verified file transition; normalize as a legacy-reported fileObservation. */
+  change?: ChangeEvidence;
+  /** Body-free observed snapshots; concurrent writers and transition ownership remain unknown. */
+  fileObservation?: FileObservation;
+  artifact?: { repository: string; pr: number; head: string; base: string;
+    stage: 'pr-observed' | 'review-accepted' | 'review-rejected' | 'merge-recorded' | 'merge-verified';
+    verification: 'trusted-review-gate'; merge?: string };
+  writeEvidence?: 'attempt' | 'tool-reported-success';
   ticket?: string; status?: string; thinking?: 'available-in-source';
   usage?: { model: string; input: number; output: number; reasoning: number };
 }
@@ -21,7 +43,7 @@ export interface ExecutionInterval {
 }
 export interface BoundaryState {
   tickets: Record<string, string>; tools: Record<string, string>;
-  provenance?: Record<string, { event: string; source: EvidenceEvent['source']; at: number | null }>;
+  provenance?: Record<string, { event: string; source: EvidenceEvent['source']; at: number | null; execution?: string | null; session?: string | null; host?: string }>;
 }
 export interface ReplayWindow {
   version: 1; from: number; to: number; intervals: ExecutionInterval[]; boundary: BoundaryState; events: EvidenceEvent[];
@@ -33,10 +55,12 @@ export function ordered(events: EvidenceEvent[]): EvidenceEvent[] {
   return [...new Map(events.map(e => [e.id, e])).values()].sort(compareEvents);
 }
 export function applyEvent(state: BoundaryState, event: EvidenceEvent): void {
-  const record = (key: string) => { if (state.provenance) state.provenance[key] = { event: event.id, source: { ...event.source }, at: event.at }; };
+  const record = (key: string) => { if (state.provenance) state.provenance[key] = { event: event.id, source: { ...event.source }, at: event.at, execution: event.execution, session: event.session, ...(event.context?.host ? { host: event.context.host } : {}) }; };
   if (event.kind === 'ticket' && event.ticket && event.status) { state.tickets[event.ticket] = event.status; record(`ticket:${event.ticket}`); }
   if (event.kind === 'tool_call' && event.occurrence) { state.tools[event.occurrence] = 'pending'; record(`tool:${event.occurrence}`); }
-  if (event.kind === 'tool_result' && event.parent) { state.tools[event.parent] = event.outcome ?? 'unknown'; record(`tool:${event.parent}`); }
+  const prior = event.parent ? state.provenance?.[`tool:${event.parent}`] : undefined;
+  const conflict = prior && (prior.execution && event.execution && prior.execution !== event.execution || prior.session && event.session && prior.session !== event.session || prior.host && event.context?.host && prior.host !== event.context.host);
+  if (event.kind === 'tool_result' && event.parent && !conflict) { state.tools[event.parent] = event.outcome ?? 'unknown'; record(`tool:${event.parent}`); }
 }
 export function replay(window: ReplayWindow, cursor: number): BoundaryState & { active: Omit<ExecutionInterval, 'end'>[] } {
   if (!Number.isFinite(cursor) || cursor < window.from || cursor >= window.to) throw new RangeError('cursor outside window');

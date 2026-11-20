@@ -1,3 +1,4 @@
+import { fileObservationOf } from '../src/routes/observatory/fileEvidence.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -14,6 +15,22 @@ function setup(path: string, handler?: (url: string) => unknown, status = 200) {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={[path]}><Observatory /><Location /></MemoryRouter></QueryClientProvider>);
   return fetch;
 }
+it('loads changed-line hunks only on demand and labels them as zero-context observations', async () => {
+  const legacy = demoWindow.events.find(e => e.id === 'write-result')!;
+  const event = { ...legacy, change: undefined, fileObservation: { ...fileObservationOf(legacy)!, origin: 'runtime-observation' as const, diff: { format: 'changed-lines' as const, context: 0 as const, redacted: true as const, truncated: false } } };
+  const fetch = setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 12500}&event=${event.id}`, url => url.includes('/events/')
+    ? { event, detail: { diff: { format: 'changed-lines', truncated: false, hunks: [{ oldStart: 3, newStart: 3, deleted: ['old public\n'], added: ['new public\n', '[redacted:sensitive-line]\n'] }] } } }
+    : { window: { ...demoWindow, events: demoWindow.events.map(e => e.id === event.id ? event : e) }, export: 'token', total: demoWindow.events.length, next: null, diagnostics: {} });
+  await screen.findByRole('button', { name: 'Load observed diff' });
+  expect(fetch.mock.calls.some(([u]) => String(u).includes('/observation'))).toBe(false);
+  expect(screen.queryByLabelText('Observed diff detail')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Load observed diff' }));
+  const detail = await screen.findByLabelText('Observed diff detail');
+  expect(detail.textContent).toContain('zero unchanged context');
+  expect(detail.textContent).toContain('@@ old line 3, new line 3 @@');
+  expect(detail.textContent).toContain('- old public'); expect(detail.textContent).toContain('+ new public');
+  expect(detail.textContent).toContain('[redacted:sensitive-line]');
+});
 it('restores cursor, exposes accessible list and cuts off result until next event', async () => {
   setup(`/observatory?demo=1&from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 2000}&event=call`);
   await screen.findByText(/Outcome at cursor: pending/);
@@ -27,7 +44,7 @@ it('restores cursor, exposes accessible list and cuts off result until next even
 });
 it('verifies source lazily then links exact recorded part', async () => {
   const call = demoWindow.events.find(e => e.id === 'call')!;
-  const fetch = setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 2000}&event=call`, url => url.includes('/events/') ? { event: call, detail: { availability: 'source-pointer' } } : { window: demoWindow, export: 'token', total: 6, next: null, diagnostics: {} });
+  const fetch = setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 2000}&event=call`, url => url.includes('/events/') ? { event: call, detail: { availability: 'source-pointer' } } : { window: demoWindow, export: 'token', total: demoWindow.events.length, next: null, diagnostics: {} });
   await screen.findByText(/Outcome at cursor: pending/);
   expect(fetch.mock.calls.some(([u]) => String(u).includes('/events/'))).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: 'Verify source detail' }));
@@ -36,10 +53,10 @@ it('verifies source lazily then links exact recorded part', async () => {
 });
 it('rejects partial and changed pagination instead of replaying incomplete history', async () => {
   const state = { from: demoWindow.from, to: demoWindow.to, cursor: demoWindow.from };
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ window: { ...demoWindow, events: [] }, export: 'a', total: 6, next: null, diagnostics: {} }))));
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ window: { ...demoWindow, events: [] }, export: 'a', total: demoWindow.events.length, next: null, diagnostics: {} }))));
   await expect(loadSnapshot(state, new AbortController().signal)).rejects.toThrow(/Incomplete/);
   let count = 0;
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ window: { ...demoWindow, events: demoWindow.events.slice(0, 1) }, export: ++count === 1 ? 'a' : 'b', total: 6, next: 1, diagnostics: {} }))));
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ window: { ...demoWindow, events: demoWindow.events.slice(0, 1) }, export: ++count === 1 ? 'a' : 'b', total: demoWindow.events.length, next: 1, diagnostics: {} }))));
   await expect(loadSnapshot(state, new AbortController().signal)).rejects.toThrow(/Snapshot changed/);
 });
 it('shows permission denial without claiming empty coverage', async () => {
@@ -48,7 +65,7 @@ it('shows permission denial without claiming empty coverage', async () => {
   expect(screen.queryByText('No evidenced active executions at this cursor.')).toBeNull();
 });
 it('keeps denied detail explicit and offers no verified-source link', async () => {
-  setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 2000}&event=call`, url => url.includes('/events/') ? { error: { message: 'source no longer visible' } } : { window: demoWindow, export: 'token', total: 6, next: null, diagnostics: {} });
+  setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 2000}&event=call`, url => url.includes('/events/') ? { error: { message: 'source no longer visible' } } : { window: demoWindow, export: 'token', total: demoWindow.events.length, next: null, diagnostics: {} });
   await screen.findByText(/Outcome at cursor: pending/);
   // Use the actual HTTP denial after loading the window.
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { message: 'source no longer visible' } }), { status: 403 })));
@@ -58,15 +75,28 @@ it('keeps denied detail explicit and offers no verified-source link', async () =
 });
 it('assembles all immutable pages and preserves the export token', async () => {
   let count = 0;
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ window: { ...demoWindow, events: count++ === 0 ? demoWindow.events.slice(0, 3) : demoWindow.events.slice(3) }, export: 'same', total: 6, next: count === 1 ? 3 : null, diagnostics: {} }))));
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ window: { ...demoWindow, events: count++ === 0 ? demoWindow.events.slice(0, 3) : demoWindow.events.slice(3) }, export: 'same', total: demoWindow.events.length, next: count === 1 ? 3 : null, diagnostics: {} }))));
   const snapshot = await loadSnapshot({ from: demoWindow.from, to: demoWindow.to, cursor: demoWindow.from }, new AbortController().signal);
   expect(snapshot.window.events).toEqual(demoWindow.events);
   expect(snapshot.export).toBe('same');
 });
 
+it('loads legacy-reported snapshot text only on explicit request without transition ownership', async () => {
+  const result = demoWindow.events.find(e => e.id === 'write-result')!;
+  const fetch = setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 12500}&event=write-result`, url =>
+    url.includes('/observation?') ? { event: result, detail: { representation: 'redacted-source', diff: { format: 'replacement', before: '', after: 'synthetic diff body', truncated: false } } }
+      : { window: demoWindow, export: 'token', total: demoWindow.events.length, next: null, diagnostics: {} });
+  await screen.findByLabelText('File observation evidence');
+  expect(fetch.mock.calls.some(([url]) => String(url).includes('/observation?'))).toBe(false);
+  expect(screen.queryByText(/synthetic diff body/)).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Load observed diff' }));
+  await screen.findByText(/synthetic diff body/);
+  expect(fetch.mock.calls.some(([url]) => String(url).includes('/observation?export=token'))).toBe(true);
+});
+
 it.each(['authorized-summary', 'hidden', 'unavailable'])('displays lazy thinking state %s', async availability => {
   const thinking = demoWindow.events.find(e => e.id === 'thinking')!;
-  setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 4500}&event=thinking`, url => url.includes('/events/') ? { event: thinking, detail: { thinking: { availability, ...(availability === 'authorized-summary' ? { summary: 'Synthetic permitted summary' } : {}) } } } : { window: demoWindow, export: 'thinking-token', total: 6, next: null, diagnostics: {} });
+  setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 4500}&event=thinking`, url => url.includes('/events/') ? { event: thinking, detail: { thinking: { availability, ...(availability === 'authorized-summary' ? { summary: 'Synthetic permitted summary' } : {}) } } } : { window: demoWindow, export: 'thinking-token', total: demoWindow.events.length, next: null, diagnostics: {} });
   await screen.findByText(/Thinking: not checked/);
   expect(screen.queryByLabelText('Authorized thinking summary')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Verify source detail' }));
@@ -91,4 +121,29 @@ it('renders evidenced source origins under human, agent and unknown filters', as
     const timeline = screen.getByRole('region', { name: 'Recorded event timeline' });
     expect(timeline.textContent).toContain(glyph);
   }
+});
+
+it.each(['tool-reported-success', 'captured-hashes', 'captured-diff', 'commit'] as const)('keeps unknown-outcome %s metadata unverified without captured inspector or diff controls', async level => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const source = demoWindow.events.find(e => e.id === 'write-result')!;
+  const result = { ...source, outcome: 'unknown' as const, change: level === 'tool-reported-success' ? undefined : { ...source.change!, level }, writeEvidence: 'tool-reported-success' as const };
+  const window = { ...demoWindow, events: [call, result] };
+  const fetch = setup(`/observatory?from=${window.from}&to=${window.to}&cursor=${window.from + 12500}&event=${result.id}`, () => ({ window, export: 'token', total: 2, next: null, diagnostics: {} }));
+  await screen.findByText('Outcome at cursor: unknown');
+  expect(screen.queryByLabelText('File observation evidence')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Load observed diff' })).toBeNull();
+  expect(screen.queryByLabelText('Observed diff detail')).toBeNull();
+  expect(fetch.mock.calls.some(([url]) => String(url).includes('/observation'))).toBe(false);
+  fireEvent.change(screen.getByLabelText('Replay cursor'), { target: { value: window.from + 12499 } });
+  expect(screen.queryByLabelText('File observation evidence')).toBeNull();
+});
+
+it('keeps a cross-execution result unverified in the inspector without a diff control', async () => {
+ const call=demoWindow.events.find(e=>e.id==='write-call')!;
+ const result={...demoWindow.events.find(e=>e.id==='write-result')!,execution:'run:lab:different',target:undefined};
+ const window={...demoWindow,events:[call,result]};
+ setup(`/observatory?from=${window.from}&to=${window.to}&cursor=${window.from+12500}&event=${result.id}`,()=>({window,export:'execution-token',total:2,next:null,diagnostics:{}}));
+ await screen.findByLabelText('Evidence inspector');
+ expect(screen.queryByLabelText('File observation evidence')).toBeNull();
+ expect(screen.queryByRole('button',{name:'Load observed diff'})).toBeNull();
 });

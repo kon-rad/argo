@@ -9,9 +9,9 @@ SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
        has_table_privilege(current_user, c.oid, 'SELECT') AS can_select,
        (SELECT rolbypassrls OR rolsuper FROM pg_roles WHERE rolname = current_user) AS bypass
 FROM pg_class c WHERE c.oid IN ('archive_sessions'::regclass, 'archive_messages'::regclass,
-  'usage_runs'::regclass, 'usage_calls'::regclass, 'card_events'::regclass, 'org_messages'::regclass);
+  'usage_runs'::regclass, 'usage_calls'::regclass, 'card_events'::regclass, 'org_messages'::regclass, 'review_attempts'::regclass, 'review_jobs'::regclass);
 SELECT tablename, policyname, roles, cmd, qual FROM pg_policies
-WHERE tablename IN ('archive_sessions', 'archive_messages', 'usage_runs', 'usage_calls', 'card_events', 'org_messages');
+WHERE tablename IN ('archive_sessions', 'archive_messages', 'usage_runs', 'usage_calls', 'card_events', 'org_messages', 'review_attempts', 'review_jobs');
 SELECT host, coalesce(runtime, 'claude-code') AS runtime, count(*) AS runs,
        count(*) FILTER (WHERE started_at IS NULL OR ended_at IS NULL OR ended_at <= started_at) AS unknown_intervals,
        min(started_at), max(ended_at), count(*) FILTER (WHERE agent_name IS NULL) AS unknown_persona
@@ -37,6 +37,24 @@ SELECT kind, count(*), min(at), max(at) FROM card_events
 WHERE at >= '2025-01-01' AND at < '2025-01-02' GROUP BY kind;
 SELECT count(*) AS org_messages, min(created_at), max(created_at), count(*) FILTER (WHERE thread_id IS NOT NULL) AS replies
 FROM org_messages WHERE created_at >= '2025-01-01' AND created_at < '2025-01-02';
+-- Prospective observations are not a denominator of all actual changes.
+-- Keep modern observations, legacy-only evidence and missing evidence distinct.
+-- BEGIN prospective-evidence-audit
+SELECT a.host, a.harness,
+  CASE WHEN m.file_observation IS NOT NULL THEN 'file-observation'
+       WHEN m.change_evidence IS NOT NULL THEN 'legacy-change' ELSE 'missing' END AS evidence_kind,
+  CASE WHEN m.file_observation IS NOT NULL THEN m.file_observation->>'origin' END AS observation_origin,
+  CASE WHEN coalesce(m.file_observation->'diff', m.change_evidence->'diff')->>'truncated' = 'false' THEN 'readable'
+       WHEN coalesce(m.file_observation->'diff', m.change_evidence->'diff')->>'truncated' = 'true' THEN 'unavailable'
+       ELSE 'unknown' END AS diff_availability,
+  CASE WHEN m.file_observation IS NULL THEN m.change_evidence->>'level' END AS legacy_level,
+  count(*) AS records
+FROM archive_messages m JOIN archive_sessions a ON a.id=m.session_id
+WHERE m.ts >= '2025-01-01' AND m.ts < '2025-01-02' GROUP BY 1,2,3,4,5,6;
+-- END prospective-evidence-audit
+SELECT count(*) AS visible_gate_attempts,
+  count(*) FILTER (WHERE patch ? 'mergeVerified') AS explicit_merge_verification_receipts,
+  min(at), max(at) FROM review_attempts WHERE at >= '2025-01-01' AND at < '2025-01-02';
 -- A read-only plan is safe to capture separately; EXPLAIN ANALYZE is intentionally opt-in.
 EXPLAIN SELECT m.id FROM archive_messages m JOIN archive_sessions a ON a.id=m.session_id
 WHERE m.ts >= '2025-01-01' AND m.ts < '2025-01-02' ORDER BY m.session_id,m.seq,m.id LIMIT 5001;
