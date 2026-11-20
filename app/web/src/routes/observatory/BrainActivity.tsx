@@ -52,7 +52,7 @@ export default function MapActivity({ events, selected, note, layout, pin, onNot
     {show3d && !rendererFailed && <div ref={rendererHost} style={{ height: 420 }}><MapRendererBoundary onFailure={() => setRendererFailed(true)}><Suspense fallback={<p>Loading map renderer…</p>}><FullMap ref={mapRef} renderOnDemand graph={data} metrics={metrics} layers={layers} selected={data.nodes.find(n => n.kind === 'note' && n.ref === note)?.id ?? null} onSelect={onPick} activity={marked} /></Suspense></MapRendererBoundary></div>}
     {omitted > 0 && <p role="status">Showing the latest {visible.length} of {marked.length} path operations. {omitted} earlier operations are omitted from this list; seek earlier or filter a note to inspect them. The map retains all recorded operations.</p>}
     <ul aria-label="Note activity">{visible.map(a => <li key={a.event.id}>
-      <button className="underline" onClick={() => onSelect(a.event.id)}>{operationStyle(a.event.target!.operation).glyph} {a.event.target!.operation} attempt: {a.event.target!.path}</button>
+      <button className="underline" onClick={() => onSelect(a.event.id)}>{operationStyle(a.event.target!.operation).glyph} {a.event.target!.operation} {a.event.change?.level ?? 'attempt'}: {a.event.target!.path}</button>
       {a.node ? <> · <button className="underline" onClick={() => onNote(a.node!.ref!)}>Filter note {a.node.ref}</button> · <button className="underline" onClick={() => mapRef.current?.focus(a.node!.id)}>Focus note {a.node.ref}</button></> : <> · {a.reason}</>}
       <span> · Evidence {a.event.source.table}:{a.event.source.id} part {a.event.source.part}</span>
     </li>)}</ul>

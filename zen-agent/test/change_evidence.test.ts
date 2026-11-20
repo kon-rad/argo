@@ -22,7 +22,7 @@ test('captures only this operation, rejects failed edits, and verifies exact com
     const result = await run('edit_file', { path: 'note.md', old: 'before', new: 'after' });
     assert.equal(result.change.path, 'note.md');
     assert.notEqual(result.change.before, result.change.after);
-    assert.deepEqual(result.change.diff, { format: 'replacement', before: 'before\n', after: 'after\n', truncated: false });
+    assert.deepEqual(result.change.diff, { format: 'replacement', truncated: true });
     assert.equal(JSON.stringify(result).includes('another agent'), false);
     await assert.rejects(run('inspect_change_commit', { capture: result.change.id, commit: git('rev-parse', 'HEAD') }));
     git('add', 'note.md'); git('commit', '-qm', 'change');
@@ -56,7 +56,8 @@ test('real runtime traces retain successful capture details and no capture on a 
   const root = mkdtempSync(join(tmpdir(), 'zen-change-trace-'));
   try {
     execFileSync('git', ['-C', root, 'init', '-q']);
-    writeFileSync(join(root, 'note.md'), 'before');
+    const credential = 'synthetic-credential-untouched-123456';
+    writeFileSync(join(root, 'note.md'), `credential=${credential}\nbefore`);
     const faux = fauxProvider(), models = createModels(); models.setProvider(faux.provider);
     faux.setResponses([
       fauxAssistantMessage([fauxToolCall('edit_file', { path: 'note.md', old: 'missing', new: 'bad' })], { stopReason: 'toolUse' }),
@@ -66,11 +67,18 @@ test('real runtime traces retain successful capture details and no capture on a 
     const config = loadConfig({ workdir: root, env: {}, overrides: { model: 'faux/faux-1', tools: ['fs'] } });
     const agent = new ZenAgent({ config, models, env: {}, dispatch: { task_id: 'fixture-ticket' } });
     const result = await agent.run('synthetic instruction');
-    const records = readFileSync(result.sessionPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const jsonl = readFileSync(result.sessionPath, 'utf8');
+    assert.equal(jsonl.includes(credential), false);
+    const records = jsonl.trim().split('\n').map(line => JSON.parse(line));
     const results = records.filter(r => r.type === 'message' && r.message.role === 'toolResult').map(r => r.message);
     assert.equal(results.length, 2);
     assert.equal(results[0].isError, true); assert.equal(results[0].details?.change, undefined);
     assert.equal(results[1].isError, false); assert.equal(results[1].details.change.path, 'note.md');
+    assert.equal(JSON.stringify(results[1].details).includes(credential), false);
+    assert.match(results[1].details.change.before, /^[a-f0-9]{64}$/);
+    assert.match(results[1].details.change.after, /^[a-f0-9]{64}$/);
+    assert.notEqual(results[1].details.change.before, results[1].details.change.after);
+    assert.ok(results[1].details.change.id);
     assert.equal(records[0].dispatch.task_id, 'fixture-ticket');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

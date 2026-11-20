@@ -88,3 +88,31 @@ it('rejects a stale normalized projection and ambiguous same-session calls', () 
   expect(ambiguous[2]?.parent).toBeUndefined();
   expect(ambiguous[2]?.change).toBeUndefined();
 });
+
+for (const mismatch of ['tool', 'path', 'missing-tool'] as const) it(`leaves a same-ID ${mismatch} mismatch unpaired`, () => {
+  const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: change.path } }] } };
+  const result = mismatch === 'missing-tool' ? raw({ toolName: undefined }) : mismatch === 'tool' ? raw({ toolName: 'edit_file' })
+    : raw({ details: { change: { ...change, path: 'notes/other.md' } } });
+  const events = archiveEvents([row(1, call), row(2, result, capturedChange(result))]);
+  expect(events[1]?.parent).toBeUndefined();
+  expect(events[1]?.target).toBeUndefined();
+  expect(events[1]?.writeEvidence).toBeUndefined();
+  expect(events[1]?.change).toBeUndefined();
+  expect(replay(makeWindow(0, 5000, events, []), 2000).tools[events[0]!.id]).toBe('pending');
+});
+
+import { createHash } from 'node:crypto';
+it('requires exact worktree identity for absolute captured paths', () => {
+  const root = '/srv/fixture-repo';
+  const worktree = createHash('sha256').update(root).digest('hex');
+  const result = raw({ details: { change: { ...change, worktree } } });
+  const call = (path: string) => ({ harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path } }] } });
+  const paired = archiveEvents([row(1, call(`${root}/${change.path}`)), row(2, result, capturedChange(result))]);
+  expect(paired[1]?.change?.worktree).toBe(worktree);
+  for (const path of [`/srv/other-repo/${change.path}`, `notes/../${change.path}`]) {
+    const events = archiveEvents([row(1, call(path)), row(2, result, capturedChange(result))]);
+    expect(events[1]?.parent).toBeUndefined();
+    expect(events[1]?.writeEvidence).toBeUndefined();
+    expect(events[1]?.change).toBeUndefined();
+  }
+});

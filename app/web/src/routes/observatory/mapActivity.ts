@@ -9,7 +9,7 @@ export interface NoteActivity { event: EvidenceEvent; node?: MapNodeData; reason
 export function mapActivity(graph: MapGraph, events: EvidenceEvent[]): NoteActivity[] {
   const refs = new Map<string, MapNodeData[]>();
   for (const node of graph.nodes) if (node.kind === 'note' && node.ref) refs.set(node.ref, [...(refs.get(node.ref) ?? []), node]);
-  return events.filter(e => e.kind === 'tool_call' && e.target).map(event => {
+  return events.filter(e => (e.kind === 'tool_call' || (e.kind === 'tool_result' && e.change)) && e.target).map(event => {
     const path = event.target!.vaultPath;
     const candidates = path ? refs.get(path) ?? [] : [];
     return { event, node: candidates.length === 1 ? candidates[0] : undefined,

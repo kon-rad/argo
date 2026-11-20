@@ -47,7 +47,7 @@ it('seeks the full synthetic human, execution, ticket, write, commit and gate tr
   expect(before.active.find(i => i.id === 'run:lab:resumed')?.ticket).toBe('demo-ticket');
   expect(before.events.find(e => e.id === 'write-result')).toBeUndefined();
   const captured = sceneAt(demoWindow, t + 12500, {});
-  expect(captured.events.find(e => e.id === 'write-result')?.change?.path).toBe('notes/demo.md');
+  expect(captured.events.find(e => e.id === 'write-result')?.change?.path).toBe('Projects/demo.md');
   expect(captured.nodes.some(n => n.kind === 'file' && n.label.includes('captured-diff'))).toBe(true);
   expect(captured.events.some(e => e.change?.commit)).toBe(false);
   expect(sceneAt(demoWindow, t + 14000, {}).events.find(e => e.id === 'commit-result')?.change?.commit?.authorship).toBe('unknown');

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { capturedChange, sameChange } from '../../archive/changeEvidence.js';
 import { vaultPath } from './paths.js';
 import { expandSteps } from '../../archive/steps.js';
@@ -59,6 +60,16 @@ function fileTarget(tool: string | null, text: string, root?: string, harness?: 
   } catch { /* Non-JSON input is not structured path evidence. */ }
   return undefined;
 }
+/** Compare the exact argument to capture identity, never basename/suffix alone. */
+function capturedTarget(call: EvidenceEvent, change: NonNullable<EvidenceEvent['change']>): boolean {
+  if (!call.target) return call.tool === 'inspect_change_commit';
+  const path = call.target.path;
+  if (path === change.path) return true;
+  const suffix = `/${change.path}`;
+  if (!path.startsWith('/') || !path.endsWith(suffix) || path.split('/').some(p => p === '.' || p === '..')) return false;
+  const root = path.slice(0, -suffix.length) || '/';
+  return createHash('sha256').update(root).digest('hex') === change.worktree;
+}
 /** Pair only within a numeric archive session, in recorded sequence order. A repeated ID starts a new occurrence. */
 export function archiveEvents(rows: ArchiveRow[], root?: string): EvidenceEvent[] {
   const pending = new Map<string, EvidenceEvent[]>();
@@ -78,11 +89,15 @@ export function archiveEvents(rows: ArchiveRow[], root?: string): EvidenceEvent[
       if (part.step === 'tool_call') { e.occurrence = e.id; if (part.toolCallId) pending.set(scope, [...(pending.get(scope) ?? []), e]); }
       if (part.step === 'tool_result') {
         const candidates = part.toolCallId ? pending.get(scope) : undefined;
-        const call = candidates?.length === 1 ? candidates[0] : undefined;
+        const candidate = candidates?.length === 1 ? candidates[0] : undefined;
+        const captured = capturedChange(row.raw);
+        const hasCapture = object(object(object(row.raw).message).details).change !== undefined;
+        const call = candidate && candidate.tool === part.toolName &&
+          (!hasCapture || (captured && capturedTarget(candidate, captured))) ? candidate : undefined;
         // A result with a contradictory timestamp cannot complete a future call.
         if (call && call.at !== null && e.at !== null && call.at <= e.at) { e.parent = call.id; e.occurrence = call.id; pending.delete(scope); }
         e.outcome = part.isError === true ? 'error' : part.isError === false ? 'success' : 'unknown';
-        const captured = row.change_evidence ? capturedChange(row.raw) : null;
+        // Capture metadata must also agree with the paired tool and path above.
         // Revalidate against the archived result. A stale or hand-edited projection cannot upgrade evidence.
         if (call && e.parent && captured && sameChange(captured, row.change_evidence)) e.change = captured;
         if (call && e.parent && call.target) {

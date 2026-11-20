@@ -29,10 +29,10 @@ export function finishChange(abs: string, prepared: ReturnType<typeof prepareCha
     const after = readFileSync(abs), before = prepared.before;
     // A racing external writer makes this observation insufficient.
     if (!after.equals(Buffer.from(intended)) || before?.equals(after)) return null;
-    const bounded = (before?.length ?? 0) + after.length <= 16384 && (!before || Buffer.from(before.toString('utf8')).equals(before));
     return { version: 1, id: randomUUID(), repository: hash(prepared.common), worktree: hash(prepared.root), path: prepared.path,
       before: before === null ? null : hash(before), after: hash(after),
-      diff: { format: 'replacement', ...(bounded ? { before: before?.toString('utf8') ?? '', after: after.toString('utf8') } : {}), truncated: !bounded } };
+      // Persistent tool details must never copy untouched file contents.
+      diff: { format: 'replacement', truncated: true } };
   } catch { return null; }
 }
 /** Proves this path's parent/commit bytes, not authorship or ownership of the whole commit. */

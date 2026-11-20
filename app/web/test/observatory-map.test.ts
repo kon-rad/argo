@@ -55,3 +55,12 @@ it('keeps origin colors consistent across read and write glyphs', () => {
   expect(operationStyle('read', 'human').color).not.toBe(operationStyle('read', 'agent').color);
   expect(operationStyle('write', 'unknown').color).toBe(operationStyle('read', 'unknown').color);
 });
+
+import { mapGraph } from './fixtures/observatoryMap.js';
+it('replays the synthetic captured write on the exact pinned note and removes it on reverse seek', () => {
+  const at = (offset: number) => mapActivity(mapGraph, sceneAt(demoWindow, demoWindow.from + offset, { note: 'Projects/demo.md' }).events);
+  expect(at(12500).find(a => a.event.id === 'write-result')).toMatchObject({ node: { id: 'note:1', ref: 'Projects/demo.md' }, event: { change: { level: 'captured-diff' } } });
+  expect(at(12499).some(a => a.event.change)).toBe(false);
+  expect(at(11999)).toEqual([]);
+  expect(at(12500).find(a => a.event.id === 'write-result')?.node?.id).toBe('note:1');
+});

@@ -49,12 +49,14 @@ test('synthetic Observatory replay, restoration and recorded-part navigation', a
 });
 
 test('synthetic prospective write, commit and verified gate evidence stay distinct under reverse seek', async ({ page }) => {
+  const { mapGraph } = await import('../test/fixtures/observatoryMap.js');
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     await route.fulfill({ json: path === '/api/auth/me' ? { required: false, authenticated: true }
-      : path === '/api/meta' ? { modules: ['usage', 'observatory'], nav: [], timezone: 'UTC', owner: 'owner', version: 'test' }
+      : path === '/api/meta' ? { modules: ['usage', 'map', 'observatory'], nav: [], timezone: 'UTC', owner: 'owner', version: 'test' }
       : path === '/api/sources' ? { sources: [] }
-      : path === '/api/sync' ? { installed: false } : {} });
+      : path === '/api/sync' ? { installed: false }
+      : path === '/api/map/graph' ? mapGraph : {} });
   });
   const t = demoWindow.from;
   await page.goto(`/observatory?demo=1&from=${t}&to=${demoWindow.to}&cursor=${t + 12000}&event=write-call`);
@@ -64,7 +66,16 @@ test('synthetic prospective write, commit and verified gate evidence stay distin
   await expect(page.getByRole('button', { name: /tool_result/ })).toHaveCount(2);
   await page.getByRole('button', { name: /tool_result/ }).last().click();
   await expect(page.getByLabel('Captured change evidence')).toContainText('captured-diff');
-  await expect(page.getByLabel('Captured change evidence')).toContainText('notes/demo.md');
+  await expect(page.getByLabel('Captured change evidence')).toContainText('Projects/demo.md');
+  await page.getByRole('link', { name: 'Brain Map replay', exact: true }).click();
+  const capturedNote = page.getByLabel('Note activity').getByRole('button', { name: '▲ W write captured-diff: Projects/demo.md', exact: true });
+  await expect(capturedNote).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Filter note Projects/demo.md', exact: true }).first()).toBeVisible();
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12499));
+  await expect(capturedNote).toHaveCount(0);
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12500));
+  await expect(capturedNote).toBeVisible();
+  await page.getByRole('link', { name: 'Workspace replay', exact: true }).click();
   await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 14000));
   await expect(page.getByRole('button', { name: /tool_result/ })).toHaveCount(3);
   await page.getByRole('button', { name: /tool_result/ }).last().click();
