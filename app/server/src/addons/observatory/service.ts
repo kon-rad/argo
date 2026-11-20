@@ -43,7 +43,7 @@ export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySe
     // Read the complete bounded history of sessions touching the window for pairing and boundary state.
     // EXISTS prevents the archive x run x call multiplication found in a naive session join.
     const messages = bounded((await db.query<ArchiveRow>(`SELECT m.id, m.session_id, m.seq, m.ts, m.role, m.kind, CASE WHEN sum(octet_length(m.raw::text)) OVER () <= 4194304 THEN m.raw ELSE '{"observatory_oversized":true}'::jsonb END AS raw,
-        ''::text AS text, m.change_evidence, a.host, a.source, a.external_id, a.harness, NULL::timestamptz AS observed_at
+        ''::text AS text, m.change_evidence, m.file_observation, a.host, a.source, a.external_id, a.harness, NULL::timestamptz AS observed_at
       FROM archive_messages m JOIN archive_sessions a ON a.id = m.session_id
       WHERE ($3::text IS NULL OR a.host = $3) AND ($4::bigint IS NULL OR a.id = $4)
         AND (m.ts < $2 OR m.ts IS NULL)
@@ -137,7 +137,7 @@ export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySe
 
 export async function coverage(db: TxClient, range: Range, modules: ReadonlySet<string>) {
   const specs = [
-    { table: 'archive_messages', time: 'ts', group: "a.host, a.harness AS runtime", join: 'JOIN archive_sessions a ON a.id = t.session_id', filter: 'a.host', session: 't.session_id', extra: 'count(*) FILTER (WHERE t.ts IS NULL)::int AS untimed, max(a.updated_at) AS session_updated_at, count(*) FILTER (WHERE t.change_evidence IS NOT NULL)::int AS captured_changes' },
+    { table: 'archive_messages', time: 'ts', group: "a.host, a.harness AS runtime", join: 'JOIN archive_sessions a ON a.id = t.session_id', filter: 'a.host', session: 't.session_id', extra: 'count(*) FILTER (WHERE t.ts IS NULL)::int AS untimed, max(a.updated_at) AS session_updated_at, count(*) FILTER (WHERE t.file_observation IS NOT NULL)::int AS file_observations' },
     { table: 'usage_calls', time: 'ts', group: 't.host, t.source AS runtime', join: '', filter: 't.host', session: `(SELECT a.id FROM archive_sessions a WHERE a.host=t.host AND a.source=t.source AND a.external_id=t.session_external_id)`, extra: '0 AS untimed' },
     { table: 'usage_runs', time: 'started_at', group: "t.host, coalesce(t.runtime, 'claude-code') AS runtime", join: '', filter: 't.host', session: `(SELECT a.id FROM archive_sessions a WHERE a.host=t.host AND a.source=coalesce(t.runtime, 'claude-code') AND a.external_id=t.session_id)`, extra: 'count(*) FILTER (WHERE t.ended_at IS NULL OR t.started_at IS NULL OR t.ended_at <= t.started_at)::int AS unknown_intervals' },
     { table: 'card_events', time: 'at', group: 'NULL::text AS host, NULL::text AS runtime', join: '', filter: 'NULL::text', session: 'NULL::bigint', extra: '0 AS untimed' },

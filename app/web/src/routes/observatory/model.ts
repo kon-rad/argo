@@ -1,4 +1,4 @@
-import { fileEvidenceLevel, fileEvidenceRank, fileTargets, pairedFileCall } from './fileEvidence.js';
+import { fileEvidenceLevel, fileEvidenceRank, fileTargets, pairedFileCall, fileObservationOf, successfulFileResult, observationNotes } from './fileEvidence.js';
 import { ordered, applyEvent, type EvidenceEvent, type ReplayWindow } from '@secondbrain/contracts/observatory';
 import { sessionLink } from '../usage/AgentSessions.js';
 export type Origin = EvidenceEvent['actor']['kind'];
@@ -69,7 +69,8 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
   });
   const evidenceContext = { boundary: window.boundary, from: window.from };
   const targets = fileTargets(through, evidenceContext);
-  const filteredEvents = filters.note ? events.filter(e => targets.get(e.id)?.vaultPath === filters.note) : events;
+  const observationScope = observationNotes(through, evidenceContext, targets);
+  const filteredEvents = filters.note ? events.filter(e => targets.get(e.id)?.vaultPath === filters.note || observationScope.get(e.id) === filters.note) : events;
   const recordedHost = (e: EvidenceEvent): string | undefined => e.context?.host ?? (e.execution ? index!.intervals.get(e.execution)?.host : undefined);
   const capturedFiles = new Map<string, string>(), pairedFiles = new Map<string, Set<string>>(), pairedHosts = new Map<string, Set<string>>();
   // Only a validated, currently visible result can resolve its exact parent chain.
@@ -81,9 +82,10 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
       for (const known of [recordedHost(parent), recordedHost(e)]) if (known) hosts.add(known);
       pairedHosts.set(parent.id, hosts);
     }
-    if (!e.change || fileEvidenceRank(fileEvidenceLevel(e, byId, evidenceContext)) < fileEvidenceRank('captured-hashes')) continue;
+    const observation = fileObservationOf(e);
+    if (!observation || !successfulFileResult(e, byId, evidenceContext) || e.tool === 'inspect_change_commit' || parent?.tool === 'inspect_change_commit') continue;
     const host = recordedHost(e) ?? (parent ? recordedHost(parent) : undefined) ?? e.session ?? e.id;
-    const id = `file:${host}:${e.change.repository}:${e.change.worktree}:${e.change.path}`;
+    const id = `file:${host}:${observation.repository}:${observation.worktree}:${observation.path}:observation:${observation.id}`;
     capturedFiles.set(e.id, id);
     if (parent?.kind === 'tool_call' && (!recordedHost(parent) || !recordedHost(e) || recordedHost(parent) === recordedHost(e))) {
       const candidates = pairedFiles.get(parent.id) ?? new Set<string>(); candidates.add(id); pairedFiles.set(parent.id, candidates);
@@ -121,7 +123,8 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
     if (target) {
       const level = fileEvidenceLevel(e, byId, evidenceContext), rank = fileEvidenceRank(level);
       const id = fileId(e, target.path);
-      const label = `${target.operation}: ${target.path} (${level})`;
+      const observation = successfulFileResult(e, byId, evidenceContext) ? fileObservationOf(e) : undefined;
+      const label = `${target.operation}: ${target.path} (${level})${observation ? ` · observation ${observation.id}, ownership unknown` : ''}`;
       add(id, label, 'file', e.actor.kind, owner.fx + 85, 70, owner.fz);
       if (rank > (fileRanks.get(id) ?? -1)) { nodeMap.get(id)!.label = label; fileRanks.set(id, rank); }
       links.push({ source: e.id, target: id });

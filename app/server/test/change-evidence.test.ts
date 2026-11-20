@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { capturedChange } from '../src/archive/changeEvidence.js';
+import { capturedChange, fileObservation, fileObservationMetadataPresent } from '../src/archive/changeEvidence.js';
 import { archiveEvents, makeWindow, inspectChangeRequest, captureMetadataPresent, capturedRequestBinding, type ArchiveRow } from '../src/addons/observatory/adapters.js';
 import { replay } from '@secondbrain/contracts/observatory';
 const hash = 'a'.repeat(64);
@@ -7,7 +7,7 @@ const change = { version: 1, id: 'capture-a', repository: hash, worktree: 'b'.re
   diff: { format: 'replacement', before: '', after: 'PRIVATE CONTENT', truncated: false } };
 const raw = (extra = {}) => ({ harness: 'zen-agent', type: 'message', message: { role: 'toolResult', toolCallId: 'a', toolName: 'write_file', isError: false, details: { change }, ...extra } });
 const row = (id: number, raw: unknown, evidence?: unknown): ArchiveRow => ({ id, session_id: 1, seq: id, ts: new Date(id * 1000), role: 'assistant', kind: 'message', raw, text: '', host: 'fixture', source: 'zen-agent', harness: 'zen-agent', external_id: 's', observed_at: null, change_evidence: evidence });
-describe('prospective change evidence', () => {
+describe('legacy reported evidence compatibility', () => {
   it('accepts only explicit successful structured results; failed, shell and unknown results stay unknown', () => {
     expect(capturedChange(raw())).toMatchObject({ level: 'captured-diff', path: change.path });
     for (const value of [raw({ isError: true }), raw({ isError: undefined }), raw({ toolName: 'bash' }), { details: { change } }]) expect(capturedChange(value)).toBeNull();
@@ -23,8 +23,8 @@ describe('prospective change evidence', () => {
   it('replays a successful change only after its paired result and retains shared-worktree uncertainty', () => {
     const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: 'notes/demo.md', content: 'PRIVATE CONTENT' } }] } };
     const events = archiveEvents([row(1, call), row(2, raw(), capturedChange(raw()))]);
-    expect(events[0]?.change).toBeUndefined();
-    expect(events[1]?.change?.level).toBe('captured-diff');
+    expect(events[0]?.fileObservation).toBeUndefined();
+    expect(events[1]?.fileObservation?.ownership).toBe('unknown');
     expect(events[1]?.parent).toBe(events[0]?.id);
     expect(events[1]?.target).toEqual(events[0]?.target);
     expect(events.every(e => e.execution === null)).toBe(true);
@@ -34,7 +34,7 @@ describe('prospective change evidence', () => {
     expect(replay(window, 1000)).toEqual(replay(window, 1000));
     expect(JSON.stringify(events)).not.toMatch(/PRIVATE CONTENT|reasoning|merged/);
     const unpaired = archiveEvents([row(2, raw(), capturedChange(raw()))]);
-    expect(unpaired[0]?.change).toBeUndefined();
+    expect(unpaired[0]?.fileObservation).toBeUndefined();
   });
 });
 
@@ -67,28 +67,37 @@ it('keeps diff bodies behind source detail and applies the archive redactor', ()
 
 import { changeDetail } from '../src/addons/observatory/changeDetail.js';
 import type { TxClient } from '../src/db.js';
+function detailDb(source: any, suppliedParent?: unknown): TxClient {
+  const details = source?.message?.details, o = details?.fileObservation ?? details?.change;
+  const args = source?.message?.toolName === 'inspect_change_commit' ? { capture: o?.id, commit: o?.commitMatch?.sha ?? o?.commit?.sha }
+    : { path: details?.captureRequest?.path ?? o?.path };
+  const parent = suppliedParent ?? { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: source?.message?.toolName, arguments: args }] } };
+  return { query: async (sql: string, params?: unknown[]) => ({ rows: sql.includes('SELECT 1') ? [{}] : params?.[0] === '1'
+    ? [{ id: 1, session_id: 1, seq: 1, ts: new Date(1000), host: 'fixture', role: 'assistant', kind: 'message', raw: parent }]
+    : [{ session_id: 1, seq: 2, ts: new Date(2000), host: 'fixture', raw: source }] }) } as unknown as TxClient;
+}
 it('authorizes and revalidates lazy diff detail, strips extra fields and rejects changed source metadata', async () => {
   const event = archiveEvents([row(1, { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: change.path } }] } }), row(2, raw(), capturedChange(raw()))])[1]!;
-  const db = { query: async () => ({ rows: [{ raw: raw() }] }) } as unknown as TxClient;
+  const db = detailDb(raw());
   await expect(changeDetail(db, event, new Set())).rejects.toHaveProperty('status', 403);
   for (const outcome of ['unknown', 'error', undefined] as const)
     await expect(changeDetail(db, { ...event, outcome }, new Set(['usage']))).rejects.toHaveProperty('status', 404);
   const detail = await changeDetail(db, event, new Set(['usage']));
-  expect(detail).toMatchObject({ diff: { after: 'PRIVATE CONTENT' }, representation: 'redacted-source' });
+  expect(detail).toMatchObject({ diff: { after: 'PRIVATE CONTENT' }, representation: 'redacted-observation-source' });
   expect(JSON.stringify(detail)).not.toContain('toolCallId');
-  const oversized = { query: async () => ({ rows: [{ raw: null }] }) } as unknown as TxClient;
+  const oversized = detailDb(null);
   await expect(changeDetail(oversized, event, new Set(['usage']))).rejects.toHaveProperty('status', 413);
-  await expect(changeDetail(db, { ...event, change: { ...event.change!, after: 'd'.repeat(64) } }, new Set(['usage']))).rejects.toHaveProperty('status', 409);
+  await expect(changeDetail(db, { ...event, fileObservation: { ...event.fileObservation!, observedAfter: 'd'.repeat(64) } }, new Set(['usage']))).rejects.toHaveProperty('status', 409);
 });
 
 it('rejects a stale normalized projection and ambiguous same-session calls', () => {
   const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: change.path } }] } };
   const projected = capturedChange(raw())!;
   const stale = archiveEvents([row(1, call), row(2, raw(), { ...projected, after: 'd'.repeat(64) })]);
-  expect(stale[1]?.change).toBeUndefined();
+  expect(stale[1]?.fileObservation).toBeUndefined();
   const ambiguous = archiveEvents([row(1, call), row(2, call), row(3, raw(), projected)]);
   expect(ambiguous[2]?.parent).toBeUndefined();
-  expect(ambiguous[2]?.change).toBeUndefined();
+  expect(ambiguous[2]?.fileObservation).toBeUndefined();
 });
 
 for (const mismatch of ['tool', 'path', 'missing-tool'] as const) it(`leaves a same-ID ${mismatch} mismatch unpaired`, () => {
@@ -99,7 +108,7 @@ for (const mismatch of ['tool', 'path', 'missing-tool'] as const) it(`leaves a s
   expect(events[1]?.parent).toBeUndefined();
   expect(events[1]?.target).toBeUndefined();
   expect(events[1]?.writeEvidence).toBeUndefined();
-  expect(events[1]?.change).toBeUndefined();
+  expect(events[1]?.fileObservation).toBeUndefined();
   expect(replay(makeWindow(0, 5000, events, []), 2000).tools[events[0]!.id]).toBe('pending');
 });
 
@@ -110,12 +119,12 @@ it('requires exact worktree identity for absolute captured paths', () => {
   const result = raw({ details: { change: { ...change, worktree } } });
   const call = (path: string) => ({ harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path } }] } });
   const paired = archiveEvents([row(1, call(`${root}/${change.path}`)), row(2, result, capturedChange(result))]);
-  expect(paired[1]?.change?.worktree).toBe(worktree);
+  expect(paired[1]?.fileObservation?.worktree).toBe(worktree);
   for (const path of [`/srv/other-repo/${change.path}`, `notes/../${change.path}`]) {
     const events = archiveEvents([row(1, call(path)), row(2, result, capturedChange(result))]);
     expect(events[1]?.parent).toBeUndefined();
     expect(events[1]?.writeEvidence).toBeUndefined();
-    expect(events[1]?.change).toBeUndefined();
+    expect(events[1]?.fileObservation).toBeUndefined();
   }
 });
 
@@ -129,7 +138,7 @@ it.each(['codex', 'claude-code'])('pairs explicit call IDs from the known namele
   const events = archiveEvents([{ ...row(1, call), harness, source: harness }, { ...row(2, result), harness, source: harness }]);
   expect(events[1]?.parent).toBe(events[0]?.id);
   expect(events[1]?.target).toEqual(events[0]?.target);
-  expect(events[1]?.change).toBeUndefined();
+  expect(events[1]?.fileObservation).toBeUndefined();
   if (harness === 'codex') expect(events[1]?.writeEvidence).toBe('tool-reported-success');
   else expect(events[1]?.writeEvidence).toBeUndefined(); // Claude's missing is_error is unknown, not success.
   const unknown = archiveEvents([{ ...row(1, call), harness: 'unknown' }, { ...row(2, result), harness: 'unknown' }]);
@@ -146,7 +155,7 @@ it.each(['capture', 'commit', 'missing-request'] as const)('does not attach a lo
   const events = archiveEvents([row(1, call), row(2, result, capturedChange(result))]);
   expect(events[1]?.parent).toBeUndefined();
   expect(events[1]?.target).toBeUndefined();
-  expect(events[1]?.change).toBeUndefined();
+  expect(events[1]?.fileObservation).toBeUndefined();
   expect(events[1]?.writeEvidence).toBeUndefined();
 });
 
@@ -156,7 +165,7 @@ it('attaches a local commit only to the exact requested capture ID and commit SH
   const result = raw({ toolName: 'inspect_change_commit', details: { change: { ...change, commit } } });
   const events = archiveEvents([row(1, call), row(2, result, capturedChange(result))]);
   expect(events[1]?.parent).toBe(events[0]?.id);
-  expect(events[1]?.change?.commit?.sha).toBe(commit.sha);
+  expect(events[1]?.fileObservation?.commitMatch?.sha).toBe(commit.sha);
 });
 
 it('projects only bounded commit request bindings and preserves invalid capture presence', () => {
@@ -183,7 +192,7 @@ it('preserves the Hermes protocol with explicit IDs and an omitted optional tool
   const events = archiveEvents(rows(result));
   expect(events[1]?.parent).toBe(events[0]?.id);
   expect(events[1]?.target).toEqual(events[0]?.target);
-  expect(events[1]?.change).toBeUndefined();
+  expect(events[1]?.fileObservation).toBeUndefined();
   expect(events[1]?.writeEvidence).toBeUndefined(); // Plain content does not prove success.
   expect(archiveEvents(rows({ ...result, tool_name: 'edit_file' }))[1]?.parent).toBeUndefined();
   expect(archiveEvents(rows(result, 'unknown'))[1]?.parent).toBeUndefined();
@@ -203,10 +212,10 @@ it('collects bounded redacted changed-line observations but keeps hunk text out 
   expect(JSON.stringify(projected)).not.toContain('public'); expect(JSON.stringify(projected)).not.toContain('hunks');
   const events = archiveEvents([row(1, call), row(2, result, projected)]);
   const event = events[1]!;
-  expect(event.change).toEqual(projected); expect(JSON.stringify(events)).not.toContain('public');
-  const db = { query: async () => ({ rows: [{ raw: result }] }) } as unknown as TxClient;
+  expect(event.fileObservation).toEqual(fileObservation(result)); expect(JSON.stringify(events)).not.toContain('public');
+  const db = detailDb(result);
   await expect(changeDetail(db, event, new Set())).rejects.toHaveProperty('status', 403);
-  expect(await changeDetail(db, event, new Set(['usage']))).toMatchObject({ diff, originalHashes: { before: null, after: hash } });
+  expect(await changeDetail(db, event, new Set(['usage']))).toMatchObject({ diff, observedHashes: { before: null, after: hash } });
   const stale = { query: async () => ({ rows: [{ raw: raw({ details: { change: { ...change, diff: { ...diff, context: 1 } } } }) }] }) } as unknown as TxClient;
   await expect(changeDetail(stale, event, new Set(['usage']))).rejects.toHaveProperty('status', 409);
   for (const invalid of [
@@ -233,7 +242,7 @@ it('keeps collected argument records content-bearing while the overview and capt
   expect(collected.messages.filter(m => m.kind === 'tool')).toHaveLength(0); // Dedicated tool lines are skipped; assistant arguments remain.
   const rows = collected.messages.map((message, i) => row(i + 1, message.raw, capturedChange(message.raw)));
   const events = archiveEvents(rows);
-  expect(events.filter(e => e.change?.level === 'captured-hashes')).toHaveLength(2);
+  expect(events.filter(e => e.fileObservation?.diff.truncated && !e.change)).toHaveLength(2);
   expect(JSON.stringify(events)).not.toContain(before); expect(JSON.stringify(events)).not.toContain(after);
   const protectedSource = buildRedactor({ env: { FIXTURE_WRITE_SECRET: before, FIXTURE_EDIT_SECRET: after } }).deep(collected.messages);
   expect(JSON.stringify(protectedSource)).not.toContain(before); expect(JSON.stringify(protectedSource)).not.toContain(after);
@@ -246,7 +255,7 @@ it.each([['./notes/demo.md', 'notes/demo.md'], ['note.md', 'sub/note.md']])('pai
   const binding = { path: requested, resolvedPath: `${root}/${observed}` };
   const result = raw({ details: { change: c, captureRequest: binding } });
   const events = archiveEvents([row(1, call), row(2, result, capturedChange(result))]);
-  expect(events[1]?.parent).toBe(events[0]?.id); expect(events[1]?.change?.path).toBe(observed);
+  expect(events[1]?.parent).toBe(events[0]?.id); expect(events[1]?.fileObservation?.path).toBe(observed);
   expect(capturedRequestBinding(result)).toEqual({ present: true, request: binding });
   const legacy = raw({ details: { change: c, path: binding.resolvedPath } });
   expect(archiveEvents([row(1, call), row(2, legacy, capturedChange(legacy))])[1]?.parent).toBeUndefined(); // details.path alone is not a request binding.
@@ -263,10 +272,10 @@ it('does not fall back to legacy path matching for present-invalid capture reque
     const result = raw({ details: { change, captureRequest } });
     expect(capturedRequestBinding(result).present).toBe(true);
     const event = archiveEvents([row(1, call), row(2, result, capturedChange(result))])[1]!;
-    expect(event.parent).toBeUndefined(); expect(event.change).toBeUndefined(); expect(event.writeEvidence).toBeUndefined();
+    expect(event.parent).toBeUndefined(); expect(event.fileObservation).toBeUndefined(); expect(event.writeEvidence).toBeUndefined();
   }
   expect(capturedRequestBinding(raw())).toEqual({ present: false });
-  expect(archiveEvents([row(1, call), row(2, raw(), capturedChange(raw()))])[1]?.change).toBeTruthy();
+  expect(archiveEvents([row(1, call), row(2, raw(), capturedChange(raw()))])[1]?.fileObservation).toBeTruthy();
   const privateExtra = raw({ details: { change, captureRequest: { path: change.path, resolvedPath: '/srv/fixture-repo/notes/demo.md', body: 'PRIVATE EXTRA' } } });
   expect(JSON.stringify(capturedRequestBinding(privateExtra))).not.toContain('PRIVATE EXTRA');
 });
@@ -282,11 +291,11 @@ it('revalidates current source request binding for lazy detail even when capture
   expect(events[0]?.target).toEqual({ path: request.path, operation: 'write' });
   expect(event.target).toEqual({ path: request.path, operation: 'write', vaultPath: 'notes/demo.md' });
   expect(event.target).not.toBe(events[0]?.target); // The earlier call never gains future scope.
-  const db = (source: unknown) => ({ query: async () => ({ rows: [{ raw: source }] }) }) as unknown as TxClient;
+  const db = (source: unknown) => detailDb(source);
   expect(await changeDetail(db(result), event, new Set(['usage']))).toMatchObject({ diff: { after: 'PRIVATE CONTENT' } });
   for (const captureRequest of [null, {}, { ...request, path: 'other.md' }, { ...request, resolvedPath: '/srv/other/notes/demo.md' }, { ...request, resolvedPath: `${root}/other.md` }]) {
     const changed = raw({ details: { change: c, captureRequest } });
-    expect(capturedChange(changed)).toEqual(event.change);
+    expect(fileObservation(changed)).toEqual(event.fileObservation);
     await expect(changeDetail(db(changed), event, new Set(['usage']))).rejects.toHaveProperty('status', 409);
   }
   await expect(changeDetail(db(raw({ details: { change: c } })), event, new Set(['usage']))).rejects.toHaveProperty('status', 409);
@@ -296,7 +305,7 @@ it('never uses request-only metadata without a valid capture to establish succes
   const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: change.path } }] } };
   const result = raw({ details: { captureRequest: { path: change.path, resolvedPath: '/srv/fixture-repo/notes/demo.md' } } });
   const event = archiveEvents([row(1, call), row(2, result)])[1]!;
-  expect(event.parent).toBeUndefined(); expect(event.writeEvidence).toBeUndefined(); expect(event.change).toBeUndefined();
+  expect(event.parent).toBeUndefined(); expect(event.writeEvidence).toBeUndefined(); expect(event.fileObservation).toBeUndefined();
 });
 
 it('retains legacy lazy detail for an exact target when the optional runtime request binding is absent', async () => {
@@ -306,6 +315,81 @@ it('retains legacy lazy detail for an exact target when the optional runtime req
   const source = raw({ details: { change: c, captureRequest: { path: c.path, resolvedPath: `${root}/${c.path}` } } });
   const event = archiveEvents([row(1, call), row(2, source, capturedChange(source))])[1]!;
   const absent = raw({ details: { change: c } });
-  const db = { query: async () => ({ rows: [{ raw: absent }] }) } as unknown as TxClient;
+  const db = detailDb(absent);
   expect(await changeDetail(db, event, new Set(['usage']))).toMatchObject({ diff: { after: 'PRIVATE CONTENT' } });
+});
+
+it('leaves a same-ID same-tool successful result with a contradictory recorded path unpaired without capture', () => {
+  const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: 'notes/demo.md' } }] } };
+  for (const path of ['notes/other.md', null, '', 'x'.repeat(5000)]) {
+    const result = raw({ details: { path } });
+    const event = archiveEvents([row(1, call), row(2, result)])[1]!;
+    expect(event.parent).toBeUndefined(); expect(event.target).toBeUndefined(); expect(event.writeEvidence).toBeUndefined();
+  }
+  const same = raw({ details: { path: 'notes/demo.md' } });
+  expect(archiveEvents([row(1, call), row(2, same)])[1]?.writeEvidence).toBe('tool-reported-success');
+  const absent = raw({ details: {} });
+  expect(archiveEvents([row(1, call), row(2, absent)])[1]?.writeEvidence).toBe('tool-reported-success');
+});
+it('requires explicit validated resolution for relative calls with absolute recorded result paths', () => {
+  const root = '/srv/fixture-repo', requested = './notes/demo.md';
+  const c = { ...change, worktree: createHash('sha256').update(root).digest('hex') };
+  const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: requested } }] } };
+  const binding = { path: requested, resolvedPath: `${root}/${change.path}` };
+  const unbound = raw({ details: { path: binding.resolvedPath } });
+  expect(archiveEvents([row(1, call), row(2, unbound)])[1]?.parent).toBeUndefined();
+  const bound = raw({ details: { path: binding.resolvedPath, change: c, captureRequest: binding } });
+  expect(archiveEvents([row(1, call), row(2, bound, capturedChange(bound))])[1]?.fileObservation).toBeTruthy();
+  const wrong = raw({ details: { path: `${root}/other.md`, change: c, captureRequest: binding } });
+  const event = archiveEvents([row(1, call), row(2, wrong, capturedChange(wrong))])[1]!;
+  expect(event.parent).toBeUndefined(); expect(event.writeEvidence).toBeUndefined(); expect(event.fileObservation).toBeUndefined();
+});
+
+
+const observed = { version: 1, id: 'observation-new', repository: hash, worktree: createHash('sha256').update('/srv/fixture-repo').digest('hex'),
+  path: change.path, observedBefore: null, observedAfter: hash, ownership: 'unknown',
+  diff: { format: 'changed-lines', context: 0, redacted: true, truncated: false,
+    hunks: [{ oldStart: 1, newStart: 1, deleted: [], added: ['new public\n'] }] } };
+const observedRaw = (observation: unknown = observed, extraDetails = {}) => raw({ details: { fileObservation: observation,
+  captureRequest: { path: './notes/demo.md', resolvedPath: '/srv/fixture-repo/notes/demo.md' }, path: '/srv/fixture-repo/notes/demo.md', ...extraDetails } });
+const observedCall = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: './notes/demo.md', content: 'private argument' } }] } };
+const observedRow = (source: unknown) => ({ ...row(2, source), file_observation: fileObservation(source) });
+it('normalizes current writes as unknown-owned observations with authorized body-free overview and bounded detail', async () => {
+  const source = observedRaw(), metadata = fileObservation(source)!;
+  expect(metadata).toMatchObject({ ownership: 'unknown', origin: 'runtime-observation', observedAfter: hash });
+  expect(JSON.stringify(metadata)).not.toMatch(/hunks|new public|private argument/);
+  const events = archiveEvents([row(1, observedCall), observedRow(source)], '/srv/fixture-repo');
+  const event = events[1]!;
+  expect(event.change).toBeUndefined(); expect(event.writeEvidence).toBe('tool-reported-success');
+  expect(event.fileObservation).toEqual(metadata); expect(event.target?.vaultPath).toBe(change.path);
+  expect(events[0]?.target?.vaultPath).toBeUndefined();
+  const db = detailDb(source);
+  await expect(changeDetail(db, event, new Set())).rejects.toHaveProperty('status', 403);
+  expect(await changeDetail(db, event, new Set(['usage']))).toMatchObject({ ownership: 'unknown', origin: 'runtime-observation', diff: observed.diff });
+  expect(events.every(e => !e.change)).toBe(true);
+});
+it.each([null, {}, { ...observed, ownership: 'owned' }, { ...observed, origin: 'runtime-observation' }])('fails closed for present-invalid modern observation %j', value => {
+  const source = observedRaw(value);
+  expect(fileObservationMetadataPresent(source)).toBe(true); expect(fileObservation(source)).toBeNull();
+  const event = archiveEvents([row(1, observedCall), observedRow(source)])[1]!;
+  expect(event.parent).toBeUndefined(); expect(event.writeEvidence).toBeUndefined(); expect(event.fileObservation).toBeUndefined(); expect(event.change).toBeUndefined();
+});
+it('rejects dual observation/legacy fields rather than falling back to a valid legacy capture', () => {
+  for (const value of [null, observed]) {
+    const source = observedRaw(value, { change });
+    expect(fileObservation(source)).toBeNull(); expect(capturedChange(source)).toBeNull();
+    const event = archiveEvents([row(1, observedCall), { ...observedRow(source), change_evidence: capturedChange(source) }])[1]!;
+    expect(event.parent).toBeUndefined(); expect(event.fileObservation).toBeUndefined(); expect(event.change).toBeUndefined();
+  }
+});
+it('keeps commit-byte matches as inspector content facts and revalidates their exact current parent request', async () => {
+  const commitMatch = { sha: 'c'.repeat(40), verification: 'local-object', authorship: 'unknown' };
+  const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'inspect_change_commit', arguments: { capture: observed.id, commit: commitMatch.sha } }] } };
+  const source = raw({ toolName: 'inspect_change_commit', details: { fileObservation: { ...observed, commitMatch } } });
+  const event = archiveEvents([row(1, call), observedRow(source)])[1]!;
+  expect(event.fileObservation?.commitMatch).toEqual(commitMatch); expect(event.change).toBeUndefined(); expect(event.target).toBeUndefined(); expect(event.writeEvidence).toBeUndefined();
+  const db = (parent: unknown) => detailDb(source, parent);
+  expect(await changeDetail(db(call), event, new Set(['usage']))).toMatchObject({ ownership: 'unknown', commitMatch });
+  const wrong = { ...call, message: { ...call.message, content: [{ ...call.message.content[0]!, arguments: { capture: 'other', commit: commitMatch.sha } }] } };
+  await expect(changeDetail(db(wrong), event, new Set(['usage']))).rejects.toHaveProperty('status', 409);
 });

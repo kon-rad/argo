@@ -7,6 +7,7 @@ function event(id: string, offset: number, kind: EvidenceEvent['kind'], origin: 
     actor: { kind: origin, sender: null, channel: 'synthetic', evidence: 'synthetic fixture only' },
     source: { table: 'archive_messages', id: String(offset), part: `${offset}:0` }, precision: 'millisecond', confidence: 'recorded' };
 }
+// Deliberately legacy input: replay must label this reported observation, never a verified transition.
 const demoChange = { version: 1 as const, id: 'synthetic-capture', repository: 'a'.repeat(64), worktree: 'b'.repeat(64), path: 'Projects/demo.md', before: null, after: 'f'.repeat(64), level: 'captured-diff' as const, diff: { format: 'replacement' as const, truncated: false } };
 export const demoWindow: ReplayWindow = {
   version: 1, from, to: from + 20000, boundary: { tickets: {}, tools: {} },

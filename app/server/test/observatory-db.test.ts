@@ -64,7 +64,8 @@ it('applies the capture migration twice and reingests one successful observation
   const from = Date.parse('2025-01-01T00:00:00Z');
   const data = await readSnapshot(db => loadWindow(db, { from, to: from + 5000, host }, new Set(['usage'])));
   const call = data.window.events.find(e => e.kind === 'tool_call')!, result = data.window.events.find(e => e.kind === 'tool_result')!;
-  expect(result.change?.level).toBe('captured-diff');
+  expect(result.change).toBeUndefined();
+  expect(result.fileObservation).toMatchObject({ ownership: 'unknown', origin: 'legacy-reported' });
   expect(replay(data.window, from).tools[call.id]).toBe('pending');
   expect(replay(data.window, from + 1000).tools[call.id]).toBe('success');
   expect(replay(data.window, from).tools[call.id]).toBe('pending');
@@ -90,4 +91,69 @@ it('captures org sender at insertion and never rewrites history from a changed r
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }
+});
+
+
+it('imports metadata-only unknown-owned observations through the new nullable migration without changing legacy ownership', async () => {
+  const migration = readFileSync(new URL('../../db/migrations/1756000020750_archive-file-observations.sql', import.meta.url), 'utf8').split('-- Down Migration')[0]!;
+  await withTransaction(async tx => { await tx.query(migration); await tx.query(migration); });
+  const session = (await query(`INSERT INTO archive_sessions(source,host,external_id) VALUES('zen-agent',$1,'observed-current') RETURNING id`, [host])).rows[0]!.id;
+  const observation = { version: 1, id: 'current-observation', repository: 'a'.repeat(64), worktree: 'b'.repeat(64), path: 'notes/demo.md',
+    observedBefore: null, observedAfter: 'c'.repeat(64), ownership: 'unknown', diff: { format: 'changed-lines', context: 0, redacted: true, truncated: false,
+      hunks: [{ oldStart: 1, newStart: 1, deleted: [], added: ['visible changed line\n'] }] } };
+  const raw = { harness: 'zen-agent', type: 'message', message: { role: 'toolResult', toolCallId: 'observed-call', toolName: 'write_file', isError: false, details: { fileObservation: observation } } };
+  const input: ParsedMessage[] = [{ seq: 1, externalId: 'observed-call', parentExternalId: null, role: 'assistant', kind: 'message', ts: new Date('2025-01-01T00:00:01Z'), contentText: '', rawSha: 'current-call', isSidechain: false,
+    raw: { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'observed-call', name: 'write_file', arguments: { path: observation.path } }] } } },
+    { seq: 2, externalId: 'observed-result', parentExternalId: null, role: 'tool', kind: 'message', ts: new Date('2025-01-01T00:00:02Z'), contentText: '', raw, rawSha: 'current-result', isSidechain: false }];
+  expect(await withTransaction(tx => upsertMessages(tx, session, input))).toBe(2);
+  expect(await withTransaction(tx => upsertMessages(tx, session, input))).toBe(0);
+  const stored = (await query('SELECT file_observation, change_evidence FROM archive_messages WHERE session_id=$1 AND seq=2', [session])).rows[0]!;
+  expect(stored.change_evidence).toBeNull(); expect(stored.file_observation).toMatchObject({ ownership: 'unknown', origin: 'runtime-observation' });
+  expect(JSON.stringify(stored)).not.toMatch(/hunks|visible changed line/);
+  const data = await readSnapshot(db => loadWindow(db, { from: Date.parse('2025-01-01T00:00:00Z'), to: Date.parse('2025-01-01T00:00:04Z'), host, session }, new Set(['usage'])));
+  const event = data.window.events.find(e => e.fileObservation)!;
+  expect(event.change).toBeUndefined(); expect(event.writeEvidence).toBe('tool-reported-success');
+  expect(JSON.stringify(data.window)).not.toMatch(/hunks|visible changed line/);
+});
+
+
+import express from 'express';
+import request from 'supertest';
+import { observatoryRouter } from '../src/addons/observatory/routes.js';
+import { errorHandler } from '../src/routes/http.js';
+it('rechecks owner, export sources, modules, current binding and raw size on the real observation endpoint', async () => {
+  const session = (await query(`INSERT INTO archive_sessions(source,host,external_id) VALUES('zen-agent',$1,'observation-api') RETURNING id`, [host])).rows[0]!.id;
+  const observation = { version: 1, id: 'api-observation', repository: 'a'.repeat(64), worktree: 'b'.repeat(64), path: 'notes/demo.md',
+    observedBefore: null, observedAfter: 'c'.repeat(64), ownership: 'unknown', diff: { format: 'replacement', before: '', after: 'readable observed text', truncated: false } };
+  const raw = { harness: 'zen-agent', type: 'message', message: { role: 'toolResult', toolCallId: 'api-call', toolName: 'write_file', isError: false, details: { fileObservation: observation } } };
+  const input: ParsedMessage[] = [{ seq: 1, externalId: 'api-call', parentExternalId: null, role: 'assistant', kind: 'message', ts: new Date('2025-01-01T00:00:01Z'), contentText: '', rawSha: 'api-call', isSidechain: false,
+    raw: { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'api-call', name: 'write_file', arguments: { path: observation.path } }] } } },
+    { seq: 2, externalId: 'api-result', parentExternalId: null, role: 'tool', kind: 'message', ts: new Date('2025-01-01T00:00:02Z'), contentText: '', raw, rawSha: 'api-result', isSidechain: false }];
+  await withTransaction(tx => upsertMessages(tx, session, input));
+  const modules = new Set(['usage']), app = express();
+  // Trusted fixture middleware stands in for the existing authenticated session middleware.
+  app.use((req, res, next) => { res.locals.sessionHash = req.get('x-fixture-owner') ?? 'fixture-owner'; next(); });
+  app.use('/api/observatory', observatoryRouter(modules)); app.use(errorHandler);
+  const window = (await request(app).get('/api/observatory/window').query({ from: '2025-01-01T00:00:00Z', to: '2025-01-01T00:00:04Z', host, session }).expect(200)).body;
+  const event = window.window.events.find((e: { fileObservation?: unknown }) => e.fileObservation);
+  expect(event.change).toBeUndefined(); expect(JSON.stringify(window)).not.toContain('readable observed text');
+  const url = `/api/observatory/events/${encodeURIComponent(event.id)}/observation`, token = { export: window.export };
+  const detail = (await request(app).get(url).query(token).expect(200)).body.detail;
+  expect(detail).toMatchObject({ ownership: 'unknown', origin: 'runtime-observation', diff: { after: 'readable observed text' } });
+  await request(app).get(url).set('x-fixture-owner', 'other-fixture-owner').query(token).expect(410);
+  modules.clear(); await request(app).get(url).query(token).expect(403); modules.add('usage');
+  const rewritten = { ...input[0]!, rawSha: 'api-rewritten-parent', raw: { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'api-call', name: 'write_file', arguments: { path: 'notes/other.md' } }] } } };
+  await withTransaction(tx => upsertMessages(tx, session, [rewritten]));
+  await request(app).get(url).query(token).expect(409);
+  await withTransaction(tx => upsertMessages(tx, session, [input[0]!]));
+  await query('UPDATE archive_messages SET raw=$1 WHERE id=$2', [{ ...raw, message: { ...raw.message, toolCallId: 'other-call' } }, event.source.id]);
+  await request(app).get(url).query(token).expect(409);
+  await query('UPDATE archive_messages SET raw=$1 WHERE id=$2', [{ ...raw, message: { ...raw.message, details: { ...raw.message.details, path: 'notes/other.md' } } }, event.source.id]);
+  await request(app).get(url).query(token).expect(409);
+  await query('UPDATE archive_messages SET raw=$1 WHERE id=$2', [{ ...raw, message: { ...raw.message, details: { ...raw.message.details, captureRequest: null } } }, event.source.id]);
+  await request(app).get(url).query(token).expect(409);
+  await query('UPDATE archive_messages SET raw=$1 WHERE id=$2', [{ ...raw, oversizedFixture: 'x'.repeat(1048576) }, event.source.id]);
+  await request(app).get(url).query(token).expect(413);
+  await query('DELETE FROM archive_messages WHERE id=$1', [event.source.id]);
+  await request(app).get(url).query(token).expect(403);
 });

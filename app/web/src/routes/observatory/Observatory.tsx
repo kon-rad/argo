@@ -1,4 +1,4 @@
-import { fileEvidenceLevel, fileEvidenceRank, fileTargets } from './fileEvidence.js';
+import { fileEvidenceLevel, fileTargets, fileObservationOf, successfulFileResult } from './fileEvidence.js';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAppTimezone } from '../../lib/useTimezone.js';
@@ -70,11 +70,12 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
   const selected = scene?.events.find(e => e.id === state.event);
   const inspectedTarget = selected && scene ? fileTargets(scene.contextEvents, scene.evidenceContext).get(selected.id) : undefined;
   const inspectedLevel = selected && scene ? fileEvidenceLevel(selected, new Map(scene.contextEvents.map(event => [event.id, event])), scene.evidenceContext) : 'attempt';
-  const verifiedChange = !!selected?.change && fileEvidenceRank(inspectedLevel) >= fileEvidenceRank('captured-hashes');
+  const selectedObservation = selected ? fileObservationOf(selected) : undefined;
+  const visibleObservation = !!selected && !!scene && !!selectedObservation && successfulFileResult(selected, new Map(scene.contextEvents.map(event => [event.id, event])), scene.evidenceContext);
   const execution = scene?.active.find(i => i.id === state.event);
   const selectedNode = scene?.nodes.find(n => n.id === state.event);
   const showDetail = async (diff = false) => {
-    if (!selected || !snapshot || diff && !verifiedChange) return;
+    if (!selected || !snapshot || diff && !visibleObservation) return;
     if (state.demo === '1') { setDetail({ event: selected, detail: 'Synthetic only, no recorded source exists' }); return; }
     detailRequest.current?.abort();
     const abort = new AbortController(); detailRequest.current = abort;
@@ -121,6 +122,7 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
       <p>Origins filter event markers. Execution markers retain their recorded agent identity.</p>
       <p>{scene.active.length} active executions · {scene.nodes.length} nodes · {scene.links.length} edges · {scene.omittedNodes} nodes / {scene.omittedLinks} edges omitted at display budget</p>
       <ul aria-label="Active executions" className="space-y-1">{scene.active.map(i => <li key={i.id}><button className="underline" onClick={() => select(i.id)}>● A {i.persona ?? 'persona unknown'} · {i.host} · {i.runtime} · {i.id}</button> · {i.ticket ?? 'ticket unknown'} · {scene.nodes.find(n => n.id === i.id)?.label}</li>)}</ul>
+      <p>File targets are per operation/observation. Tool-reported success does not prove an owned transition; snapshot diffs and Git content comparisons do not increase the write grade.</p>
       <ul aria-label="Workspace targets">{scene.nodes.filter(n => n.kind === 'ticket' || n.kind === 'file').map(n => <li key={n.id}><button className="underline" onClick={() => select(n.id)}>{n.kind}: {n.label}</button></li>)}</ul>
       {!scene.active.length && <p>No evidenced active executions at this cursor.</p>}
       <section aria-label="Evidence inspector" className="border border-[var(--rule)] p-3">
@@ -133,14 +135,15 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
           <p>Source {selected.source.table}:{selected.source.id} part {selected.source.part}</p>
           <p>Outcome at cursor: {scene.tools[selected.occurrence ?? selected.parent ?? ''] ?? 'unknown'}</p>
           {inspectedTarget && <p>{inspectedTarget.operation}: {inspectedTarget.path} ({inspectedLevel})</p>}
-          {verifiedChange && <pre className="whitespace-pre-wrap break-all" aria-label="Captured change evidence">{JSON.stringify({ ...selected.change, diffSource: selected.source }, null, 2)}</pre>}
-          {selected.change && !verifiedChange && <p>Recorded change metadata is unverified at this cursor. No captured grade or diff is available.</p>}
+          {visibleObservation && <div aria-label="File observation evidence"><p>Unattributed file snapshots. Transition ownership is unknown. {selectedObservation!.origin === 'legacy-reported' ? 'Legacy-reported source claim; not retroactively verified.' : 'Runtime observations; concurrent writers may be included.'}</p><pre className="whitespace-pre-wrap break-all">{JSON.stringify({ ...selectedObservation, diffSource: selected.source }, null, 2)}</pre></div>}
+          {visibleObservation && selectedObservation!.commitMatch && <p aria-label="Git content comparison">{selectedObservation!.origin === 'legacy-reported' ? 'Legacy source reports a Git byte-pair match' : 'Runtime reports an observed byte-pair match'} at {selectedObservation!.commitMatch.sha}. This content comparison establishes neither authorship nor ownership of a file transition and is not a new write.</p>}
+          {selectedObservation && !visibleObservation && <p>Recorded file metadata is unverified at this cursor. No observation detail is available.</p>}
           {selected.artifact && <pre className="whitespace-pre-wrap break-all" aria-label="PR evidence">{JSON.stringify(selected.artifact, null, 2)}</pre>}
           {selected.kind === 'thinking' && <p>Thinking: {typeof detail?.detail === 'object' && detail.detail.thinking ? detail.detail.thinking.availability : 'not checked; verify source detail'}. No reasoning reconstructed.</p>}
           {typeof detail?.detail === 'object' && detail.detail.thinking?.availability === 'authorized-summary' && <div aria-label="Authorized thinking summary" className="whitespace-pre-wrap">{detail.detail.thinking.summary}</div>}
           <button className={field} onClick={() => void showDetail()}>Verify source detail</button>
-          {verifiedChange && <button className={field} onClick={() => void showDetail(true)}>Load captured diff</button>}
-          {verifiedChange && typeof detail?.detail === 'object' && detail.detail.diff && <ChangedDiff diff={detail.detail.diff} />}
+          {visibleObservation && <button className={field} onClick={() => void showDetail(true)}>Load observed diff</button>}
+          {visibleObservation && typeof detail?.detail === 'object' && detail.detail.diff && <ChangedDiff diff={detail.detail.diff} />}
           {detail !== undefined && <>{!(typeof detail.detail === 'object' && detail.detail.diff) && <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(detail, null, 2)}</pre>}{detail.event && !detail.error && eventLink(selected) && state.demo !== '1' && <Link className="underline" to={eventLink(selected)!}>Open recorded session part</Link>}</>}
         </> : !execution && <p>Select an execution or recorded event. File targets require structured source evidence.</p>}
       </section>

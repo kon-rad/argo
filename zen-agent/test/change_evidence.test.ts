@@ -10,54 +10,59 @@ import { DEFAULTS } from '../src/config.js';
 import { fsTools } from '../src/tools/fs.js';
 import type { ToolContext } from '../src/tools/index.js';
 
-test('captures only this operation, rejects failed edits, and verifies exact commit bytes', async () => {
+test('observes this path without claiming ownership of the operation, rejects failed edits, and verifies exact commit bytes', async () => {
   const root = mkdtempSync(join(tmpdir(), 'zen-change-'));
   try {
     const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
     git('init', '-q'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.com'); // public-ok: synthetic git identity
     writeFileSync(join(root, 'note.md'), 'before\n'); git('add', '.'); git('commit', '-qm', 'fixture');
     const tools = Object.fromEntries(fsTools({ cfg: { ...DEFAULTS, workdir: root, fs: { ...DEFAULTS.fs, roots: [root] } } } as ToolContext).map(t => [t.name, t]));
-    const run = async (name: string, args: object) => (await tools[name]!.execute('call', args)).details;
+    const run = async (name: string, args: object) => {
+      const details = (await tools[name]!.execute('call', args)).details;
+      assert.equal(details.change, undefined);
+      if (details.fileObservation) assert.equal(details.fileObservation.ownership, 'unknown');
+      return details;
+    };
     await assert.rejects(run('edit_file', { path: 'note.md', old: 'absent', new: 'oops' }));
     assert.equal(readFileSync(join(root, 'note.md'), 'utf8'), 'before\n');
     writeFileSync(join(root, 'other.md'), 'another agent\n');
     const result = await run('edit_file', { path: 'note.md', old: 'before', new: 'after' });
-    assert.equal(result.change.path, 'note.md');
-    assert.notEqual(result.change.before, result.change.after);
-    assert.deepEqual(result.change.diff, { format: 'changed-lines', context: 0, redacted: true, truncated: false, hunks: [{ oldStart: 1, newStart: 1, deleted: ['before\n'], added: ['after\n'] }] });
+    assert.equal(result.fileObservation.path, 'note.md');
+    assert.notEqual(result.fileObservation.observedBefore, result.fileObservation.observedAfter);
+    assert.deepEqual(result.fileObservation.diff, { format: 'changed-lines', context: 0, redacted: true, truncated: false, hunks: [{ oldStart: 1, newStart: 1, deleted: ['before\n'], added: ['after\n'] }] });
     assert.equal(JSON.stringify(result).includes('another agent'), false);
-    await assert.rejects(run('inspect_change_commit', { capture: result.change.id, commit: git('rev-parse', 'HEAD') }));
+    await assert.rejects(run('inspect_change_commit', { capture: result.fileObservation.id, commit: git('rev-parse', 'HEAD') }));
     git('add', 'note.md'); git('commit', '-qm', 'change');
-    const commit = await run('inspect_change_commit', { capture: result.change.id, commit: git('rev-parse', 'HEAD') });
-    assert.equal(commit.change.commit.verification, 'local-object');
-    assert.equal(commit.change.id, result.change.id);
-    assert.equal(commit.change.commit.sha, git('rev-parse', 'HEAD'));
-    assert.equal(commit.change.commit.authorship, 'unknown');
+    const commit = await run('inspect_change_commit', { capture: result.fileObservation.id, commit: git('rev-parse', 'HEAD') });
+    assert.equal(commit.fileObservation.commitMatch.verification, 'local-object');
+    assert.equal(commit.fileObservation.id, result.fileObservation.id);
+    assert.equal(commit.fileObservation.commitMatch.sha, git('rev-parse', 'HEAD'));
+    assert.equal(commit.fileObservation.commitMatch.authorship, 'unknown');
     git('tag', '-a', 'fixture-tag', '-m', 'fixture tag');
-    await assert.rejects(run('inspect_change_commit', { capture: result.change.id, commit: git('rev-parse', 'fixture-tag') }), /commit object/);
+    await assert.rejects(run('inspect_change_commit', { capture: result.fileObservation.id, commit: git('rev-parse', 'fixture-tag') }), /commit object/);
     const peerTools = Object.fromEntries(fsTools({ cfg: { ...DEFAULTS, workdir: root, fs: { ...DEFAULTS.fs, roots: [root] } } } as ToolContext).map(t => [t.name, t]));
-    await assert.rejects(peerTools.inspect_change_commit!.execute('peer', { capture: result.change.id, commit: git('rev-parse', 'HEAD') }), /capture unavailable/);
+    await assert.rejects(peerTools.inspect_change_commit!.execute('peer', { capture: result.fileObservation.id, commit: git('rev-parse', 'HEAD') }), /observation unavailable/);
     const linked = join(root, 'linked');
     git('worktree', 'add', '-qb', 'fixture-linked', linked);
     const linkedTools = Object.fromEntries(fsTools({ cfg: { ...DEFAULTS, workdir: linked, fs: { ...DEFAULTS.fs, roots: [linked] } } } as ToolContext).map(t => [t.name, t]));
-    const linkedChange = (await linkedTools.edit_file!.execute('linked', { path: 'note.md', old: 'after', new: 'linked' })).details.change;
-    assert.equal(linkedChange.repository, result.change.repository);
-    assert.notEqual(linkedChange.worktree, result.change.worktree);
+    const linkedChange = (await linkedTools.edit_file!.execute('linked', { path: 'note.md', old: 'after', new: 'linked' })).details.fileObservation;
+    assert.equal(linkedChange.repository, result.fileObservation.repository);
+    assert.notEqual(linkedChange.worktree, result.fileObservation.worktree);
     const noop = await run('write_file', { path: 'note.md', content: 'after\n' });
-    assert.equal(noop.change, undefined);
+    assert.equal(noop.fileObservation, undefined);
     const empty = await run('write_file', { path: 'empty.md', content: '' });
-    assert.equal(empty.change.before, null); assert.equal(empty.change.after, hash(''));
-    assert.deepEqual(empty.change.diff, { format: 'changed-lines', context: 0, redacted: true, truncated: true, reason: 'empty-change' });
+    assert.equal(empty.fileObservation.observedBefore, null); assert.equal(empty.fileObservation.observedAfter, hash(''));
+    assert.deepEqual(empty.fileObservation.diff, { format: 'changed-lines', context: 0, redacted: true, truncated: true, reason: 'empty-change' });
     const large = await run('write_file', { path: 'big.md', content: 'x'.repeat(20000) });
-    assert.equal(large.change.diff.truncated, true);
-    assert.equal(large.change.diff.after, undefined);
+    assert.equal(large.fileObservation.diff.truncated, true);
+    assert.equal(large.fileObservation.diff.after, undefined);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from '@earendil-works/pi-ai';
 import { ZenAgent } from '../src/agent.js';
 import { loadConfig } from '../src/config.js';
-import { finishChange, prepareChange, hash } from '../src/tools/change.js';
+import { finishObservation as finishChange, prepareChange, hash } from '../src/tools/change.js';
 test('changed-line hunks omit context and redact sensitive deleted and same-line text before persistence', () => {
   const root = mkdtempSync(join(tmpdir(), 'zen-safe-hunks-'));
   try {
@@ -67,7 +72,7 @@ test('changed-line hunks omit context and redact sensitive deleted and same-line
     const after = 'credential=fixture-untouched-secret\nnew public\npassword="fixture-added-secret"; const newFlag = true;\nstable\n';
     writeFileSync(path, before); const prepared = prepareChange(path);
     writeFileSync(path, after); const capture = finishChange(path, prepared, after)!;
-    assert.equal(capture.before, hash(before)); assert.equal(capture.after, hash(after));
+    assert.equal(capture.observedBefore, hash(before)); assert.equal(capture.observedAfter, hash(after));
     assert.deepEqual(capture.diff, { format: 'changed-lines', context: 0, redacted: true, truncated: false,
       hunks: [{ oldStart: 2, newStart: 2, deleted: ['old public\n', '[redacted:sensitive-line]\n'], added: ['new public\n', '[redacted:sensitive-line]\n'] }] });
     for (const literal of ['fixture-untouched-secret', 'fixture-deleted-secret', 'fixture-added-secret', 'stable', 'oldFlag', 'newFlag']) assert.equal(JSON.stringify(capture).includes(literal), false);
@@ -94,12 +99,12 @@ test('real runtime traces retain successful capture details and no capture on a 
     const results = records.filter(r => r.type === 'message' && r.message.role === 'toolResult').map(r => r.message);
     assert.equal(results.length, 2);
     assert.equal(results[0].isError, true); assert.equal(results[0].details?.change, undefined);
-    assert.equal(results[1].isError, false); assert.equal(results[1].details.change.path, 'note.md');
+    assert.equal(results[1].isError, false); assert.equal(results[1].details.fileObservation.path, 'note.md');
     assert.equal(JSON.stringify(results[1].details).includes(credential), false);
-    assert.match(results[1].details.change.before, /^[a-f0-9]{64}$/);
-    assert.match(results[1].details.change.after, /^[a-f0-9]{64}$/);
-    assert.notEqual(results[1].details.change.before, results[1].details.change.after);
-    assert.ok(results[1].details.change.id);
+    assert.match(results[1].details.fileObservation.observedBefore, /^[a-f0-9]{64}$/);
+    assert.match(results[1].details.fileObservation.observedAfter, /^[a-f0-9]{64}$/);
+    assert.notEqual(results[1].details.fileObservation.observedBefore, results[1].details.fileObservation.observedAfter);
+    assert.ok(results[1].details.fileObservation.id);
     assert.equal(records[0].dispatch.task_id, 'fixture-ticket');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -136,11 +141,11 @@ test('content-bearing write/edit arguments persist for resume while sensitive ch
       }
     }
     for (const record of results) {
-      assert.equal(record.message.details.change.diff.format, 'changed-lines');
-      assert.equal(record.message.details.change.diff.truncated, false);
-      assert.match(JSON.stringify(record.message.details.change.diff.hunks), /redacted:sensitive-line/);
-      assert.equal(JSON.stringify(record.message.details.change).includes(before), false);
-      assert.equal(JSON.stringify(record.message.details.change).includes(after), false);
+      assert.equal(record.message.details.fileObservation.diff.format, 'changed-lines');
+      assert.equal(record.message.details.fileObservation.diff.truncated, false);
+      assert.match(JSON.stringify(record.message.details.fileObservation.diff.hunks), /redacted:sensitive-line/);
+      assert.equal(JSON.stringify(record.message.details.fileObservation).includes(before), false);
+      assert.equal(JSON.stringify(record.message.details.fileObservation).includes(after), false);
     }
     const resumed = new ZenAgent({ config, models, env: {}, resume: result.sessionId });
     const resumedCalls = resumed.agent.state.messages.filter(m => m.role === 'assistant')
@@ -195,7 +200,7 @@ test('never attributes dangling or swapped file/parent symlinks to repository by
     const target = join(outside, 'missing.md'), link = join(root, 'dangling.md');
     symlinkSync(target, link);
     const result = await tools.write_file!.execute('dangling', { path: 'dangling.md', content: 'outside bytes' });
-    assert.equal(result.details.change, undefined);
+    assert.equal(result.details.fileObservation, undefined);
     assert.equal(readFileSync(target, 'utf8'), 'outside bytes'); // Write semantics unchanged, capture remains unknown.
     execFileSync('git', ['-C', outside, 'init', '-q']); // Parent escapes must also reject another Git repository.
     const file = join(root, 'swap.md'); writeFileSync(file, 'before');
@@ -231,7 +236,7 @@ test('actual write_file drops capture when a same-inode peer changes bytes after
     syncBuiltinESMExports();
     const result = await tools.write_file!.execute('write', { path: 'note.md', content: 'intended after\n' });
     assert.equal(injected, true); assert.equal(nodeFs.statSync(path).ino, inode);
-    assert.equal(result.details.change, undefined);
+    assert.equal(result.details.fileObservation, undefined);
     assert.equal(readFileSync(path, 'utf8'), 'intended after\n');
   } finally { t.mock.restoreAll(); syncBuiltinESMExports(); rmSync(root, { recursive: true, force: true }); }
 });
@@ -252,12 +257,12 @@ test('actual edit_file never captures a prepared baseline different from the byt
     syncBuiltinESMExports();
     const result = await tools.edit_file!.execute('edit', { path: 'note.md', old: 'old public', new: 'new public' });
     assert.equal(injected, true); assert.equal(nodeFs.statSync(path).ino, inode);
-    assert.equal(result.details.change, undefined);
+    assert.equal(result.details.fileObservation, undefined);
     assert.equal(originalRead(path, 'utf8'), 'new public\n');
   } finally { t.mock.restoreAll(); syncBuiltinESMExports(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test('real relative and nested writes emit exact request binding outside content-free capture metadata', async () => {
+test('real relative and nested writes emit exact request binding outside content-free observation metadata', async () => {
   const root = mkdtempSync(join(tmpdir(), 'zen-capture-request-'));
   try {
     execFileSync('git', ['-C', root, 'init', '-q']);
@@ -265,11 +270,37 @@ test('real relative and nested writes emit exact request binding outside content
     for (const [cwd, path, relativePath] of [[root, './note.md', 'note.md'], [join(root, 'sub'), 'note.md', 'sub/note.md']]) {
       const tools = Object.fromEntries(fsTools({ cfg: { ...DEFAULTS, workdir: cwd!, fs: { ...DEFAULTS.fs, roots: [root] } } } as ToolContext).map(tool => [tool.name, tool]));
       const result = await tools.write_file!.execute('relative', { path: path!, content: 'public changed line\n' });
-      assert.equal(result.details.change.path, relativePath);
+      assert.equal(result.details.fileObservation.path, relativePath);
       assert.deepEqual(result.details.captureRequest, { path, resolvedPath: join(nodeFs.realpathSync(root), relativePath!) });
-      assert.equal(JSON.stringify(result.details.change).includes('resolvedPath'), false);
+      assert.equal(JSON.stringify(result.details.fileObservation).includes('resolvedPath'), false);
       const edited = await tools.edit_file!.execute('relative-edit', { path: path!, old: 'public', new: 'edited' });
       assert.deepEqual(edited.details.captureRequest, result.details.captureRequest);
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const initial of [null, 'observed before\n']) test(`after final pre-write check a peer ${initial === null ? 'create' : 'same-inode modification'} never yields a transition capture`, async t => {
+  const root = mkdtempSync(join(tmpdir(), 'zen-post-check-peer-'));
+  const originalWrite = nodeFs.writeFileSync;
+  try {
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    const path = join(root, 'note.md');
+    if (initial !== null) originalWrite(path, initial);
+    const tools = Object.fromEntries(fsTools({ cfg: { ...DEFAULTS, workdir: root, fs: { ...DEFAULTS.fs, roots: [root] } } } as ToolContext).map(tool => [tool.name, tool]));
+    let injected = false, peerInode: number | undefined;
+    t.mock.method(nodeFs, 'writeFileSync', ((...args: any[]) => {
+      if (!injected && args[0] === path) {
+        injected = true; originalWrite(path, 'peer intervening bytes\n'); peerInode = nodeFs.statSync(path).ino;
+      }
+      return Reflect.apply(originalWrite, nodeFs, args);
+    }) as typeof nodeFs.writeFileSync);
+    syncBuiltinESMExports();
+    const result = await tools.write_file!.execute('post-check', { path: 'note.md', content: 'intended after\n' });
+    assert.equal(injected, true); assert.equal(nodeFs.statSync(path).ino, peerInode);
+    assert.equal(result.details.change, undefined);
+    assert.equal(result.details.fileObservation.ownership, 'unknown');
+    assert.equal(result.details.fileObservation.observedBefore, initial === null ? null : hash(initial));
+    assert.equal(result.details.fileObservation.observedAfter, hash('intended after\n'));
+    assert.equal(JSON.stringify(result.details.fileObservation).includes('captured-diff'), false);
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); rmSync(root, { recursive: true, force: true }); }
 });

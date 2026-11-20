@@ -2,7 +2,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from '@earendil-works/pi-ai';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
-import { prepareChange, checkBeforeWrite, finishChange, inspectCommit, type ChangeCapture } from './change.js';
+import { prepareChange, checkBeforeWrite, finishObservation, inspectObservedCommit, type FileObservationRecord } from './change.js';
 import { clipOutput, text, tool, type ToolContext } from './index.js';
 
 /**
@@ -92,16 +92,16 @@ export function notFound(abs: string, shown: string): Error {
 export function fsTools(ctx: ToolContext): AgentTool<any>[] {
   const roots = ctx.cfg.fs.roots;
   const cwd = ctx.cfg.workdir;
-  const captures = new Map<string, { root: string; change: ChangeCapture }>();
-  const capture = (abs: string, prepared: ReturnType<typeof prepareChange>, content: string, requestedPath: string) => {
+  const observations = new Map<string, { root: string; observation: FileObservationRecord }>();
+  const observe = (abs: string, prepared: ReturnType<typeof prepareChange>, content: string, requestedPath: string) => {
     if (!prepared || !requestedPath.length || requestedPath.length > 1024 || /[\x00-\x1f]/.test(requestedPath)) return {};
     const resolvedPath = resolve(prepared.root, prepared.path);
     if (Buffer.byteLength(resolvedPath) > 4096) return {};
-    const change = finishChange(abs, prepared, content, { ...process.env, ...ctx.env });
-    if (!change || !prepared) return {};
-    captures.set(change.id, { root: prepared.root, change });
-    if (captures.size > 128) captures.delete(captures.keys().next().value!);
-    return { change, captureRequest: { path: requestedPath, resolvedPath } };
+    const fileObservation = finishObservation(abs, prepared, content, { ...process.env, ...ctx.env });
+    if (!fileObservation || !prepared) return {};
+    observations.set(fileObservation.id, { root: prepared.root, observation: fileObservation });
+    if (observations.size > 128) observations.delete(observations.keys().next().value!);
+    return { path: resolvedPath, fileObservation, captureRequest: { path: requestedPath, resolvedPath } };
   };
   const at = (p: string) => resolveIn(roots, p, cwd);
 
@@ -142,7 +142,7 @@ export function fsTools(ctx: ToolContext): AgentTool<any>[] {
       mkdirSync(dirname(abs), { recursive: true });
       const eligible = checkBeforeWrite(abs, prepared);
       writeFileSync(abs, a.content);
-      return text(`wrote ${a.content.length} characters to ${a.path}`, { path: abs, ...capture(abs, eligible, a.content, a.path) });
+      return text(`wrote ${a.content.length} characters to ${a.path}`, { path: abs, ...observe(abs, eligible, a.content, a.path) });
     },
   });
 
@@ -162,7 +162,7 @@ export function fsTools(ctx: ToolContext): AgentTool<any>[] {
       const content = cur.slice(0, first) + a.new + cur.slice(first + a.old.length);
       const eligible = checkBeforeWrite(abs, prepared, Buffer.from(cur));
       writeFileSync(abs, content);
-      return text(`edited ${a.path}`, { path: abs, ...capture(abs, eligible, content, a.path) });
+      return text(`edited ${a.path}`, { path: abs, ...observe(abs, eligible, content, a.path) });
     },
   });
 
@@ -183,13 +183,13 @@ export function fsTools(ctx: ToolContext): AgentTool<any>[] {
   });
 
   const inspect_change_commit = tool({
-    name: 'inspect_change_commit', label: 'Inspect captured change commit',
-    description: 'Verify a full local commit SHA against the before/after bytes of a capture ID returned by write_file/edit_file. Does not establish authorship, PR review or merge.',
+    name: 'inspect_change_commit', label: 'Compare observed file bytes with commit',
+    description: 'Compare a full local commit SHA with an observed before/after byte pair returned by write_file/edit_file. This is a content match only, not ownership of the transition, authorship, PR review or merge.',
     parameters: Type.Object({ capture: Type.String(), commit: Type.String() }),
     execute: async a => {
-      const captured = captures.get(a.capture);
-      if (!captured) throw new Error('capture unavailable in this execution');
-      return text('verified local commit path bytes; authorship unknown', { change: inspectCommit(captured.root, captured.change, a.commit) });
+      const observed = observations.get(a.capture);
+      if (!observed) throw new Error('observation unavailable in this execution');
+      return text('observed byte pair matches local commit objects; transition ownership and authorship unknown', { fileObservation: inspectObservedCommit(observed.root, observed.observation, a.commit) });
     },
   });
   return [read_file, write_file, edit_file, list_dir, inspect_change_commit];

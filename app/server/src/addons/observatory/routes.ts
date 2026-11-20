@@ -1,4 +1,4 @@
-import { changeDetail } from './changeDetail.js';
+import { observationDetail } from './observationDetail.js';
 import { thinkingDetail } from './adapters.js';
 import { redactor } from '../../archive/redact.js';
 import { config } from '../../config.js';
@@ -33,12 +33,12 @@ export function observatoryRouter(modules: ReadonlySet<string>, vaultRoot?: stri
     const q = range(req.query); const data = await readSnapshot(db => loadWindow(db, q, modules, vaultRoot));
     const token = exports.put(owner(res), data); const { refs: _refs, ...page } = exports.page(owner(res), token, 0, 500); res.json(page);
   }));
-  router.get('/events/:id/diff', wrap(async (req, res) => {
+  router.get(['/events/:id/observation', '/events/:id/diff'], wrap(async (req, res) => {
     const q = parseOr400(z.object({ export: z.uuid() }).strict(), req.query);
     const data = exports.get(owner(res), q.export), event = exports.event(owner(res), q.export, String(req.params.id));
     const detail = await readSnapshot(async db => {
       await authorizeExport(db, data, modules);
-      return changeDetail(db, event, modules);
+      return observationDetail(db, event, modules);
     });
     res.json({ event, detail });
   }));

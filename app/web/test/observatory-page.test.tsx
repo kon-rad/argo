@@ -1,3 +1,4 @@
+import { fileObservationOf } from '../src/routes/observatory/fileEvidence.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -15,15 +16,16 @@ function setup(path: string, handler?: (url: string) => unknown, status = 200) {
   return fetch;
 }
 it('loads changed-line hunks only on demand and labels them as zero-context observations', async () => {
-  const event = demoWindow.events.find(e => e.id === 'write-result')!;
+  const legacy = demoWindow.events.find(e => e.id === 'write-result')!;
+  const event = { ...legacy, change: undefined, fileObservation: { ...fileObservationOf(legacy)!, origin: 'runtime-observation' as const, diff: { format: 'changed-lines' as const, context: 0 as const, redacted: true as const, truncated: false } } };
   const fetch = setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 12500}&event=${event.id}`, url => url.includes('/events/')
     ? { event, detail: { diff: { format: 'changed-lines', truncated: false, hunks: [{ oldStart: 3, newStart: 3, deleted: ['old public\n'], added: ['new public\n', '[redacted:sensitive-line]\n'] }] } } }
-    : { window: demoWindow, export: 'token', total: demoWindow.events.length, next: null, diagnostics: {} });
-  await screen.findByRole('button', { name: 'Load captured diff' });
-  expect(fetch.mock.calls.some(([u]) => String(u).includes('/diff'))).toBe(false);
-  expect(screen.queryByLabelText('Captured diff detail')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Load captured diff' }));
-  const detail = await screen.findByLabelText('Captured diff detail');
+    : { window: { ...demoWindow, events: demoWindow.events.map(e => e.id === event.id ? event : e) }, export: 'token', total: demoWindow.events.length, next: null, diagnostics: {} });
+  await screen.findByRole('button', { name: 'Load observed diff' });
+  expect(fetch.mock.calls.some(([u]) => String(u).includes('/observation'))).toBe(false);
+  expect(screen.queryByLabelText('Observed diff detail')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Load observed diff' }));
+  const detail = await screen.findByLabelText('Observed diff detail');
   expect(detail.textContent).toContain('zero unchanged context');
   expect(detail.textContent).toContain('@@ old line 3, new line 3 @@');
   expect(detail.textContent).toContain('- old public'); expect(detail.textContent).toContain('+ new public');
@@ -79,17 +81,17 @@ it('assembles all immutable pages and preserves the export token', async () => {
   expect(snapshot.export).toBe('same');
 });
 
-it('loads bounded captured diff contents only on explicit request', async () => {
+it('loads legacy-reported snapshot text only on explicit request without transition ownership', async () => {
   const result = demoWindow.events.find(e => e.id === 'write-result')!;
   const fetch = setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 12500}&event=write-result`, url =>
-    url.includes('/diff?') ? { event: result, detail: { representation: 'redacted-source', diff: { format: 'replacement', before: '', after: 'synthetic diff body', truncated: false } } }
+    url.includes('/observation?') ? { event: result, detail: { representation: 'redacted-source', diff: { format: 'replacement', before: '', after: 'synthetic diff body', truncated: false } } }
       : { window: demoWindow, export: 'token', total: demoWindow.events.length, next: null, diagnostics: {} });
-  await screen.findByLabelText('Captured change evidence');
-  expect(fetch.mock.calls.some(([url]) => String(url).includes('/diff?'))).toBe(false);
+  await screen.findByLabelText('File observation evidence');
+  expect(fetch.mock.calls.some(([url]) => String(url).includes('/observation?'))).toBe(false);
   expect(screen.queryByText(/synthetic diff body/)).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Load captured diff' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Load observed diff' }));
   await screen.findByText(/synthetic diff body/);
-  expect(fetch.mock.calls.some(([url]) => String(url).includes('/diff?export=token'))).toBe(true);
+  expect(fetch.mock.calls.some(([url]) => String(url).includes('/observation?export=token'))).toBe(true);
 });
 
 it.each(['authorized-summary', 'hidden', 'unavailable'])('displays lazy thinking state %s', async availability => {
@@ -128,10 +130,10 @@ it.each(['tool-reported-success', 'captured-hashes', 'captured-diff', 'commit'] 
   const window = { ...demoWindow, events: [call, result] };
   const fetch = setup(`/observatory?from=${window.from}&to=${window.to}&cursor=${window.from + 12500}&event=${result.id}`, () => ({ window, export: 'token', total: 2, next: null, diagnostics: {} }));
   await screen.findByText('Outcome at cursor: unknown');
-  expect(screen.queryByLabelText('Captured change evidence')).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Load captured diff' })).toBeNull();
-  expect(screen.queryByLabelText('Captured diff detail')).toBeNull();
-  expect(fetch.mock.calls.some(([url]) => String(url).includes('/diff'))).toBe(false);
+  expect(screen.queryByLabelText('File observation evidence')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Load observed diff' })).toBeNull();
+  expect(screen.queryByLabelText('Observed diff detail')).toBeNull();
+  expect(fetch.mock.calls.some(([url]) => String(url).includes('/observation'))).toBe(false);
   fireEvent.change(screen.getByLabelText('Replay cursor'), { target: { value: window.from + 12499 } });
-  expect(screen.queryByLabelText('Captured change evidence')).toBeNull();
+  expect(screen.queryByLabelText('File observation evidence')).toBeNull();
 });

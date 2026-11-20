@@ -6,10 +6,10 @@ import { changedLines, type ChangedLines } from './changeDiff.js';
 
 export const hash = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex');
 const git = (cwd: string, ...args: string[]): string => execFileSync('git', ['--literal-pathspecs', '-C', cwd, ...args], { encoding: 'utf8', timeout: 2000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-export interface ChangeCapture {
-  version: 1; id: string; repository: string; worktree: string; path: string; before: string | null; after: string;
+export interface FileObservationRecord {
+  version: 1; id: string; repository: string; worktree: string; path: string; observedBefore: string | null; observedAfter: string; ownership: 'unknown';
   diff: ChangedLines;
-  commit?: { sha: string; verification: 'local-object'; authorship: 'unknown' };
+  commitMatch?: { sha: string; verification: 'local-object'; authorship: 'unknown' };
 }
 const sameEntry = (a: Stats, b: Stats): boolean => a.dev === b.dev && a.ino === b.ino;
 /** Inspect lexical entries even for dangling links; canonicalization alone follows them. */
@@ -81,7 +81,7 @@ export function checkBeforeWrite(abs: string, prepared: ReturnType<typeof prepar
     return prepared;
   } catch { return null; }
 }
-export function finishChange(abs: string, prepared: ReturnType<typeof prepareChange>, intended: string, env: NodeJS.ProcessEnv = process.env): ChangeCapture | null {
+export function finishObservation(abs: string, prepared: ReturnType<typeof prepareChange>, intended: string, env: NodeJS.ProcessEnv = process.env): FileObservationRecord | null {
   if (!prepared || Buffer.byteLength(intended) > 16 * 1024 * 1024) return null;
   try {
     if (abs !== prepared.abs) return null;
@@ -95,17 +95,17 @@ export function finishChange(abs: string, prepared: ReturnType<typeof prepareCha
     // Final bytes must match the intended write; this is not an atomic external-writer transaction.
     if (!after.equals(Buffer.from(intended)) || before?.equals(after)) return null;
     return { version: 1, id: randomUUID(), repository: hash(prepared.common), worktree: hash(prepared.root), path: prepared.path,
-      before: before === null ? null : hash(before), after: hash(after),
+      observedBefore: before === null ? null : hash(before), observedAfter: hash(after), ownership: 'unknown',
       // Redaction happens before this object reaches tool results/session persistence.
       diff: changedLines(before, after, env) };
   } catch { return null; }
 }
-/** Proves this path's parent/commit bytes, not authorship or ownership of the whole commit. */
-export function inspectCommit(root: string, change: ChangeCapture, sha: string): ChangeCapture {
+/** A Git content comparison only; never proof that this tool owned a transition. */
+export function inspectObservedCommit(root: string, observation: FileObservationRecord, sha: string): FileObservationRecord {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('commit must be a full SHA');
   if (git(root, 'cat-file', '-t', sha) !== 'commit') throw new Error('SHA must identify a commit object');
   const show = (ref: string): Buffer | null => {
-    const entry = git(root, 'ls-tree', ref, '--', change.path);
+    const entry = git(root, 'ls-tree', ref, '--', observation.path);
     if (!entry) return null;
     const match = /^100(?:644|755) blob ([a-f0-9]{40})\t/.exec(entry);
     if (!match) throw new Error('path is not a regular blob');
@@ -114,6 +114,6 @@ export function inspectCommit(root: string, change: ChangeCapture, sha: string):
   const parents = git(root, 'rev-list', '--parents', '-n', '1', sha).split(' ');
   if (parents.length !== 2) throw new Error('requires a single-parent commit');
   const after = show(sha), before = show(parents[1]!);
-  if (!after || hash(after) !== change.after || (before === null ? null : hash(before)) !== change.before) throw new Error('commit bytes do not match this capture');
-  return { ...change, commit: { sha, verification: 'local-object', authorship: 'unknown' } };
+  if (!after || hash(after) !== observation.observedAfter || (before === null ? null : hash(before)) !== observation.observedBefore) throw new Error('commit bytes do not match this observed pair');
+  return { ...observation, commitMatch: { sha, verification: 'local-object', authorship: 'unknown' } };
 }

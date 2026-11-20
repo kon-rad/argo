@@ -2,7 +2,7 @@ import { query, type TxClient } from '../db.js';
 import { clean, sha256 } from './clean.js';
 import { redactor } from './redact.js';
 import { RESULT_PARSER_VERSION, toolResult } from './toolResult.js';
-import { capturedChange } from './changeEvidence.js';
+import { capturedChange, fileObservation } from './changeEvidence.js';
 import { stepFields } from './steps.js';
 import type { Host, LogLine, ParsedMessage, SessionInput } from './types.js';
 
@@ -100,7 +100,7 @@ export async function upsertMessages(tx: TxClient, sessionId: number, input: Par
   // One INSERT cannot touch the same conflict key twice: dedupe by externalId, last one wins.
   const msgs = [...new Map(input.map((m) => [m.externalId, m])).values()];
   const red = redactor();
-  const COLS = 17;
+  const COLS = 18;
   let changed = 0;
   for (let i = 0; i < msgs.length; i += MSG_BATCH) {
     const batch = msgs.slice(i, i + MSG_BATCH);
@@ -108,28 +108,29 @@ export async function upsertMessages(tx: TxClient, sessionId: number, input: Par
     const params: unknown[] = [];
     batch.forEach((m, j) => {
       const b = j * COLS;
-      const ph = Array.from({ length: COLS }, (_, k) => `$${b + k + 1}${k === 8 || k === 16 ? '::jsonb' : k === 12 ? '::text[]' : ''}`);
+      const ph = Array.from({ length: COLS }, (_, k) => `$${b + k + 1}${k === 8 || k === 16 || k === 17 ? '::jsonb' : k === 12 ? '::text[]' : ''}`);
       values.push(`(${ph.join(',')})`);
       // Classified from the original record; stored redacted. raw_sha stays the original's hash.
       const f = deriveMessage(m.raw, m.contentText);
       const raw = red.deep(clean(m.raw));
-      const capture = capturedChange(raw);
+      const capture = capturedChange(raw), observation = fileObservation(raw);
       params.push(sessionId, m.seq, m.externalId, m.parentExternalId, m.role, m.kind, m.ts,
         f.contentText, JSON.stringify(raw), m.rawSha, m.isSidechain,
-        f.step, f.toolNames.length ? f.toolNames : null, f.toolCallId, f.isError, RESULT_PARSER_VERSION, capture === null ? null : JSON.stringify(capture));
+        f.step, f.toolNames.length ? f.toolNames : null, f.toolCallId, f.isError, RESULT_PARSER_VERSION, capture === null ? null : JSON.stringify(capture), observation === null ? null : JSON.stringify(observation));
     });
     const r = await tx.query(
       `INSERT INTO archive_messages AS a (session_id, seq, external_id, parent_external_id, role, kind, ts, content_text, raw, raw_sha, is_sidechain,
-         step, tool_names, tool_call_id, is_error, result_parser_version, change_evidence)
+         step, tool_names, tool_call_id, is_error, result_parser_version, change_evidence, file_observation)
        VALUES ${values.join(',')}
        ON CONFLICT (session_id, external_id) DO UPDATE SET
          seq=EXCLUDED.seq, parent_external_id=EXCLUDED.parent_external_id, role=EXCLUDED.role, kind=EXCLUDED.kind,
          ts=EXCLUDED.ts, content_text=EXCLUDED.content_text, raw=EXCLUDED.raw, raw_sha=EXCLUDED.raw_sha,
          is_sidechain=EXCLUDED.is_sidechain, step=EXCLUDED.step, tool_names=EXCLUDED.tool_names,
-         tool_call_id=EXCLUDED.tool_call_id, is_error=EXCLUDED.is_error, result_parser_version=EXCLUDED.result_parser_version, change_evidence=EXCLUDED.change_evidence
+         tool_call_id=EXCLUDED.tool_call_id, is_error=EXCLUDED.is_error, result_parser_version=EXCLUDED.result_parser_version, change_evidence=EXCLUDED.change_evidence, file_observation=EXCLUDED.file_observation
        WHERE a.raw_sha IS DISTINCT FROM EXCLUDED.raw_sha OR a.step IS NULL
          OR a.result_parser_version IS DISTINCT FROM EXCLUDED.result_parser_version
          OR a.change_evidence IS DISTINCT FROM EXCLUDED.change_evidence
+         OR a.file_observation IS DISTINCT FROM EXCLUDED.file_observation
          OR a.is_error IS DISTINCT FROM EXCLUDED.is_error`, params);
     changed += r.rowCount ?? 0;
   }

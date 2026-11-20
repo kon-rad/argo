@@ -6,6 +6,14 @@ export interface ChangeEvidence {
   diff: { format: 'replacement'; truncated: boolean } | { format: 'changed-lines'; context: 0; redacted: true; truncated: boolean; reason?: 'input-limit' | 'line-limit' | 'output-limit' | 'binary' | 'unsafe-text' | 'empty-change' };
   commit?: { sha: string; verification: 'local-object'; authorship: 'unknown' };
 }
+/** Snapshots/content comparison only. Never proof that this tool owned a file transition. */
+export interface FileObservation {
+  version: 1; id: string; repository: string; worktree: string; path: string;
+  observedBefore: string | null; observedAfter: string; ownership: 'unknown';
+  origin: 'runtime-observation' | 'legacy-reported';
+  diff: ChangeEvidence['diff'];
+  commitMatch?: { sha: string; verification: 'local-object'; authorship: 'unknown' };
+}
 export interface EvidenceEvent {
   version: 1; id: string; at: number | null; observedAt: number | null; sequence: number; part: number;
   kind: 'prompt' | 'response' | 'thinking' | 'tool_call' | 'tool_result' | 'system' | 'meta' | 'usage' | 'ticket' | 'message' | 'artifact';
@@ -16,8 +24,10 @@ export interface EvidenceEvent {
   parent?: string; occurrence?: string; tool?: string; outcome?: 'success' | 'error' | 'unknown';
   /** Explicit structured path only; operation attempt, never proof of changed bytes. */
   target?: { path: string; vaultPath?: string; operation: 'read' | 'write' | 'edit' };
-  /** Captured runtime observation, never ownership of other files in the worktree. Diff stays in authorized source. */
+  /** @deprecated Legacy source claim only. Never proof of ownership or a verified file transition; normalize as a legacy-reported fileObservation. */
   change?: ChangeEvidence;
+  /** Body-free observed snapshots; concurrent writers and transition ownership remain unknown. */
+  fileObservation?: FileObservation;
   artifact?: { repository: string; pr: number; head: string; base: string;
     stage: 'pr-observed' | 'review-accepted' | 'review-rejected' | 'merge-recorded' | 'merge-verified';
     verification: 'trusted-review-gate'; merge?: string };

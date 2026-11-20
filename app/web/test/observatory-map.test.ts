@@ -1,3 +1,4 @@
+import { fileObservationOf, successfulFileResult } from '../src/routes/observatory/fileEvidence.js';
 import { expect, it } from 'vitest';
 import { demoWindow } from '../src/routes/observatory/demo.js';
 import { mapActivity, operationStyle } from '../src/routes/observatory/mapActivity.js';
@@ -80,13 +81,13 @@ it('shows paired reported-success without capture, including inherited targets, 
     expect(mapActivity(mapGraph, [call, bad]).map(a => a.event.id)).toEqual([call.id]);
 });
 
-it('retains only exact prior capture scope for the real commit target fallback', () => {
+it('never turns a read-only Git content comparison into a new map write target', () => {
   const call = demoWindow.events.find(e => e.id === 'write-call')!;
   const result = demoWindow.events.find(e => e.id === 'write-result')!;
   const inspect = demoWindow.events.find(e => e.id === 'commit-call')!;
   const commit = { ...demoWindow.events.find(e => e.id === 'commit-result')!, target: { path: result.change!.path, operation: 'edit' as const } };
   const events = [call, result, inspect, commit];
-  expect(mapActivity(mapGraph, events).find(a => a.event.id === commit.id)?.node?.id).toBe('note:1');
+  expect(mapActivity(mapGraph, events).find(a => a.event.id === commit.id)).toBeUndefined();
   for (const changed of [
     { ...commit, change: { ...commit.change!, id: 'unrelated-capture' } },
     { ...commit, change: { ...commit.change!, worktree: '9'.repeat(64) } },
@@ -102,7 +103,10 @@ it('keeps validated causal context for a note-filtered commit without displaying
   const scene = sceneAt(demoWindow, demoWindow.from + 14000, { note: 'Projects/demo.md' });
   expect(scene.events.some(e => e.id === 'commit-call')).toBe(false);
   const activity = mapActivity(mapGraph, scene.events, scene.contextEvents);
-  expect(activity.find(a => a.event.id === 'commit-result')).toMatchObject({ node: { id: 'note:1' }, event: { change: { level: 'commit' } } });
+  expect(activity.find(a => a.event.id === 'commit-result')).toBeUndefined();
+  const contentFact = scene.events.find(e => e.id === 'commit-result')!;
+  expect(fileObservationOf(contentFact)?.commitMatch?.authorship).toBe('unknown');
+  expect(successfulFileResult(contentFact, new Map(scene.contextEvents.map(e => [e.id, e])), scene.evidenceContext)).toBe(true);
   const before = sceneAt(demoWindow, demoWindow.from + 13999, { note: 'Projects/demo.md' });
   expect(mapActivity(mapGraph, before.events, before.contextEvents).some(a => a.event.id === 'commit-result')).toBe(false);
 });

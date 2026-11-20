@@ -24,5 +24,5 @@ export async function loadSnapshot(state: ViewState, signal: AbortSignal): Promi
   return { window: { ...first.window, events: ordered(events) }, export: first.export, diagnostics: first.diagnostics };
 }
 export function loadDetail(id: string, token: string, signal: AbortSignal, diff = false) {
-  return request<{ event: EvidenceEvent; detail: { availability: string; content: string; diff?: DiffDetail; thinking?: { availability: 'authorized-summary' | 'hidden' | 'unavailable'; summary?: string } } }>(`/observatory/events/${encodeURIComponent(id)}${diff ? '/diff' : ''}`, { export: token }, { signal });
+  return request<{ event: EvidenceEvent; detail: { availability: string; content: string; diff?: DiffDetail; thinking?: { availability: 'authorized-summary' | 'hidden' | 'unavailable'; summary?: string } } }>(`/observatory/events/${encodeURIComponent(id)}${diff ? '/observation' : ''}`, { export: token }, { signal });
 }

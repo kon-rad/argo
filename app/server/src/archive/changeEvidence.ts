@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ChangeEvidence } from '@secondbrain/contracts/observatory';
+import type { ChangeEvidence, FileObservation } from '@secondbrain/contracts/observatory';
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const path = z.string().min(1).max(1024).refine(p => !p.startsWith('/') && !p.includes('\\') && !p.split('/').some(s => s === '..' || s === '.' || s === '') && !/[\x00-\x1f]/.test(p));
 const changedLine = z.string().min(1).max(4096).refine(line => Buffer.byteLength(line) <= 4096 && !line.slice(0, -1).includes('\n'));
@@ -16,12 +16,16 @@ const capture = z.object({ version: z.literal(1), id: z.string().min(1).max(128)
   diff: diffSchema,
   commit: z.object({ sha: z.string().regex(/^[a-f0-9]{40}$/), verification: z.literal('local-object'), authorship: z.literal('unknown') }).strict().optional(),
 }).strict();
-/** Only the runtime-owned result details, never tool arguments, prose or shell strings. */
+const observation = capture.omit({ before: true, after: true, commit: true }).extend({ observedBefore: hash.nullable(), observedAfter: hash,
+  ownership: z.literal('unknown'), commitMatch: capture.shape.commit });
+
+/** Deprecated reported snapshots for legacy conversion only, never verified transition ownership. */
 export function capturedChange(raw: unknown): ChangeEvidence | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, any>, m = r.message;
   if (r.harness !== 'zen-agent' || r.type !== 'message' || m?.role !== 'toolResult' || m.isError !== false) return null;
   if (!['write_file', 'edit_file', 'inspect_change_commit'].includes(m.toolName)) return null;
+  if (m.details && typeof m.details === 'object' && Object.hasOwn(m.details, 'fileObservation')) return null;
   const parsed = capture.safeParse(m.details?.change);
   if (!parsed.success) return null;
   const c = parsed.data;
@@ -48,4 +52,34 @@ export function sameChange(a: unknown, b: unknown): boolean {
   if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) || Array.isArray(b)) return false;
   const keys = Object.keys(a);
   return keys.length === Object.keys(b).length && keys.every(key => Object.hasOwn(b, key) && sameChange((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
+}
+
+
+/** Runtime observations and historical reported captures never establish transition ownership. */
+export function fileObservation(raw: unknown): FileObservation | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, any>, m = r.message, details = m?.details;
+  if (r.harness !== 'zen-agent' || r.type !== 'message' || m?.role !== 'toolResult' || m.isError !== false || !details || typeof details !== 'object') return null;
+  const modern = Object.hasOwn(details, 'fileObservation'), legacy = Object.hasOwn(details, 'change');
+  if (modern && legacy) return null;
+  if (legacy) {
+    const c = capturedChange(raw);
+    return c ? { version: 1, id: c.id, repository: c.repository, worktree: c.worktree, path: c.path,
+      observedBefore: c.before, observedAfter: c.after, ownership: 'unknown', origin: 'legacy-reported', diff: c.diff,
+      ...(c.commit ? { commitMatch: c.commit } : {}) } : null;
+  }
+  if (!modern) return null;
+  const parsed = observation.safeParse(details.fileObservation);
+  if (!parsed.success) return null;
+  const o = parsed.data;
+  // Reuse the bounded diff/content validation without treating its legacy grade as evidence.
+  const c = capturedChange({ ...r, message: { ...m, details: { change: { version: o.version, id: o.id, repository: o.repository, worktree: o.worktree,
+    path: o.path, before: o.observedBefore, after: o.observedAfter, diff: o.diff, ...(o.commitMatch ? { commit: o.commitMatch } : {}) } } } });
+  return c ? { version: 1, id: c.id, repository: c.repository, worktree: c.worktree, path: c.path,
+    observedBefore: c.before, observedAfter: c.after, ownership: 'unknown', origin: 'runtime-observation', diff: c.diff,
+    ...(c.commit ? { commitMatch: c.commit } : {}) } : null;
+}
+export function fileObservationMetadataPresent(raw: unknown): boolean {
+  const details = (raw as { message?: { details?: unknown } } | null)?.message?.details;
+  return !!details && typeof details === 'object' && (Object.hasOwn(details, 'change') || Object.hasOwn(details, 'fileObservation'));
 }

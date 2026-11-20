@@ -24,7 +24,7 @@ const { parseZenTrace } = await import('../../app/server/dist/usage/zenTrace.js'
 const { upsertMessages } = await import('../../app/server/dist/archive/store.js');
 const { query, withTransaction, setDatabaseUrl } = await import('../../app/server/dist/db.js');
 const { readSnapshot, loadWindow } = await import('../../app/server/dist/addons/observatory/service.js');
-const { changeDetail } = await import('../../app/server/dist/addons/observatory/changeDetail.js');
+const { observationDetail } = await import('../../app/server/dist/addons/observatory/observationDetail.js');
 setDatabaseUrl(`postgres://${process.env.PGHOST}:${process.env.PGPORT}/${process.env.SB_TEST_DB}`);
 const host = `fixture-change-roundtrip-${process.pid}`;
 try {
@@ -50,16 +50,18 @@ try {
   const results = records.filter(r => r.type === 'message' && r.message.role === 'toolResult');
   assert.equal(results.length, 3);
   for (const r of results) {
-    assert.equal(r.message.details.change.diff.format, 'changed-lines');
+    assert.equal(r.message.details.change, undefined);
+    assert.equal(r.message.details.fileObservation.ownership, 'unknown');
+    assert.equal(r.message.details.fileObservation.diff.format, 'changed-lines');
     assert.ok(r.message.details.captureRequest.path.startsWith('./'));
     assert.ok(r.message.details.captureRequest.resolvedPath.startsWith('/'));
-    assert.equal('captureRequest' in r.message.details.change, false);
-    if (r.message.details.change.path.split('/').at(-1) === 'empty.md') {
-      assert.equal(r.message.details.change.before, null);
-      assert.equal(r.message.details.change.diff.truncated, true);
-      assert.equal(r.message.details.change.diff.reason, 'empty-change');
-    } else assert.equal(r.message.details.change.diff.truncated, false);
-    const text = JSON.stringify(r.message.details.change);
+    assert.equal('captureRequest' in r.message.details.fileObservation, false);
+    if (r.message.details.fileObservation.path.split('/').at(-1) === 'empty.md') {
+      assert.equal(r.message.details.fileObservation.observedBefore, null);
+      assert.equal(r.message.details.fileObservation.diff.truncated, true);
+      assert.equal(r.message.details.fileObservation.diff.reason, 'empty-change');
+    } else assert.equal(r.message.details.fileObservation.diff.truncated, false);
+    const text = JSON.stringify(r.message.details.fileObservation);
     for (const value of [untouched, deleted, added, 'stable context']) assert.equal(text.includes(value), false);
   }
   const resumed = new ZenAgent({ config, models, env: {}, resume: run.sessionId });
@@ -71,31 +73,36 @@ try {
   await query('INSERT INTO usage_hosts(slug,display,kind) VALUES($1,$1,\'server\')', [host]);
   const session = (await query('INSERT INTO archive_sessions(source,host,external_id) VALUES(\'zen-agent\',$1,$2) RETURNING id', [host, run.sessionId])).rows[0].id;
   assert.ok(await withTransaction(tx => upsertMessages(tx, session, collected.messages)));
-  const projected = (await query('SELECT change_evidence FROM archive_messages WHERE session_id=$1 AND change_evidence IS NOT NULL', [session])).rows;
+  const projected = (await query('SELECT file_observation, change_evidence FROM archive_messages WHERE session_id=$1 AND file_observation IS NOT NULL', [session])).rows;
   assert.equal(projected.length, 3);
   const from = Math.min(...collected.messages.filter(m => m.ts).map(m => m.ts.getTime())) - 1;
   const data = await readSnapshot(db => loadWindow(db, { from, to: Date.now() + 1000, host }, new Set(['usage'])));
-  const captured = data.window.events.filter(e => e.change);
-  assert.equal(captured.length, 3);
+  const observed = data.window.events.filter(e => e.fileObservation);
+  assert.ok(data.window.events.every(e => !e.change), 'no ordinary or legacy snapshot is a verified transition');
+  assert.ok(projected.every(row => row.change_evidence === null));
+  assert.equal(observed.length, 3);
   for (const value of ['initial public', 'old public', 'new public', untouched, deleted, added, 'hunks', 'captureRequest', 'resolvedPath']) {
     assert.equal(JSON.stringify(projected).includes(value), false);
     assert.equal(JSON.stringify(data.window).includes(value), false);
   }
-  for (const event of captured) {
-    await assert.rejects(readSnapshot(db => changeDetail(db, event, new Set())), e => e.status === 403);
-    const detail = await readSnapshot(db => changeDetail(db, event, new Set(['usage'])));
+  for (const event of observed) {
+    await assert.rejects(readSnapshot(db => observationDetail(db, event, new Set())), e => e.status === 403);
+    const detail = await readSnapshot(db => observationDetail(db, event, new Set(['usage'])));
     assert.equal(detail.diff.format, 'changed-lines');
-    if (event.change.path.split('/').at(-1) === 'empty.md') {
-      assert.equal(event.change.level, 'captured-hashes');
+    if (event.fileObservation.path.split('/').at(-1) === 'empty.md') {
+      assert.equal(event.fileObservation.ownership, 'unknown');
       assert.equal(detail.diff.truncated, true); assert.equal(detail.diff.reason, 'empty-change');
       assert.equal('hunks' in detail.diff, false); continue;
     }
     assert.equal(detail.diff.truncated, false);
     assert.ok(JSON.stringify(detail.diff).includes(event.tool === 'write_file' ? 'old public' : 'new public'));
     for (const value of [untouched, deleted, added, 'stable context']) assert.equal(JSON.stringify(detail).includes(value), false);
-    assert.deepEqual(detail.originalHashes, { before: event.change.before, after: event.change.after });
+    assert.equal(detail.ownership, 'unknown');
+    assert.equal(detail.origin, 'runtime-observation');
+    assert.equal(event.fileObservation.ownership, 'unknown');
+    assert.deepEqual(detail.observedHashes, { before: event.fileObservation.observedBefore, after: event.fileObservation.observedAfter });
   }
-  console.log('PASS: actual write/edit -> JSONL/resume -> collector/upsert -> metadata-only window -> authorized redacted changed-line detail (2 changed-line captures plus empty-file hash capture)');
+  console.log('PASS: actual write/edit -> JSONL/resume -> collector/upsert -> metadata-only window -> authorized unattributed observed diff (2 readable observations plus empty-file hash observation; zero transition captures)');
 } finally {
   await query('DELETE FROM archive_sessions WHERE host=$1', [host]);
   await query('DELETE FROM usage_hosts WHERE slug=$1', [host]);
