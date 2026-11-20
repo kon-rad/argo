@@ -188,6 +188,34 @@ it('preserves the Hermes protocol with explicit IDs and an omitted optional tool
 });
 
 import { parseZenTrace } from '../src/usage/zenTrace.js';
+it('collects bounded redacted changed-line observations but keeps hunk text out of all overview metadata', async () => {
+  const diff = { format: 'changed-lines', context: 0, redacted: true, truncated: false,
+    hunks: [{ oldStart: 2, newStart: 2, deleted: ['old public\n', '[redacted:sensitive-line]\n'], added: ['new public\n', '[redacted:sensitive-line]\n'] }] };
+  const result = raw({ details: { change: { ...change, diff } } });
+  const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: change.path, content: 'new public\npassword=private-argument-literal' } }] } };
+  const records = [{ type: 'meta', version: 1, id: 'synthetic-hunks', at: '2026-01-01T00:00:00Z', parts: [] }, call, result];
+  const collected = parseZenTrace(records, 'fixture', '/synthetic/hunks.jsonl', new Date(5000)).session!;
+  expect(JSON.stringify(collected.messages)).toContain('new public');
+  const projected = capturedChange(result)!;
+  expect(projected).toMatchObject({ level: 'captured-diff', diff: { format: 'changed-lines', context: 0, redacted: true, truncated: false } });
+  expect(JSON.stringify(projected)).not.toContain('public'); expect(JSON.stringify(projected)).not.toContain('hunks');
+  const events = archiveEvents([row(1, call), row(2, result, projected)]);
+  const event = events[1]!;
+  expect(event.change).toEqual(projected); expect(JSON.stringify(events)).not.toContain('public');
+  const db = { query: async () => ({ rows: [{ raw: result }] }) } as unknown as TxClient;
+  await expect(changeDetail(db, event, new Set())).rejects.toHaveProperty('status', 403);
+  expect(await changeDetail(db, event, new Set(['usage']))).toMatchObject({ diff, originalHashes: { before: null, after: hash } });
+  const stale = { query: async () => ({ rows: [{ raw: raw({ details: { change: { ...change, diff: { ...diff, context: 1 } } } }) }] }) } as unknown as TxClient;
+  await expect(changeDetail(stale, event, new Set(['usage']))).rejects.toHaveProperty('status', 409);
+  for (const invalid of [
+    { ...diff, context: 1 }, { ...diff, redacted: false }, { ...diff, hunks: [{ oldStart: 1, newStart: 1, deleted: [], added: [] }] },
+    { ...diff, hunks: [{ oldStart: 1, newStart: 1, deleted: [], added: ['x'.repeat(4097)] }] },
+    { ...diff, hunks: [{ oldStart: 1, newStart: 1, deleted: [], added: Array(5).fill('x'.repeat(4000)) }] },
+    { ...diff, truncated: true },
+  ]) expect(capturedChange(raw({ details: { change: { ...change, diff: invalid } } }))).toBeNull();
+  const fallback = capturedChange(raw({ details: { change: { ...change, diff: { format: 'changed-lines', context: 0, redacted: true, truncated: true, reason: 'binary' } } } }));
+  expect(fallback).toMatchObject({ level: 'captured-hashes', diff: { reason: 'binary' } });
+});
 it('keeps collected argument records content-bearing while the overview and capture projection omit text', () => {
   const before = 'synthetic-private-write-argument-123456', after = 'synthetic-private-edit-argument-654321';
   const args = [{ path: change.path, content: before }, { path: change.path, old: before, new: after }];

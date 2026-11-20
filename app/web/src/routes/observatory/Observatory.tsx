@@ -8,6 +8,7 @@ import { api } from '../../lib/api.js';
 import { request } from '../../lib/http.js';
 import { demoWindow } from './demo.js';
 import { loadDetail, loadSnapshot, type Snapshot } from './api.js';
+import { ChangedDiff, type DiffDetail } from './ChangedDiff.js';
 import { eventLink, originStyle, readState, sceneAt, stepCursor, writeState, replayHref, type ViewState } from './model.js';
 const MapActivity = lazy(() => import('./BrainActivity.js'));
 const Workspace = lazy(() => import('./Workspace.js'));
@@ -20,7 +21,7 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
   const state = readState(params, initialNow), stateKey = params.toString();
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [error, setError] = useState(''), [coverage, setCoverage] = useState<unknown>();
-  const [detail, setDetail] = useState<{ event?: unknown; error?: string; detail?: { thinking?: { availability: string; summary?: string } } | string }>();
+  const [detail, setDetail] = useState<{ event?: unknown; error?: string; detail?: { diff?: DiffDetail; thinking?: { availability: string; summary?: string } } | string }>();
   const detailRequest = useRef<AbortController | null>(null);
   const [play, setPlay] = useState<0 | 1 | -1>(0), [live, setLive] = useState(false), [refresh, setRefresh] = useState(0);
   const [webgl, setWebgl] = useState(true);
@@ -137,7 +138,8 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
           {typeof detail?.detail === 'object' && detail.detail.thinking?.availability === 'authorized-summary' && <div aria-label="Authorized thinking summary" className="whitespace-pre-wrap">{detail.detail.thinking.summary}</div>}
           <button className={field} onClick={() => void showDetail()}>Verify source detail</button>
           {selected.change && <button className={field} onClick={() => void showDetail(true)}>Load captured diff</button>}
-          {detail !== undefined && <><pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(detail, null, 2)}</pre>{detail.event && !detail.error && eventLink(selected) && state.demo !== '1' && <Link className="underline" to={eventLink(selected)!}>Open recorded session part</Link>}</>}
+          {typeof detail?.detail === 'object' && detail.detail.diff && <ChangedDiff diff={detail.detail.diff} />}
+          {detail !== undefined && <>{!(typeof detail.detail === 'object' && detail.detail.diff) && <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(detail, null, 2)}</pre>}{detail.event && !detail.error && eventLink(selected) && state.demo !== '1' && <Link className="underline" to={eventLink(selected)!}>Open recorded session part</Link>}</>}
         </> : !execution && <p>Select an execution or recorded event. File targets require structured source evidence.</p>}
       </section>
       <section aria-label="Recorded event timeline"><h2>Events through cursor ({scene.events.length}; latest 200 shown)</h2>

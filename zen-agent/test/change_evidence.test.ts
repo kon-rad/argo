@@ -22,7 +22,7 @@ test('captures only this operation, rejects failed edits, and verifies exact com
     const result = await run('edit_file', { path: 'note.md', old: 'before', new: 'after' });
     assert.equal(result.change.path, 'note.md');
     assert.notEqual(result.change.before, result.change.after);
-    assert.deepEqual(result.change.diff, { format: 'replacement', truncated: true });
+    assert.deepEqual(result.change.diff, { format: 'changed-lines', context: 0, redacted: true, truncated: false, hunks: [{ oldStart: 1, newStart: 1, deleted: ['before\n'], added: ['after\n'] }] });
     assert.equal(JSON.stringify(result).includes('another agent'), false);
     await assert.rejects(run('inspect_change_commit', { capture: result.change.id, commit: git('rev-parse', 'HEAD') }));
     git('add', 'note.md'); git('commit', '-qm', 'change');
@@ -52,6 +52,22 @@ test('captures only this operation, rejects failed edits, and verifies exact com
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from '@earendil-works/pi-ai';
 import { ZenAgent } from '../src/agent.js';
 import { loadConfig } from '../src/config.js';
+import { finishChange, prepareChange, hash } from '../src/tools/change.js';
+test('changed-line hunks omit context and redact sensitive deleted and same-line text before persistence', () => {
+  const root = mkdtempSync(join(tmpdir(), 'zen-safe-hunks-'));
+  try {
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    const path = join(root, 'note.md');
+    const before = 'credential=fixture-untouched-secret\nold public\npassword="fixture-deleted-secret"; const oldFlag = true;\nstable\n';
+    const after = 'credential=fixture-untouched-secret\nnew public\npassword="fixture-added-secret"; const newFlag = true;\nstable\n';
+    writeFileSync(path, before); const prepared = prepareChange(path);
+    writeFileSync(path, after); const capture = finishChange(path, prepared, after)!;
+    assert.equal(capture.before, hash(before)); assert.equal(capture.after, hash(after));
+    assert.deepEqual(capture.diff, { format: 'changed-lines', context: 0, redacted: true, truncated: false,
+      hunks: [{ oldStart: 2, newStart: 2, deleted: ['old public\n', '[redacted:sensitive-line]\n'], added: ['new public\n', '[redacted:sensitive-line]\n'] }] });
+    for (const literal of ['fixture-untouched-secret', 'fixture-deleted-secret', 'fixture-added-secret', 'stable', 'oldFlag', 'newFlag']) assert.equal(JSON.stringify(capture).includes(literal), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 test('real runtime traces retain successful capture details and no capture on a failed edit', async () => {
   const root = mkdtempSync(join(tmpdir(), 'zen-change-trace-'));
   try {
@@ -83,7 +99,7 @@ test('real runtime traces retain successful capture details and no capture on a 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('content-bearing write/edit arguments persist for resume while capture metadata stays hash-only', async () => {
+test('content-bearing write/edit arguments persist for resume while sensitive changed lines are redacted', async () => {
   const root = mkdtempSync(join(tmpdir(), 'zen-change-content-'));
   try {
     execFileSync('git', ['-C', root, 'init', '-q']);
@@ -115,7 +131,9 @@ test('content-bearing write/edit arguments persist for resume while capture meta
       }
     }
     for (const record of results) {
-      assert.deepEqual(record.message.details.change.diff, { format: 'replacement', truncated: true });
+      assert.equal(record.message.details.change.diff.format, 'changed-lines');
+      assert.equal(record.message.details.change.diff.truncated, false);
+      assert.match(JSON.stringify(record.message.details.change.diff.hunks), /redacted:sensitive-line/);
       assert.equal(JSON.stringify(record.message.details.change).includes(before), false);
       assert.equal(JSON.stringify(record.message.details.change).includes(after), false);
     }
@@ -129,4 +147,36 @@ test('content-bearing write/edit arguments persist for resume while capture meta
     assert.equal(continued.text, 'resumed with original arguments');
     assert.equal(readFileSync(join(root, 'note.md'), 'utf8'), `credential=${after}\n`);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+import { changedLines } from '../src/tools/changeDiff.js';
+test('safe diff bounds fall back without partially retained hunk text', () => {
+  const cases = [
+    ['x'.repeat(70000), 'input-limit'], ['x\n'.repeat(513), 'line-limit'], ['binary\0bytes', 'binary'],
+    ['-----BEGIN PRIVATE KEY-----\nsecret', 'unsafe-text'], ['x'.repeat(5000), 'line-limit'],
+    [Array.from({ length: 6 }, (_, i) => String(i).repeat(3000)).join('\n'), 'output-limit'],
+  ];
+  for (const [content, reason] of cases) assert.deepEqual(changedLines(Buffer.from('before\n'), Buffer.from(content!)), { format: 'changed-lines', context: 0, redacted: true, truncated: true, reason });
+  assert.equal(changedLines(null, Buffer.from([0xff])).truncated, true);
+  const diff = changedLines(Buffer.from('a\nsame\nb\n'), Buffer.from('A\nsame\nB\n'));
+  assert.equal(diff.truncated, false);
+  if (!diff.truncated) {
+    assert.deepEqual(diff.hunks.map(h => [h.oldStart, h.newStart]), [[1, 1], [3, 3]]);
+    assert.equal(JSON.stringify(diff).includes('same'), false);
+  }
+});
+
+test('known secret environment values redact before persistence, including multiline and plural keys', () => {
+  const oldKeys = process.env.FIXTURE_KEYS, oldPassword = process.env.FIXTURE_PASSWORD;
+  try {
+    process.env.FIXTURE_KEYS = 'fixture-opaque-value-123456';
+    const result = changedLines(null, Buffer.from('const value = "fixture-opaque-value-123456";\n'));
+    assert.equal(JSON.stringify(changedLines(null, Buffer.from('const value = "fixture-runtime-only-value";'), { FIXTURE_PASS: 'fixture-runtime-only-value' })).includes('fixture-runtime-only-value'), false);
+    assert.equal(JSON.stringify(result).includes('fixture-opaque-value-123456'), false);
+    process.env.FIXTURE_PASSWORD = 'first-secret-line\ncontinuation-opaque-line';
+    assert.deepEqual(changedLines(Buffer.from(process.env.FIXTURE_PASSWORD), Buffer.from('public')), { format: 'changed-lines', context: 0, redacted: true, truncated: true, reason: 'unsafe-text' });
+  } finally {
+    if (oldKeys === undefined) delete process.env.FIXTURE_KEYS; else process.env.FIXTURE_KEYS = oldKeys;
+    if (oldPassword === undefined) delete process.env.FIXTURE_PASSWORD; else process.env.FIXTURE_PASSWORD = oldPassword;
+  }
 });

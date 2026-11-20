@@ -13,7 +13,11 @@ export async function changeDetail(db: TxClient, event: EvidenceEvent, modules: 
   if (row.raw === null) throw new HttpError(413, 'captured source exceeds 1 MiB');
   const raw = redactor().deep(row.raw);
   if (!sameChange(capturedChange(raw), event.change)) throw new HttpError(409, 'captured source changed; restart window');
-  const diff = (raw as { message: { details: { change: { diff: { before?: string; after?: string; truncated: boolean } } } } }).message.details.change.diff;
+  // capturedChange validated the bounded union above, including every hunk.
+  const diff = (raw as { message: { details: { change: { diff: Record<string, unknown> & { format: string; truncated: boolean } } } } }).message.details.change.diff;
+  const detail = diff.format === 'changed-lines'
+    ? { ...event.change.diff, ...(!diff.truncated ? { hunks: diff.hunks } : {}) }
+    : { format: 'replacement', truncated: diff.truncated, ...(!diff.truncated ? { before: diff.before, after: diff.after } : {}) };
   return { source: event.source, representation: 'redacted-source', originalHashes: { before: event.change.before, after: event.change.after },
-    diff: { format: 'replacement', truncated: diff.truncated, ...(!diff.truncated ? { before: diff.before, after: diff.after } : {}) } };
+    diff: detail };
 }

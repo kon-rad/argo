@@ -14,6 +14,21 @@ function setup(path: string, handler?: (url: string) => unknown, status = 200) {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={[path]}><Observatory /><Location /></MemoryRouter></QueryClientProvider>);
   return fetch;
 }
+it('loads changed-line hunks only on demand and labels them as zero-context observations', async () => {
+  const event = demoWindow.events.find(e => e.id === 'write-result')!;
+  const fetch = setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 12500}&event=${event.id}`, url => url.includes('/events/')
+    ? { event, detail: { diff: { format: 'changed-lines', truncated: false, hunks: [{ oldStart: 3, newStart: 3, deleted: ['old public\n'], added: ['new public\n', '[redacted:sensitive-line]\n'] }] } } }
+    : { window: demoWindow, export: 'token', total: demoWindow.events.length, next: null, diagnostics: {} });
+  await screen.findByRole('button', { name: 'Load captured diff' });
+  expect(fetch.mock.calls.some(([u]) => String(u).includes('/diff'))).toBe(false);
+  expect(screen.queryByLabelText('Captured diff detail')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Load captured diff' }));
+  const detail = await screen.findByLabelText('Captured diff detail');
+  expect(detail.textContent).toContain('zero unchanged context');
+  expect(detail.textContent).toContain('@@ old line 3, new line 3 @@');
+  expect(detail.textContent).toContain('- old public'); expect(detail.textContent).toContain('+ new public');
+  expect(detail.textContent).toContain('[redacted:sensitive-line]');
+});
 it('restores cursor, exposes accessible list and cuts off result until next event', async () => {
   setup(`/observatory?demo=1&from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 2000}&event=call`);
   await screen.findByText(/Outcome at cursor: pending/);

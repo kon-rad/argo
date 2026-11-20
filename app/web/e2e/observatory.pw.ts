@@ -108,6 +108,23 @@ test('synthetic prospective write, commit and verified gate evidence stay distin
   await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12499));
   await expect(reportedNote).toHaveCount(0);
   await expect(page.getByLabel('Note activity').getByRole('button', { name: '▲ W write attempt: Projects/demo.md', exact: true })).toBeVisible();
+  // Authorized lazy-detail rendering uses changed-line observations, never replacement text.
+  const writeResult = demoWindow.events.find(event => event.id === 'write-result')!;
+  const hunkEvent = { ...writeResult, change: { ...writeResult.change!, diff: { format: 'changed-lines', context: 0, redacted: true, truncated: false } } };
+  const hunkWindow = { ...demoWindow, events: demoWindow.events.map(event => event.id === hunkEvent.id ? hunkEvent : event) };
+  await page.route('**/api/observatory/window*', route => route.fulfill({ json: { window: hunkWindow, total: hunkWindow.events.length, next: null, export: 'hunk-fixture', diagnostics: { synthetic: true } } }));
+  await page.route('**/api/observatory/events/*/diff*', route => route.fulfill({ json: { event: hunkEvent, detail: { representation: 'redacted-source', diff: { format: 'changed-lines', context: 0, redacted: true, truncated: false,
+    hunks: [{ oldStart: 2, newStart: 2, deleted: ['old public\n', '[redacted:sensitive-line]\n'], added: ['new public\n', '[redacted:sensitive-line]\n'] }] } } } }));
+  await page.goto(`/observatory?from=${t}&to=${demoWindow.to}&cursor=${t + 12500}&event=${hunkEvent.id}`);
+  await expect(page.getByRole('button', { name: 'Load captured diff' })).toBeVisible();
+  await expect(page.getByLabel('Captured diff detail')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Load captured diff' }).click();
+  await expect(page.getByLabel('Captured diff detail')).toContainText('zero unchanged context');
+  await expect(page.getByLabel('Captured diff detail')).toContainText('- old public');
+  await expect(page.getByLabel('Captured diff detail')).toContainText('+ new public');
+  await expect(page.getByLabel('Captured diff detail')).toContainText('[redacted:sensitive-line]');
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12499));
+  await expect(page.getByLabel('Captured diff detail')).toHaveCount(0);
 });
 
 // Coordinator-only rendered scenario. API fixtures do not establish source permissions or production coverage.

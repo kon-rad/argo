@@ -2,12 +2,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
+import { changedLines, type ChangedLines } from './changeDiff.js';
 
 export const hash = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex');
 const git = (cwd: string, ...args: string[]): string => execFileSync('git', ['--literal-pathspecs', '-C', cwd, ...args], { encoding: 'utf8', timeout: 2000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 export interface ChangeCapture {
   version: 1; id: string; repository: string; worktree: string; path: string; before: string | null; after: string;
-  diff: { format: 'replacement'; before?: string; after?: string; truncated: boolean };
+  diff: ChangedLines;
   commit?: { sha: string; verification: 'local-object'; authorship: 'unknown' };
 }
 /** A single synchronous file operation, never a working-tree-wide diff or mtime attribution. */
@@ -23,7 +24,7 @@ export function prepareChange(abs: string) {
     return { root, common, before, path: relative(root, resolve(realpathSync(cwd), relative(cwd, abs))) };
   } catch { return null; }
 }
-export function finishChange(abs: string, prepared: ReturnType<typeof prepareChange>, intended: string): ChangeCapture | null {
+export function finishChange(abs: string, prepared: ReturnType<typeof prepareChange>, intended: string, env: NodeJS.ProcessEnv = process.env): ChangeCapture | null {
   if (!prepared || Buffer.byteLength(intended) > 16 * 1024 * 1024) return null;
   try {
     const after = readFileSync(abs), before = prepared.before;
@@ -31,8 +32,8 @@ export function finishChange(abs: string, prepared: ReturnType<typeof prepareCha
     if (!after.equals(Buffer.from(intended)) || before?.equals(after)) return null;
     return { version: 1, id: randomUUID(), repository: hash(prepared.common), worktree: hash(prepared.root), path: prepared.path,
       before: before === null ? null : hash(before), after: hash(after),
-      // Persistent tool details must never copy untouched file contents.
-      diff: { format: 'replacement', truncated: true } };
+      // Redaction happens before this object reaches tool results/session persistence.
+      diff: changedLines(before, after, env) };
   } catch { return null; }
 }
 /** Proves this path's parent/commit bytes, not authorship or ownership of the whole commit. */

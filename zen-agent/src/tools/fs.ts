@@ -94,7 +94,7 @@ export function fsTools(ctx: ToolContext): AgentTool<any>[] {
   const cwd = ctx.cfg.workdir;
   const captures = new Map<string, { root: string; change: ChangeCapture }>();
   const capture = (abs: string, prepared: ReturnType<typeof prepareChange>, content: string) => {
-    const change = finishChange(abs, prepared, content);
+    const change = finishChange(abs, prepared, content, { ...process.env, ...ctx.env });
     if (!change || !prepared) return {};
     captures.set(change.id, { root: prepared.root, change });
     if (captures.size > 128) captures.delete(captures.keys().next().value!);

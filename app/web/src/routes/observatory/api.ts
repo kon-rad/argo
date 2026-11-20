@@ -2,6 +2,7 @@ import type { EvidenceEvent, ReplayWindow } from '@secondbrain/contracts/observa
 import { ordered } from '@secondbrain/contracts/observatory';
 import { request } from '../../lib/http.js';
 import type { ViewState } from './model.js';
+import type { DiffDetail } from './ChangedDiff.js';
 export interface Snapshot { window: ReplayWindow; export: string; diagnostics: Record<string, unknown> }
 interface Page extends Snapshot { total: number; next: number | null }
 export const CACHE_BYTES = 32 * 1024 * 1024;
@@ -23,5 +24,5 @@ export async function loadSnapshot(state: ViewState, signal: AbortSignal): Promi
   return { window: { ...first.window, events: ordered(events) }, export: first.export, diagnostics: first.diagnostics };
 }
 export function loadDetail(id: string, token: string, signal: AbortSignal, diff = false) {
-  return request<{ event: EvidenceEvent; detail: { availability: string; content: string; thinking?: { availability: 'authorized-summary' | 'hidden' | 'unavailable'; summary?: string } } }>(`/observatory/events/${encodeURIComponent(id)}${diff ? '/diff' : ''}`, { export: token }, { signal });
+  return request<{ event: EvidenceEvent; detail: { availability: string; content: string; diff?: DiffDetail; thinking?: { availability: 'authorized-summary' | 'hidden' | 'unavailable'; summary?: string } } }>(`/observatory/events/${encodeURIComponent(id)}${diff ? '/diff' : ''}`, { export: token }, { signal });
 }
