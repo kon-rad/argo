@@ -1,6 +1,7 @@
 import { expandSteps } from '../../archive/steps.js';
 import { applyEvent, ordered, type BoundaryState, type EvidenceEvent, type ReplayWindow } from '@secondbrain/contracts/observatory';
 export interface ArchiveRow {
+  observatory_projection?: import('../../archive/observatoryProjection.js').ObservatoryProjection;
   id: number; session_id: number; seq: number; ts: Date | null; role: string; kind: string; raw: unknown; text: string;
   host: string; source: string; external_id: string; harness: string; observed_at: Date | null;
 }
@@ -35,7 +36,7 @@ export function thinkingDetail(raw: unknown): ThinkingDetail {
   return { availability: 'unavailable' };
 }
 /** Retain explicit file targets, never argument bodies or guessed shell targets. */
-function fileTarget(tool: string | null, text: string): EvidenceEvent['target'] {
+export function fileTarget(tool: string | null, text: string): EvidenceEvent['target'] {
   const operations: Record<string, 'read' | 'write' | 'edit'> = { read: 'read', read_file: 'read', Read: 'read', write_file: 'write', Write: 'write', edit_file: 'edit', Edit: 'edit' };
   const operation = tool && Object.hasOwn(operations, tool) ? operations[tool] : undefined;
   if (!operation || text.length > 1000000) return undefined;
@@ -51,13 +52,13 @@ export function archiveEvents(rows: ArchiveRow[]): EvidenceEvent[] {
   const pending = new Map<string, EvidenceEvent[]>();
   const events: EvidenceEvent[] = [];
   for (const row of [...new Map(rows.map(row => [row.id, row])).values()].sort((a, b) => a.session_id - b.session_id || a.seq - b.seq || a.id - b.id)) {
-    expandSteps(row).forEach((part, index) => {
+    (row.observatory_projection?.parts.map(p => ({ ...p, key: p.key.replace(/^0/, String(row.id)) })) ?? expandSteps(row)).forEach((part, index) => {
       const e = envelope('archive_messages', String(row.id), instant(row.ts), part.step);
       e.id += `:${part.key}`; e.source.part = part.key; e.sequence = row.seq; e.part = index; e.session = `archive:${row.session_id}`;
       e.context = { host: row.host, runtime: row.harness, source: row.source, externalSession: row.external_id };
       // Archive updated_at is session freshness, not observation time for this particular message.
       if (['response', 'thinking', 'tool_call', 'tool_result'].includes(part.step)) e.actor = { kind: 'agent', sender: null, channel: null, evidence: 'archive-step' };
-      if (part.step === 'prompt') e.actor = recordedSender(row.raw);
+      if (part.step === 'prompt') e.actor = row.observatory_projection?.sender ?? recordedSender(row.raw);
       if (part.step === 'thinking') e.thinking = 'available-in-source';
       if (part.toolName) e.tool = part.toolName;
       if (part.step === 'tool_call') e.target = fileTarget(part.toolName, part.text);

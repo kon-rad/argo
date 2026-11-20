@@ -1,3 +1,4 @@
+import { projectMessages } from './observatoryProjection.js';
 import { query, type TxClient } from '../db.js';
 import { clean, sha256 } from './clean.js';
 import { redactor } from './redact.js';
@@ -125,7 +126,9 @@ export async function upsertMessages(tx: TxClient, sessionId: number, input: Par
          is_sidechain=EXCLUDED.is_sidechain, step=EXCLUDED.step, tool_names=EXCLUDED.tool_names,
          tool_call_id=EXCLUDED.tool_call_id, is_error=EXCLUDED.is_error, result_parser_version=EXCLUDED.result_parser_version
        WHERE a.raw_sha IS DISTINCT FROM EXCLUDED.raw_sha OR a.step IS NULL
-         OR a.result_parser_version IS DISTINCT FROM EXCLUDED.result_parser_version`, params);
+         OR a.result_parser_version IS DISTINCT FROM EXCLUDED.result_parser_version
+         OR a.observatory_projection IS NULL RETURNING id`, params);
+    await projectMessages(tx, r.rows.map(row => row.id));
     changed += r.rowCount ?? 0;
   }
   return changed;
