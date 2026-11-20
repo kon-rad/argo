@@ -76,17 +76,28 @@ export function span(fromIso: string | null | undefined, toIso: string | null | 
   return `${Math.floor(h / 24)} d ${h % 24} h`;
 }
 
+// Date formatters are immutable and expensive to construct during timeline scrubbing.
+// Bound the cache, including browser locale and seconds precision in its identity.
+const zonedFormatters = new Map<string, Intl.DateTimeFormat>();
 /** A timestamp in a given IANA zone with the zone shown, e.g. "Oct 11, 2026, 07:17:37 GMT+9". No zone: the app's. */
 export function zoned(iso: string | null, tz?: string | null, opts: { seconds?: boolean } = {}): string {
   if (!iso) return '—';
   const d = new Date(iso);
   try {
-    return new Intl.DateTimeFormat([], {
-      timeZone: tz ?? appTimezone(),
+    const zone = tz ?? appTimezone(), locale = typeof navigator === 'undefined' ? '' : navigator.language;
+    const key = JSON.stringify([locale, zone, !!opts.seconds]);
+    let formatter = zonedFormatters.get(key);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat([], {
+      timeZone: zone,
       year: 'numeric', month: 'short', day: 'numeric',
       hour: '2-digit', minute: '2-digit', second: opts.seconds ? '2-digit' : undefined,
       hourCycle: 'h23', timeZoneName: 'short',
-    }).format(d);
+      });
+      if (zonedFormatters.size >= 16) zonedFormatters.delete(zonedFormatters.keys().next().value!);
+      zonedFormatters.set(key, formatter);
+    }
+    return formatter.format(d);
   } catch {
     return d.toLocaleString();
   }

@@ -39,6 +39,8 @@ export default function MapActivity({ events, selected, note, layout, pin, onNot
   const activity = useMemo(() => graph.data ? mapActivity(graph.data, events) : [], [graph.data, events]);
   const selectedExecution = events.some(e => e.execution === selected);
   const marked = useMemo(() => activity.filter(a => !selectedExecution || a.event.execution === selected), [activity, selectedExecution, selected]);
+  const visible = marked.slice(-200);
+  const omitted = marked.length - visible.length;
   const onPick = (id: string | null) => onNote(graph.data?.nodes.find(n => n.id === id && n.kind === 'note')?.ref ?? undefined);
   if (graph.isError) return <p role="alert">Map unavailable: {(graph.error as Error).message}. Pinned layouts are never silently replaced.</p>;
   if (!graph.data) return <p role="status">Loading pinned map layout…</p>;
@@ -48,7 +50,8 @@ export default function MapActivity({ events, selected, note, layout, pin, onNot
     <p>○ R circle: read attempt · ▲ W triangle: write/edit attempt. Colors preserve sender origin: amber human, cyan agent, grey unattributed/automation. A tool result does not prove changed bytes. {selectedExecution ? 'Showing notes touched by selected execution.' : ''}</p>
     {show3d && rendererFailed && <p role="status">3D map unavailable. Use the recorded note activity below, or turn 3D off and on to retry.</p>}
     {show3d && !rendererFailed && <div ref={rendererHost} style={{ height: 420 }}><MapRendererBoundary onFailure={() => setRendererFailed(true)}><Suspense fallback={<p>Loading map renderer…</p>}><FullMap ref={mapRef} renderOnDemand graph={data} metrics={metrics} layers={layers} selected={data.nodes.find(n => n.kind === 'note' && n.ref === note)?.id ?? null} onSelect={onPick} activity={marked} /></Suspense></MapRendererBoundary></div>}
-    <ul aria-label="Note activity">{marked.map(a => <li key={a.event.id}>
+    {omitted > 0 && <p role="status">Showing the latest {visible.length} of {marked.length} path operations. {omitted} earlier operations are omitted from this list; seek earlier or filter a note to inspect them. The map retains all recorded operations.</p>}
+    <ul aria-label="Note activity">{visible.map(a => <li key={a.event.id}>
       <button className="underline" onClick={() => onSelect(a.event.id)}>{operationStyle(a.event.target!.operation).glyph} {a.event.target!.operation} attempt: {a.event.target!.path}</button>
       {a.node ? <> · <button className="underline" onClick={() => onNote(a.node!.ref!)}>Filter note {a.node.ref}</button> · <button className="underline" onClick={() => mapRef.current?.focus(a.node!.id)}>Focus note {a.node.ref}</button></> : <> · {a.reason}</>}
       <span> · Evidence {a.event.source.table}:{a.event.source.id} part {a.event.source.part}</span>

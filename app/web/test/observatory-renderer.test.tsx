@@ -135,3 +135,12 @@ it.each([0, 1])('cancels deferred fit on unmount after %i frames', frameCount =>
   view.unmount(); expect(frames.queue.size).toBe(0);
   frames.tick(); expect(graph.cameraPosition).not.toHaveBeenCalled();
 });
+
+it('destroys workspace controls before detaching their original DOM root', () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const view = render(<Workspace nodes={[]} links={[]} onSelect={() => {}} />);
+  const host = view.getByLabelText('3D execution workspace'), connected: boolean[] = [];
+  graph._destructor!.mockImplementationOnce(() => connected.push(host.isConnected));
+  view.unmount();
+  expect(connected).toEqual([true]);
+});

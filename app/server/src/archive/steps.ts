@@ -148,7 +148,10 @@ export function expandSteps(row: StepRow): StepPart[] {
   const k = String(row.id);
   if (isObj(raw) && raw.harness === 'codex') {
     const f = codexFields(raw);
-    return [{ key: k, step: f.step, text: toolResult(raw)?.text ?? row.text, toolName: f.toolNames[0] ?? null, toolCallId: f.toolCallId, isError: f.isError }];
+    const p = isObj(raw.payload) ? raw.payload : {};
+    const args = p.type === 'function_call' ? p.arguments : undefined;
+    const text = typeof args === 'string' ? args : isObj(args) ? JSON.stringify(args) : toolResult(raw)?.text ?? row.text;
+    return [{ key: k, step: f.step, text, toolName: f.toolNames[0] ?? null, toolCallId: f.toolCallId, isError: f.isError }];
   }
   if (isObj(raw) && isZen(raw)) {
     if (raw.type !== 'message' || !isObj(raw.message)) return [{ key: k, step: zenFields(raw).step, text: row.text, ...base }];

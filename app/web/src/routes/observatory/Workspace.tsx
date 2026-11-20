@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph';
 import { BoxGeometry, Mesh, MeshBasicMaterial, OctahedronGeometry, SphereGeometry, type BufferGeometry } from 'three';
 import { originStyle, type SceneNode, type SceneLink } from './model.js';
@@ -23,7 +23,8 @@ export default function Workspace({ nodes, links, onSelect }: { nodes: SceneNode
     g.cameraPosition({ x: center.x, y: center.y + span * 1.2, z: center.z + span * 1.8 }, center);
     framed.current = true; wake.current();
   }, []);
-  useEffect(() => {
+  // Orbit controls must disconnect while the canvas still belongs to its original document.
+  useLayoutEffect(() => {
     const el = host.current!;
     let cleanup = () => {};
     try {

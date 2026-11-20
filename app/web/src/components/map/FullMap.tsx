@@ -1,7 +1,7 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useLayoutEffect, useImperativeHandle, useRef } from 'react';
 import { operationStyle, type NoteActivity } from '../../routes/observatory/mapActivity.js';
 import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph';
-import { Group, Mesh, MeshBasicMaterial, SphereGeometry, TorusGeometry, ConeGeometry, Vector2 } from 'three';
+import { Group, Mesh, MeshBasicMaterial, SphereGeometry, TorusGeometry, ConeGeometry, Vector2, type BufferGeometry } from 'three';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { LABELLED, labelSprite, metricLabel, nodeColor, recency, type MapGraph, type MapMetric, type MapNodeData } from '../../lib/mapData.js';
 
@@ -40,9 +40,13 @@ function hexDim(hex: string, k: number): string {
 export const FullMap = forwardRef<FullMapHandle, Props>(function FullMap({ graph, metrics, layers, selected, onSelect, activity, renderOnDemand }, ref) {
   const host = useRef<HTMLDivElement>(null);
   const fg = useRef<ForceGraph3DInstance | null>(null);
+  const select = useRef(onSelect); select.current = onSelect;
   const nodesById = useRef(new Map<string, GNode>());
   const neighbours = useRef(new Set<string>());
   const wake = useRef((_duration = 1200) => {});
+  const activityGroup = useRef<Group | null>(null);
+  const activityMeshes = useRef(new Map<string, Mesh>());
+  const activityResources = useRef(new Map<string, { geometry: BufferGeometry; material: MeshBasicMaterial }>());
 
   useImperativeHandle(ref, () => ({
     focus(id) {
@@ -55,8 +59,8 @@ export const FullMap = forwardRef<FullMapHandle, Props>(function FullMap({ graph
     },
   }));
 
-  // Create once.
-  useEffect(() => {
+  // Dispose controls before DOM detachment so their document listeners use the original root.
+  useLayoutEffect(() => {
     const el = host.current!;
     const g = new ForceGraph3D(el, { controlType: 'orbit' })
       .backgroundColor('#04060c')
@@ -97,6 +101,11 @@ export const FullMap = forwardRef<FullMapHandle, Props>(function FullMap({ graph
     return () => {
       ro.disconnect();
       stopIdle();
+      activityGroup.current?.parent?.remove(activityGroup.current);
+      activityGroup.current?.clear(); activityGroup.current = null;
+      activityMeshes.current.clear();
+      for (const resource of activityResources.current.values()) { resource.geometry.dispose(); resource.material.dispose(); }
+      activityResources.current.clear();
       g._destructor();
       fg.current = null;
       el.innerHTML = '';
@@ -130,28 +139,33 @@ export const FullMap = forwardRef<FullMapHandle, Props>(function FullMap({ graph
     g.graphData({ nodes, links });
   }, [graph, metrics]);
 
-  // Overlay lives beside the pinned graph. Seeking never replaces topology or runs forces.
+  // Reconcile glyphs beside the pinned graph; share the bounded shape/origin resources.
   useEffect(() => {
     const g = fg.current;
     if (!g || !activity) return;
-    const group = new Group();
-    const seen = new Set<string>();
+    if (!activityGroup.current) { activityGroup.current = new Group(); g.scene().add(activityGroup.current); }
+    const group = activityGroup.current, seen = new Set<string>();
     for (const item of activity) {
       if (!item.node || !item.event.target) continue;
       const read = item.event.target.operation === 'read', key = `${item.node.id}:${read}:${item.event.actor.kind}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const mesh = new Mesh(read ? new TorusGeometry(5, 1, 6, 12) : new ConeGeometry(5, 8, 3), new MeshBasicMaterial({ color: operationStyle(item.event.target.operation, item.event.actor.kind).color, depthTest: false }));
+      let mesh = activityMeshes.current.get(key);
+      if (!mesh) {
+        const resourceKey = `${read}:${item.event.actor.kind}`;
+        let resource = activityResources.current.get(resourceKey);
+        if (!resource) {
+          resource = { geometry: read ? new TorusGeometry(5, 1, 6, 12) : new ConeGeometry(5, 8, 3),
+            material: new MeshBasicMaterial({ color: operationStyle(item.event.target.operation, item.event.actor.kind).color, depthTest: false }) };
+          activityResources.current.set(resourceKey, resource);
+        }
+        mesh = new Mesh(resource.geometry, resource.material); mesh.renderOrder = 10;
+        activityMeshes.current.set(key, mesh); group.add(mesh);
+      }
       mesh.position.set(item.node.x + (read ? -7 : 7), item.node.y + 10, item.node.z);
-      mesh.renderOrder = 10;
-      group.add(mesh);
     }
-    g.scene().add(group);
+    for (const [key, mesh] of activityMeshes.current) if (!seen.has(key)) { group.remove(mesh); activityMeshes.current.delete(key); }
     wake.current();
-    return () => {
-      g.scene().remove(group);
-      for (const child of group.children) { const mesh = child as Mesh; mesh.geometry.dispose(); (mesh.material as MeshBasicMaterial).dispose(); }
-    };
   }, [activity]);
 
   // Highlight, visibility.
@@ -198,10 +212,10 @@ export const FullMap = forwardRef<FullMapHandle, Props>(function FullMap({ graph
         if (hit) return '#ffffff';
         return l.kind === 'link' ? '#6f7ea3' : l.kind === 'goal' ? '#ffd27a' : '#9aa3b5';
       })
-      .onNodeClick((raw) => onSelect((raw as GNode).id))
-      .onBackgroundClick(() => onSelect(null));
+      .onNodeClick((raw) => select.current((raw as GNode).id))
+      .onBackgroundClick(() => select.current(null));
     wake.current();
-  }, [graph, layers, selected, onSelect]);
+  }, [graph, layers, selected]);
 
   return <div ref={host} className="h-full w-full" data-testid="map-full" />;
 });

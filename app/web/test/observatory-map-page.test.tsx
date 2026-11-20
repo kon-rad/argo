@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import MapPage from '../src/routes/Map.js';
 import Observatory from '../src/routes/observatory/Observatory.js';
+import BrainActivity from '../src/routes/observatory/BrainActivity.js';
 import { mapGraph as graph, mapWindow as window } from './fixtures/observatoryMap.js';
 vi.mock('../src/routes/observatory/Workspace.js', () => ({ default: () => <div>Workspace canvas mock</div> }));
 const mapProps = vi.hoisted(() => ({ activity: [] as any[] }));
@@ -58,4 +59,17 @@ it('makes unavailable pinned layouts explicit instead of drawing a different gra
   setup(true, true);
   await screen.findByText(/Pinned layouts are never silently replaced/);
   expect(screen.queryByText(/Current topology is context only/)).toBeNull();
+});
+
+it('bounds rendered operation rows while retaining all overlay evidence', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(graph))));
+  const source = window.events.find(e => e.id === 'read')!;
+  const events = Array.from({ length: 5000 }, (_, i) => ({ ...source, id: `bulk-${i}`, source: { ...source.source, id: String(i) } }));
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><BrainActivity events={events} pin={() => {}} onNote={() => {}} onSelect={() => {}} show3d /></QueryClientProvider>);
+  await screen.findByText(/Showing the latest 200 of 5000 path operations/);
+  await waitFor(() => expect(mapProps.activity).toHaveLength(5000));
+  const list = screen.getByRole('list', { name: 'Note activity' });
+  expect(list.querySelectorAll('li')).toHaveLength(200);
+  expect(list.textContent).toContain('archive_messages:4999');
+  expect(list.textContent).not.toContain('archive_messages:0 part');
 });
