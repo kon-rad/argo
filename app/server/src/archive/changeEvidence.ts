@@ -9,7 +9,7 @@ const diffSchema = z.union([
   z.object({ format: z.literal('replacement'), before: z.string().max(16384).optional(), after: z.string().max(16384).optional(), truncated: z.boolean() }).strict(),
   z.object({ format: z.literal('changed-lines'), context: z.literal(0), redacted: z.literal(true), truncated: z.literal(false), hunks: z.array(hunk).min(1).max(512) }).strict(),
   z.object({ format: z.literal('changed-lines'), context: z.literal(0), redacted: z.literal(true), truncated: z.literal(true),
-    reason: z.enum(['input-limit', 'line-limit', 'output-limit', 'binary', 'unsafe-text']) }).strict(),
+    reason: z.enum(['input-limit', 'line-limit', 'output-limit', 'binary', 'unsafe-text', 'empty-change']) }).strict(),
 ]);
 const capture = z.object({ version: z.literal(1), id: z.string().min(1).max(128), repository: hash, worktree: hash, path,
   before: hash.nullable(), after: hash,

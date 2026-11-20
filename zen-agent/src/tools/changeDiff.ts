@@ -1,6 +1,6 @@
 /** Bounded context-free observations, not full-file replacements or executable patches. */
 export interface ChangedHunk { oldStart: number; newStart: number; deleted: string[]; added: string[] }
-export type DiffReason = 'input-limit' | 'line-limit' | 'output-limit' | 'binary' | 'unsafe-text';
+export type DiffReason = 'input-limit' | 'line-limit' | 'output-limit' | 'binary' | 'unsafe-text' | 'empty-change';
 export type ChangedLines = { format: 'changed-lines'; context: 0; redacted: true } & (
   { truncated: false; hunks: ChangedHunk[] } | { truncated: true; reason: DiffReason });
 
@@ -41,6 +41,7 @@ export function changedLines(before: Buffer | null, after: Buffer, env: NodeJS.P
     if (i < a.length && (j === b.length || lengths[(i + 1) * width + j]! >= lengths[i * width + j + 1]!)) current.deleted.push(redact(a[i++]!));
     else current.added.push(redact(b[j++]!));
   }
+  if (!hunks.length) return unavailable('empty-change');
   const result: ChangedLines = { format: 'changed-lines', context: 0, redacted: true, truncated: false, hunks };
   return Buffer.byteLength(JSON.stringify(result)) > 16384 ? unavailable('output-limit') : result;
 }

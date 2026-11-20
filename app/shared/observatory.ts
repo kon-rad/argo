@@ -3,7 +3,7 @@ export type SourceTable = 'archive_messages' | 'usage_calls' | 'usage_runs' | 'c
 export interface ChangeEvidence {
   version: 1; id: string; repository: string; worktree: string; path: string;
   before: string | null; after: string; level: 'captured-hashes' | 'captured-diff' | 'commit';
-  diff: { format: 'replacement'; truncated: boolean } | { format: 'changed-lines'; context: 0; redacted: true; truncated: boolean; reason?: 'input-limit' | 'line-limit' | 'output-limit' | 'binary' | 'unsafe-text' };
+  diff: { format: 'replacement'; truncated: boolean } | { format: 'changed-lines'; context: 0; redacted: true; truncated: boolean; reason?: 'input-limit' | 'line-limit' | 'output-limit' | 'binary' | 'unsafe-text' | 'empty-change' };
   commit?: { sha: string; verification: 'local-object'; authorship: 'unknown' };
 }
 export interface EvidenceEvent {

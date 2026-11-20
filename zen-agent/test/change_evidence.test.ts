@@ -43,6 +43,9 @@ test('captures only this operation, rejects failed edits, and verifies exact com
     assert.notEqual(linkedChange.worktree, result.change.worktree);
     const noop = await run('write_file', { path: 'note.md', content: 'after\n' });
     assert.equal(noop.change, undefined);
+    const empty = await run('write_file', { path: 'empty.md', content: '' });
+    assert.equal(empty.change.before, null); assert.equal(empty.change.after, hash(''));
+    assert.deepEqual(empty.change.diff, { format: 'changed-lines', context: 0, redacted: true, truncated: true, reason: 'empty-change' });
     const large = await run('write_file', { path: 'big.md', content: 'x'.repeat(20000) });
     assert.equal(large.change.diff.truncated, true);
     assert.equal(large.change.diff.after, undefined);
