@@ -15,7 +15,7 @@ export interface EvidenceEvent {
   source: { table: SourceTable; id: string; part: string }; precision: 'millisecond' | 'unknown'; confidence: 'recorded';
   parent?: string; occurrence?: string; tool?: string; outcome?: 'success' | 'error' | 'unknown';
   /** Explicit structured path only; operation attempt, never proof of changed bytes. */
-  target?: { path: string; operation: 'read' | 'write' | 'edit' };
+  target?: { path: string; vaultPath?: string; operation: 'read' | 'write' | 'edit' };
   /** Captured runtime observation, never ownership of other files in the worktree. Diff stays in authorized source. */
   change?: ChangeEvidence;
   artifact?: { repository: string; pr: number; head: string; base: string;

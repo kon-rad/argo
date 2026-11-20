@@ -240,6 +240,21 @@ describe('map API', () => {
     expect(node.body.neighbours.map((n: { id: string }) => n.id)).toEqual(expect.arrayContaining(['note:1', 'project:demo']));
   });
 
+  it('pins retained layouts and never falls back from an unavailable version', async () => {
+    const root = await seed();
+    await buildMap(root);
+    const app = createApp({ modules: ALL_MODULES, vaultRoot: root });
+    const first = await request(app).get('/api/map/graph?version=1').expect(200);
+    await buildMap(root);
+    const latest = await request(app).get('/api/map/graph').expect(200);
+    expect(latest.body.version).toBe(2);
+    const pinned = await request(app).get('/api/map/graph?version=1').expect(200);
+    expect(pinned.body).toEqual(first.body);
+    expect(pinned.headers['etag']).toBe('"map-1"');
+    await request(app).get('/api/map/graph?version=999').expect(404);
+    for (const version of ['bad', '0', '-1', '1.5', '2147483648']) await request(app).get(`/api/map/graph?version=${version}`).expect(400);
+  });
+
   it('404s before the first build', async () => {
     await request(createApp({ modules: ALL_MODULES, vaultRoot: mkdtempSync(join(tmpdir(), 'sb-map-')) })).get('/api/map/graph').expect(404);
   });

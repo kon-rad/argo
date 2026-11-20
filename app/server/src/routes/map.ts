@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { metricViews, type MetricView } from '../metrics/collect.js';
-import { wrap } from './http.js';
+import { z } from 'zod';
+import { parseOr400, wrap } from './http.js';
 
 /**
  * The brain map's data: the newest stored layout, the metrics, and one
@@ -23,10 +24,11 @@ export function mapRouter(): Router {
   const router = Router();
 
   router.get('/graph', wrap(async (req, res) => {
+    const requested = parseOr400(z.object({ version: z.coerce.number().int().positive().max(2147483647).optional() }).strict(), req.query).version;
     const { rows: v } = await query<{ version: number; built_at: string }>(
-      `SELECT version, built_at::text FROM map_layouts ORDER BY version DESC LIMIT 1`);
+      `SELECT version, built_at::text FROM map_layouts WHERE ($1::integer IS NULL OR version = $1) ORDER BY version DESC LIMIT 1`, [requested ?? null]);
     if (!v[0]) {
-      res.status(404).json({ error: 'no layout yet: run `secondbrain map-build` on the server' });
+      res.status(404).json({ error: requested ? 'requested layout unavailable; select a new layout explicitly' : 'no layout yet: run `secondbrain map-build` on the server' });
       return;
     }
     const version = v[0].version;

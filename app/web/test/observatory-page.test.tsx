@@ -88,9 +88,13 @@ it.each(['authorized-summary', 'hidden', 'unavailable'])('displays lazy thinking
   else expect(screen.queryByLabelText('Authorized thinking summary')).toBeNull();
 });
 
-import { archiveEvents } from '../../server/src/addons/observatory/adapters.js';
+import type { EvidenceEvent } from '@secondbrain/contracts/observatory';
 it('renders evidenced source origins under human, agent and unknown filters', async () => {
-  const events = archiveEvents(['human', 'agent', 'unknown'].map((kind, id) => ({ id: id + 1, session_id: 12, seq: id, ts: new Date(demoWindow.from + id), role: 'user', kind: 'user', raw: { type: 'user', sender: { kind, id: 'fixture-sender' }, message: { content: 'Synthetic prompt' } }, text: '', host: 'lab', source: 'claude-code', external_id: 's', harness: 'claude-code', observed_at: null })));
+  // Adapter sender extraction is covered by server tests; exercise the browser transport contract here.
+  const events: EvidenceEvent[] = (['human', 'agent', 'unknown'] as const).map((kind, id) => ({
+    ...demoWindow.events[0]!, id: `origin:${id}`, at: demoWindow.from + id,
+    actor: { kind, sender: 'fixture-sender', channel: null, evidence: 'archive-recorded-sender' },
+  }));
   const window = { ...demoWindow, events };
   setup(`/observatory?from=${window.from}&to=${window.to}&cursor=${window.from + 100}`, () => ({ window, export: 'origin-token', total: 3, next: null, diagnostics: {} }));
   await screen.findByText('Events through cursor (3; latest 200 shown)');
