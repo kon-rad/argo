@@ -66,6 +66,8 @@ test('synthetic prospective write, commit and verified gate evidence stay distin
   await expect(page.getByRole('button', { name: /tool_result/ })).toHaveCount(2);
   await page.getByRole('button', { name: /tool_result/ }).last().click();
   await expect(page.getByLabel('Captured change evidence')).toContainText('captured-diff');
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /^file:/ })).toHaveCount(1);
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /\(captured-diff\)/ })).toHaveCount(1);
   await expect(page.getByLabel('Captured change evidence')).toContainText('Projects/demo.md');
   await page.getByRole('link', { name: 'Brain Map replay', exact: true }).click();
   const capturedNote = page.getByLabel('Note activity').getByRole('button', { name: '▲ W write captured-diff: Projects/demo.md', exact: true });
@@ -108,6 +110,13 @@ test('synthetic prospective write, commit and verified gate evidence stay distin
   await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12499));
   await expect(reportedNote).toHaveCount(0);
   await expect(page.getByLabel('Note activity').getByRole('button', { name: '▲ W write attempt: Projects/demo.md', exact: true })).toBeVisible();
+  // A failed but valid pair stays one attempt target; no captured/success promotion.
+  const failedWindow = { ...reportedWindow, events: reportedWindow.events.map(event => event.id === 'write-result' ? { ...event, outcome: 'error' } : event) };
+  await page.route('**/api/observatory/window*', route => route.fulfill({ json: { window: failedWindow, total: failedWindow.events.length, next: null, export: 'failed-fixture', diagnostics: { synthetic: true } } }));
+  await page.goto(`/observatory?from=${t}&to=${demoWindow.to}&cursor=${t + 12500}&event=write-result`);
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /^file:/ })).toHaveCount(1);
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /\(attempt\)/ })).toHaveCount(1);
+  await expect(page.getByLabel('Captured change evidence')).toHaveCount(0);
   // Authorized lazy-detail rendering uses changed-line observations, never replacement text.
   const writeResult = demoWindow.events.find(event => event.id === 'write-result')!;
   const hunkEvent = { ...writeResult, change: { ...writeResult.change!, diff: { format: 'changed-lines', context: 0, redacted: true, truncated: false } } };

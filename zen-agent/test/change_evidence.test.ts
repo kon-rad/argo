@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync, unlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -182,4 +182,32 @@ test('known secret environment values redact before persistence, including multi
     if (oldKeys === undefined) delete process.env.FIXTURE_KEYS; else process.env.FIXTURE_KEYS = oldKeys;
     if (oldPassword === undefined) delete process.env.FIXTURE_PASSWORD; else process.env.FIXTURE_PASSWORD = oldPassword;
   }
+});
+
+test('never attributes dangling or swapped file/parent symlinks to repository bytes', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'zen-capture-path-'));
+  const outside = mkdtempSync(join(tmpdir(), 'zen-capture-outside-'));
+  try {
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    const tools = Object.fromEntries(fsTools({ cfg: { ...DEFAULTS, workdir: root, fs: { ...DEFAULTS.fs, roots: [root] } } } as ToolContext).map(t => [t.name, t]));
+    const target = join(outside, 'missing.md'), link = join(root, 'dangling.md');
+    symlinkSync(target, link);
+    const result = await tools.write_file!.execute('dangling', { path: 'dangling.md', content: 'outside bytes' });
+    assert.equal(result.details.change, undefined);
+    assert.equal(readFileSync(target, 'utf8'), 'outside bytes'); // Write semantics unchanged, capture remains unknown.
+    execFileSync('git', ['-C', outside, 'init', '-q']); // Parent escapes must also reject another Git repository.
+    const file = join(root, 'swap.md'); writeFileSync(file, 'before');
+    const prepared = prepareChange(file)!; assert.ok(prepared);
+    unlinkSync(file); symlinkSync(target, file); writeFileSync(file, 'after');
+    assert.equal(finishChange(file, prepared, 'after'), null);
+    const parent = join(root, 'parent'); mkdirSync(parent);
+    const nested = join(parent, 'note.md'); writeFileSync(nested, 'before');
+    const prior = prepareChange(nested)!; assert.ok(prior);
+    rmSync(parent, { recursive: true }); symlinkSync(outside, parent);
+    writeFileSync(nested, 'after'); assert.equal(finishChange(nested, prior, 'after'), null);
+    assert.equal(prepareChange(nested), null);
+    const absentParent = join(root, 'new-parent', 'note.md'); const pending = prepareChange(absentParent)!; assert.ok(pending);
+    symlinkSync(outside, join(root, 'new-parent')); writeFileSync(absentParent, 'after');
+    assert.equal(finishChange(absentParent, pending, 'after'), null);
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
 });

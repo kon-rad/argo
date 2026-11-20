@@ -3,10 +3,20 @@ import type { BoundaryState, EvidenceEvent } from '@secondbrain/contracts/observ
 const levels = ['attempt', 'tool-reported-success', 'captured-hashes', 'captured-diff', 'commit'] as const;
 export type FileEvidenceLevel = typeof levels[number];
 export interface BoundaryContext { boundary?: BoundaryState; from?: number }
+/** Pairing is independent of success. Contradictory recorded fields cannot join files. */
+export function pairedFileCall(event: EvidenceEvent, byId: ReadonlyMap<string, EvidenceEvent>): EvidenceEvent | undefined {
+  if (event.kind !== 'tool_result' || !event.parent || event.at === null) return undefined;
+  const parent = byId.get(event.parent);
+  if (parent?.kind !== 'tool_call' || parent.at === null || parent.at > event.at) return undefined;
+  if (event.tool && parent.tool && event.tool !== parent.tool ||
+    event.target && parent.target && event.target.path !== parent.target.path ||
+    event.context?.host && parent.context?.host && event.context.host !== parent.context.host ||
+    event.session && parent.session && event.session !== parent.session) return undefined;
+  return parent;
+}
 export function fileEvidenceLevel(event: EvidenceEvent, byId: ReadonlyMap<string, EvidenceEvent>, context: BoundaryContext = {}): FileEvidenceLevel {
   if (event.kind !== 'tool_result' || !event.parent || event.outcome === 'error' || event.at === null) return 'attempt';
-  const parent = byId.get(event.parent);
-  const visibleParent = parent?.kind === 'tool_call' && parent.at !== null && parent.at <= event.at;
+  const visibleParent = pairedFileCall(event, byId);
   const prior = context.boundary?.provenance?.[`tool:${event.parent}`];
   const boundaryParent = context.from !== undefined && context.boundary?.tools[event.parent] === 'pending' &&
     prior?.event === event.parent && prior.at !== null && prior.at < context.from && prior.at <= event.at &&
@@ -32,8 +42,8 @@ export function fileTargets(events: EvidenceEvent[], context: BoundaryContext = 
     const key = level !== 'attempt' ? captureKey(event) : undefined;
     const previous = key ? captures.get(key) : undefined;
     const inherited = previous && event.at !== null && previous.at <= event.at ? previous.target : undefined;
-    const parent = event.parent ? byId.get(event.parent) : undefined;
-    const pairedTarget = parent?.kind === 'tool_call' && parent.at !== null && event.at !== null && parent.at <= event.at ? targets.get(parent.id) : undefined;
+    const parent = pairedFileCall(event, byId);
+    const pairedTarget = parent ? targets.get(parent.id) : undefined;
     let target = event.target ?? pairedTarget ?? inherited ??
       (level !== 'attempt' && event.change ? { path: event.change.path, operation: 'edit' as const } : undefined);
     // The adapter's commit fallback has a repository path but no vault scope.

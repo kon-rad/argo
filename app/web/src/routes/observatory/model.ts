@@ -1,4 +1,4 @@
-import { fileEvidenceLevel, fileEvidenceRank, fileTargets } from './fileEvidence.js';
+import { fileEvidenceLevel, fileEvidenceRank, fileTargets, pairedFileCall } from './fileEvidence.js';
 import { ordered, applyEvent, type EvidenceEvent, type ReplayWindow } from '@secondbrain/contracts/observatory';
 import { sessionLink } from '../usage/AgentSessions.js';
 export type Origin = EvidenceEvent['actor']['kind'];
@@ -70,6 +70,33 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
   const evidenceContext = { boundary: window.boundary, from: window.from };
   const targets = fileTargets(through, evidenceContext);
   const filteredEvents = filters.note ? events.filter(e => targets.get(e.id)?.vaultPath === filters.note) : events;
+  const recordedHost = (e: EvidenceEvent): string | undefined => e.context?.host ?? (e.execution ? index!.intervals.get(e.execution)?.host : undefined);
+  const capturedFiles = new Map<string, string>(), pairedFiles = new Map<string, Set<string>>(), pairedHosts = new Map<string, Set<string>>();
+  // Only a validated, currently visible result can resolve its exact parent chain.
+  // Never consult a later cursor, join by path alone, or borrow a filtered-out capture.
+  for (const e of filteredEvents) {
+    const parent = pairedFileCall(e, byId);
+    if (parent) {
+      const hosts = pairedHosts.get(parent.id) ?? new Set<string>();
+      for (const known of [recordedHost(parent), recordedHost(e)]) if (known) hosts.add(known);
+      pairedHosts.set(parent.id, hosts);
+    }
+    if (!e.change || fileEvidenceRank(fileEvidenceLevel(e, byId, evidenceContext)) < fileEvidenceRank('captured-hashes')) continue;
+    const host = recordedHost(e) ?? (parent ? recordedHost(parent) : undefined) ?? e.session ?? e.id;
+    const id = `file:${host}:${e.change.repository}:${e.change.worktree}:${e.change.path}`;
+    capturedFiles.set(e.id, id);
+    if (parent?.kind === 'tool_call' && (!recordedHost(parent) || !recordedHost(e) || recordedHost(parent) === recordedHost(e))) {
+      const candidates = pairedFiles.get(parent.id) ?? new Set<string>(); candidates.add(id); pairedFiles.set(parent.id, candidates);
+    }
+  }
+  const fileId = (e: EvidenceEvent, path: string): string => {
+    const canonical = capturedFiles.get(e.id); if (canonical) return canonical;
+    const paired = pairedFileCall(e, byId)?.id;
+    const chain = paired ?? e.id, candidates = pairedFiles.get(chain);
+    if (candidates?.size === 1) return [...candidates][0]!;
+    const hosts = pairedHosts.get(chain), host = hosts?.size === 1 ? [...hosts][0] : recordedHost(e);
+    return `file:${host ?? e.session ?? chain}:${chain}:${path}`;
+  };
   const nodes: SceneNode[] = []; const links: SceneLink[] = []; const nodeMap = new Map<string, SceneNode>();
   const fileRanks = new Map<string, number>();
   const add = (id: string, label: string, kind: SceneNode['kind'], origin: Origin, x: number, y: number, z: number) => {
@@ -93,8 +120,7 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
     const target = targets.get(e.id);
     if (target) {
       const level = fileEvidenceLevel(e, byId, evidenceContext), rank = fileEvidenceRank(level);
-      const change = rank >= fileEvidenceRank('captured-hashes') ? e.change : undefined;
-      const id = `file:${e.context?.host ?? e.execution ?? e.session ?? e.id}:${change ? `${change.repository}:${change.worktree}` : e.execution ?? e.session ?? e.id}:${change?.path ?? target.path}`;
+      const id = fileId(e, target.path);
       const label = `${target.operation}: ${target.path} (${level})`;
       add(id, label, 'file', e.actor.kind, owner.fx + 85, 70, owner.fz);
       if (rank > (fileRanks.get(id) ?? -1)) { nodeMap.get(id)!.label = label; fileRanks.set(id, rank); }

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
+import { constants, closeSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, type Stats } from 'node:fs';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { changedLines, type ChangedLines } from './changeDiff.js';
 
 export const hash = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex');
@@ -11,23 +11,74 @@ export interface ChangeCapture {
   diff: ChangedLines;
   commit?: { sha: string; verification: 'local-object'; authorship: 'unknown' };
 }
+const sameEntry = (a: Stats, b: Stats): boolean => a.dev === b.dev && a.ino === b.ino;
+/** Inspect lexical entries even for dangling links; canonicalization alone follows them. */
+function location(abs: string, root: string, lexicalRoot: string) {
+  const path = relative(lexicalRoot, abs);
+  if (!path || path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path)) throw new Error('outside worktree');
+  const parents = new Map<string, Stats>();
+  let cursor = lexicalRoot, file: Stats | undefined;
+  const pieces = path.split(sep);
+  for (let i = -1; i < pieces.length; i++) {
+    if (i >= 0) cursor = resolve(cursor, pieces[i]!);
+    const stat = lstatSync(cursor, { throwIfNoEntry: false });
+    if (!stat) continue; // Missing ancestors are created by the tool, then checked again.
+    if (stat.isSymbolicLink()) throw new Error('symlink observation unsupported');
+    if (realpathSync(cursor) !== resolve(root, ...pieces.slice(0, i + 1))) throw new Error('canonical path changed');
+    if (i < pieces.length - 1) {
+      if (!stat.isDirectory()) throw new Error('parent is not a directory');
+      parents.set(cursor, stat);
+    } else {
+      if (!stat.isFile() || stat.size > 16 * 1024 * 1024) throw new Error('unsupported file');
+      file = stat;
+    }
+  }
+  return { parents, file, path };
+}
+function readObserved(abs: string, file: Stats): Buffer {
+  const fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const current = fstatSync(fd);
+    if (!sameEntry(current, file) || !current.isFile() || current.size > 16 * 1024 * 1024) throw new Error('file changed');
+    return readFileSync(fd);
+  } finally { closeSync(fd); }
+}
+function sameParents(before: Map<string, Stats>, after: Map<string, Stats>): boolean {
+  return [...before].every(([path, stat]) => after.has(path) && sameEntry(stat, after.get(path)!));
+}
 /** A single synchronous file operation, never a working-tree-wide diff or mtime attribution. */
 export function prepareChange(abs: string) {
   // Symlinks can cross repository boundaries. Leave them unsupported rather than invent identity.
   let cwd = dirname(abs);
   while (!existsSync(cwd) && dirname(cwd) !== cwd) cwd = dirname(cwd);
   try {
-    if (existsSync(abs) && (lstatSync(abs).isSymbolicLink() || statSync(abs).size > 16 * 1024 * 1024)) return null;
     const root = realpathSync(git(cwd, 'rev-parse', '--show-toplevel'));
     const common = realpathSync(git(cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'));
-    const before = existsSync(abs) ? readFileSync(abs) : null;
-    return { root, common, before, path: relative(root, resolve(realpathSync(cwd), relative(cwd, abs))) };
+    // Locate this worktree's lexical root, allowing OS aliases above it (e.g. /tmp),
+    // while rejecting a symlink standing in for the root or any descendant entry.
+    let lexicalRoot = cwd;
+    while (realpathSync(lexicalRoot) !== root) {
+      const parent = dirname(lexicalRoot); if (parent === lexicalRoot) return null;
+      lexicalRoot = parent;
+    }
+    const observed = location(abs, root, lexicalRoot);
+    const before = observed.file ? readObserved(abs, observed.file) : null;
+    const checked = location(abs, root, lexicalRoot);
+    if (!sameParents(observed.parents, checked.parents) || !!observed.file !== !!checked.file || observed.file && !sameEntry(observed.file, checked.file!)) return null;
+    return { root, common, lexicalRoot, abs, before, path: observed.path, parents: observed.parents, file: observed.file };
   } catch { return null; }
 }
 export function finishChange(abs: string, prepared: ReturnType<typeof prepareChange>, intended: string, env: NodeJS.ProcessEnv = process.env): ChangeCapture | null {
   if (!prepared || Buffer.byteLength(intended) > 16 * 1024 * 1024) return null;
   try {
-    const after = readFileSync(abs), before = prepared.before;
+    if (abs !== prepared.abs) return null;
+    const observed = location(abs, prepared.root, prepared.lexicalRoot);
+    if (!observed.file || !sameParents(prepared.parents, observed.parents) || prepared.file && !sameEntry(prepared.file, observed.file)) return null;
+    const cwd = dirname(abs);
+    if (realpathSync(git(cwd, 'rev-parse', '--show-toplevel')) !== prepared.root || realpathSync(git(cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir')) !== prepared.common) return null;
+    const after = readObserved(abs, observed.file), before = prepared.before;
+    const checked = location(abs, prepared.root, prepared.lexicalRoot);
+    if (!checked.file || !sameEntry(observed.file, checked.file) || !sameParents(observed.parents, checked.parents)) return null;
     // A racing external writer makes this observation insufficient.
     if (!after.equals(Buffer.from(intended)) || before?.equals(after)) return null;
     return { version: 1, id: randomUUID(), repository: hash(prepared.common), worktree: hash(prepared.root), path: prepared.path,

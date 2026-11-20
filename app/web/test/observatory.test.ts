@@ -88,10 +88,12 @@ it('opens later session evidence and uses recorded steps when start is missing',
 });
 
 it('namespaces opaque local worktree identities by recorded host', () => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
   const result = demoWindow.events.find(e => e.id === 'write-result')!;
-  const peer = { ...result, id: 'other-host-result', execution: 'run:other:resumed', context: { ...result.context!, host: 'other' } };
+  const peerCall = { ...call, id: 'other-host-call', execution: 'run:other:resumed', context: { ...call.context!, host: 'other' } };
+  const peer = { ...result, id: 'other-host-result', parent: peerCall.id, execution: peerCall.execution, context: { ...result.context!, host: 'other' } };
   const interval = { ...demoWindow.intervals.find(i => i.id === 'run:lab:resumed')!, id: peer.execution, host: 'other' };
-  const w = { ...demoWindow, intervals: [...demoWindow.intervals, interval], events: [...demoWindow.events, peer] };
+  const w = { ...demoWindow, intervals: [...demoWindow.intervals, interval], events: [...demoWindow.events, peerCall, peer] };
   expect(sceneAt(w, w.from + 12500, {}).nodes.filter(n => n.kind === 'file' && n.label.includes('captured-diff'))).toHaveLength(2);
 });
 
@@ -142,4 +144,41 @@ it('ranks hashes, text diff and commit on the same canonical captured file witho
   expect(end).toHaveLength(2);
   expect(end.find(n => n.id.includes(peer.change!.worktree))!.label).toContain('(captured-diff)');
   expect(sceneAt(window, window.from + 12200, {}).nodes.some(n => n.label.includes('(commit)'))).toBe(false);
+});
+
+it('keeps one paired captured target at the real demo cursor and restores only the attempt on reverse', () => {
+  const files = (offset: number) => sceneAt(demoWindow, demoWindow.from + offset, {}).nodes.filter(node => node.kind === 'file');
+  expect(files(12499)).toHaveLength(1); expect(files(12499)[0]!.label).toContain('(attempt)');
+  expect(files(12499)[0]!.id).not.toContain('b'.repeat(64));
+  expect(files(12500)).toHaveLength(1); expect(files(12500)[0]!.label).toContain('(captured-diff)');
+  expect(files(12500)[0]!.id).toContain('b'.repeat(64));
+  expect(files(12499)).toHaveLength(1); expect(files(12499)[0]!.label).toContain('(attempt)');
+});
+it('binds captured file identity to exact visible parent even when call host comes only from its execution', () => {
+  const original = demoWindow.events.find(e => e.id === 'write-call')!;
+  const call = { ...original, context: undefined };
+  const result = demoWindow.events.find(e => e.id === 'write-result')!;
+  const peerCall = { ...call, id: 'peer-call', at: demoWindow.from + 12100 };
+  const peerResult = { ...result, id: 'peer-result', parent: peerCall.id, change: { ...result.change!, worktree: '9'.repeat(64) } };
+  const window = { ...demoWindow, events: [call, result, peerCall, peerResult] };
+  const files = sceneAt(window, window.from + 12500, {}).nodes.filter(n => n.kind === 'file');
+  expect(files).toHaveLength(2); expect(files.every(n => n.label.includes('(captured-diff)'))).toBe(true);
+  expect(new Set(files.map(n => n.id)).size).toBe(2);
+  const prior = sceneAt(window, window.from + 12499, {}).nodes.filter(n => n.kind === 'file');
+  expect(prior).toHaveLength(2); expect(prior.every(n => n.label.includes('(attempt)'))).toBe(true);
+  expect(prior.some(n => n.id.includes(result.change!.worktree))).toBe(false);
+});
+
+it('retains one attempt target for a valid failed pair without joining contradictory or unpaired results', () => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const result = { ...demoWindow.events.find(e => e.id === 'write-result')!, change: undefined, outcome: 'error' as const };
+  const window = { ...demoWindow, events: [call, result] };
+  const before = sceneAt(window, window.from + 12499, {}).nodes.filter(n => n.kind === 'file');
+  const failed = sceneAt(window, window.from + 12500, {}).nodes.filter(n => n.kind === 'file');
+  expect(failed).toHaveLength(1); expect(failed[0]!.id).toBe(before[0]!.id); expect(failed[0]!.label).toContain('(attempt)');
+  expect(sceneAt(window, window.from + 12499, {}).nodes.filter(n => n.kind === 'file')).toEqual(before);
+  for (const bad of [{ ...result, parent: undefined }, { ...result, tool: 'read_file' }, { ...result, target: { ...result.target!, path: 'other.md' } }]) {
+    const files = sceneAt({ ...window, events: [call, bad] }, window.from + 12500, {}).nodes.filter(n => n.kind === 'file');
+    expect(files).toHaveLength(2); expect(files.every(n => n.label.includes('(attempt)'))).toBe(true);
+  }
 });
