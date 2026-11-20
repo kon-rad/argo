@@ -34,8 +34,10 @@ it('adds read circles and write triangles beside pinned notes without rebuilding
   view.rerender(<FullMap {...props} activity={[]} />);
   expect(graph.graphData).toHaveBeenCalledTimes(1);
   expect(graph.cameraPosition).toHaveBeenCalledTimes(1);
-  expect(disposals.every(pair => pair.every(spy => spy.mock.calls.length === 1))).toBe(true);
+  expect(disposals.every(pair => pair.every(spy => spy.mock.calls.length === 0))).toBe(true);
+  expect(scene.children[0]!.children).toHaveLength(0);
   view.unmount();
+  expect(disposals.every(pair => pair.every(spy => spy.mock.calls.length === 1))).toBe(true);
   expect(scene.children).toHaveLength(0);
   expect(graph._destructor).toHaveBeenCalledTimes(1);
 });
@@ -61,4 +63,24 @@ it('pauses a static activity map and wakes on interaction without leaving timers
   const pauses = graph.pauseAnimation!.mock.calls.length;
   vi.advanceTimersByTime(2000);
   expect(graph.pauseAnimation!.mock.calls.length).toBe(pauses);
+});
+
+it('reuses surviving glyphs and shares resources across notes and seeks', () => {
+  const scene = new Group(); graph.scene!.mockReturnValue(scene);
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const note = { id: 'note:1', kind: 'note' as const, ref: 'Projects/demo.md', label: 'Demo', parent: null, color: null, size: 1, x: 3, y: 4, z: 5, meta: {} };
+  const other = { ...note, id: 'note:2', ref: 'Projects/other.md', x: 50 };
+  const data: MapGraph = { version: 7, builtAt: '2026-11-01T00:00:00Z', nodes: [note, other], edges: [] };
+  const event = { ...demoWindow.events.find(e => e.id === 'call')!, target: { path: note.ref, operation: 'read' as const } };
+  const one = { node: note, event }, two = { node: other, event: { ...event, id: 'other' } };
+  const props = { graph: data, metrics: [], layers: { notes: true, links: true, structure: true, metrics: false }, selected: null, onSelect: vi.fn() };
+  const view = render(<FullMap {...props} activity={[one, two]} />);
+  const group = scene.children[0]!, first = group.children[0] as Mesh, second = group.children[1] as Mesh;
+  expect(first.geometry).toBe(second.geometry); expect(first.material).toBe(second.material);
+  view.rerender(<FullMap {...props} activity={[one]} />);
+  expect(group.children).toEqual([first]);
+  view.rerender(<FullMap {...props} activity={[one, two]} />);
+  expect(group.children[0]).toBe(first);
+  expect((group.children[1] as Mesh).geometry).toBe(first.geometry);
+  expect(graph.graphData).toHaveBeenCalledTimes(1);
 });
