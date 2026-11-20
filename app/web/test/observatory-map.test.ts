@@ -145,3 +145,19 @@ it.each(['tool-reported-success', 'captured-hashes', 'captured-diff', 'commit'] 
   expect(activity.every(a => !a.event.change && a.event.writeEvidence !== 'tool-reported-success')).toBe(true);
   expect(sceneAt(window, window.from + 12499, {})).toEqual(before);
 });
+
+it('maps only a validated relative result scope and never retroactively scopes its earlier call', () => {
+  const sourceCall = demoWindow.events.find(e => e.id === 'write-call')!;
+  const sourceResult = demoWindow.events.find(e => e.id === 'write-result')!;
+  const call = { ...sourceCall, target: { path: './Projects/demo.md', operation: 'write' as const } };
+  const result = { ...sourceResult, target: { ...call.target, vaultPath: 'Projects/demo.md' } };
+  const window = { ...demoWindow, events: [call, result] };
+  const before = sceneAt(window, window.from + 12499, {});
+  expect(mapActivity(mapGraph, before.events, before.contextEvents)[0]?.node).toBeUndefined();
+  const after = sceneAt(window, window.from + 12500, {});
+  const activity = mapActivity(mapGraph, after.events, after.contextEvents);
+  expect(activity.find(a => a.event.id === result.id)?.node?.id).toBe('note:1');
+  expect(activity.find(a => a.event.id === call.id)?.node).toBeUndefined();
+  expect(call.target).not.toHaveProperty('vaultPath');
+  expect(sceneAt(window, window.from + 12499, {})).toEqual(before);
+});

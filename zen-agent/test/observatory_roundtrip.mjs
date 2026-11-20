@@ -4,14 +4,17 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 assert.equal(process.env.PGHOST, '127.0.0.1', 'explicit loopback scratch database required');
 assert.match(process.env.SB_TEST_DB ?? '', /^[a-z0-9_]+_test$/);
 assert.match(process.env.PGPORT ?? '', /^\d+$/);
-const workdir = mkdtempSync(join(tmpdir(), 'observatory-roundtrip-'));
+assert.ok(process.argv.slice(2).every(arg => arg === '--nested'));
+const repository = mkdtempSync(join(tmpdir(), 'observatory-roundtrip-'));
+const workdir = process.argv.includes('--nested') ? join(repository, 'sub') : repository;
+mkdirSync(workdir, { recursive: true });
 process.env.VAULT_ROOT = workdir;
 process.env.DEPLOYMENT = 'local';
 const { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } = await import('@earendil-works/pi-ai');
@@ -25,14 +28,14 @@ const { changeDetail } = await import('../../app/server/dist/addons/observatory/
 setDatabaseUrl(`postgres://${process.env.PGHOST}:${process.env.PGPORT}/${process.env.SB_TEST_DB}`);
 const host = `fixture-change-roundtrip-${process.pid}`;
 try {
-  execFileSync('git', ['-C', workdir, 'init', '-q']);
+  execFileSync('git', ['-C', repository, 'init', '-q']);
   const untouched = 'fixture-untouched-credential-123456';
   const deleted = 'fixture-deleted-credential-123456';
   const added = 'fixture-added-credential-123456';
   writeFileSync(join(workdir, 'note.md'), `credential=${untouched}\ninitial public\npassword=${deleted}\nstable context\n`);
-  const writeArgs = { path: 'note.md', content: `credential=${untouched}\nold public\npassword=${deleted}\nstable context\n` };
-  const emptyArgs = { path: 'empty.md', content: '' };
-  const editArgs = { path: 'note.md', old: `old public\npassword=${deleted}`, new: `new public\npassword=${added}` };
+  const writeArgs = { path: './note.md', content: `credential=${untouched}\nold public\npassword=${deleted}\nstable context\n` };
+  const emptyArgs = { path: './empty.md', content: '' };
+  const editArgs = { path: './note.md', old: `old public\npassword=${deleted}`, new: `new public\npassword=${added}` };
   const faux = fauxProvider(), models = createModels(); models.setProvider(faux.provider);
   faux.setResponses([
     fauxAssistantMessage([fauxToolCall('write_file', writeArgs)], { stopReason: 'toolUse' }),
@@ -48,7 +51,10 @@ try {
   assert.equal(results.length, 3);
   for (const r of results) {
     assert.equal(r.message.details.change.diff.format, 'changed-lines');
-    if (r.message.details.change.path === 'empty.md') {
+    assert.ok(r.message.details.captureRequest.path.startsWith('./'));
+    assert.ok(r.message.details.captureRequest.resolvedPath.startsWith('/'));
+    assert.equal('captureRequest' in r.message.details.change, false);
+    if (r.message.details.change.path.split('/').at(-1) === 'empty.md') {
       assert.equal(r.message.details.change.before, null);
       assert.equal(r.message.details.change.diff.truncated, true);
       assert.equal(r.message.details.change.diff.reason, 'empty-change');
@@ -71,7 +77,7 @@ try {
   const data = await readSnapshot(db => loadWindow(db, { from, to: Date.now() + 1000, host }, new Set(['usage'])));
   const captured = data.window.events.filter(e => e.change);
   assert.equal(captured.length, 3);
-  for (const value of ['initial public', 'old public', 'new public', untouched, deleted, added, 'hunks']) {
+  for (const value of ['initial public', 'old public', 'new public', untouched, deleted, added, 'hunks', 'captureRequest', 'resolvedPath']) {
     assert.equal(JSON.stringify(projected).includes(value), false);
     assert.equal(JSON.stringify(data.window).includes(value), false);
   }
@@ -79,7 +85,7 @@ try {
     await assert.rejects(readSnapshot(db => changeDetail(db, event, new Set())), e => e.status === 403);
     const detail = await readSnapshot(db => changeDetail(db, event, new Set(['usage'])));
     assert.equal(detail.diff.format, 'changed-lines');
-    if (event.change.path === 'empty.md') {
+    if (event.change.path.split('/').at(-1) === 'empty.md') {
       assert.equal(event.change.level, 'captured-hashes');
       assert.equal(detail.diff.truncated, true); assert.equal(detail.diff.reason, 'empty-change');
       assert.equal('hunks' in detail.diff, false); continue;
@@ -95,5 +101,5 @@ try {
   await query('DELETE FROM usage_hosts WHERE slug=$1', [host]);
   // setDatabaseUrl replaces the initial pool; close its current live binding.
   await (await import('../../app/server/dist/db.js')).pool.end();
-  rmSync(workdir, { recursive: true, force: true });
+  rmSync(repository, { recursive: true, force: true });
 }

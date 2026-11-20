@@ -2,7 +2,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from '@earendil-works/pi-ai';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
-import { prepareChange, finishChange, inspectCommit, type ChangeCapture } from './change.js';
+import { prepareChange, checkBeforeWrite, finishChange, inspectCommit, type ChangeCapture } from './change.js';
 import { clipOutput, text, tool, type ToolContext } from './index.js';
 
 /**
@@ -93,12 +93,15 @@ export function fsTools(ctx: ToolContext): AgentTool<any>[] {
   const roots = ctx.cfg.fs.roots;
   const cwd = ctx.cfg.workdir;
   const captures = new Map<string, { root: string; change: ChangeCapture }>();
-  const capture = (abs: string, prepared: ReturnType<typeof prepareChange>, content: string) => {
+  const capture = (abs: string, prepared: ReturnType<typeof prepareChange>, content: string, requestedPath: string) => {
+    if (!prepared || !requestedPath.length || requestedPath.length > 1024 || /[\x00-\x1f]/.test(requestedPath)) return {};
+    const resolvedPath = resolve(prepared.root, prepared.path);
+    if (Buffer.byteLength(resolvedPath) > 4096) return {};
     const change = finishChange(abs, prepared, content, { ...process.env, ...ctx.env });
     if (!change || !prepared) return {};
     captures.set(change.id, { root: prepared.root, change });
     if (captures.size > 128) captures.delete(captures.keys().next().value!);
-    return { change };
+    return { change, captureRequest: { path: requestedPath, resolvedPath } };
   };
   const at = (p: string) => resolveIn(roots, p, cwd);
 
@@ -137,8 +140,9 @@ export function fsTools(ctx: ToolContext): AgentTool<any>[] {
       const abs = at(a.path);
       const prepared = prepareChange(abs);
       mkdirSync(dirname(abs), { recursive: true });
+      const eligible = checkBeforeWrite(abs, prepared);
       writeFileSync(abs, a.content);
-      return text(`wrote ${a.content.length} characters to ${a.path}`, { path: abs, ...capture(abs, prepared, a.content) });
+      return text(`wrote ${a.content.length} characters to ${a.path}`, { path: abs, ...capture(abs, eligible, a.content, a.path) });
     },
   });
 
@@ -156,8 +160,9 @@ export function fsTools(ctx: ToolContext): AgentTool<any>[] {
       if (cur.indexOf(a.old, first + 1) >= 0) throw new Error(`old text occurs more than once in ${a.path}; include more context`);
       const prepared = prepareChange(abs);
       const content = cur.slice(0, first) + a.new + cur.slice(first + a.old.length);
+      const eligible = checkBeforeWrite(abs, prepared, Buffer.from(cur));
       writeFileSync(abs, content);
-      return text(`edited ${a.path}`, { path: abs, ...capture(abs, prepared, content) });
+      return text(`edited ${a.path}`, { path: abs, ...capture(abs, eligible, content, a.path) });
     },
   });
 

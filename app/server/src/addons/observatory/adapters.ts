@@ -75,6 +75,17 @@ export function inspectChangeRequest(tool: string | null, text: string): Inspect
 export function captureMetadataPresent(raw: unknown): boolean {
   return object(object(object(raw).message).details).change !== undefined;
 }
+export interface CapturedRequestBinding { present: boolean; request?: { path: string; resolvedPath: string } }
+/** Source-only runtime binding. Presence must survive projection even if malformed. */
+export function capturedRequestBinding(raw: unknown): CapturedRequestBinding {
+  const details = object(object(object(raw).message).details);
+  if (!Object.hasOwn(details, 'captureRequest')) return { present: false };
+  const request = object(details.captureRequest), path = request.path, resolvedPath = request.resolvedPath;
+  if (typeof path !== 'string' || !path.length || path.length > 1024 || /[\x00-\x1f]/.test(path) ||
+    typeof resolvedPath !== 'string' || Buffer.byteLength(resolvedPath) > 4096 || !resolvedPath.startsWith('/') ||
+    /[\\\x00-\x1f]/.test(resolvedPath) || resolvedPath.split('/').slice(1).some(p => !p || p === '.' || p === '..')) return { present: true };
+  return { present: true, request: { path, resolvedPath } };
+}
 function knownNamelessResult(row: ArchiveRow): boolean {
   const raw = object(row.raw);
   return (row.harness === 'codex' && raw.harness === 'codex' &&
@@ -82,16 +93,21 @@ function knownNamelessResult(row: ArchiveRow): boolean {
     (row.harness === 'claude-code' && raw.type === 'user') ||
     (row.harness === 'hermes' && raw.role === 'tool' && typeof raw.tool_call_id === 'string' && raw.tool_call_id.length > 0);
 }
-/** Compare the exact argument to capture identity, never basename/suffix alone. */
-function capturedTarget(call: EvidenceEvent, change: NonNullable<EvidenceEvent['change']>, request?: InspectChangeRequest): boolean {
-  if (call.tool === 'inspect_change_commit') return !!request && request.capture === change.id && request.commit === change.commit?.sha;
-  if (!call.target) return false;
-  const path = call.target.path;
-  if (path === change.path) return true;
+function absoluteCapturePath(path: string, change: NonNullable<EvidenceEvent['change']>): boolean {
   const suffix = `/${change.path}`;
   if (!path.startsWith('/') || !path.endsWith(suffix) || path.split('/').some(p => p === '.' || p === '..')) return false;
   const root = path.slice(0, -suffix.length) || '/';
   return createHash('sha256').update(root).digest('hex') === change.worktree;
+}
+/** Match explicit runtime resolution, or the conservative legacy contract when absent. */
+export function capturePathMatches(path: string, change: NonNullable<EvidenceEvent['change']>, binding: CapturedRequestBinding): boolean {
+  if (binding.present) return !!binding.request && binding.request.path === path && absoluteCapturePath(binding.request.resolvedPath, change);
+  return path === change.path || absoluteCapturePath(path, change);
+}
+/** Compare the exact argument to capture identity, never basename/suffix alone. */
+function capturedTarget(call: EvidenceEvent, change: NonNullable<EvidenceEvent['change']>, binding: CapturedRequestBinding, request?: InspectChangeRequest): boolean {
+  if (call.tool === 'inspect_change_commit') return !binding.present && !!request && request.capture === change.id && request.commit === change.commit?.sha;
+  return !!call.target && capturePathMatches(call.target.path, change, binding);
 }
 /** Pair only within a numeric archive session, in recorded sequence order. A repeated ID starts a new occurrence. */
 export function archiveEvents(rows: ArchiveRow[], root?: string): EvidenceEvent[] {
@@ -118,10 +134,11 @@ export function archiveEvents(rows: ArchiveRow[], root?: string): EvidenceEvent[
         const candidate = candidates?.length === 1 ? candidates[0] : undefined;
         const captured = capturedChange(row.raw);
         const hasCapture = captureMetadataPresent(row.raw);
+        const binding = capturedRequestBinding(row.raw);
         // Codex, Claude and Hermes can omit result names by protocol; an explicitly contradictory name never pairs.
         const toolMatches = candidate && (part.toolName !== null ? candidate.tool === part.toolName : knownNamelessResult(row));
         const call = candidate && toolMatches &&
-          (!hasCapture || (captured && capturedTarget(candidate, captured, commitRequests.get(candidate.id)))) ? candidate : undefined;
+          (!(hasCapture || binding.present) || (captured && capturedTarget(candidate, captured, binding, commitRequests.get(candidate.id)))) ? candidate : undefined;
         // A result with a contradictory timestamp cannot complete a future call.
         if (call && call.at !== null && e.at !== null && call.at <= e.at) { e.parent = call.id; e.occurrence = call.id; pending.delete(scope); }
         e.outcome = part.isError === true ? 'error' : part.isError === false ? 'success' : 'unknown';
@@ -131,6 +148,10 @@ export function archiveEvents(rows: ArchiveRow[], root?: string): EvidenceEvent[
         if (call && e.parent && call.target) {
           e.target = call.target;
           if (call.target.operation !== 'read' && e.outcome === 'success') e.writeEvidence = 'tool-reported-success';
+        }
+        if (e.change && binding.present && binding.request && e.target && !e.target.vaultPath) {
+          const scoped = vaultPath(binding.request.resolvedPath, root);
+          if (scoped) e.target = { ...e.target, vaultPath: scoped };
         }
         if (e.change && !e.target) e.target = { path: e.change.path, operation: 'edit' };
       }

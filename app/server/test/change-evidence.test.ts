@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { capturedChange } from '../src/archive/changeEvidence.js';
-import { archiveEvents, makeWindow, inspectChangeRequest, captureMetadataPresent, type ArchiveRow } from '../src/addons/observatory/adapters.js';
+import { archiveEvents, makeWindow, inspectChangeRequest, captureMetadataPresent, capturedRequestBinding, type ArchiveRow } from '../src/addons/observatory/adapters.js';
 import { replay } from '@secondbrain/contracts/observatory';
 const hash = 'a'.repeat(64);
 const change = { version: 1, id: 'capture-a', repository: hash, worktree: 'b'.repeat(64), path: 'notes/demo.md', before: null, after: hash,
@@ -237,4 +237,75 @@ it('keeps collected argument records content-bearing while the overview and capt
   expect(JSON.stringify(events)).not.toContain(before); expect(JSON.stringify(events)).not.toContain(after);
   const protectedSource = buildRedactor({ env: { FIXTURE_WRITE_SECRET: before, FIXTURE_EDIT_SECRET: after } }).deep(collected.messages);
   expect(JSON.stringify(protectedSource)).not.toContain(before); expect(JSON.stringify(protectedSource)).not.toContain(after);
+});
+
+it.each([['./notes/demo.md', 'notes/demo.md'], ['note.md', 'sub/note.md']])('pairs only explicit runtime-owned request binding for %s', (requested, observed) => {
+  const root = '/srv/fixture-repo';
+  const c = { ...change, path: observed!, worktree: createHash('sha256').update(root).digest('hex') };
+  const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: requested } }] } };
+  const binding = { path: requested, resolvedPath: `${root}/${observed}` };
+  const result = raw({ details: { change: c, captureRequest: binding } });
+  const events = archiveEvents([row(1, call), row(2, result, capturedChange(result))]);
+  expect(events[1]?.parent).toBe(events[0]?.id); expect(events[1]?.change?.path).toBe(observed);
+  expect(capturedRequestBinding(result)).toEqual({ present: true, request: binding });
+  const legacy = raw({ details: { change: c, path: binding.resolvedPath } });
+  expect(archiveEvents([row(1, call), row(2, legacy, capturedChange(legacy))])[1]?.parent).toBeUndefined(); // details.path alone is not a request binding.
+  expect(JSON.stringify(events)).not.toContain('captureRequest'); expect(JSON.stringify(capturedChange(result))).not.toContain('resolvedPath');
+  for (const captureRequest of [null, {}, { path: 'other.md', resolvedPath: binding.resolvedPath }, { ...binding, resolvedPath: `/srv/other/${observed}` }, { ...binding, resolvedPath: `${root}/other.md` }, { ...binding, resolvedPath: `${root}/sub/../${observed}` }]) {
+    const bad = raw({ details: { change: c, captureRequest } });
+    const rejected = archiveEvents([row(1, call), row(2, bad, capturedChange(bad))])[1]!;
+    expect(rejected.parent).toBeUndefined(); expect(rejected.change).toBeUndefined(); expect(rejected.writeEvidence).toBeUndefined();
+  }
+});
+it('does not fall back to legacy path matching for present-invalid capture request metadata', () => {
+  const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: change.path } }] } };
+  for (const captureRequest of [null, {}, { path: 'other.md', resolvedPath: '/srv/fixture-repo/notes/demo.md' }, { path: change.path, resolvedPath: 'relative.md' }]) {
+    const result = raw({ details: { change, captureRequest } });
+    expect(capturedRequestBinding(result).present).toBe(true);
+    const event = archiveEvents([row(1, call), row(2, result, capturedChange(result))])[1]!;
+    expect(event.parent).toBeUndefined(); expect(event.change).toBeUndefined(); expect(event.writeEvidence).toBeUndefined();
+  }
+  expect(capturedRequestBinding(raw())).toEqual({ present: false });
+  expect(archiveEvents([row(1, call), row(2, raw(), capturedChange(raw()))])[1]?.change).toBeTruthy();
+  const privateExtra = raw({ details: { change, captureRequest: { path: change.path, resolvedPath: '/srv/fixture-repo/notes/demo.md', body: 'PRIVATE EXTRA' } } });
+  expect(JSON.stringify(capturedRequestBinding(privateExtra))).not.toContain('PRIVATE EXTRA');
+});
+
+it('revalidates current source request binding for lazy detail even when capture hashes and diff metadata match', async () => {
+  const root = '/srv/fixture-repo';
+  const c = { ...change, worktree: createHash('sha256').update(root).digest('hex') };
+  const request = { path: './notes/demo.md', resolvedPath: `${root}/notes/demo.md` };
+  const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: request.path } }] } };
+  const result = raw({ details: { change: c, captureRequest: request } });
+  const events = archiveEvents([row(1, call), row(2, result, capturedChange(result))], root);
+  const event = events[1]!;
+  expect(events[0]?.target).toEqual({ path: request.path, operation: 'write' });
+  expect(event.target).toEqual({ path: request.path, operation: 'write', vaultPath: 'notes/demo.md' });
+  expect(event.target).not.toBe(events[0]?.target); // The earlier call never gains future scope.
+  const db = (source: unknown) => ({ query: async () => ({ rows: [{ raw: source }] }) }) as unknown as TxClient;
+  expect(await changeDetail(db(result), event, new Set(['usage']))).toMatchObject({ diff: { after: 'PRIVATE CONTENT' } });
+  for (const captureRequest of [null, {}, { ...request, path: 'other.md' }, { ...request, resolvedPath: '/srv/other/notes/demo.md' }, { ...request, resolvedPath: `${root}/other.md` }]) {
+    const changed = raw({ details: { change: c, captureRequest } });
+    expect(capturedChange(changed)).toEqual(event.change);
+    await expect(changeDetail(db(changed), event, new Set(['usage']))).rejects.toHaveProperty('status', 409);
+  }
+  await expect(changeDetail(db(raw({ details: { change: c } })), event, new Set(['usage']))).rejects.toHaveProperty('status', 409);
+  await expect(changeDetail(db({ ...result, message: { ...result.message, toolName: 'edit_file' } }), event, new Set(['usage']))).rejects.toHaveProperty('status', 409);
+});
+it('never uses request-only metadata without a valid capture to establish successful pairing', () => {
+  const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: change.path } }] } };
+  const result = raw({ details: { captureRequest: { path: change.path, resolvedPath: '/srv/fixture-repo/notes/demo.md' } } });
+  const event = archiveEvents([row(1, call), row(2, result)])[1]!;
+  expect(event.parent).toBeUndefined(); expect(event.writeEvidence).toBeUndefined(); expect(event.change).toBeUndefined();
+});
+
+it('retains legacy lazy detail for an exact target when the optional runtime request binding is absent', async () => {
+  const root = '/srv/fixture-repo';
+  const c = { ...change, worktree: createHash('sha256').update(root).digest('hex') };
+  const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: c.path } }] } };
+  const source = raw({ details: { change: c, captureRequest: { path: c.path, resolvedPath: `${root}/${c.path}` } } });
+  const event = archiveEvents([row(1, call), row(2, source, capturedChange(source))])[1]!;
+  const absent = raw({ details: { change: c } });
+  const db = { query: async () => ({ rows: [{ raw: absent }] }) } as unknown as TxClient;
+  expect(await changeDetail(db, event, new Set(['usage']))).toMatchObject({ diff: { after: 'PRIVATE CONTENT' } });
 });

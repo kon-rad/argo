@@ -4,6 +4,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync, unlinkSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import nodeFs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { DEFAULTS } from '../src/config.js';
 import { fsTools } from '../src/tools/fs.js';
 import type { ToolContext } from '../src/tools/index.js';
@@ -210,4 +212,64 @@ test('never attributes dangling or swapped file/parent symlinks to repository by
     symlinkSync(outside, join(root, 'new-parent')); writeFileSync(absentParent, 'after');
     assert.equal(finishChange(absentParent, pending, 'after'), null);
   } finally { rmSync(root, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); }
+});
+
+test('actual write_file drops capture when a same-inode peer changes bytes after preparation', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'zen-write-peer-'));
+  const originalMkdir = nodeFs.mkdirSync, originalWrite = nodeFs.writeFileSync;
+  try {
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    const path = join(root, 'note.md'); originalWrite(path, 'observed before\n');
+    const inode = nodeFs.statSync(path).ino;
+    const tools = Object.fromEntries(fsTools({ cfg: { ...DEFAULTS, workdir: root, fs: { ...DEFAULTS.fs, roots: [root] } } } as ToolContext).map(tool => [tool.name, tool]));
+    let injected = false;
+    t.mock.method(nodeFs, 'mkdirSync', ((...args: any[]) => {
+      const result = Reflect.apply(originalMkdir, nodeFs, args);
+      if (!injected && args[0] === root) { injected = true; originalWrite(path, 'peer intervening bytes\n'); }
+      return result;
+    }) as typeof nodeFs.mkdirSync);
+    syncBuiltinESMExports();
+    const result = await tools.write_file!.execute('write', { path: 'note.md', content: 'intended after\n' });
+    assert.equal(injected, true); assert.equal(nodeFs.statSync(path).ino, inode);
+    assert.equal(result.details.change, undefined);
+    assert.equal(readFileSync(path, 'utf8'), 'intended after\n');
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); rmSync(root, { recursive: true, force: true }); }
+});
+test('actual edit_file never captures a prepared baseline different from the bytes used for replacement', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'zen-edit-peer-'));
+  const originalRead = nodeFs.readFileSync, originalWrite = nodeFs.writeFileSync;
+  try {
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    const path = join(root, 'note.md'); originalWrite(path, 'old public\n');
+    const inode = nodeFs.statSync(path).ino;
+    const tools = Object.fromEntries(fsTools({ cfg: { ...DEFAULTS, workdir: root, fs: { ...DEFAULTS.fs, roots: [root] } } } as ToolContext).map(tool => [tool.name, tool]));
+    let injected = false;
+    t.mock.method(nodeFs, 'readFileSync', ((...args: any[]) => {
+      const result = Reflect.apply(originalRead, nodeFs, args);
+      if (!injected && args[0] === path && args[1] === 'utf8') { injected = true; originalWrite(path, 'peer replaces baseline\n'); }
+      return result;
+    }) as typeof nodeFs.readFileSync);
+    syncBuiltinESMExports();
+    const result = await tools.edit_file!.execute('edit', { path: 'note.md', old: 'old public', new: 'new public' });
+    assert.equal(injected, true); assert.equal(nodeFs.statSync(path).ino, inode);
+    assert.equal(result.details.change, undefined);
+    assert.equal(originalRead(path, 'utf8'), 'new public\n');
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('real relative and nested writes emit exact request binding outside content-free capture metadata', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'zen-capture-request-'));
+  try {
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    mkdirSync(join(root, 'sub'));
+    for (const [cwd, path, relativePath] of [[root, './note.md', 'note.md'], [join(root, 'sub'), 'note.md', 'sub/note.md']]) {
+      const tools = Object.fromEntries(fsTools({ cfg: { ...DEFAULTS, workdir: cwd!, fs: { ...DEFAULTS.fs, roots: [root] } } } as ToolContext).map(tool => [tool.name, tool]));
+      const result = await tools.write_file!.execute('relative', { path: path!, content: 'public changed line\n' });
+      assert.equal(result.details.change.path, relativePath);
+      assert.deepEqual(result.details.captureRequest, { path, resolvedPath: join(nodeFs.realpathSync(root), relativePath!) });
+      assert.equal(JSON.stringify(result.details.change).includes('resolvedPath'), false);
+      const edited = await tools.edit_file!.execute('relative-edit', { path: path!, old: 'public', new: 'edited' });
+      assert.deepEqual(edited.details.captureRequest, result.details.captureRequest);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -68,6 +68,19 @@ export function prepareChange(abs: string) {
     return { root, common, lexicalRoot, abs, before, path: observed.path, parents: observed.parents, file: observed.file };
   } catch { return null; }
 }
+/** Eligibility check immediately before the tool write, not an atomic external-writer CAS. */
+export function checkBeforeWrite(abs: string, prepared: ReturnType<typeof prepareChange>, replacementBase?: Buffer): ReturnType<typeof prepareChange> {
+  if (!prepared || abs !== prepared.abs || replacementBase && !prepared.before?.equals(replacementBase)) return null;
+  try {
+    const observed = location(abs, prepared.root, prepared.lexicalRoot);
+    if (!sameParents(prepared.parents, observed.parents) || !!prepared.file !== !!observed.file || prepared.file && !sameEntry(prepared.file, observed.file!)) return null;
+    const current = observed.file ? readObserved(abs, observed.file) : null;
+    if (prepared.before === null ? current !== null : current === null || !prepared.before.equals(current)) return null;
+    const checked = location(abs, prepared.root, prepared.lexicalRoot);
+    if (!sameParents(observed.parents, checked.parents) || !!observed.file !== !!checked.file || observed.file && !sameEntry(observed.file, checked.file!)) return null;
+    return prepared;
+  } catch { return null; }
+}
 export function finishChange(abs: string, prepared: ReturnType<typeof prepareChange>, intended: string, env: NodeJS.ProcessEnv = process.env): ChangeCapture | null {
   if (!prepared || Buffer.byteLength(intended) > 16 * 1024 * 1024) return null;
   try {
@@ -79,7 +92,7 @@ export function finishChange(abs: string, prepared: ReturnType<typeof prepareCha
     const after = readObserved(abs, observed.file), before = prepared.before;
     const checked = location(abs, prepared.root, prepared.lexicalRoot);
     if (!checked.file || !sameEntry(observed.file, checked.file) || !sameParents(observed.parents, checked.parents)) return null;
-    // A racing external writer makes this observation insufficient.
+    // Final bytes must match the intended write; this is not an atomic external-writer transaction.
     if (!after.equals(Buffer.from(intended)) || before?.equals(after)) return null;
     return { version: 1, id: randomUUID(), repository: hash(prepared.common), worktree: hash(prepared.root), path: prepared.path,
       before: before === null ? null : hash(before), after: hash(after),
