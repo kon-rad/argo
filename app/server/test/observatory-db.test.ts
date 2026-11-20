@@ -1,3 +1,4 @@
+import { backfillObservatory } from '../src/archive/observatoryProjection.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { query } from '../src/db.js';
 import { authorizeDetail, coverage, loadWindow, readSnapshot } from '../src/addons/observatory/service.js';
@@ -23,6 +24,7 @@ describe('observatory scratch schema and join cardinalities', () => {
       await query(`INSERT INTO usage_calls(source,host,call_id,session_external_id,message_external_id,ts,model)
         VALUES('codex',$1,$2,'shared','message-a','2025-01-01T00:00:10Z','test-model')`, [host, run]);
     }
+    while (await backfillObservatory(100)) {}
     const range = { from: Date.parse('2025-01-01T00:00:05Z'), to: Date.parse('2025-01-01T00:01:00Z'), host };
     const data = await readSnapshot(db => loadWindow(db, range, new Set(['usage'])));
     expect(data.window.events.filter(e => e.kind === 'tool_call')).toHaveLength(1);
@@ -61,4 +63,44 @@ it('captures org sender at insertion and never rewrites history from a changed r
       throw rollback;
     });
   } catch (error) { if (error !== rollback) throw error; }
+});
+
+it('seeks a tiny window after a >8 MiB prefix without transferring prefix bodies', async () => {
+  const session = (await query(`INSERT INTO archive_sessions(source,host,external_id) VALUES('codex',$1,'long') RETURNING id`, [host])).rows[0]!.id;
+  await query(`INSERT INTO archive_messages(session_id,seq,external_id,role,kind,ts,raw,raw_sha)
+    SELECT $1,n,'prefix-'||n,'assistant','response_item','2025-01-01T00:00:00Z',
+      jsonb_build_object('harness','codex','payload',jsonb_build_object('role','assistant','content',repeat('x',100000))), 'fake'
+    FROM generate_series(1,90) n`, [session]);
+  expect(Number((await query('SELECT sum(octet_length(raw::text)) AS bytes FROM archive_messages WHERE session_id=$1', [session])).rows[0]!.bytes)).toBeGreaterThan(8 * 1024 * 1024);
+  const insert = async (seq: number, type: string, ts: string) => (await query(`INSERT INTO archive_messages(session_id,seq,external_id,role,kind,ts,raw,raw_sha)
+    VALUES($1,$2,$2::text,'assistant','response_item',$3,$4,'fake') RETURNING id`,
+    [session,seq,ts,{ harness: 'codex', payload: { type, call_id: 'pending', name: 'read', arguments: '{}' } }])).rows[0]!.id;
+  const call = await insert(91,'function_call','2025-01-01T00:00:01Z');
+  await insert(92,'function_call_output','2025-01-01T00:05:01Z');
+  await expect(readSnapshot(db => loadWindow(db, { from: Date.parse('2025-01-01T00:05:00Z'), to: Date.parse('2025-01-01T00:05:02Z'), host }, new Set(['usage'])))).rejects.toHaveProperty('status', 503);
+  while (await backfillObservatory(100)) {}
+  const range = { from: Date.parse('2025-01-01T00:05:00Z'), to: Date.parse('2025-01-01T00:05:02Z'), host };
+  const statements: string[] = [];
+  const data = await readSnapshot(db => loadWindow({ query: async (sql, args) => {
+    statements.push(sql);
+    const result = await db.query(sql, args);
+    if (sql.includes('WITH active AS MATERIALIZED')) {
+      expect(result.rows).toHaveLength(2);
+      expect(result.rows.every(row => row.raw === null)).toBe(true);
+    }
+    return result;
+  } } as typeof db, range, new Set(['usage'])));
+  expect(statements).toHaveLength(3);
+  expect(data.window.events).toHaveLength(1);
+  expect(data.window.events[0]!.parent).toBe(`archive_messages:${call}:${call}`);
+  expect(data.window.boundary.tools[`archive_messages:${call}:${call}`]).toBe('pending');
+  expect(JSON.stringify(data).length).toBeLessThan(10000);
+  expect(await backfillObservatory(100)).toBe(0);
+  await query("UPDATE archive_messages SET role='system' WHERE id=$1", [call]);
+  await expect(readSnapshot(db => loadWindow(db, range, new Set(['usage'])))).rejects.toHaveProperty('status', 503);
+  while (await backfillObservatory(100)) {}
+  // A genuinely large selected source still hits the original guard after rebuilding.
+  await query(`UPDATE archive_messages SET raw=jsonb_build_object('harness','codex','payload',jsonb_build_object('role','assistant','content',repeat('x',4200000))) WHERE session_id=$1 AND seq=92`, [session]);
+  while (await backfillObservatory(100)) {}
+  await expect(readSnapshot(db => loadWindow(db, range, new Set(['usage'])))).rejects.toHaveProperty('status', 413);
 });

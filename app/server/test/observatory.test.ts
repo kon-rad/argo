@@ -181,3 +181,45 @@ it('returns existing Codex summary only and distinguishes hidden from unavailabl
   expect(thinkingDetail({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'secret' }] } })).toEqual({ availability: 'unavailable' });
   expect(thinkingDetail({ message: { content: [{ type: 'redacted_thinking' }] } })).toEqual({ availability: 'hidden' });
 });
+
+import { projectObservatory } from '../src/archive/observatoryProjection.js';
+it('projects mixed harness rows without bodies and preserves exact adapter semantics', () => {
+  const raw = [
+    { role: 'assistant', session_id: 's', tool_calls: [{ id: 'x', function: { name: 'Write', arguments: '{"path":"src/demo.ts","content":"PRIVATE"}' } }, { id: 'y', function: { name: 'read', arguments: '{}' } }], reasoning: 'PRIVATE' },
+    { harness: 'codex', payload: { type: 'function_call_output', call_id: 'x', output: 'PRIVATE' } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'x', name: 'read', input: {} }] } },
+    { role: 'tool', session_id: 's', tool_call_id: 'x', content: 'PRIVATE' },
+    { role: 'tool', session_id: 's', tool_call_id: 'y', content: 'PRIVATE' },
+  ];
+  const rows = raw.map((raw, i) => ({ id: i + 100, session_id: 1, seq: i, ts: i === 4 ? null : new Date(i), role: 'assistant', kind: 'message', raw, text: '', host: 'lab', source: 'hermes', external_id: 's', harness: 'hermes', observed_at: null }));
+  const projected = rows.map(row => ({ ...row, raw: null, observatory_projection: projectObservatory(row) }));
+  expect(JSON.stringify(projected)).not.toContain('PRIVATE');
+  expect(archiveEvents(projected)).toEqual(archiveEvents(rows));
+});
+
+it('guards actual selected raw size and incomplete projection explicitly', async () => {
+  for (const [flag, status] of [['oversized', 413], ['missing', 503]] as const) {
+    const db = dbFixture(() => [{ [flag]: true }]);
+    await expect(loadWindow(db, { from: 0, to: 100 }, new Set(['usage']))).rejects.toHaveProperty('status', status);
+  }
+});
+
+it('reads selected metadata and prior tool context in a constant number of source queries', async () => {
+  const calls: string[] = [];
+  const row = { id: 40, session_id: 1, seq: 1, ts: new Date(5), role: 'assistant', kind: 'message', raw: { role: 'assistant', session_id: 's', tool_calls: [{ id: 'pending', function: { name: 'read', arguments: '{}' } }] }, text: '', host: 'lab', source: 'hermes', external_id: 's', harness: 'hermes', observed_at: null };
+  const result = { ...row, id: 41, seq: 2, ts: new Date(20), raw: { role: 'tool', session_id: 's', tool_call_id: 'pending', content: 'PRIVATE' } };
+  const db = dbFixture(sql => {
+    calls.push(sql);
+    if (sql.includes('WITH active AS MATERIALIZED')) return [row, result].map(r => ({ ...r, raw: null, observatory_projection: projectObservatory(r), missing: false, oversized: false }));
+    return [];
+  });
+  const data = await loadWindow(db, { from: 10, to: 30 }, new Set(['usage']));
+  expect(calls).toHaveLength(3);
+  expect(calls[0]).toContain('NULL::jsonb AS raw');
+  expect(calls[0]).toContain('UNION ALL');
+  expect(data.window.events).toHaveLength(1);
+  expect(data.window.events[0]!.parent).toBe('archive_messages:40:40:tc:0');
+  expect(data.window.boundary.tools['archive_messages:40:40:tc:0']).toBe('pending');
+  expect(data.refs.archive_messages).toEqual(['40', '41']);
+  expect(JSON.stringify(data)).not.toContain('PRIVATE');
+});

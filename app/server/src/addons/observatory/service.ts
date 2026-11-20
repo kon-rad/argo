@@ -39,19 +39,36 @@ export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySe
   const diagnostics: Diagnostics = { untimed: 0, unknownIntervals: 0, ambiguousSessions: 0, unpairedResults: 0,
     humanOrigin: 'unknown', liveExecutions: 'unsupported', historicalCompleteness: 'unknown', truncated: 0 };
   if (modules.has('usage')) {
-    // Read the complete bounded history of sessions touching the window for pairing and boundary state.
-    // EXISTS prevents the archive x run x call multiplication found in a naive session join.
-    const messages = bounded((await db.query<ArchiveRow>(`SELECT m.id, m.session_id, m.seq, m.ts, m.role, m.kind, CASE WHEN sum(octet_length(m.raw::text)) OVER () <= 4194304 THEN m.raw ELSE '{"observatory_oversized":true}'::jsonb END AS raw,
-        ''::text AS text, a.host, a.source, a.external_id, a.harness, NULL::timestamptz AS observed_at
-      FROM archive_messages m JOIN archive_sessions a ON a.id = m.session_id
+    // Selected bodies alone count toward the raw guard. Historical context is content-free.
+    const messages = (await db.query<ArchiveRow & { missing: boolean; oversized: boolean }>(`WITH active AS MATERIALIZED (
+      SELECT a.id, a.host, a.source, a.external_id, a.harness FROM archive_sessions a
       WHERE ($3::text IS NULL OR a.host = $3) AND ($4::bigint IS NULL OR a.id = $4)
-        AND (m.ts < $2 OR m.ts IS NULL)
         AND (EXISTS (SELECT 1 FROM archive_messages w WHERE w.session_id = a.id AND w.ts >= $1 AND w.ts < $2)
           OR EXISTS (SELECT 1 FROM usage_runs r WHERE r.host = a.host AND r.session_id = a.external_id
-            AND coalesce(r.runtime, 'claude-code') = a.source AND r.started_at < $2 AND r.ended_at > $1))
-      ORDER BY m.session_id, m.seq, m.id LIMIT 5001`, args)).rows);
-    if (messages.some(m => (m.raw as { observatory_oversized?: boolean })?.observatory_oversized)) throw new HttpError(413, 'archive source exceeds 4 MiB; narrow range or select a session');
-    events.push(...archiveEvents(messages));
+            AND coalesce(r.runtime, 'claude-code') = a.source AND r.started_at < $2 AND r.ended_at > $1))),
+      budget AS (
+        SELECT EXISTS (SELECT 1 FROM archive_messages u JOIN active a ON a.id=u.session_id
+          WHERE u.observatory_projection IS NULL AND (u.ts < $2 OR u.ts IS NULL)) AS missing,
+          (SELECT coalesce(sum(octet_length(m.raw::text)),0) > 4194304
+           FROM archive_messages m JOIN active a ON a.id=m.session_id
+           WHERE (m.ts >= $1 AND m.ts < $2) OR m.ts IS NULL) AS oversized),
+      candidates AS (
+        SELECT m.id, m.session_id, m.seq, m.ts, m.role, m.kind, m.observatory_projection FROM archive_messages m JOIN active a ON a.id=m.session_id
+          WHERE (m.ts >= $1 AND m.ts < $2) OR m.ts IS NULL
+        UNION ALL
+        SELECT m.id, m.session_id, m.seq, m.ts, m.role, m.kind, m.observatory_projection FROM archive_messages m JOIN active a ON a.id=m.session_id
+          WHERE m.ts < $1 AND (
+            m.observatory_projection->'parts' @> '[{"step":"tool_call"}]'::jsonb OR
+            m.observatory_projection->'parts' @> '[{"step":"tool_result"}]'::jsonb))
+      SELECT m.id, m.session_id, m.seq, m.ts, m.role, m.kind, NULL::jsonb AS raw,
+        m.observatory_projection, ''::text AS text, a.host, a.source, a.external_id, a.harness,
+        NULL::timestamptz AS observed_at, b.missing, b.oversized
+      FROM budget b LEFT JOIN candidates m ON true LEFT JOIN active a ON a.id=m.session_id
+      ORDER BY m.session_id, m.seq, m.id LIMIT 5001`, args)).rows;
+    if (messages.some(m => m.missing)) throw new HttpError(503, 'archive replay projection incomplete; run archive-steps --observatory --apply in bounded batches');
+    if (messages.some(m => m.oversized)) throw new HttpError(413, 'archive source exceeds 4 MiB; narrow range or select a session');
+    bounded(messages);
+    events.push(...archiveEvents(messages.filter(m => m.id != null)));
     const runs = bounded((await db.query<{ host: string; run_id: string; session_id: string; runtime: string; agent_name: string | null; task_id: string | null; started_at: Date | null; ended_at: Date | null; archive_ids: number[] }>(
       `SELECT r.host, r.run_id, r.session_id, coalesce(r.runtime, 'claude-code') AS runtime, r.agent_name, r.task_id, r.started_at, r.ended_at,
         ARRAY(SELECT a.id FROM archive_sessions a WHERE a.host = r.host AND a.source = coalesce(r.runtime, 'claude-code') AND a.external_id = r.session_id) AS archive_ids
@@ -127,7 +144,7 @@ export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySe
 
 export async function coverage(db: TxClient, range: Range, modules: ReadonlySet<string>) {
   const specs = [
-    { table: 'archive_messages', time: 'ts', group: "a.host, a.harness AS runtime", join: 'JOIN archive_sessions a ON a.id = t.session_id', filter: 'a.host', session: 't.session_id', extra: 'count(*) FILTER (WHERE t.ts IS NULL)::int AS untimed, max(a.updated_at) AS session_updated_at' },
+    { table: 'archive_messages', time: 'ts', group: "a.host, a.harness AS runtime", join: 'JOIN archive_sessions a ON a.id = t.session_id', filter: 'a.host', session: 't.session_id', extra: 'count(*) FILTER (WHERE t.ts IS NULL)::int AS untimed, max(a.updated_at) AS session_updated_at, count(*) FILTER (WHERE t.observatory_projection IS NULL)::int AS replay_projection_missing' },
     { table: 'usage_calls', time: 'ts', group: 't.host, t.source AS runtime', join: '', filter: 't.host', session: `(SELECT a.id FROM archive_sessions a WHERE a.host=t.host AND a.source=t.source AND a.external_id=t.session_external_id)`, extra: '0 AS untimed' },
     { table: 'usage_runs', time: 'started_at', group: "t.host, coalesce(t.runtime, 'claude-code') AS runtime", join: '', filter: 't.host', session: `(SELECT a.id FROM archive_sessions a WHERE a.host=t.host AND a.source=coalesce(t.runtime, 'claude-code') AND a.external_id=t.session_id)`, extra: 'count(*) FILTER (WHERE t.ended_at IS NULL OR t.started_at IS NULL OR t.ended_at <= t.started_at)::int AS unknown_intervals' },
     { table: 'card_events', time: 'at', group: 'NULL::text AS host, NULL::text AS runtime', join: '', filter: 'NULL::text', session: 'NULL::bigint', extra: '0 AS untimed' },

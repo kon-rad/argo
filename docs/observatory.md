@@ -1,6 +1,6 @@
 # Observatory evidence API and replay
 
-Observatory 1 provides bounded, authorized evidence windows over existing usage, archive, board and org records, plus a pure replay contract. Observatory 2 adds an optional browser workspace and Usage navigation described below. Enable `observatory` in `MODULES` or the vault's `secondbrain.json` `addons` list. It defaults off. There are no new collectors, tables, credentials, timers or model calls. A forward migration adds insertion-time sender provenance to org messages; historical rows are not backfilled.
+Observatory 1 provides bounded, authorized evidence windows over existing usage, archive, board and org records, plus a pure replay contract. Observatory 2 adds an optional browser workspace and Usage navigation described below. Enable `observatory` in `MODULES` or the vault's `secondbrain.json` `addons` list. It defaults off. There are no new collectors, credentials, timers or model calls. Observatory 5 adds a rebuildable archive step projection column and indexes. A forward migration adds insertion-time sender provenance to org messages; historical rows are not backfilled.
 
 ## Authorization
 
@@ -17,7 +17,7 @@ Source adapters also require their source module: `usage` for archive, calls and
 | `/api/observatory/window?export=<token>&offset=<next>&limit=500` | Continue the immutable snapshot. Range and filters cannot change. `limit` is 1 to 500. `next=null` ends pagination. |
 | `/api/observatory/events/<encoded-event-id>?export=<token>` | Returns pinned event metadata and an authorized source pointer, including stable row ID and part key. No transcript body, tool arguments, hidden thinking or current card state is returned. Thinking detail may include an existing authorized Codex summary, with explicit hidden/unavailable states. Missing/deleted source rows return 404; denied source reads return 403. |
 
-Ranges must be positive and at most 24 hours. Unknown parameters return 400. Archive JSON transfer is additionally capped at four MiB before expansion. Source reads use a read-only repeatable-read transaction, a three-second per-statement timeout and a 5,000-record cap for each source and expanded result. Oversized results return 413, rather than silently truncating a replay. Query timeout returns 503. Narrow the range or select a session. Archive pairing requires the selected sessions' bounded prior history; a long session can exceed the cap even with a narrow range. A future materialized projection can remove that limitation.
+Ranges must be positive and at most 24 hours. Unknown parameters return 400. Selected archive source JSON is additionally capped at four MiB; bodies are not transferred to the replay reader. Source reads use a read-only repeatable-read transaction, a three-second per-statement timeout and a 5,000-record cap for each source and expanded result. Oversized results return 413, rather than silently truncating a replay. Query timeout returns 503. Narrow the range or select a session. Archive pairing uses content-free projected parts for prior tool calls/results, plus selected and untimed rows. Historical prompt, response and thinking bodies are never loaded per seek. Exact tool boundary state still grows with distinct historical occurrences: more than 5,000 required context records or expanded events returns 413, even with a narrow range. The API does not discard completed occurrences to invent a smaller boundary. Untimed rows remain explicit and count toward caps. Unknown time is never assigned an invented window.
 
 Exports last five minutes, with at most eight exports, four MiB per export and 32 MiB per app instance. Eviction, expiry, process restart and a token belonging to another session return 410 with an explicit restart instruction. Concurrent imports cannot reorder existing pages. Detail validates visibility but returns pinned metadata: it does not pretend that a mutable source body is part of the snapshot. Complete all pages before replaying or exporting locally; `total` is the expected event count. Boundary and intervals repeat on each page.
 
@@ -88,3 +88,32 @@ The Playwright scenario uses Vite and synthetic API responses, no database or pr
 This correction revision has no rendered performance measurement. Earlier coordinator measurements missed the ticket targets and are not evidence for this revision. Performance targets remain pending: 500 nodes/1,500 edges, 32 MiB cache accounting, p95 seek below 100 ms and 30 fps on an agreed baseline device. Record device, browser/GPU, exact revision, event/node/edge counts, response bytes, browser memory, seek samples, frame-rate samples and idle frame activity. The display limits and cleanup tests do not prove frame rate, memory use or seek latency.
 
 The coordinator scenario now includes a separate renderer stress harness at `e2e/observatory-benchmark.html`, served only by Vite during development. It uses exactly 500 synthetic nodes and 1,500 edges, ten warmup updates, 40 position-changing seeks and 120 interaction-awake animation-frame intervals. Playwright attaches `synthetic-performance.json` with raw samples, browser/renderer, viewport, p95 seek latency and requestAnimationFrame rate. Assertions enforce p95 below 100 ms and at least 30 fps. Seek samples include synchronous React scene updates plus two animation frames; frame samples measure animation scheduling, not GPU completion. This isolates renderer stress and does not establish production workloads, browser heap usage or full-page replay latency. Run the full scenario on the correction commit and record its SHA, device/GPU and output. Earlier revision evidence cannot satisfy this revision's acceptance gate.
+
+## Observatory 5 projection and rollout
+
+Migration `1756000020700` adds `archive_messages.observatory_projection`. It stores versioned step kinds, stable relative part keys, call identifiers, outcome evidence, bounded explicit file targets and recorded sender metadata. It stores no transcript, argument, summary, thinking or diff bodies. The existing multi-harness step parser builds it during message import, in the import transaction, from the stored redacted source. The replay adapter resolves relative keys against the immutable numeric row ID. Lazy authorized thinking detail continues to read the source only on request.
+
+Updates to raw/role/kind/content_text invalidate the projection in an invoker trigger. Historical rows start NULL. Missing projection in any relevant pre-window/selected/untimed source returns 503 with a backfill instruction, including run-only sessions. No raw-history fallback or silent omission occurs. Source timestamp and sequence updates are read directly rather than cached. All projection reads stay on the source table under its existing authorization and snapshot.
+
+Coordinator commands, on the deployed revision with its normal authorized environment:
+
+```bash
+secondbrain archive-steps --observatory --dry-run
+secondbrain archive-steps --observatory --apply --batch 100
+```
+
+The first command reports visible total/missing counts. Each apply invocation commits at most 100 rows (accepted batch range 1..200), reports changed and remaining coverage, then exits. Repeat it until missing is zero; rerunning is safe. NULL rows form the persistent resume queue, so edits and concurrent imports cannot advance past missing coverage. `SKIP LOCKED` supports concurrent workers, but a zero changed count with nonzero missing means rows may still be locked. Stop/retry rather than claiming completeness. This is bounded by source row count per transaction, not source bytes: a single very large archive row can still make a backfill batch expensive; reduce batch size. There is no daemon or migration-time body expansion.
+
+Coverage groups expose `replay_projection_missing` for the requested range only. This does not certify prior context readiness; the window reader checks all relevant earlier rows too. The CLI audit reports all visible archive rows. Historical completeness and production coverage remain unknown until the coordinator runs them.
+
+The archive read is one set query, followed by one runs query and one usage query regardless of session count. An active-session CTE uses host/source/session identity and EXISTS, without multiplying messages by executions. Separate UNION ALL branches read selected/untimed metadata and prior tool metadata; the raw-byte aggregate touches only selected/untimed rows. Partial indexes cover missing projection and tool context; `(session_id, ts)` covers time selection. All bounds, source refs and immutable export reauthorization remain in force. Run the database fixture and [EXPLAIN audit](audits/observatory-window.sql) on the shipping host; plans and production backfill have not been verified in the sandbox.
+
+
+Read-only query-plan audit (empty host/session disables that filter):
+
+```bash
+psql -X -v from='2025-01-01T00:05:00Z' -v to='2025-01-01T00:05:02Z' \
+  -v host='' -v session='' -f docs/audits/observatory-window.sql
+```
+
+Supply the observed window when auditing production and retain outputs privately. The script uses the app's three-second query budget, rolls back and performs no backfill writes.
