@@ -5,7 +5,7 @@ Source after: 95c4bb2abaa001dd79f52e08e9fb6a05b0ec5aec
 App/web tree before: 0249f09134a498e96326549a2ef91fb00f27e02b
 App/web tree after: 0249f09134a498e96326549a2ef91fb00f27e02b
 Mode: existing production build served by Vite preview. No build is performed.
-Browser: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/159.0.0.0 Safari/537.36
+Browser: Native Google Chrome 159, headless mode on macOS. Full user-agent bytes are retained with the coordinator raw receipt.
 Renderer: ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Max, Unspecified Version)
 Viewport: 1280x900
 
