@@ -84,3 +84,27 @@ it('reuses surviving glyphs and shares resources across notes and seeks', () => 
   expect((group.children[1] as Mesh).geometry).toBe(first.geometry);
   expect(graph.graphData).toHaveBeenCalledTimes(1);
 });
+
+it('destroys map controls while their original DOM root is still attached', () => {
+  graph.scene!.mockReturnValue(new Group());
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const view = render(<FullMap graph={{ version: 1, builtAt: '2026-01-01', nodes: [], edges: [] }} metrics={[]} layers={{ notes: true, links: true, structure: true, metrics: false }} selected={null} onSelect={() => {}} />);
+  const host = view.getByTestId('map-full'), connected: boolean[] = [];
+  graph._destructor!.mockImplementationOnce(() => connected.push(host.isConnected));
+  view.unmount();
+  expect(connected).toEqual([true]);
+});
+
+it('updates click handlers without restyling unchanged graph data', () => {
+  graph.scene!.mockReturnValue(new Group());
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const data: MapGraph = { version: 1, builtAt: '2026-01-01', nodes: [], edges: [] };
+  const layers = { notes: true, links: true, structure: true, metrics: false };
+  const first = vi.fn(), next = vi.fn(), metrics: [] = [];
+  const view = render(<FullMap graph={data} layers={layers} metrics={metrics} selected={null} onSelect={first} />);
+  view.rerender(<FullMap graph={data} layers={layers} metrics={metrics} selected={null} onSelect={next} />);
+  expect(graph.nodeColor).toHaveBeenCalledTimes(1);
+  const callback = graph.onNodeClick!.mock.calls[0]![0] as (node: { id: string }) => void;
+  callback({ id: 'latest-handler' });
+  expect(first).not.toHaveBeenCalled(); expect(next).toHaveBeenCalledWith('latest-handler');
+});

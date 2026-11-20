@@ -42,3 +42,12 @@ describe('time helpers in the shared zone', () => {
     expect(span('2026-11-10T07:13:00Z', null)).toBeNull();
   });
 });
+
+it('keeps displayed offsets and seconds correct across repeated zone formatting', () => {
+  expect(zoned('2026-11-01T08:30:00Z', 'America/Los_Angeles')).toMatch(/01:30.*PDT/);
+  expect(zoned('2026-11-01T09:30:00Z', 'America/Los_Angeles')).toMatch(/01:30.*PST/);
+  expect(zoned('2026-11-10T07:13:40Z', 'UTC', { seconds: true })).toContain('07:13:40');
+  expect(zoned('2026-11-10T07:13:40Z', 'UTC')).not.toContain('07:13:40');
+  expect(zoned('2026-11-10T07:13:40Z', 'Asia/Singapore', { seconds: true })).toContain('15:13:40');
+  expect(zoned('2026-11-10T07:13:40Z', 'UTC', { seconds: true })).toContain('07:13:40');
+});

@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useLayoutEffect, useImperativeHandle, useRef } from 'react';
 import { operationStyle, type NoteActivity } from '../../routes/observatory/mapActivity.js';
 import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph';
 import { Group, Mesh, MeshBasicMaterial, SphereGeometry, TorusGeometry, ConeGeometry, Vector2, type BufferGeometry } from 'three';
@@ -40,6 +40,7 @@ function hexDim(hex: string, k: number): string {
 export const FullMap = forwardRef<FullMapHandle, Props>(function FullMap({ graph, metrics, layers, selected, onSelect, activity, renderOnDemand }, ref) {
   const host = useRef<HTMLDivElement>(null);
   const fg = useRef<ForceGraph3DInstance | null>(null);
+  const select = useRef(onSelect); select.current = onSelect;
   const nodesById = useRef(new Map<string, GNode>());
   const neighbours = useRef(new Set<string>());
   const wake = useRef((_duration = 1200) => {});
@@ -58,8 +59,8 @@ export const FullMap = forwardRef<FullMapHandle, Props>(function FullMap({ graph
     },
   }));
 
-  // Create once.
-  useEffect(() => {
+  // Dispose controls before DOM detachment so their document listeners use the original root.
+  useLayoutEffect(() => {
     const el = host.current!;
     const g = new ForceGraph3D(el, { controlType: 'orbit' })
       .backgroundColor('#04060c')
@@ -211,10 +212,10 @@ export const FullMap = forwardRef<FullMapHandle, Props>(function FullMap({ graph
         if (hit) return '#ffffff';
         return l.kind === 'link' ? '#6f7ea3' : l.kind === 'goal' ? '#ffd27a' : '#9aa3b5';
       })
-      .onNodeClick((raw) => onSelect((raw as GNode).id))
-      .onBackgroundClick(() => onSelect(null));
+      .onNodeClick((raw) => select.current((raw as GNode).id))
+      .onBackgroundClick(() => select.current(null));
     wake.current();
-  }, [graph, layers, selected, onSelect]);
+  }, [graph, layers, selected]);
 
   return <div ref={host} className="h-full w-full" data-testid="map-full" />;
 });
