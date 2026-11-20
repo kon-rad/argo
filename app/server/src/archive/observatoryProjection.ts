@@ -6,7 +6,10 @@ import { query, withTransaction, type TxClient } from '../db.js';
 export function projectObservatory(row: StepRow) {
   return { version: 1, sender: recordedSender(row.raw), parts: expandSteps({ ...row, id: 0 }).map(part => {
     const target = part.step === 'tool_call' ? fileTarget(part.toolName, part.text) : undefined;
-    return { ...part, text: target ? JSON.stringify({ path: target.path }) : '' };
+    // Keep this allowlist explicit: future parser detail must not enter the projection.
+    return { key: part.key, step: part.step, toolName: part.toolName,
+      toolCallId: part.toolCallId, isError: part.isError,
+      text: target ? JSON.stringify({ path: target.path }) : '' };
   }) };
 }
 export interface ObservatoryProjection { version: number; sender: ReturnType<typeof recordedSender>; parts: StepPart[] }
@@ -23,7 +26,7 @@ export async function projectMessages(tx: TxClient, ids: number[]): Promise<numb
 export async function backfillObservatory(batch = 100): Promise<number> {
   if (!Number.isSafeInteger(batch) || batch < 1 || batch > 200) throw new Error('observatory batch must be 1..200');
   return withTransaction(async tx => {
-    const { rows } = await tx.query<{ id: number }>(`SELECT id FROM archive_messages WHERE observatory_projection IS NULL ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED`, [batch]);
+    const { rows } = await tx.query<{ id: number }>(`SELECT id FROM archive_messages WHERE observatory_projection IS NULL ORDER BY session_id, id LIMIT $1 FOR UPDATE SKIP LOCKED`, [batch]);
     return projectMessages(tx, rows.map(r => r.id));
   });
 }

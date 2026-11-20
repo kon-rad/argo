@@ -194,6 +194,9 @@ it('projects mixed harness rows without bodies and preserves exact adapter seman
   const rows = raw.map((raw, i) => ({ id: i + 100, session_id: 1, seq: i, ts: i === 4 ? null : new Date(i), role: 'assistant', kind: 'message', raw, text: '', host: 'lab', source: 'hermes', external_id: 's', harness: 'hermes', observed_at: null }));
   const projected = rows.map(row => ({ ...row, raw: null, observatory_projection: projectObservatory(row) }));
   expect(JSON.stringify(projected)).not.toContain('PRIVATE');
+  for (const row of projected) for (const part of row.observatory_projection.parts) {
+    expect(Object.keys(part).sort()).toEqual(['isError', 'key', 'step', 'text', 'toolCallId', 'toolName']);
+  }
   expect(archiveEvents(projected)).toEqual(archiveEvents(rows));
 });
 
