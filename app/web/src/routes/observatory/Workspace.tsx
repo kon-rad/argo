@@ -58,6 +58,6 @@ export default function Workspace({ nodes, links, onSelect }: { nodes: SceneNode
     g.graphData({ nodes: nodes.map(n => ({ ...n, x: n.fx, y: n.fy, z: n.fz })), links: links.map(l => ({ ...l })) });
     wake.current();
   }, [nodes, links, failed]);
-  return <><div ref={host} style={{ height: failed ? 0 : 420 }} aria-label="3D execution workspace" tabIndex={failed ? -1 : 0} />
+  return <><div ref={host} style={{ height: 420, display: failed ? 'none' : undefined }} aria-label="3D execution workspace" tabIndex={failed ? -1 : 0} />
     {failed && <p role="status">3D unavailable. Use the execution list and event timeline below.</p>}</>;
 }

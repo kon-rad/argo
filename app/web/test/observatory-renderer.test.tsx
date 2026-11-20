@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import Workspace from '../src/routes/observatory/Workspace.js';
 import { demoWindow } from '../src/routes/observatory/demo.js';
 import { sceneAt } from '../src/routes/observatory/model.js';
@@ -35,4 +35,17 @@ it('pins layout, preserves renderer on seek, pauses when idle and destroys on un
   const pauses = graph.pauseAnimation!.mock.calls.length;
   vi.advanceTimersByTime(2000);
   expect(graph.pauseAnimation!.mock.calls.length).toBe(pauses);
+});
+
+it('hides the retained canvas when WebGL context is lost so HTML inspection stays usable', () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const first = sceneAt(demoWindow, demoWindow.from + 2000, {});
+  const view = render(<Workspace nodes={first.nodes} links={first.links} onSelect={() => {}} />);
+  const host = view.getByLabelText('3D execution workspace');
+  const canvas = document.createElement('canvas');
+  canvas.style.height = '420px'; host.appendChild(canvas);
+  fireEvent(canvas, new Event('webglcontextlost', { bubbles: true, cancelable: true }));
+  expect(host.style.display).toBe('none');
+  expect(view.getByRole('status').textContent).toContain('3D unavailable');
+  expect(graph.pauseAnimation).toHaveBeenCalled();
 });
