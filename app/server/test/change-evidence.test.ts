@@ -72,7 +72,9 @@ function detailDb(source: any, suppliedParent?: unknown): TxClient {
   const args = source?.message?.toolName === 'inspect_change_commit' ? { capture: o?.id, commit: o?.commitMatch?.sha ?? o?.commit?.sha }
     : { path: details?.captureRequest?.path ?? o?.path };
   const parent = suppliedParent ?? { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: source?.message?.toolName, arguments: args }] } };
-  return { query: async (sql: string, params?: unknown[]) => ({ rows: sql.includes('SELECT 1') ? [{}] : params?.[0] === '1'
+  return { query: async (sql: string, params?: unknown[]) => ({ rows: sql.includes('ORDER BY m.session_id, m.seq, m.id LIMIT 5001') ? [row(1, parent), { ...row(2, source, capturedChange(source)), file_observation: fileObservation(source) }]
+    : sql.includes('FROM usage_runs') || sql.includes('FROM usage_calls') ? []
+    : sql.includes('SELECT 1') ? [{}] : params?.[0] === '1'
     ? [{ id: 1, session_id: 1, seq: 1, ts: new Date(1000), host: 'fixture', role: 'assistant', kind: 'message', raw: parent }]
     : [{ session_id: 1, seq: 2, ts: new Date(2000), host: 'fixture', raw: source }] }) } as unknown as TxClient;
 }

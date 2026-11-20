@@ -4,7 +4,7 @@ import { redactor } from '../../archive/redact.js';
 import { expandSteps } from '../../archive/steps.js';
 import type { TxClient } from '../../db.js';
 import { HttpError } from '../../routes/http.js';
-import { authorizeDetail } from './service.js';
+import { authorizeDetail, loadWindow } from './service.js';
 import { capturedRequestBinding, capturePathMatches, recordedResultPath, resultPathMatches, inspectChangeRequest, fileTarget } from './adapters.js';
 /** Authorized observed bytes, never proof of agent ownership of the transition. */
 export async function observationDetail(db: TxClient, event: EvidenceEvent, modules: ReadonlySet<string>) {
@@ -36,6 +36,13 @@ export async function observationDetail(db: TxClient, event: EvidenceEvent, modu
     if (!event.target || !currentTarget || currentTarget.path !== event.target.path || !capturePathMatches(currentTarget.path, observation, binding) ||
       !resultPathMatches(currentTarget.path, recordedResultPath(raw), binding, observation)) throw new HttpError(409, 'observation request binding changed; restart window');
   }
+  // Re-run the canonical bounded session adapter, including intervening calls and current usage interval identities.
+  // No truncated prefix can silently hide an ambiguity: loadWindow fails closed on its existing row/body budgets.
+  const current = await loadWindow(db, { from: parent.ts.getTime(), to: event.at! + 1, host: row.host, session: row.session_id }, modules);
+  const paired = current.window.events.find(candidate => candidate.id === event.id);
+  if (!paired || paired.parent !== event.parent || !sameChange(paired.fileObservation, observation) ||
+    paired.execution !== event.execution)
+    throw new HttpError(409, 'observation current pairing changed; restart window');
   const diff = (observation.origin === 'runtime-observation' ? message.details.fileObservation : message.details.change).diff;
   const detail = diff.format === 'changed-lines' ? { ...observation.diff, ...(!diff.truncated ? { hunks: diff.hunks } : {}) }
     : { format: 'replacement', truncated: diff.truncated, ...(!diff.truncated ? { before: diff.before, after: diff.after } : {}) };

@@ -137,3 +137,13 @@ it.each(['tool-reported-success', 'captured-hashes', 'captured-diff', 'commit'] 
   fireEvent.change(screen.getByLabelText('Replay cursor'), { target: { value: window.from + 12499 } });
   expect(screen.queryByLabelText('File observation evidence')).toBeNull();
 });
+
+it('keeps a cross-execution result unverified in the inspector without a diff control', async () => {
+ const call=demoWindow.events.find(e=>e.id==='write-call')!;
+ const result={...demoWindow.events.find(e=>e.id==='write-result')!,execution:'run:lab:different',target:undefined};
+ const window={...demoWindow,events:[call,result]};
+ setup(`/observatory?from=${window.from}&to=${window.to}&cursor=${window.from+12500}&event=${result.id}`,()=>({window,export:'execution-token',total:2,next:null,diagnostics:{}}));
+ await screen.findByLabelText('Evidence inspector');
+ expect(screen.queryByLabelText('File observation evidence')).toBeNull();
+ expect(screen.queryByRole('button',{name:'Load observed diff'})).toBeNull();
+});

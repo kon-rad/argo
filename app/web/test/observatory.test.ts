@@ -1,3 +1,4 @@
+import { fileTargets, successfulFileResult } from '../src/routes/observatory/fileEvidence.js';
 import { fileObservationOf } from '../src/routes/observatory/fileEvidence.js';
 import { describe, it, expect } from 'vitest';
 import { readState, writeState, sceneAt, originStyle, eventLink, stepCursor } from '../src/routes/observatory/model.js';
@@ -234,4 +235,15 @@ it('does not recreate a write target or write edge for a read-only Git content c
   expect(withPrior.nodes.filter(n => n.kind === 'file')).toHaveLength(1);
   expect(withPrior.links.some(link => link.source === source.id && link.target.startsWith('file:'))).toBe(false);
   expect(withPrior.nodes.filter(n => n.kind === 'file').every(n => !n.label.includes('(commit)'))).toBe(true);
+});
+
+it.each([true, false])('does not inherit a target or promote a cross-execution result (recorded target %s)', recordedTarget => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const original = demoWindow.events.find(e => e.id === 'write-result')!;
+  const result = { ...original, target: recordedTarget ? original.target : undefined, execution: 'run:lab:different' };
+  const window = { ...demoWindow, events: [call, result] };
+  const through = sceneAt(window, window.from + 12500, {});
+  expect(through.nodes.filter(n => n.kind === 'file').every(n => !n.label.includes('tool-reported-success'))).toBe(true);
+  expect(fileTargets(window.events).has(result.id)).toBe(false);
+  expect(successfulFileResult(result, new Map(window.events.map(e => [e.id, e])))).toBe(false);
 });

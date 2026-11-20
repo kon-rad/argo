@@ -11,15 +11,21 @@ export function pairedFileCall(event: EvidenceEvent, byId: ReadonlyMap<string, E
   if (event.tool && parent.tool && event.tool !== parent.tool ||
     event.target && parent.target && event.target.path !== parent.target.path ||
     event.context?.host && parent.context?.host && event.context.host !== parent.context.host ||
-    event.session && parent.session && event.session !== parent.session) return undefined;
+    event.session && parent.session && event.session !== parent.session ||
+    event.execution && parent.execution && event.execution !== parent.execution) return undefined;
   return parent;
 }
 export function successfulFileResult(event: EvidenceEvent, byId: ReadonlyMap<string, EvidenceEvent>, context: BoundaryContext = {}): boolean {
   if (event.kind !== 'tool_result' || !event.parent || event.outcome !== 'success' || event.at === null) return false;
   const visibleParent = pairedFileCall(event, byId);
   const prior = context.boundary?.provenance?.[`tool:${event.parent}`];
+  if (prior && (prior.execution && event.execution && prior.execution !== event.execution || prior.session && event.session && prior.session !== event.session || prior.host && event.context?.host && prior.host !== event.context.host)) return false;
+  if (event.parent && byId.has(event.parent)) return !!visibleParent;
   const boundaryParent = context.from !== undefined && context.boundary?.tools[event.parent] === 'pending' &&
     prior?.event === event.parent && prior.at !== null && prior.at < context.from && prior.at <= event.at &&
+    !(prior.execution && event.execution && prior.execution !== event.execution) &&
+    !(prior.session && event.session && prior.session !== event.session) &&
+    !(prior.host && event.context?.host && prior.host !== event.context.host) &&
     prior.source.table === 'archive_messages' && event.source.table === 'archive_messages' &&
     event.parent === `${prior.source.table}:${prior.source.id}:${prior.source.part}`;
   return !!visibleParent || !!boundaryParent;
@@ -50,6 +56,10 @@ export function fileTargets(events: EvidenceEvent[], context: BoundaryContext = 
   const targets = new Map<string, NonNullable<EvidenceEvent['target']>>();
   const observations = new Map<string, { at: number; target: NonNullable<EvidenceEvent['target']> }>();
   for (const event of events) {
+    const recordedParent = event.parent ? byId.get(event.parent) : undefined;
+    const boundaryParent = event.parent ? context.boundary?.provenance?.[`tool:${event.parent}`] : undefined;
+    const execution = recordedParent?.execution ?? boundaryParent?.execution;
+    if (event.kind === 'tool_result' && event.execution && execution && event.execution !== execution) continue;
     const parent = pairedFileCall(event, byId);
     if (event.tool === 'inspect_change_commit' || parent?.tool === 'inspect_change_commit') continue;
     const observation = fileObservationOf(event);

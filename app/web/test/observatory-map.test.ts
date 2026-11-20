@@ -1,3 +1,4 @@
+import { fileTargets } from '../src/routes/observatory/fileEvidence.js';
 import { fileObservationOf, successfulFileResult } from '../src/routes/observatory/fileEvidence.js';
 import { expect, it } from 'vitest';
 import { demoWindow } from '../src/routes/observatory/demo.js';
@@ -164,4 +165,35 @@ it('maps only a validated relative result scope and never retroactively scopes i
   expect(activity.find(a => a.event.id === call.id)?.node).toBeUndefined();
   expect(call.target).not.toHaveProperty('vaultPath');
   expect(sceneAt(window, window.from + 12499, {})).toEqual(before);
+});
+
+it.each([true, false])('does not inherit a target or promote a cross-execution result (recorded target %s)', recordedTarget => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const original = demoWindow.events.find(e => e.id === 'write-result')!;
+  const result = { ...original, target: recordedTarget ? original.target : undefined, execution: 'run:lab:different' };
+  const window = { ...demoWindow, events: [call, result] };
+  const through = sceneAt(window, window.from + 12500, {});
+  expect(through.nodes.filter(n => n.kind === 'file').every(n => !n.label.includes('tool-reported-success'))).toBe(true);
+  expect(fileTargets(window.events).has(result.id)).toBe(false);
+  expect(mapActivity(mapGraph, through.events, through.contextEvents, through.evidenceContext).map(a => a.event.id)).toEqual([call.id]);
+  expect(successfulFileResult(result, new Map(window.events.map(e => [e.id, e])))).toBe(false);
+});
+
+it('rejects contradictory boundary execution but leaves absent execution identity unassigned', () => {
+ const original=demoWindow.events.find(e=>e.id==='write-call')!;
+ const call={...original,id:`${original.source.table}:${original.source.id}:${original.source.part}`};
+ const result={...demoWindow.events.find(e=>e.id==='write-result')!,execution:'run:lab:different',parent:call.id};
+ const from=demoWindow.from+12400;
+ const boundary={tickets:{},tools:{[call.id]:'pending'},provenance:{[`tool:${call.id}`]:{event:call.id,source:call.source,at:call.at,execution:call.execution,session:call.session,host:call.context!.host}}};
+ const context={boundary,from};
+ expect(successfulFileResult(result,new Map(),context)).toBe(false);
+ expect(fileTargets([result],context).has(result.id)).toBe(false);
+ const visibleBad=new Map([[call.id,call],[result.id,result]]);
+ expect(successfulFileResult(result,visibleBad,context)).toBe(false);
+ expect(successfulFileResult(result,new Map([[call.id,{...call,execution:null}]]),context)).toBe(false);
+ const missing={...result,execution:null};
+ expect(successfulFileResult(missing,new Map(),context)).toBe(true);
+ expect(missing.execution).toBeNull();
+ const window={...demoWindow,from,boundary,events:[result]};
+ expect(sceneAt(window,result.at!,{}).tools[call.id]).toBe('pending');
 });

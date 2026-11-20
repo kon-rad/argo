@@ -28,10 +28,10 @@ export function observatoryRouter(modules: ReadonlySet<string>, vaultRoot?: stri
       const q = parseOr400(pageQuery, req.query);
       const data = exports.get(owner(res), q.export);
       await readSnapshot(db => authorizeExport(db, data, modules));
-      const { refs: _refs, ...page } = exports.page(owner(res), q.export, q.offset, q.limit); res.json(page); return;
+      const { refs: _refs, executionRefs: _executionRefs, ...page } = exports.page(owner(res), q.export, q.offset, q.limit); res.json(page); return;
     }
     const q = range(req.query); const data = await readSnapshot(db => loadWindow(db, q, modules, vaultRoot));
-    const token = exports.put(owner(res), data); const { refs: _refs, ...page } = exports.page(owner(res), token, 0, 500); res.json(page);
+    const token = exports.put(owner(res), data); const { refs: _refs, executionRefs: _executionRefs, ...page } = exports.page(owner(res), token, 0, 500); res.json(page);
   }));
   router.get(['/events/:id/observation', '/events/:id/diff'], wrap(async (req, res) => {
     const q = parseOr400(z.object({ export: z.uuid() }).strict(), req.query);

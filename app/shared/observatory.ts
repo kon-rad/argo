@@ -43,7 +43,7 @@ export interface ExecutionInterval {
 }
 export interface BoundaryState {
   tickets: Record<string, string>; tools: Record<string, string>;
-  provenance?: Record<string, { event: string; source: EvidenceEvent['source']; at: number | null }>;
+  provenance?: Record<string, { event: string; source: EvidenceEvent['source']; at: number | null; execution?: string | null; session?: string | null; host?: string }>;
 }
 export interface ReplayWindow {
   version: 1; from: number; to: number; intervals: ExecutionInterval[]; boundary: BoundaryState; events: EvidenceEvent[];
@@ -55,10 +55,12 @@ export function ordered(events: EvidenceEvent[]): EvidenceEvent[] {
   return [...new Map(events.map(e => [e.id, e])).values()].sort(compareEvents);
 }
 export function applyEvent(state: BoundaryState, event: EvidenceEvent): void {
-  const record = (key: string) => { if (state.provenance) state.provenance[key] = { event: event.id, source: { ...event.source }, at: event.at }; };
+  const record = (key: string) => { if (state.provenance) state.provenance[key] = { event: event.id, source: { ...event.source }, at: event.at, execution: event.execution, session: event.session, ...(event.context?.host ? { host: event.context.host } : {}) }; };
   if (event.kind === 'ticket' && event.ticket && event.status) { state.tickets[event.ticket] = event.status; record(`ticket:${event.ticket}`); }
   if (event.kind === 'tool_call' && event.occurrence) { state.tools[event.occurrence] = 'pending'; record(`tool:${event.occurrence}`); }
-  if (event.kind === 'tool_result' && event.parent) { state.tools[event.parent] = event.outcome ?? 'unknown'; record(`tool:${event.parent}`); }
+  const prior = event.parent ? state.provenance?.[`tool:${event.parent}`] : undefined;
+  const conflict = prior && (prior.execution && event.execution && prior.execution !== event.execution || prior.session && event.session && prior.session !== event.session || prior.host && event.context?.host && prior.host !== event.context.host);
+  if (event.kind === 'tool_result' && event.parent && !conflict) { state.tools[event.parent] = event.outcome ?? 'unknown'; record(`tool:${event.parent}`); }
 }
 export function replay(window: ReplayWindow, cursor: number): BoundaryState & { active: Omit<ExecutionInterval, 'end'>[] } {
   if (!Number.isFinite(cursor) || cursor < window.from || cursor >= window.to) throw new RangeError('cursor outside window');
