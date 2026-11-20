@@ -51,3 +51,9 @@ The demonstrated old-route leak was separately traced to document keyboard liste
 ## Required review handoff
 
 Preserve the exact source revision, app/web tree hash, device/GPU, production asset hashes, full raw seek/frame samples, response byte count, forced-GC samples, mode-switch counts and caveats in the coordinator's revision-bound RESULT. The workload uses synthetic API data and does not establish production authorization or historical completeness. Re-run after current behavior changes. A sandbox worker's inability to run a browser is historical capability evidence, not a claim that coordinator measurements do not exist.
+
+## Reproduce against a production build
+
+From `app/`, run `npm run build`, then `node web/e2e/observatory-map-benchmark.cjs`. Set the test-only `OBSERVATORY_CHROME` variable to a native browser executable for the agreed hardware baseline; otherwise Playwright uses its installed browser. The script starts only a loopback production preview and mocks every data API with synthetic records. It writes raw samples and a Markdown receipt to an OS temporary directory, checks source stability and served/dist hashes, and fails timing budgets instead of hiding a slow result. It never builds or changes application source.
+
+Optional test controls: `OBSERVATORY_BENCH_PORT` defaults to 5206, `OBSERVATORY_BENCH_CYCLES` defaults to 30 (120 is supported), and `OBSERVATORY_BENCH_OUTPUT` selects an output directory outside the vault. Heap figures are observations, not a process or GPU memory guarantee. Source HEAD, frontend tree and build hashes accompany each run. Documentation-only commits may change HEAD while the runtime tree remains identical; each review submission still needs its own exact-head coordinator receipt.
