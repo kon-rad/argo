@@ -17,7 +17,7 @@ export async function observationDetail(db: TxClient, event: EvidenceEvent, modu
   if (row.raw === null) throw new HttpError(413, 'observation source exceeds 1 MiB');
   if (event.session !== `archive:${row.session_id}` || event.context?.host !== row.host || row.ts === null || row.ts.getTime() !== event.at || row.seq !== event.sequence) throw new HttpError(409, 'observation source identity changed; restart window');
   const raw = redactor().deep(row.raw);
-  if (!sameChange(fileObservation(raw), observation)) throw new HttpError(409, 'observation source changed; restart window');
+  if (!observation.detailDigest || !/^[a-f0-9]{64}$/.test(observation.detailDigest) || !sameChange(fileObservation(raw), observation)) throw new HttpError(409, 'observation source changed; restart window');
   const message = (raw as { message: { toolName: string; toolCallId: string; details: Record<string, any> } }).message;
   if (message.toolName !== event.tool) throw new HttpError(409, 'observation tool changed; restart window');
   const binding = capturedRequestBinding(raw);

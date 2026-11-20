@@ -393,3 +393,24 @@ it('keeps commit-byte matches as inspector content facts and revalidates their e
   const wrong = { ...call, message: { ...call.message, content: [{ ...call.message.content[0]!, arguments: { capture: 'other', commit: commitMatch.sha } }] } };
   await expect(changeDetail(db(wrong), event, new Set(['usage']))).rejects.toHaveProperty('status', 409);
 });
+
+it.each([['legacy', 'changed-lines'], ['runtime', 'changed-lines'], ['legacy', 'replacement'], ['runtime', 'replacement']] as const)('binds %s %s exports to redacted diff bodies, including JSON key order', async (origin, format) => {
+  const diff = format === 'replacement' ? { format: 'replacement', before: 'old public', after: 'new public', truncated: false } : { format: 'changed-lines', context: 0, redacted: true, truncated: false,
+    hunks: [{ oldStart: 1, newStart: 1, deleted: ['old public\n'], added: ['new public\n'] }] };
+  const source = origin === 'legacy' ? raw({ details: { change: { ...change, diff } } })
+    : observedRaw({ ...observed, diff });
+  const call = origin === 'runtime' ? observedCall : { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: change.path } }] } };
+  const event = archiveEvents([row(1, call), { ...row(2, source, capturedChange(source)), file_observation: fileObservation(source) }])[1]!;
+  expect(event.fileObservation?.detailDigest).toMatch(/^[a-f0-9]{64}$/);
+  await expect(changeDetail(detailDb(source), { ...event, fileObservation: { ...event.fileObservation!, detailDigest: undefined } }, new Set(['usage']))).rejects.toHaveProperty('status', 409);
+  await expect(changeDetail(detailDb(source), event, new Set(['usage']))).resolves.toMatchObject({ diff });
+  const rewritten = structuredClone(source) as any;
+  const observation = rewritten.message.details.change ?? rewritten.message.details.fileObservation;
+  if (format === 'changed-lines') observation.diff.hunks[0].added = ['rewritten public\n'];
+  else observation.diff.after = 'rewritten public';
+  await expect(changeDetail(detailDb(rewritten), event, new Set(['usage']))).rejects.toHaveProperty('status', 409);
+  const reordered = JSON.parse(JSON.stringify(source), (_key, value) => value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value).reverse()) : value);
+  await expect(changeDetail(detailDb(reordered), event, new Set(['usage']))).resolves.toMatchObject({ diff });
+  expect(JSON.stringify(event.fileObservation)).not.toContain('new public');
+});

@@ -13,6 +13,8 @@ export interface FileObservation {
   origin: 'runtime-observation' | 'legacy-reported';
   diff: ChangeEvidence['diff'];
   commitMatch?: { sha: string; verification: 'local-object'; authorship: 'unknown' };
+  /** SHA-256 binding of the validated redacted diff representation; absent on old metadata until canonical reingestion. */
+  detailDigest?: string;
 }
 export interface EvidenceEvent {
   version: 1; id: string; at: number | null; observedAt: number | null; sequence: number; part: number;

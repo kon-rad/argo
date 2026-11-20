@@ -140,6 +140,11 @@ it('rechecks owner, export sources, modules, current binding and raw size on the
   const url = `/api/observatory/events/${encodeURIComponent(event.id)}/observation`, token = { export: window.export };
   const detail = (await request(app).get(url).query(token).expect(200)).body.detail;
   expect(detail).toMatchObject({ ownership: 'unknown', origin: 'runtime-observation', diff: { after: 'readable observed text' } });
+  // Same stored metadata and observed hashes, different source-only body: the pinned export must reject it.
+  await query('UPDATE archive_messages SET raw=$1 WHERE id=$2', [{ ...raw, message: { ...raw.message, details: { fileObservation: { ...observation, diff: { ...observation.diff, after: 'rewritten source-only body' } } } } }, event.source.id]);
+  await request(app).get(url).query(token).expect(409);
+  await query('UPDATE archive_messages SET raw=$1 WHERE id=$2', [raw, event.source.id]);
+  await request(app).get(url).query(token).expect(200);
   await request(app).get(url).set('x-fixture-owner', 'other-fixture-owner').query(token).expect(410);
   modules.clear(); await request(app).get(url).query(token).expect(403); modules.add('usage');
   const rewritten = { ...input[0]!, rawSha: 'api-rewritten-parent', raw: { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'api-call', name: 'write_file', arguments: { path: 'notes/other.md' } }] } } };
@@ -156,4 +161,24 @@ it('rechecks owner, export sources, modules, current binding and raw size on the
   await request(app).get(url).query(token).expect(413);
   await query('DELETE FROM archive_messages WHERE id=$1', [event.source.id]);
   await request(app).get(url).query(token).expect(403);
+});
+
+it('audits migrated observation-only, legacy-only and missing rows as distinct coverage buckets', async () => {
+  const session = (await query(`INSERT INTO archive_sessions(source,host,external_id) VALUES('zen-agent',$1,'audit-evidence') RETURNING id`, [host])).rows[0]!.id;
+  for (const [index, observation, legacy] of [
+    [1, { origin: 'runtime-observation', diff: { truncated: false } }, null],
+    [2, null, { level: 'captured-hashes' }], [3, null, null],
+  ] as const) await query(`INSERT INTO archive_messages(session_id,seq,external_id,role,kind,ts,raw,raw_sha,file_observation,change_evidence)
+    VALUES($1,$2,$3,'tool','message','2025-01-01T00:00:10Z','{}',$3,$4,$5)`, [session,index,`audit-${index}`,observation,legacy]);
+  const sql = readFileSync(new URL('../../../docs/audits/observatory.sql', import.meta.url), 'utf8');
+  const statement = sql.split('-- BEGIN prospective-evidence-audit')[1]?.split('-- END prospective-evidence-audit')[0];
+  expect(statement).toBeTruthy();
+  const rows = (await query(statement!)).rows.filter(row => row.host === host);
+  expect(rows.map(row => ({ kind: row.evidence_kind, origin: row.observation_origin, availability: row.diff_availability, level: row.legacy_level, records: Number(row.records) })))
+    .toEqual(expect.arrayContaining([
+      { kind: 'file-observation', origin: 'runtime-observation', availability: 'readable', level: null, records: 1 },
+      { kind: 'legacy-change', origin: null, availability: 'unknown', level: 'captured-hashes', records: 1 },
+      { kind: 'missing', origin: null, availability: 'unknown', level: null, records: 1 },
+    ]));
+  expect(rows).toHaveLength(3);
 });

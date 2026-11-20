@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { redactor } from './redact.js';
 import { z } from 'zod';
 import type { ChangeEvidence, FileObservation } from '@secondbrain/contracts/observatory';
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -55,8 +57,19 @@ export function sameChange(a: unknown, b: unknown): boolean {
 }
 
 
+/** Canonical key order survives PostgreSQL jsonb; array order remains evidence-significant. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+function detailDigest(diff: unknown): string {
+  return createHash('sha256').update(canonical(diff)).digest('hex');
+}
+
 /** Runtime observations and historical reported captures never establish transition ownership. */
 export function fileObservation(raw: unknown): FileObservation | null {
+  raw = redactor().deep(raw);
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, any>, m = r.message, details = m?.details;
   if (r.harness !== 'zen-agent' || r.type !== 'message' || m?.role !== 'toolResult' || m.isError !== false || !details || typeof details !== 'object') return null;
@@ -65,7 +78,7 @@ export function fileObservation(raw: unknown): FileObservation | null {
   if (legacy) {
     const c = capturedChange(raw);
     return c ? { version: 1, id: c.id, repository: c.repository, worktree: c.worktree, path: c.path,
-      observedBefore: c.before, observedAfter: c.after, ownership: 'unknown', origin: 'legacy-reported', diff: c.diff,
+      observedBefore: c.before, observedAfter: c.after, ownership: 'unknown', origin: 'legacy-reported', diff: c.diff, detailDigest: detailDigest(capture.parse(details.change).diff),
       ...(c.commit ? { commitMatch: c.commit } : {}) } : null;
   }
   if (!modern) return null;
@@ -76,7 +89,7 @@ export function fileObservation(raw: unknown): FileObservation | null {
   const c = capturedChange({ ...r, message: { ...m, details: { change: { version: o.version, id: o.id, repository: o.repository, worktree: o.worktree,
     path: o.path, before: o.observedBefore, after: o.observedAfter, diff: o.diff, ...(o.commitMatch ? { commit: o.commitMatch } : {}) } } } });
   return c ? { version: 1, id: c.id, repository: c.repository, worktree: c.worktree, path: c.path,
-    observedBefore: c.before, observedAfter: c.after, ownership: 'unknown', origin: 'runtime-observation', diff: c.diff,
+    observedBefore: c.before, observedAfter: c.after, ownership: 'unknown', origin: 'runtime-observation', diff: c.diff, detailDigest: detailDigest(o.diff),
     ...(c.commit ? { commitMatch: c.commit } : {}) } : null;
 }
 export function fileObservationMetadataPresent(raw: unknown): boolean {
