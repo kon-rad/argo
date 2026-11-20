@@ -73,7 +73,7 @@ it('seeks a tiny window after a >8 MiB prefix without transferring prefix bodies
     FROM generate_series(1,90) n`, [session]);
   expect(Number((await query('SELECT sum(octet_length(raw::text)) AS bytes FROM archive_messages WHERE session_id=$1', [session])).rows[0]!.bytes)).toBeGreaterThan(8 * 1024 * 1024);
   const insert = async (seq: number, type: string, ts: string) => (await query(`INSERT INTO archive_messages(session_id,seq,external_id,role,kind,ts,raw,raw_sha)
-    VALUES($1,$2,$2::text,'assistant','response_item',$3,$4,'fake') RETURNING id`,
+    VALUES($1,$2::integer,($2::integer)::text,'assistant','response_item',$3,$4,'fake') RETURNING id`,
     [session,seq,ts,{ harness: 'codex', payload: { type, call_id: 'pending', name: 'read', arguments: '{}' } }])).rows[0]!.id;
   const call = await insert(91,'function_call','2025-01-01T00:00:01Z');
   await insert(92,'function_call_output','2025-01-01T00:05:01Z');

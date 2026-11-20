@@ -183,6 +183,11 @@ it('returns existing Codex summary only and distinguishes hidden from unavailabl
 });
 
 import { projectObservatory } from '../src/archive/observatoryProjection.js';
+it('normalizes nullable archive content before projecting a tool call', () => {
+  const projection = projectObservatory({ id: 1, role: 'assistant', kind: 'response_item', ts: null, text: null,
+    raw: { harness: 'codex', payload: { type: 'function_call', call_id: 'call', name: 'read', arguments: '{}' } } });
+  expect(projection.parts).toEqual([{ key: '0', step: 'tool_call', text: '', toolName: 'read', toolCallId: 'call', isError: null }]);
+});
 it('projects mixed harness rows without bodies and preserves exact adapter semantics', () => {
   const raw = [
     { role: 'assistant', session_id: 's', tool_calls: [{ id: 'x', function: { name: 'Write', arguments: '{"path":"src/demo.ts","content":"PRIVATE"}' } }, { id: 'y', function: { name: 'read', arguments: '{}' } }], reasoning: 'PRIVATE' },

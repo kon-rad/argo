@@ -81,3 +81,7 @@ Dedicated migrated-database fixtures pass all three tests, including insertion-t
 Card `t_07c1c871` adds a rebuildable content-free archive projection through the importer and bounded resumable `archive-steps --observatory` batches. Replay selects window metadata and prior tool context, retaining occurrence pairing and exact boundary provenance without fetching narrative prefixes. Selected raw bytes still have a 4 MiB guard. Missing relevant projection fails 503. See [rollout and limits](observatory.md#observatory-5-projection-and-rollout).
 
 The synthetic database regression has a prefix over 8 MiB and asserts two transferred metadata rows, three source queries, cross-boundary pairing, invalidation, backfill idempotency and a real oversized selected source returning 413. The sandbox refused PostgreSQL connections, so this fixture, migration and EXPLAIN are pending coordinator verification. Database-free adapters, authorization and immutable pagination are checked separately; these do not establish production coverage.
+
+### Bounded-window scratch database correction
+
+Dedicated scratch PostgreSQL verification passed all four Observatory database tests after normalizing nullable archive content before projection and explicitly typing the fixture sequence parameter before converting it to a text identifier. The pure suite passed 25 tests, including the nullable-content regression. These results cover the synthetic database fixture and do not establish production coverage or production query plans.
