@@ -186,3 +186,25 @@ it('preserves the Hermes protocol with explicit IDs and an omitted optional tool
   expect(archiveEvents(rows({ ...result, tool_name: 'edit_file' }))[1]?.parent).toBeUndefined();
   expect(archiveEvents(rows(result, 'unknown'))[1]?.parent).toBeUndefined();
 });
+
+import { parseZenTrace } from '../src/usage/zenTrace.js';
+it('keeps collected argument records content-bearing while the overview and capture projection omit text', () => {
+  const before = 'synthetic-private-write-argument-123456', after = 'synthetic-private-edit-argument-654321';
+  const args = [{ path: change.path, content: before }, { path: change.path, old: before, new: after }];
+  const records: Record<string, unknown>[] = [{ type: 'meta', version: 1, id: 'synthetic-content-trace', at: '2026-01-01T00:00:00Z', model: 'faux/faux-1', parts: [] }];
+  for (const [i, name] of ['write_file', 'edit_file'].entries()) {
+    records.push({ type: 'message', at: new Date(1000 + i * 2000).toISOString(), message: { role: 'assistant', content: [{ type: 'toolCall', id: `content-${i}`, name, arguments: args[i] }] } });
+    records.push({ type: 'tool', at: new Date(1500 + i * 2000).toISOString(), toolCallId: `content-${i}`, name, args: args[i], isError: false, durationMs: 1 });
+    records.push({ type: 'message', at: new Date(2000 + i * 2000).toISOString(), message: { role: 'toolResult', toolCallId: `content-${i}`, toolName: name, isError: false, content: [{ type: 'text', text: 'changed' }], details: { change: { ...change, id: `capture-${i}`, diff: { format: 'replacement', truncated: true } } } } });
+  }
+  const collected = parseZenTrace(records, 'fixture', '/synthetic/session.jsonl', new Date(5000)).session!;
+  const collectedRaw = JSON.stringify(collected.messages.map(m => m.raw));
+  expect(collectedRaw).toContain(before); expect(collectedRaw).toContain(after);
+  expect(collected.messages.filter(m => m.kind === 'tool')).toHaveLength(0); // Dedicated tool lines are skipped; assistant arguments remain.
+  const rows = collected.messages.map((message, i) => row(i + 1, message.raw, capturedChange(message.raw)));
+  const events = archiveEvents(rows);
+  expect(events.filter(e => e.change?.level === 'captured-hashes')).toHaveLength(2);
+  expect(JSON.stringify(events)).not.toContain(before); expect(JSON.stringify(events)).not.toContain(after);
+  const protectedSource = buildRedactor({ env: { FIXTURE_WRITE_SECRET: before, FIXTURE_EDIT_SECRET: after } }).deep(collected.messages);
+  expect(JSON.stringify(protectedSource)).not.toContain(before); expect(JSON.stringify(protectedSource)).not.toContain(after);
+});

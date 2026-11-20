@@ -82,3 +82,51 @@ test('real runtime traces retain successful capture details and no capture on a 
     assert.equal(records[0].dispatch.task_id, 'fixture-ticket');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('content-bearing write/edit arguments persist for resume while capture metadata stays hash-only', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'zen-change-content-'));
+  try {
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    const before = 'synthetic-private-write-argument-123456';
+    const after = 'synthetic-private-edit-argument-654321';
+    const writeArgs = { path: 'note.md', content: `credential=${before}\n` };
+    const editArgs = { path: 'note.md', old: before, new: after };
+    const faux = fauxProvider(), models = createModels(); models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('write_file', writeArgs)], { stopReason: 'toolUse' }),
+      fauxAssistantMessage([fauxToolCall('edit_file', editArgs)], { stopReason: 'toolUse' }),
+      fauxAssistantMessage([fauxText('fixture completed')]),
+    ]);
+    const config = loadConfig({ workdir: root, env: {}, overrides: { model: 'faux/faux-1', tools: ['fs'] } });
+    const first = new ZenAgent({ config, models, env: {} });
+    const result = await first.run('synthetic content-bearing instruction');
+    const records = readFileSync(result.sessionPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const calls = records.filter(r => r.type === 'message' && r.message.role === 'assistant')
+      .flatMap(r => r.message.content.filter((b: { type: string }) => b.type === 'toolCall'));
+    assert.deepEqual(calls.map(c => c.arguments), [writeArgs, editArgs]);
+    const traces = records.filter(r => r.type === 'tool');
+    assert.deepEqual(traces.map(r => r.args), [writeArgs, editArgs]);
+    const results = records.filter(r => r.type === 'message' && r.message.role === 'toolResult');
+    assert.equal(results.length, 2);
+    for (const record of records) {
+      const serialized = JSON.stringify(record);
+      if (serialized.includes(before) || serialized.includes(after)) {
+        assert.ok(record.type === 'tool' || (record.type === 'message' && record.message.role === 'assistant'));
+      }
+    }
+    for (const record of results) {
+      assert.deepEqual(record.message.details.change.diff, { format: 'replacement', truncated: true });
+      assert.equal(JSON.stringify(record.message.details.change).includes(before), false);
+      assert.equal(JSON.stringify(record.message.details.change).includes(after), false);
+    }
+    const resumed = new ZenAgent({ config, models, env: {}, resume: result.sessionId });
+    const resumedCalls = resumed.agent.state.messages.filter(m => m.role === 'assistant')
+      .flatMap(m => m.content.filter(b => b.type === 'toolCall'));
+    assert.deepEqual(resumedCalls.map(c => c.arguments), [writeArgs, editArgs]);
+    faux.setResponses([fauxAssistantMessage([fauxText('resumed with original arguments')])]);
+    const continued = await resumed.run('continue synthetic session');
+    assert.equal(continued.sessionId, result.sessionId);
+    assert.equal(continued.text, 'resumed with original arguments');
+    assert.equal(readFileSync(join(root, 'note.md'), 'utf8'), `credential=${after}\n`);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

@@ -1,5 +1,8 @@
 # Observatory 1 development log
 
+Historical record: entries below describe the evidence and pending work at their recorded revisions. Statements about outstanding browser gates or session-text guarantees are superseded by the review-115 correction note and the current revision-bound coordinator acceptance pack; they are not current acceptance status.
+
+
 ## 2026-11-17
 
 Added an optional API-only addon for coverage, evidence windows and source detail pointers. Shared replay uses recorded intervals and source provenance, restores boundary state, preserves concurrent/resumed identities and idle gaps, and excludes unknown execution ends. Archive step expansion supplies tool occurrences; usage measurements do not create tools. Prompt human origin and historical completeness remain unknown without evidence. Thinking is availability only. No LLM processing or production access was used.
@@ -52,7 +55,7 @@ Software rendering was materially slower and remains a documented limit: Headles
 
 Host zen-agent checks report 94 passed. Isolated Python checks report 278 passed and 2 skipped. Pre-integration app tests had three unrelated route/response failures; fresh CI at a6dfd36 passed every required check after integration. Corrections for the independent review findings still require renewed exact-head CI and rendered checks before acceptance. No author approval, merge or deployment is claimed by this log.
 
-## Review 109 correction
+## Review 109 correction (historical, superseded acceptance status)
 
 Card: `t_2693489d`. Source-only correction in the isolated engine worktree.
 
@@ -185,7 +188,7 @@ Host verification passed 341 web tests, 102 database-free checks, 38 targeted mi
 
 Corrected all three source findings. Archive replay requires matching recorded tool names and capture paths before pairing or attributing targets, successful writes or changes. Absolute arguments additionally require the capture's exact worktree root hash. Missing tool names, mismatched worktrees, malformed capture records and unsupported path aliases remain unpaired. No migrations or source facts were changed; the existing projections remain rebuildable.
 
-Zen capture details now retain operation identity and original before/after hashes without file text, including small files. `diff.truncated=true` reports unavailable diff text honestly. This deliberately reduces new observations to captured hashes until a protected diff store exists. Existing archived diff detail still uses source authorization and redaction. The regression edits another line of a synthetic credential-bearing file and checks both persistent result details and the real runtime JSONL contain no credential.
+Zen capture details now retain operation identity and original before/after hashes without file text, including small files. `diff.truncated=true` reports unavailable diff text honestly. This deliberately reduces new observations to captured hashes until a protected diff store exists. Existing archived diff detail still uses source authorization and redaction. The regression edits another line of a synthetic credential-bearing file and checks that this specific untouched line is absent from captured-change metadata and the resulting fixture trace. It makes no claim about write/edit argument literals, which ordinary trace records retain.
 
 The synthetic write explicitly scopes `Projects/demo.md` to note `note:1` in pinned fixture layout v7. Map activity includes captured results with their evidence level, alongside attempts. A model test resolves the captured result to that exact note at +12.5 seconds, removes it at +12.499 seconds, removes the attempt before +12 seconds, and restores the result on forward seek. The coordinator browser trace now performs the same map transition and reverse seek.
 
@@ -205,4 +208,11 @@ Required checks remain blocked. `cd app && SB_TEST_DB=sb_card_cb969d54_test npm 
 
 Independent review of the initial correction found that unconditional result-name equality rejected valid Codex and Claude protocols, which omit result names. It also found that a local commit result could bypass request binding when no file target existed. Five focused regressions failed before the fix: two known nameless protocols and three mismatched capture/commit requests. Known protocols now retain explicit-ID pairing when no recorded name contradicts the call; unknown runtimes remain conservative. Commit evidence must match the requested capture ID and full SHA. The exported bounded request helper keeps only those two fields, and the capture-presence helper distinguishes malformed capture metadata from absence for future bounded collectors.
 
-Current Zen file operations record hashes without file contents, including small files. The actual session-JSONL regression checks that an untouched synthetic credential line never enters tool details or the persisted trace. Optional legacy text-diff support does not mean current Zen produces text diffs. The guide now states that distinction and that current hash-only captures have unavailable text.
+Current Zen captured-change metadata records hashes without before/after file text, including small files. The actual session-JSONL regression checks that an untouched synthetic credential line is not additionally copied from the file into capture metadata; ordinary content-bearing tool arguments remain in the trace. Optional legacy text-diff support does not mean current Zen produces text diffs. The guide now states that distinction and that current hash-only captures have unavailable text.
+
+
+## Review 115: trace content boundary and exact-head acceptance
+
+The documentation guarantee is limited to captured-change metadata: `toolResult.details.change` omits before/after file text. Ordinary assistant tool-call records and dedicated trace arguments still contain write content and edit old/new text, which resume preserves. Raw session traces and collected archive records are private content-bearing sources with existing authorization/redaction requirements. The earlier untouched-credential test established no additional copy of an unchanged line; it never established secret-free session JSONL. New runtime fixtures explicitly exercise literals in write and edit arguments, inspect every record type, and resume the same session with those arguments intact. An archive fixture verifies that collection retains content-bearing assistant arguments while the overview and normalized capture metadata omit them, and configured source redaction remains separate. Runtime behavior and resume format are unchanged.
+
+The handover describes the acceptance pack as a timeless submission requirement, rather than asserting that the current gate is pending. The coordinator commits and freezes this complete correction first, then builds and executes native scenarios and the full production benchmark on that exact head, recording source before/after, device/GPU, raw samples and served/dist hashes. Reference measurements on earlier revisions remain labelled references. No later documentation commit is part of that measurement; completed receipts belong to the exact-head review handoff.
