@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import type { NoteActivity } from '../../routes/observatory/mapActivity.js';
 import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph';
-import { Group, Mesh, MeshBasicMaterial, SphereGeometry, Vector2 } from 'three';
+import { Group, Mesh, MeshBasicMaterial, SphereGeometry, TorusGeometry, ConeGeometry, Vector2 } from 'three';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { LABELLED, labelSprite, metricLabel, nodeColor, recency, type MapGraph, type MapMetric, type MapNodeData } from '../../lib/mapData.js';
 
@@ -19,6 +20,7 @@ type GNode = MapNodeData & { fx: number; fy: number; fz: number };
 type GLink = { source: string | GNode; target: string | GNode; kind: string };
 
 interface Props {
+  activity?: NoteActivity[];
   graph: MapGraph;
   metrics: MapMetric[];
   layers: Layers;
@@ -34,7 +36,7 @@ function hexDim(hex: string, k: number): string {
   return `#${ch(16)}${ch(8)}${ch(0)}`;
 }
 
-export const FullMap = forwardRef<FullMapHandle, Props>(function FullMap({ graph, metrics, layers, selected, onSelect }, ref) {
+export const FullMap = forwardRef<FullMapHandle, Props>(function FullMap({ graph, metrics, layers, selected, onSelect, activity }, ref) {
   const host = useRef<HTMLDivElement>(null);
   const fg = useRef<ForceGraph3DInstance | null>(null);
   const nodesById = useRef(new Map<string, GNode>());
@@ -104,6 +106,29 @@ export const FullMap = forwardRef<FullMapHandle, Props>(function FullMap({ graph
     });
     g.graphData({ nodes, links });
   }, [graph, metrics]);
+
+  // Overlay lives beside the pinned graph. Seeking never replaces topology or runs forces.
+  useEffect(() => {
+    const g = fg.current;
+    if (!g || !activity) return;
+    const group = new Group();
+    const seen = new Set<string>();
+    for (const item of activity) {
+      if (!item.node || !item.event.target) continue;
+      const read = item.event.target.operation === 'read', key = `${item.node.id}:${read}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const mesh = new Mesh(read ? new TorusGeometry(5, 1, 6, 12) : new ConeGeometry(5, 8, 3), new MeshBasicMaterial({ color: read ? '#22d3ee' : '#fbbf24', depthTest: false }));
+      mesh.position.set(item.node.x + (read ? -7 : 7), item.node.y + 10, item.node.z);
+      mesh.renderOrder = 10;
+      group.add(mesh);
+    }
+    g.scene().add(group);
+    return () => {
+      g.scene().remove(group);
+      for (const child of group.children) { const mesh = child as Mesh; mesh.geometry.dispose(); (mesh.material as MeshBasicMaterial).dispose(); }
+    };
+  }, [activity]);
 
   // Highlight, visibility.
   useEffect(() => {

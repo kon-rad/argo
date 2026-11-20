@@ -14,7 +14,7 @@ function range(input: unknown) {
   if (to <= from || to - from > 86400_000) throw new HttpError(400, 'range must be positive and at most 24 hours');
   return { ...q, from, to };
 }
-export function observatoryRouter(modules: ReadonlySet<string>): Router {
+export function observatoryRouter(modules: ReadonlySet<string>, vaultRoot?: string): Router {
   const router = Router(); const exports = new Exports();
   // Session middleware authenticates the sole owner on remote deployments. Local access is the local owner.
   const owner = (res: { locals: Record<string, unknown> }) => String(res.locals.sessionHash ?? 'local-owner');
@@ -27,7 +27,7 @@ export function observatoryRouter(modules: ReadonlySet<string>): Router {
       await readSnapshot(db => authorizeExport(db, data, modules));
       const { refs: _refs, ...page } = exports.page(owner(res), q.export, q.offset, q.limit); res.json(page); return;
     }
-    const q = range(req.query); const data = await readSnapshot(db => loadWindow(db, q, modules));
+    const q = range(req.query); const data = await readSnapshot(db => loadWindow(db, q, modules, vaultRoot));
     const token = exports.put(owner(res), data); const { refs: _refs, ...page } = exports.page(owner(res), token, 0, 500); res.json(page);
   }));
   router.get('/events/:id', wrap(async (req, res) => {
@@ -39,4 +39,4 @@ export function observatoryRouter(modules: ReadonlySet<string>): Router {
   }));
   return router;
 }
-export const routes: FeatureRoutes = ({ opts }) => [{ path: '/api/observatory', router: observatoryRouter(opts.modules ?? config.modules) }];
+export const routes: FeatureRoutes = ({ opts }) => [{ path: '/api/observatory', router: observatoryRouter(opts.modules ?? config.modules, opts.vaultRoot ?? config.vaultRoot) }];

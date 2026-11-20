@@ -1,9 +1,9 @@
 import { ordered, replay, type EvidenceEvent, type ReplayWindow } from '@secondbrain/contracts/observatory';
 import { sessionLink } from '../usage/AgentSessions.js';
 export type Origin = EvidenceEvent['actor']['kind'];
-export interface Filters { host?: string; session?: string; ticket?: string; runtime?: string; persona?: string; model?: string; origin?: string }
-export interface ViewState extends Filters { from: number; to: number; cursor: number; event?: string; demo?: string }
-const filterKeys = ['host', 'session', 'ticket', 'runtime', 'persona', 'model', 'origin', 'event', 'demo'] as const;
+export interface Filters { host?: string; session?: string; ticket?: string; runtime?: string; persona?: string; model?: string; origin?: string; note?: string }
+export interface ViewState extends Filters { from: number; to: number; cursor: number; event?: string; demo?: string; layout?: string }
+const filterKeys = ['host', 'session', 'ticket', 'runtime', 'persona', 'model', 'origin', 'event', 'demo', 'note', 'layout'] as const;
 export function readState(params: URLSearchParams, now: number): ViewState {
   const num = (key: string, fallback: number) => { const raw = params.get(key); const n = Number(raw); return raw && Number.isSafeInteger(n) && n >= 0 && n <= 8640000000000000 ? n : fallback; };
   let to = num('to', now), from = num('from', to - 3600000);
@@ -16,6 +16,12 @@ export function writeState(state: ViewState): URLSearchParams {
   const params = new URLSearchParams({ from: String(state.from), to: String(state.to), cursor: String(state.cursor) });
   for (const key of filterKeys) if (state[key]) params.set(key, state[key]!);
   return params;
+}
+/** Both spatial modes carry the entire replay contract, including hidden selections. */
+export function replayHref(mode: 'map' | 'workspace', state: ViewState): string {
+  const params = writeState(state);
+  if (mode === 'map') params.set('activity', '1');
+  return `${mode === 'map' ? '/map' : '/observatory'}?${params}`;
 }
 export function originStyle(origin: Origin) {
   return { human: { color: '#fbbf24', shape: 'diamond', glyph: '◆ H' }, agent: { color: '#22d3ee', shape: 'sphere', glyph: '● A' },
@@ -45,6 +51,8 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
     (!filters.runtime || e.context?.runtime === filters.runtime || active.some(i => i.id === e.execution && i.runtime === filters.runtime)) &&
     (!filters.persona || active.some(i => i.id === e.execution && i.persona === filters.persona)) &&
     (!filters.model || e.usage?.model === filters.model || active.some(i => i.id === e.execution)) && (!filters.origin || e.actor.kind === filters.origin));
+  const targets = new Map(through.filter(e => e.target).map(e => [e.id, e.target!]));
+  const filteredEvents = filters.note ? events.filter(e => (e.target ?? targets.get(e.parent ?? ''))?.vaultPath === filters.note) : events;
   const nodes: SceneNode[] = []; const links: SceneLink[] = [];
   const add = (id: string, label: string, kind: SceneNode['kind'], origin: Origin, x: number, y: number, z: number) => {
     if (!nodes.some(n => n.id === id)) nodes.push({ id, label, kind, origin, fx: x, fy: y, fz: z });
@@ -60,14 +68,14 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
     if (i.ticket) { add(`ticket:${i.ticket}`, `${i.ticket}: ${state.tickets[i.ticket] ?? 'historical state unknown'}`, 'ticket', 'unknown', p.x, 100, p.z); links.push({ source: i.id, target: `ticket:${i.ticket}` }); }
   }
   // A short trail represents recorded events only. Ended executions retain no attached nodes/edges.
-  for (const e of events.filter(e => e.execution && ids.has(e.execution) && cursor - e.at! <= 2000).slice(-200)) {
+  for (const e of filteredEvents.filter(e => e.execution && ids.has(e.execution) && cursor - e.at! <= 2000).slice(-200)) {
     const owner = nodes.find(n => n.id === e.execution)!;
     add(e.id, `${originStyle(e.actor.kind).glyph} ${e.kind} ${e.tool ?? ''}`, 'event', e.actor.kind, owner.fx + (hash(e.id) % 60) - 30, 55, owner.fz + 20);
     links.push({ source: e.execution!, target: e.id, result: e.kind === 'tool_result' });
-    const target = e.target ?? (e.parent ? through.find(call => call.id === e.parent)?.target : undefined);
+    const target = e.target ?? (e.parent ? targets.get(e.parent ?? '') : undefined);
     if (target) { const id = `file:${target.path}`; add(id, `${target.operation}: ${target.path} (attempt)`, 'file', e.actor.kind, owner.fx + 85, 70, owner.fz); links.push({ source: e.id, target: id }); }
   }
   const limitedNodes = nodes.slice(0, 500), shown = new Set(limitedNodes.map(n => n.id));
   const limitedLinks = links.filter(l => shown.has(l.source) && shown.has(l.target)).slice(0, 1500);
-  return { ...state, active, events, nodes: limitedNodes, links: limitedLinks, omittedNodes: nodes.length - limitedNodes.length, omittedLinks: links.length - limitedLinks.length };
+  return { ...state, active, events: filteredEvents, nodes: limitedNodes, links: limitedLinks, omittedNodes: nodes.length - limitedNodes.length, omittedLinks: links.length - limitedLinks.length };
 }

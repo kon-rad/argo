@@ -31,7 +31,7 @@ export async function readSnapshot<T>(fn: (db: TxClient) => Promise<T>): Promise
   }
 }
 
-export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySet<string>): Promise<ExportData> {
+export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySet<string>, vaultRoot?: string): Promise<ExportData> {
   const { from, to, host, session } = range;
   const args = [new Date(from), new Date(to), host ?? null, session ?? null];
   const events: EvidenceEvent[] = [];
@@ -51,7 +51,7 @@ export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySe
             AND coalesce(r.runtime, 'claude-code') = a.source AND r.started_at < $2 AND r.ended_at > $1))
       ORDER BY m.session_id, m.seq, m.id LIMIT 5001`, args)).rows);
     if (messages.some(m => (m.raw as { observatory_oversized?: boolean })?.observatory_oversized)) throw new HttpError(413, 'archive source exceeds 4 MiB; narrow range or select a session');
-    events.push(...archiveEvents(messages));
+    events.push(...archiveEvents(messages, vaultRoot));
     const runs = bounded((await db.query<{ host: string; run_id: string; session_id: string; runtime: string; agent_name: string | null; task_id: string | null; started_at: Date | null; ended_at: Date | null; archive_ids: number[] }>(
       `SELECT r.host, r.run_id, r.session_id, coalesce(r.runtime, 'claude-code') AS runtime, r.agent_name, r.task_id, r.started_at, r.ended_at,
         ARRAY(SELECT a.id FROM archive_sessions a WHERE a.host = r.host AND a.source = coalesce(r.runtime, 'claude-code') AND a.external_id = r.session_id) AS archive_ids

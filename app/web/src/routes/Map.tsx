@@ -2,6 +2,8 @@ import { lazy, Suspense, useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { FullMapHandle, Layers } from '../components/map/FullMap.js';
+import { api } from '../lib/api.js';
+import { readState, replayHref } from './observatory/model.js';
 import { ageDays, formatValue, mapApi, nodeColor, type MapMetric } from '../lib/mapData.js';
 
 /**
@@ -13,6 +15,7 @@ import { ageDays, formatValue, mapApi, nodeColor, type MapMetric } from '../lib/
  */
 
 // Separate chunks: the Pi never downloads 3d-force-graph, the desktop never the kiosk scene.
+const Observatory = lazy(() => import('./observatory/Observatory.js'));
 const KioskMap = lazy(() => import('../components/map/KioskMap.js'));
 const FullMap = lazy(() => import('../components/map/FullMap.js').then((m) => ({ default: m.FullMap })));
 
@@ -92,12 +95,16 @@ function SidePanel({ id, metrics, onClose, onPick }: { id: string; metrics: MapM
 
 export default function MapPage() {
   const [params] = useSearchParams();
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta });
+  if (params.get('activity') === '1' && meta.isPending) return <p>Loading map modules…</p>;
   if (params.get('kiosk') === '1') return <Suspense fallback={null}><KioskMap /></Suspense>;
-  return <FullMapPage />;
+  if (params.get('activity') === '1' && meta.data?.modules?.includes('observatory')) return <Suspense fallback={null}><Observatory mode="map" /></Suspense>;
+  return <FullMapPage observatory={meta.data?.modules?.includes('observatory') ?? false} />;
 }
 
-function FullMapPage() {
-  const graph = useQuery({ queryKey: ['map-graph'], queryFn: mapApi.graph, refetchInterval: 10 * 60_000 });
+function FullMapPage({ observatory }: { observatory: boolean }) {
+  const [params] = useSearchParams();
+  const graph = useQuery({ queryKey: ['map-graph'], queryFn: () => mapApi.graph(), refetchInterval: 10 * 60_000 });
   const metrics = useQuery({ queryKey: ['map-metrics'], queryFn: () => mapApi.metrics(false), refetchInterval: 60_000 });
   const [layers, setLayers] = useState<Layers>({ notes: true, links: true, structure: true, metrics: true });
   const [selected, setSelected] = useState<string | null>(null);
@@ -156,6 +163,7 @@ function FullMapPage() {
           {counts['note'] ?? 0} notes · {counts['project'] ?? 0} areas · {counts['feature'] ?? 0} projects
           {graph.data ? ` · layout v${graph.data.version}` : ''}
         </span>
+        {observatory && <Link className="underline" to={replayHref('map', { ...readState(params, Date.now()), layout: graph.data ? String(graph.data.version) : undefined, note: graph.data?.nodes.find(n => n.id === selected && n.kind === 'note')?.ref ?? undefined })}>Show activity</Link>}
         <Link to="/map?kiosk=1" className="ml-auto underline">TV view</Link>
       </div>
       <div className="relative min-h-0 flex-1">
