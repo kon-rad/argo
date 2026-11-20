@@ -50,7 +50,7 @@ export interface MapNodeDetail {
 }
 
 export const mapApi = {
-  graph: () => request<MapGraph>('/map/graph'),
+  graph: (version?: string) => request<MapGraph>(`/map/graph${version ? `?version=${encodeURIComponent(version)}` : ''}`),
   metrics: (kiosk = false) => request<{ metrics: MapMetric[] }>(`/map/metrics${kiosk ? '?kiosk=1' : ''}`),
   node: (id: string) => request<MapNodeDetail>(`/map/node/${encodeURIComponent(id)}`),
 };

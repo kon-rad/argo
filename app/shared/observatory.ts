@@ -1,13 +1,27 @@
 /** Versioned, content-free evidence contract. Pure replay: no clock, IO or model calls. */
-export type SourceTable = 'archive_messages' | 'usage_calls' | 'usage_runs' | 'card_events' | 'org_messages';
+export type SourceTable = 'archive_messages' | 'usage_calls' | 'usage_runs' | 'card_events' | 'org_messages' | 'review_attempts';
+export interface ChangeEvidence {
+  version: 1; id: string; repository: string; worktree: string; path: string;
+  before: string | null; after: string; level: 'captured-hashes' | 'captured-diff' | 'commit';
+  diff: { format: 'replacement'; truncated: boolean };
+  commit?: { sha: string; verification: 'local-object'; authorship: 'unknown' };
+}
 export interface EvidenceEvent {
   version: 1; id: string; at: number | null; observedAt: number | null; sequence: number; part: number;
-  kind: 'prompt' | 'response' | 'thinking' | 'tool_call' | 'tool_result' | 'system' | 'meta' | 'usage' | 'ticket' | 'message';
+  kind: 'prompt' | 'response' | 'thinking' | 'tool_call' | 'tool_result' | 'system' | 'meta' | 'usage' | 'ticket' | 'message' | 'artifact';
   session: string | null; execution: string | null;
   context?: { host: string; runtime: string; source: string; externalSession: string };
   actor: { kind: 'human' | 'agent' | 'automation' | 'unknown'; sender: string | null; channel: string | null; evidence: string };
   source: { table: SourceTable; id: string; part: string }; precision: 'millisecond' | 'unknown'; confidence: 'recorded';
   parent?: string; occurrence?: string; tool?: string; outcome?: 'success' | 'error' | 'unknown';
+  /** Explicit structured path only; operation attempt, never proof of changed bytes. */
+  target?: { path: string; vaultPath?: string; operation: 'read' | 'write' | 'edit' };
+  /** Captured runtime observation, never ownership of other files in the worktree. Diff stays in authorized source. */
+  change?: ChangeEvidence;
+  artifact?: { repository: string; pr: number; head: string; base: string;
+    stage: 'pr-observed' | 'review-accepted' | 'review-rejected' | 'merge-recorded' | 'merge-verified';
+    verification: 'trusted-review-gate'; merge?: string };
+  writeEvidence?: 'attempt' | 'tool-reported-success';
   ticket?: string; status?: string; thinking?: 'available-in-source';
   usage?: { model: string; input: number; output: number; reasoning: number };
 }

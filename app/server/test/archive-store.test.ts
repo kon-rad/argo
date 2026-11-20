@@ -27,6 +27,10 @@ describe('archive store', () => {
       return { s, n };
     });
     expect(first.n).toBe(2);
+    const projected = (await query('SELECT observatory_projection FROM archive_messages ORDER BY seq')).rows;
+    expect(projected).toHaveLength(2);
+    expect(projected.every(row => row.observatory_projection?.version === 1)).toBe(true);
+    expect(JSON.stringify(projected)).not.toContain('\"text\":\"a\"');
     const again = await withTransaction(async (tx) => {
       const s = await store.upsertSession(tx, session());
       return { s, n: await store.upsertMessages(tx, s.id, [msg(1, 'a'), msg(2, 'b')]) };

@@ -1,3 +1,4 @@
+import { backfillObservatory, observatoryCoverage } from './archive/observatoryProjection.js';
 import { replayResults } from './archive/replayResults.js';
 import { exitFlushed } from './cli-exit.js';
 import { pool } from './db.js';
@@ -15,7 +16,10 @@ const log = (m: string) => console.error(`${new Date().toISOString()} ${m}`);
 
 let code = 1;
 try {
-  if (has('--results')) {
+  if (has('--observatory')) {
+    log(JSON.stringify(has('--apply') ? { changed: await backfillObservatory(has('--batch') ? batch : 100), coverage: await observatoryCoverage() } : await observatoryCoverage()));
+  }
+  else if (has('--results')) {
     const value = (flag: string) => {
       if (!has(flag)) return undefined;
       const v = argv[argv.indexOf(flag) + 1];

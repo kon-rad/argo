@@ -29,6 +29,15 @@ describe('observatory replay', () => {
   });
 });
 describe('archive evidence adapter', () => {
+  it('exposes bounded structured path attempts without arguments, shell guesses or file contents', () => {
+    const row = (id: number, tool: string, args: unknown) => ({ id, session_id: 1, seq: id, ts: new Date(id), role: 'assistant', kind: 'assistant', raw: { role: 'assistant', session_id: 's', tool_calls: [{ id: String(id), function: { name: tool, arguments: JSON.stringify(args) } }] }, text: '', host: 'lab', source: 'hermes', external_id: 's', harness: 'hermes', observed_at: null });
+    const events = archiveEvents([row(1, 'read_file', { path: 'src/demo.ts' }), row(2, 'Write', { file_path: 'src/new.ts', content: 'SECRET_CONTENT' }), row(3, 'Bash', { command: 'cat src/demo.ts', path: 'guessed' })]);
+    expect(events[0]?.target).toEqual({ path: 'src/demo.ts', operation: 'read' });
+    expect(events[1]?.target).toEqual({ path: 'src/new.ts', operation: 'write' });
+    expect(events[2]?.target).toBeUndefined();
+    expect(JSON.stringify(events)).not.toMatch(/SECRET_CONTENT|cat src/);
+  });
+
   it('expands parts, scopes reused IDs by session and occurrence, excludes text and human guesses', () => {
     const row = (id: number, session_id: number, seq: number, raw: unknown, role = 'assistant') => ({ id, session_id, seq, ts: new Date(id * 1000), role, kind: role, raw, text: 'private text', host: 'test-host', source: 'hermes', external_id: String(id), harness: 'hermes', observed_at: null });
     const call = { role: 'assistant', session_id: 's', tool_calls: [{ id: 'reuse', function: { name: 'read', arguments: '{}' } }] };
@@ -70,7 +79,7 @@ describe('boundary, pagination and authorization', () => {
     for (let i = 0; i < 8; i++) cache.put('a', exportFixture());
     expect(() => cache.get('a', token)).toThrow(/expired/);
   });
-  it('does not mount disabled module or advertise a UI', () => {
+  it('does not mount disabled module', () => {
     expect(moduleSet('')).not.toContain('observatory');
     expect(addonRoutes(new Set(), {} as never)).toEqual([]);
     const routes = addonRoutes(new Set(['observatory']), { opts: { modules: new Set(['observatory']) } } as never);
@@ -87,7 +96,7 @@ describe('boundary, pagination and authorization', () => {
   it('marks disabled sources without querying them', async () => {
     const db = dbFixture(() => { throw new Error('unexpected source read'); });
     const result = await coverage(db, { from: 0, to: 100 }, new Set());
-    expect(result.sources.map(s => s.status)).toEqual(Array(5).fill('disabled'));
+    expect(result.sources.map(s => s.status)).toEqual(Array(6).fill('disabled'));
   });
   it('keeps usage rows separate from tools and rejects unknown execution ends', async () => {
     const db = dbFixture(sql => {
@@ -150,4 +159,75 @@ describe('recorded ordering', () => {
     expect(new Set(events.map(e => e.id)).size).toBe(4);
     expect(() => replay(window(), 100)).toThrow(/outside/);
   });
+});
+
+describe('recorded sender provenance', () => {
+  it('exports explicit archive senders and keeps role-only prompts unknown', () => {
+    const rows = ['human', 'agent', 'unknown'].map((kind, i) => ({ id: i + 1, session_id: 1, seq: i, ts: new Date(10 + i), role: 'user', kind: 'user', raw: { type: 'user', sender: { kind, id: 'fixture-sender', channel: 'fixture' }, message: { content: 'private prompt' } }, text: '', host: 'lab', source: 'claude-code', external_id: 's', harness: 'claude-code', observed_at: null }));
+    expect(archiveEvents(rows).map(e => e.actor.kind)).toEqual(['human', 'agent', 'unknown']);
+  });
+  it('uses org sender kind recorded at insertion, never current roster', async () => {
+    const db = dbFixture(() => ['human', 'agent', null].map((author_kind, id) => ({ id, created_at: new Date(10), author: 'fixture', author_kind, channel_slug: 'fixture', thread_id: null, task_id: null })));
+    const data = await loadWindow(db, { from: 0, to: 100 }, new Set(['org']));
+    expect(data.window.events.map(e => e.actor.kind)).toEqual(['human', 'agent', 'unknown']);
+  });
+});
+
+import { thinkingDetail } from '../src/addons/observatory/adapters.js';
+it('returns existing Codex summary only and distinguishes hidden from unavailable', () => {
+  expect(thinkingDetail({ harness: 'codex', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'Synthetic authorized summary' }], encrypted_content: 'secret' } })).toEqual({ availability: 'authorized-summary', summary: 'Synthetic authorized summary' });
+  expect(thinkingDetail({ harness: 'codex', payload: { type: 'reasoning', encrypted_content: 'secret' } })).toEqual({ availability: 'hidden' });
+  expect(thinkingDetail({ harness: 'codex', payload: { type: 'reasoning', summary: [] } })).toEqual({ availability: 'unavailable' });
+  expect(thinkingDetail({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'secret' }] } })).toEqual({ availability: 'unavailable' });
+  expect(thinkingDetail({ message: { content: [{ type: 'redacted_thinking' }] } })).toEqual({ availability: 'hidden' });
+});
+
+import { projectObservatory } from '../src/archive/observatoryProjection.js';
+it('normalizes nullable archive content before projecting a tool call', () => {
+  const projection = projectObservatory({ id: 1, role: 'assistant', kind: 'response_item', ts: null, text: null,
+    raw: { harness: 'codex', payload: { type: 'function_call', call_id: 'call', name: 'read', arguments: '{}' } } });
+  expect(projection.parts).toEqual([{ key: '0', step: 'tool_call', text: '', toolName: 'read', toolCallId: 'call', isError: null }]);
+});
+it('projects mixed harness rows without bodies and preserves exact adapter semantics', () => {
+  const raw = [
+    { role: 'assistant', session_id: 's', tool_calls: [{ id: 'x', function: { name: 'Write', arguments: '{"path":"src/demo.ts","content":"PRIVATE"}' } }, { id: 'y', function: { name: 'read', arguments: '{}' } }], reasoning: 'PRIVATE' },
+    { harness: 'codex', payload: { type: 'function_call_output', call_id: 'x', output: 'PRIVATE' } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'x', name: 'read', input: {} }] } },
+    { role: 'tool', session_id: 's', tool_call_id: 'x', content: 'PRIVATE' },
+    { role: 'tool', session_id: 's', tool_call_id: 'y', content: 'PRIVATE' },
+  ];
+  const rows = raw.map((raw, i) => ({ id: i + 100, session_id: 1, seq: i, ts: i === 4 ? null : new Date(i), role: 'assistant', kind: 'message', raw, text: '', host: 'lab', source: 'hermes', external_id: 's', harness: 'hermes', observed_at: null }));
+  const projected = rows.map(row => ({ ...row, raw: null, observatory_projection: projectObservatory(row) }));
+  expect(JSON.stringify(projected)).not.toContain('PRIVATE');
+  for (const row of projected) for (const part of row.observatory_projection.parts) {
+    expect(Object.keys(part).sort()).toEqual(['isError', 'key', 'step', 'text', 'toolCallId', 'toolName']);
+  }
+  expect(archiveEvents(projected)).toEqual(archiveEvents(rows));
+});
+
+it('guards actual selected raw size and incomplete projection explicitly', async () => {
+  for (const [flag, status] of [['oversized', 413], ['missing', 503]] as const) {
+    const db = dbFixture(() => [{ [flag]: true }]);
+    await expect(loadWindow(db, { from: 0, to: 100 }, new Set(['usage']))).rejects.toHaveProperty('status', status);
+  }
+});
+
+it('reads selected metadata and prior tool context in a constant number of source queries', async () => {
+  const calls: string[] = [];
+  const row = { id: 40, session_id: 1, seq: 1, ts: new Date(5), role: 'assistant', kind: 'message', raw: { role: 'assistant', session_id: 's', tool_calls: [{ id: 'pending', function: { name: 'read', arguments: '{}' } }] }, text: '', host: 'lab', source: 'hermes', external_id: 's', harness: 'hermes', observed_at: null };
+  const result = { ...row, id: 41, seq: 2, ts: new Date(20), raw: { role: 'tool', session_id: 's', tool_call_id: 'pending', content: 'PRIVATE' } };
+  const db = dbFixture(sql => {
+    calls.push(sql);
+    if (sql.includes('WITH active AS MATERIALIZED')) return [row, result].map(r => ({ ...r, raw: null, observatory_projection: projectObservatory(r), missing: false, oversized: false }));
+    return [];
+  });
+  const data = await loadWindow(db, { from: 10, to: 30 }, new Set(['usage']));
+  expect(calls).toHaveLength(3);
+  expect(calls[0]).toContain('NULL::jsonb AS raw');
+  expect(calls[0]).toContain('UNION ALL');
+  expect(data.window.events).toHaveLength(1);
+  expect(data.window.events[0]!.parent).toBe('archive_messages:40:40:tc:0');
+  expect(data.window.boundary.tools['archive_messages:40:40:tc:0']).toBe('pending');
+  expect(data.refs.archive_messages).toEqual(['40', '41']);
+  expect(JSON.stringify(data)).not.toContain('PRIVATE');
 });

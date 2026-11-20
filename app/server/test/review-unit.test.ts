@@ -28,7 +28,18 @@ describe('automatic contextual shipping gate', () => {
   it('accepts only exact evidence and completes after merge, deployment and health; retries do not merge twice', async () => {
     const f = fixture(); await runReview(f.job, ['test'], f.io); await runReview(f.job, ['test'], f.io);
     expect(f.counts()).toEqual({ reviews: 1, merges: 1, deploys: 1, completions: 1 });
-    expect(f.events).toEqual(['reviewing', 'approved', 'merging', 'merged', 'deploying', 'deployed', 'save', 'done']);
+    expect(f.events).toEqual(['reviewing', 'approved', 'merging', 'merged', 'save', 'deploying', 'deployed', 'save', 'done']);
+  });
+  it('records merge verification only after trusted confirmation succeeds', async () => {
+    const f = fixture();
+    f.io.verifyMerge = async () => { throw new Error('unverified merge'); };
+    await runReview(f.job, ['test'], f.io);
+    expect(f.job.merged).toBe(merged);
+    expect(f.job.mergeVerified).toBeUndefined();
+    expect(f.job.state).toBe('blocked');
+    f.io.verifyMerge = async () => {};
+    await runReview(f.job, ['test'], f.io);
+    expect(f.job.mergeVerified).toBe(merged);
   });
   it.each(['missing', 'truncated'] as const)('blocks %s essential context before dispatch', async (field) => {
     const f = fixture(), s = snapshot(); s.sources[0]![field] = true; f.setCurrent(s);

@@ -2,6 +2,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type } from '@earendil-works/pi-ai';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { prepareChange, finishChange, inspectCommit, type ChangeCapture } from './change.js';
 import { clipOutput, text, tool, type ToolContext } from './index.js';
 
 /**
@@ -91,6 +92,14 @@ export function notFound(abs: string, shown: string): Error {
 export function fsTools(ctx: ToolContext): AgentTool<any>[] {
   const roots = ctx.cfg.fs.roots;
   const cwd = ctx.cfg.workdir;
+  const captures = new Map<string, { root: string; change: ChangeCapture }>();
+  const capture = (abs: string, prepared: ReturnType<typeof prepareChange>, content: string) => {
+    const change = finishChange(abs, prepared, content);
+    if (!change || !prepared) return {};
+    captures.set(change.id, { root: prepared.root, change });
+    if (captures.size > 128) captures.delete(captures.keys().next().value!);
+    return { change };
+  };
   const at = (p: string) => resolveIn(roots, p, cwd);
 
   const read_file = tool({
@@ -126,9 +135,10 @@ export function fsTools(ctx: ToolContext): AgentTool<any>[] {
     parameters: Type.Object({ path: Type.String(), content: Type.String() }),
     execute: async (a) => {
       const abs = at(a.path);
+      const prepared = prepareChange(abs);
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, a.content);
-      return text(`wrote ${a.content.length} characters to ${a.path}`, { path: abs });
+      return text(`wrote ${a.content.length} characters to ${a.path}`, { path: abs, ...capture(abs, prepared, a.content) });
     },
   });
 
@@ -144,8 +154,10 @@ export function fsTools(ctx: ToolContext): AgentTool<any>[] {
       const first = cur.indexOf(a.old);
       if (first < 0) throw new Error(`old text not found in ${a.path}`);
       if (cur.indexOf(a.old, first + 1) >= 0) throw new Error(`old text occurs more than once in ${a.path}; include more context`);
-      writeFileSync(abs, cur.slice(0, first) + a.new + cur.slice(first + a.old.length));
-      return text(`edited ${a.path}`, { path: abs });
+      const prepared = prepareChange(abs);
+      const content = cur.slice(0, first) + a.new + cur.slice(first + a.old.length);
+      writeFileSync(abs, content);
+      return text(`edited ${a.path}`, { path: abs, ...capture(abs, prepared, content) });
     },
   });
 
@@ -165,5 +177,15 @@ export function fsTools(ctx: ToolContext): AgentTool<any>[] {
     },
   });
 
-  return [read_file, write_file, edit_file, list_dir];
+  const inspect_change_commit = tool({
+    name: 'inspect_change_commit', label: 'Inspect captured change commit',
+    description: 'Verify a full local commit SHA against the before/after bytes of a capture ID returned by write_file/edit_file. Does not establish authorship, PR review or merge.',
+    parameters: Type.Object({ capture: Type.String(), commit: Type.String() }),
+    execute: async a => {
+      const captured = captures.get(a.capture);
+      if (!captured) throw new Error('capture unavailable in this execution');
+      return text('verified local commit path bytes; authorship unknown', { change: inspectCommit(captured.root, captured.change, a.commit) });
+    },
+  });
+  return [read_file, write_file, edit_file, list_dir, inspect_change_commit];
 }
