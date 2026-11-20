@@ -1,4 +1,4 @@
-import { fileEvidenceLevel, fileTargets } from './fileEvidence.js';
+import { fileEvidenceLevel, fileEvidenceRank, fileTargets } from './fileEvidence.js';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAppTimezone } from '../../lib/useTimezone.js';
@@ -70,10 +70,11 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
   const selected = scene?.events.find(e => e.id === state.event);
   const inspectedTarget = selected && scene ? fileTargets(scene.contextEvents, scene.evidenceContext).get(selected.id) : undefined;
   const inspectedLevel = selected && scene ? fileEvidenceLevel(selected, new Map(scene.contextEvents.map(event => [event.id, event])), scene.evidenceContext) : 'attempt';
+  const verifiedChange = !!selected?.change && fileEvidenceRank(inspectedLevel) >= fileEvidenceRank('captured-hashes');
   const execution = scene?.active.find(i => i.id === state.event);
   const selectedNode = scene?.nodes.find(n => n.id === state.event);
   const showDetail = async (diff = false) => {
-    if (!selected || !snapshot) return;
+    if (!selected || !snapshot || diff && !verifiedChange) return;
     if (state.demo === '1') { setDetail({ event: selected, detail: 'Synthetic only, no recorded source exists' }); return; }
     detailRequest.current?.abort();
     const abort = new AbortController(); detailRequest.current = abort;
@@ -132,13 +133,14 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
           <p>Source {selected.source.table}:{selected.source.id} part {selected.source.part}</p>
           <p>Outcome at cursor: {scene.tools[selected.occurrence ?? selected.parent ?? ''] ?? 'unknown'}</p>
           {inspectedTarget && <p>{inspectedTarget.operation}: {inspectedTarget.path} ({inspectedLevel})</p>}
-          {selected.change && <pre className="whitespace-pre-wrap break-all" aria-label="Captured change evidence">{JSON.stringify({ ...selected.change, diffSource: selected.source }, null, 2)}</pre>}
+          {verifiedChange && <pre className="whitespace-pre-wrap break-all" aria-label="Captured change evidence">{JSON.stringify({ ...selected.change, diffSource: selected.source }, null, 2)}</pre>}
+          {selected.change && !verifiedChange && <p>Recorded change metadata is unverified at this cursor. No captured grade or diff is available.</p>}
           {selected.artifact && <pre className="whitespace-pre-wrap break-all" aria-label="PR evidence">{JSON.stringify(selected.artifact, null, 2)}</pre>}
           {selected.kind === 'thinking' && <p>Thinking: {typeof detail?.detail === 'object' && detail.detail.thinking ? detail.detail.thinking.availability : 'not checked; verify source detail'}. No reasoning reconstructed.</p>}
           {typeof detail?.detail === 'object' && detail.detail.thinking?.availability === 'authorized-summary' && <div aria-label="Authorized thinking summary" className="whitespace-pre-wrap">{detail.detail.thinking.summary}</div>}
           <button className={field} onClick={() => void showDetail()}>Verify source detail</button>
-          {selected.change && <button className={field} onClick={() => void showDetail(true)}>Load captured diff</button>}
-          {typeof detail?.detail === 'object' && detail.detail.diff && <ChangedDiff diff={detail.detail.diff} />}
+          {verifiedChange && <button className={field} onClick={() => void showDetail(true)}>Load captured diff</button>}
+          {verifiedChange && typeof detail?.detail === 'object' && detail.detail.diff && <ChangedDiff diff={detail.detail.diff} />}
           {detail !== undefined && <>{!(typeof detail.detail === 'object' && detail.detail.diff) && <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(detail, null, 2)}</pre>}{detail.event && !detail.error && eventLink(selected) && state.demo !== '1' && <Link className="underline" to={eventLink(selected)!}>Open recorded session part</Link>}</>}
         </> : !execution && <p>Select an execution or recorded event. File targets require structured source evidence.</p>}
       </section>

@@ -117,6 +117,20 @@ test('synthetic prospective write, commit and verified gate evidence stay distin
   await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /^file:/ })).toHaveCount(1);
   await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /\(attempt\)/ })).toHaveCount(1);
   await expect(page.getByLabel('Captured change evidence')).toHaveCount(0);
+  // Contradictory capture metadata cannot turn an unknown result into captured evidence.
+  const unknownWindow = { ...demoWindow, events: demoWindow.events.map(event => event.id === 'write-result' ? { ...event, outcome: 'unknown' } : event) };
+  await page.route('**/api/observatory/window*', route => route.fulfill({ json: { window: unknownWindow, total: unknownWindow.events.length, next: null, export: 'unknown-fixture', diagnostics: { synthetic: true } } }));
+  await page.goto(`/observatory?from=${t}&to=${demoWindow.to}&cursor=${t + 12500}&event=write-result`);
+  await expect(page.getByText('Outcome at cursor: unknown')).toBeVisible();
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /^file:/ })).toHaveCount(1);
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /\(attempt\)/ })).toHaveCount(1);
+  await expect(page.getByLabel('Captured change evidence')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Load captured diff' })).toHaveCount(0);
+  await page.getByRole('link', { name: 'Brain Map replay', exact: true }).click();
+  await expect(page.getByText('Outcome at cursor: unknown')).toBeVisible();
+  await expect(page.getByLabel('Note activity').getByRole('button', { name: '▲ W write attempt: Projects/demo.md', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Note activity').getByRole('button', { name: /captured|commit|tool-reported-success/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Load captured diff' })).toHaveCount(0);
   // Authorized lazy-detail rendering uses changed-line observations, never replacement text.
   const writeResult = demoWindow.events.find(event => event.id === 'write-result')!;
   const hunkEvent = { ...writeResult, change: { ...writeResult.change!, diff: { format: 'changed-lines', context: 0, redacted: true, truncated: false } } };

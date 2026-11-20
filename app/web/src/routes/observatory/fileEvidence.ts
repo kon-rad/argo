@@ -15,7 +15,7 @@ export function pairedFileCall(event: EvidenceEvent, byId: ReadonlyMap<string, E
   return parent;
 }
 export function fileEvidenceLevel(event: EvidenceEvent, byId: ReadonlyMap<string, EvidenceEvent>, context: BoundaryContext = {}): FileEvidenceLevel {
-  if (event.kind !== 'tool_result' || !event.parent || event.outcome === 'error' || event.at === null) return 'attempt';
+  if (event.kind !== 'tool_result' || !event.parent || event.outcome !== 'success' || event.at === null) return 'attempt';
   const visibleParent = pairedFileCall(event, byId);
   const prior = context.boundary?.provenance?.[`tool:${event.parent}`];
   const boundaryParent = context.from !== undefined && context.boundary?.tools[event.parent] === 'pending' &&

@@ -182,3 +182,17 @@ it('retains one attempt target for a valid failed pair without joining contradic
     expect(files).toHaveLength(2); expect(files.every(n => n.label.includes('(attempt)'))).toBe(true);
   }
 });
+
+it.each(['tool-reported-success', 'captured-hashes', 'captured-diff', 'commit'] as const)('does not promote paired unknown-outcome %s metadata in workspace replay', level => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const source = demoWindow.events.find(e => e.id === 'write-result')!;
+  const result = { ...source, outcome: 'unknown' as const, change: level === 'tool-reported-success' ? undefined : { ...source.change!, level }, writeEvidence: 'tool-reported-success' as const };
+  const window = { ...demoWindow, events: [call, result] };
+  const before = sceneAt(window, window.from + 12499, {}), after = sceneAt(window, window.from + 12500, {});
+  expect(after.tools[call.id]).toBe('unknown');
+  const files = after.nodes.filter(n => n.kind === 'file');
+  expect(files).toHaveLength(1); expect(files[0]!.label).toContain('(attempt)');
+  expect(files[0]!.id).toBe(before.nodes.find(n => n.kind === 'file')!.id);
+  expect(files.some(n => /tool-reported-success|captured-hashes|captured-diff|commit/.test(n.label))).toBe(false);
+  expect(sceneAt(window, window.from + 12499, {})).toEqual(before);
+});

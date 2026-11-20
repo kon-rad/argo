@@ -7,7 +7,7 @@ import { authorizeDetail } from './service.js';
 /** A bounded current source representation. Original byte hashes predate redaction. */
 export async function changeDetail(db: TxClient, event: EvidenceEvent, modules: ReadonlySet<string>) {
   await authorizeDetail(db, event, modules);
-  if (event.source.table !== 'archive_messages' || !event.change) throw new HttpError(404, 'no captured change');
+  if (event.source.table !== 'archive_messages' || event.outcome !== 'success' || !event.change) throw new HttpError(404, 'no captured change');
   const row = (await db.query<{ raw: unknown }>('SELECT CASE WHEN octet_length(raw::text) <= 1048576 THEN raw ELSE NULL END AS raw FROM archive_messages WHERE id=$1', [event.source.id])).rows[0];
   if (!row) throw new HttpError(404, 'source no longer visible');
   if (row.raw === null) throw new HttpError(413, 'captured source exceeds 1 MiB');

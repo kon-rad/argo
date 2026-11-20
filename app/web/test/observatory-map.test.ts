@@ -132,3 +132,16 @@ it('preserves an authoritative paired result whose call precedes the requested w
     expect(mapActivity(mapGraph, bad.events, bad.contextEvents, bad.evidenceContext)).toEqual([]);
   }
 });
+
+it.each(['tool-reported-success', 'captured-hashes', 'captured-diff', 'commit'] as const)('does not promote paired unknown-outcome %s metadata in map replay', level => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const source = demoWindow.events.find(e => e.id === 'write-result')!;
+  const result = { ...source, outcome: 'unknown' as const, change: level === 'tool-reported-success' ? undefined : { ...source.change!, level }, writeEvidence: 'tool-reported-success' as const };
+  const window = { ...demoWindow, events: [call, result] };
+  const before = sceneAt(window, window.from + 12499, {}), after = sceneAt(window, window.from + 12500, {});
+  expect(after.tools[call.id]).toBe('unknown');
+  const activity = mapActivity(mapGraph, after.events, after.contextEvents, after.evidenceContext);
+  expect(activity.map(a => a.event.id)).toEqual([call.id]);
+  expect(activity.every(a => !a.event.change && a.event.writeEvidence !== 'tool-reported-success')).toBe(true);
+  expect(sceneAt(window, window.from + 12499, {})).toEqual(before);
+});

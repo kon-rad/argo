@@ -120,3 +120,18 @@ it('renders evidenced source origins under human, agent and unknown filters', as
     expect(timeline.textContent).toContain(glyph);
   }
 });
+
+it.each(['tool-reported-success', 'captured-hashes', 'captured-diff', 'commit'] as const)('keeps unknown-outcome %s metadata unverified without captured inspector or diff controls', async level => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const source = demoWindow.events.find(e => e.id === 'write-result')!;
+  const result = { ...source, outcome: 'unknown' as const, change: level === 'tool-reported-success' ? undefined : { ...source.change!, level }, writeEvidence: 'tool-reported-success' as const };
+  const window = { ...demoWindow, events: [call, result] };
+  const fetch = setup(`/observatory?from=${window.from}&to=${window.to}&cursor=${window.from + 12500}&event=${result.id}`, () => ({ window, export: 'token', total: 2, next: null, diagnostics: {} }));
+  await screen.findByText('Outcome at cursor: unknown');
+  expect(screen.queryByLabelText('Captured change evidence')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Load captured diff' })).toBeNull();
+  expect(screen.queryByLabelText('Captured diff detail')).toBeNull();
+  expect(fetch.mock.calls.some(([url]) => String(url).includes('/diff'))).toBe(false);
+  fireEvent.change(screen.getByLabelText('Replay cursor'), { target: { value: window.from + 12499 } });
+  expect(screen.queryByLabelText('Captured change evidence')).toBeNull();
+});

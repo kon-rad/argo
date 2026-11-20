@@ -71,6 +71,8 @@ it('authorizes and revalidates lazy diff detail, strips extra fields and rejects
   const event = archiveEvents([row(1, { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: change.path } }] } }), row(2, raw(), capturedChange(raw()))])[1]!;
   const db = { query: async () => ({ rows: [{ raw: raw() }] }) } as unknown as TxClient;
   await expect(changeDetail(db, event, new Set())).rejects.toHaveProperty('status', 403);
+  for (const outcome of ['unknown', 'error', undefined] as const)
+    await expect(changeDetail(db, { ...event, outcome }, new Set(['usage']))).rejects.toHaveProperty('status', 404);
   const detail = await changeDetail(db, event, new Set(['usage']));
   expect(detail).toMatchObject({ diff: { after: 'PRIVATE CONTENT' }, representation: 'redacted-source' });
   expect(JSON.stringify(detail)).not.toContain('toolCallId');
