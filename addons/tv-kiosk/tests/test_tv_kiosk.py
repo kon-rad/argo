@@ -105,13 +105,9 @@ def test_sb_tv_never_switches_or_reloads_pages():
 
 
 def bash4():
-    """sb-tv uses mapfile (bash 4+, as on the Pi); macOS ships bash 3.2."""
+    """The launcher also runs on macOS bash 3.2 for isolated regression tests."""
     import shutil
-    import pytest
-    for b in (shutil.which("bash"), "/opt/homebrew/bin/bash", "/usr/local/bin/bash"):
-        if b and os.path.exists(b) and subprocess.run([b, "-c", "mapfile -t x < /dev/null"], capture_output=True).returncode == 0:
-            return b
-    pytest.skip("needs bash 4+")
+    return shutil.which("bash")
 
 
 def sbtv(tmp_path, conf, *args):
@@ -177,7 +173,77 @@ def test_browse_url_strips_only_kiosk(tmp_path):
              "https://a.example/": "https://a.example/"}
     for page, want in cases.items():
         (conf / "pages").write_text(page + "\n")
-        r = subprocess.run([bash4(), "-c", f'source <(sed "/^case /,\\$d" "{SBTV}"); browse_url'],
+        preamble = SBTV.read_text().split('\ncase "${1:-start}"', 1)[0]
+        r = subprocess.run([bash4(), "-c", preamble + "\nbrowse_url"],
                            env={"PATH": os.environ["PATH"], "HOME": str(tmp_path), "SB_TV_CONF": str(conf)},
                            capture_output=True, text=True)
         assert r.stdout.strip() == want, (page, r.stdout, r.stderr)
+
+
+def launch_args(tmp_path, mode=None, voice=False):
+    """Execute the real launcher with isolated process/audio/browser substitutes."""
+    import time
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    (conf / "pages").write_text("https://example.com/?kiosk=1\n")
+    if mode:
+        (conf / "default-mode").write_text(mode + "\n")
+    if voice:
+        (conf / "voice-enabled").touch()
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    for name, body in {"pgrep": "exit 1", "wpctl": "exit 0", "chromium": "exit 0",
+                       "nohup": 'printf "%s\\n" "$@" > "$HOME/args.tmp"\nmv "$HOME/args.tmp" "$HOME/args"'}.items():
+        file = stubs / name
+        file.write_text("#!/bin/sh\n" + body + "\n")
+        file.chmod(0o755)
+    result = subprocess.run(["bash", str(SBTV), "start"], capture_output=True, text=True,
+                            env={"HOME": str(tmp_path), "PATH": f"{stubs}:{os.environ['PATH']}",
+                                 "SB_TV_CONF": str(conf)})
+    if result.returncode:
+        return result, []
+    for _ in range(500):
+        if (tmp_path / "args").exists():
+            return result, (tmp_path / "args").read_text().splitlines()
+        time.sleep(0.01)
+    raise AssertionError("launcher did not call Chromium")
+
+
+def test_tv_default_stays_kiosk_without_debug_port(tmp_path):
+    result, args = launch_args(tmp_path)
+    assert result.returncode == 0
+    assert "--kiosk" in args
+    assert not any("remote-debugging" in arg for arg in args)
+
+
+def test_windowed_has_no_fullscreen_flags_and_preserves_profile(tmp_path):
+    result, args = launch_args(tmp_path, "windowed", voice=True)
+    assert result.returncode == 0
+    assert "--kiosk" not in args and "--start-fullscreen" not in args and "" not in args
+    assert "https://example.com/" in args
+    assert f"--user-data-dir={tmp_path}/conf/chromium-profile" in args
+    assert "--remote-debugging-address=127.0.0.1" in args
+    assert "--remote-debugging-port=9222" in args
+
+
+def test_windowed_without_voice_has_no_empty_argument(tmp_path):
+    result, args = launch_args(tmp_path, "windowed")
+    assert result.returncode == 0
+    assert "--kiosk" not in args and "--start-fullscreen" not in args and "" not in args
+    assert not any("remote-debugging" in arg for arg in args)
+
+
+def test_bad_persisted_mode_refuses_to_launch(tmp_path):
+    result, args = launch_args(tmp_path, "invalid")
+    assert result.returncode != 0 and args == []
+
+
+def test_mode_command_validates_and_persists(tmp_path):
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    (conf / "pages").write_text("https://example.com/\n")
+    assert sbtv(tmp_path, conf, "mode", "windowed").returncode == 0
+    assert (conf / "default-mode").read_text() == "windowed\n"
+    assert "mode: windowed" in sbtv(tmp_path, conf, "status").stdout
+    assert sbtv(tmp_path, conf, "mode", "bad").returncode != 0
+    assert (conf / "default-mode").read_text() == "windowed\n"

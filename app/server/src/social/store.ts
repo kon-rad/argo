@@ -113,6 +113,40 @@ export async function disconnectAccount(id: number): Promise<boolean> {
   return (res.rowCount ?? 0) > 0;
 }
 
+/**
+ * Buffer-relayed accounts whose channel is no longer connected in Buffer (swapped or removed there): marked
+ * disconnected, so `--account youtube` resolves to the one live channel again. Returns each with the count of
+ * drafts and queued posts still pointing at it, which `move` re-points. An empty list changes nothing: an
+ * empty answer is more likely a Buffer hiccup than every channel removed at once.
+ */
+export async function disconnectMissingBufferAccounts(liveChannelIds: string[]): Promise<{ id: number; provider: ProviderName; waiting: number }[]> {
+  if (liveChannelIds.length === 0) return [];
+  const { rows } = await query<{ id: number; provider: ProviderName; waiting: number }>(
+    `WITH gone AS (
+       UPDATE social_accounts SET disconnected_at = now()
+       WHERE transport = 'buffer' AND disconnected_at IS NULL AND NOT (provider_account_id = ANY($1::text[]))
+       RETURNING id, provider)
+     SELECT g.id, g.provider,
+            (SELECT count(*)::int FROM social_posts p WHERE p.account_id = g.id AND p.status IN ('draft', 'queued')) AS waiting
+     FROM gone g ORDER BY g.id`,
+    [liveChannelIds],
+  );
+  return rows;
+}
+
+/** Re-point a draft or queued post to another connected account on the same network. False if either doesn't fit. */
+export async function movePost(id: number, accountId: number): Promise<boolean> {
+  const res = await query(
+    `UPDATE social_posts p SET account_id = $2
+     FROM social_accounts old_a, social_accounts new_a
+     WHERE p.id = $1 AND p.status IN ('draft', 'queued')
+       AND old_a.id = p.account_id AND new_a.id = $2
+       AND new_a.disconnected_at IS NULL AND new_a.provider = old_a.provider`,
+    [id, accountId],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
 /** What a listing shows of an image: never the bytes. */
 export interface MediaSummary {
   position: number;
@@ -137,6 +171,9 @@ export interface PostRow {
   attempt_count: number;
   handed_off_at: Date | null;
   created_at: Date;
+  /** The kanban card behind the post, and the vault draft it came from (both optional). */
+  card_id: string | null;
+  source_path: string | null;
 }
 
 const POST_COLUMNS = `p.*, (
@@ -156,11 +193,13 @@ export async function queuePost(
   scheduledFor: Date,
   options: PostOptions = {},
   status: 'queued' | 'draft' = 'queued',
+  link: { cardId?: string | null; sourcePath?: string | null } = {},
 ): Promise<PostRow> {
   const id = await withTransaction(async (c) => {
     const { rows } = await c.query<{ id: number }>(
-      `INSERT INTO social_posts (account_id, body, scheduled_for, options, status) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [accountId, body, scheduledFor, JSON.stringify(options), status],
+      `INSERT INTO social_posts (account_id, body, scheduled_for, options, status, card_id, source_path)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [accountId, body, scheduledFor, JSON.stringify(options), status, link.cardId ?? null, link.sourcePath ?? null],
     );
     const postId = rows[0]!.id;
     for (const [position, m] of media.entries()) {
@@ -175,10 +214,27 @@ export async function queuePost(
   return rows[0]!;
 }
 
-export async function listPosts(status?: string): Promise<PostRow[]> {
-  const { rows } = status
-    ? await query<PostRow>(`SELECT ${POST_COLUMNS} FROM social_posts p WHERE p.status = $1 ORDER BY p.scheduled_for`, [status])
-    : await query<PostRow>(`SELECT ${POST_COLUMNS} FROM social_posts p ORDER BY p.scheduled_for`);
+export interface PostFilter {
+  status?: string;
+  /** scheduled_for >= from and < to. */
+  from?: Date;
+  to?: Date;
+  accountIds?: number[];
+}
+
+export async function listPosts(filter: string | PostFilter = {}): Promise<PostRow[]> {
+  const f: PostFilter = typeof filter === 'string' ? { status: filter } : filter;
+  const where: string[] = [];
+  const args: unknown[] = [];
+  const add = (sql: string, v: unknown) => { args.push(v); where.push(sql.replace('?', `$${args.length}`)); };
+  if (f.status) add('p.status = ?', f.status);
+  if (f.from) add('p.scheduled_for >= ?::timestamptz', f.from);
+  if (f.to) add('p.scheduled_for < ?::timestamptz', f.to);
+  if (f.accountIds) add('p.account_id = ANY(?::bigint[])', f.accountIds);
+  const { rows } = await query<PostRow>(
+    `SELECT ${POST_COLUMNS} FROM social_posts p ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY p.scheduled_for, p.id`,
+    args,
+  );
   return rows;
 }
 

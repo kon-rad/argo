@@ -8,7 +8,8 @@ export { discoverMachine, machineProvider, machineProviderId, parseMachines, ref
 export { availableProviders, buildModels, customProvider, pickModel } from './models.js';
 export { listPersonas, loadPersona, personaHeader, readOrg, type Persona } from './persona.js';
 export { newSessionId, Session, type SessionLine, type SessionSummary, type UsageTotals } from './session.js';
-export { discoverSkills, skillBody, skillsIndex, splitFrontmatter, type Skill } from './skills.js';
+export { discoverSkills, readViewManifest, resolveSkills, skillBody, skillsIndex, splitFrontmatter, type ResolvedSkills, type Skill, type SkillsMode } from './skills.js';
+export { packageDigest, type PackageFile, type PackageResult } from './skillpkg.js';
 export { buildTools, TOOL_SETS, type ToolContext, type ToolSet } from './tools/index.js';
 export { BoardKanban, formatCard, formatDetail, kanbanTools, makeKanban, type Card, type CardDetail, type KanbanBackend } from './tools/kanban.js';
 export { Knowledge, formatHits, knowledgeTools } from './tools/knowledge.js';

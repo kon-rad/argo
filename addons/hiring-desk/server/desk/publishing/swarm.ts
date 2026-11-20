@@ -1,21 +1,23 @@
 import { artifactDigest, isHash } from '@secondbrain/desk-contracts/desk';
 import type { Confirmation, DeskPublisher, DeskPublicStore, DeskRecord, EntityRef, Observation, ReleaseBinding, Result } from '@secondbrain/desk-contracts/desk';
 
+export type SwarmMediaType = 'text/markdown; charset=utf-8' | 'video/mp4';
 export interface SwarmGateway {
-  upload(bytes: Uint8Array, contentType: 'text/markdown; charset=utf-8'): Promise<string>;
-  download(reference: string): Promise<Uint8Array>;
+  upload(bytes: Uint8Array, contentType: SwarmMediaType): Promise<string>;
+  download(reference: string, expectedType?: SwarmMediaType): Promise<Uint8Array>;
 }
 /** Bee's documented `/bzz` upload/download endpoints; configuration is supplied by the host. */
 export class BeeHttpSwarmGateway implements SwarmGateway {
   private readonly base: URL;
   constructor(baseUrl: string, private readonly postageBatchId: string, private readonly fetcher: typeof fetch = fetch, private readonly timeoutMs = 20_000, private readonly maxBytes = 1_000_000) {
     this.base = new URL(baseUrl);
-    if ((this.base.protocol !== 'https:' && !(this.base.protocol === 'http:' && this.base.hostname === '127.0.0.1')) || this.base.username || this.base.password || this.base.search || this.base.hash || !/^[0-9a-fA-F]{64}$/.test(postageBatchId) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000 || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 10_000_000) {
+    if ((this.base.protocol !== 'https:' && !(this.base.protocol === 'http:' && this.base.hostname === '127.0.0.1')) || this.base.username || this.base.password || this.base.search || this.base.hash || !/^[0-9a-fA-F]{64}$/.test(postageBatchId) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000 || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 128_000_000) {
       throw new Error('Invalid Bee gateway configuration');
     }
     this.base.pathname = this.base.pathname.replace(/\/$/, '');
   }
-  async upload(bytes: Uint8Array, contentType: 'text/markdown; charset=utf-8'): Promise<string> {
+  async upload(bytes: Uint8Array, contentType: SwarmMediaType): Promise<string> {
+    if (contentType !== 'text/markdown; charset=utf-8' && contentType !== 'video/mp4') throw new Error('Unsupported public artifact content type');
     if (bytes.byteLength === 0 || bytes.byteLength > this.maxBytes) throw new Error('Artifact is empty or exceeds the public-upload size limit');
     const response = await this.request('/bzz', { method: 'POST', headers: { 'Swarm-Postage-Batch-Id': this.postageBatchId, 'Content-Type': contentType }, body: Uint8Array.from(bytes) });
     if (!response.ok) throw new Error(`Bee upload failed with HTTP ${response.status}`);
@@ -24,18 +26,18 @@ export class BeeHttpSwarmGateway implements SwarmGateway {
     if (typeof reference !== 'string' || !/^[0-9a-f]{64}$/.test(reference)) throw new Error('Bee returned an invalid content reference');
     return reference;
   }
-  async download(reference: string): Promise<Uint8Array> {
+  async download(reference: string, expectedType: SwarmMediaType = 'text/markdown; charset=utf-8'): Promise<Uint8Array> {
+    if (expectedType !== 'text/markdown; charset=utf-8' && expectedType !== 'video/mp4') throw new Error('Unsupported artifact content type');
     if (!/^[0-9a-f]{64}$/.test(reference)) throw new Error('Unsupported or encrypted Swarm reference');
     const response = await this.request(`/bzz/${reference}`, { method: 'GET' });
     if (!response.ok) throw new Error(`Bee download failed with HTTP ${response.status}`);
     const contentType = response.headers.get('content-type')?.toLowerCase();
-    if (!contentType?.startsWith('text/markdown')) throw new Error('Bee returned an unsupported artifact content type');
+    if ((expectedType === 'video/mp4' && contentType?.split(';')[0]?.trim() !== 'video/mp4') || (expectedType !== 'video/mp4' && contentType?.split(';')[0]?.trim() !== 'text/markdown')) throw new Error('Bee returned an unsupported artifact content type');
     return boundedBody(response, this.maxBytes);
   }
   private request(path: string, init: RequestInit): Promise<Response> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    return this.fetcher(new URL(`${this.base.toString().replace(/\/$/, '')}${path}`), { ...init, redirect: 'error', signal: controller.signal }).finally(() => clearTimeout(timer));
+    // Keep the deadline active through streamed body consumption, not just response headers.
+    return this.fetcher(new URL(`${this.base.toString().replace(/\/$/, '')}${path}`), { ...init, redirect: 'error', signal: AbortSignal.timeout(this.timeoutMs) });
   }
 }
 async function boundedBody(response: Response, maxBytes: number): Promise<Uint8Array> {

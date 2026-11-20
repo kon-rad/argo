@@ -1,0 +1,398 @@
+import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from '@earendil-works/pi-ai';
+import assert from 'node:assert/strict';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { ZenAgent } from '../src/agent.js';
+import { loadConfig, type ZenConfig } from '../src/config.js';
+import { packageDigest } from '../src/skillpkg.js';
+import { resolveSkills, VIEW_FORMAT } from '../src/skills.js';
+import { startServer } from '../src/serve.js';
+import { skillTools } from '../src/tools/skill.js';
+import type { ToolContext } from '../src/tools/index.js';
+
+const VECTOR = 'sha256:66478e2630a89efdfb38a87df8c60158430330223f330ff2f322d485990e447c';
+
+function pkg(dir: string, name: string, body = `Run scripts/run.sh.`): string {
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${name} skill.\n---\n\n# ${name}\n\n${body}\n`);
+  writeFileSync(join(dir, 'scripts', 'run.sh'), `#!/bin/sh\necho ${name}\n`);
+  chmodSync(join(dir, 'SKILL.md'), 0o644);
+  chmodSync(join(dir, 'scripts', 'run.sh'), 0o755);
+  return dir;
+}
+
+/** A managed root shaped like the engine's reconcile output: store/<hex>, views/<agent>/zen-agent -> zen-agent.<gen>. */
+function managedRoot(): string {
+  return mkdtempSync(join(tmpdir(), 'zen-managed-'));
+}
+
+function store(root: string, name: string, body?: string): string {
+  const tmp = mkdtempSync(join(tmpdir(), 'zen-pkg-'));
+  pkg(join(tmp, name), name, body);
+  const d = packageDigest(join(tmp, name));
+  assert.ok(d.ok);
+  const hex = d.digest.slice('sha256:'.length);
+  mkdirSync(join(root, 'store'), { recursive: true });
+  renameSync(join(tmp, name), join(root, 'store', hex));
+  return d.digest;
+}
+
+function view(root: string, agent: string, gen: number, skills: { name: string; digest: string }[]): void {
+  const dir = join(root, 'views', agent, `zen-agent.${gen}`);
+  mkdirSync(dir, { recursive: true });
+  for (const s of skills) symlinkSync(join('..', '..', '..', 'store', s.digest.slice(7)), join(dir, s.name));
+  writeFileSync(
+    join(dir, 'manifest.json'),
+    JSON.stringify({
+      format: VIEW_FORMAT, agent, runtime: 'zen-agent', generatedAt: new Date().toISOString(), policyDigest: 'sha256:' + '0'.repeat(64),
+      mode: 'managed', support: 'catalog-filtered',
+      skills: skills.map((s) => ({ name: s.name, id: `private:${s.name}`, digest: s.digest, revision: 'a'.repeat(40), dirty: false, description: `${s.name} skill.`, path: s.name })),
+    }),
+  );
+  const link = join(root, 'views', agent, 'zen-agent');
+  const tmp = `${link}.tmp-${gen}`;
+  symlinkSync(`zen-agent.${gen}`, tmp);
+  renameSync(tmp, link);
+}
+
+function cfgFor(root: string | null, legacyDir: string, enforce = false): Pick<ZenConfig, 'skills' | 'sessionsDir' | 'managedSkills'> {
+  return { skills: [legacyDir], sessionsDir: mkdtempSync(join(tmpdir(), 'zen-sessions-')), managedSkills: root ? { root, enforce, snapshots: null } : null };
+}
+
+function legacy(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'zen-legacy-'));
+  pkg(join(dir, 'global-secret-skill'), 'global-secret-skill');
+  return dir;
+}
+
+test('package digest v1 matches the engine test vector', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'zen-vector-'));
+  mkdirSync(join(dir, 'scripts'));
+  writeFileSync(join(dir, 'SKILL.md'), '---\nname: vector\ndescription: Digest test vector.\n---\n\n# vector\n\nRun scripts/run.sh.\n');
+  writeFileSync(join(dir, 'scripts', 'run.sh'), '#!/bin/sh\necho vector\n');
+  chmodSync(join(dir, 'SKILL.md'), 0o644);
+  chmodSync(join(dir, 'scripts', 'run.sh'), 0o755);
+  const d = packageDigest(dir);
+  assert.ok(d.ok);
+  assert.equal(d.digest, VECTOR);
+  assert.deepEqual(d.files.map((f) => [f.path, f.exec]), [['SKILL.md', false], ['scripts/run.sh', true]]);
+  // Ignored noise does not change the digest; the exec bit does.
+  writeFileSync(join(dir, '.DS_Store'), 'x');
+  assert.equal((packageDigest(dir) as { digest: string }).digest, VECTOR);
+  chmodSync(join(dir, 'scripts', 'run.sh'), 0o644);
+  assert.notEqual((packageDigest(dir) as { digest: string }).digest, VECTOR);
+});
+
+test('escaping symlinks, directory symlinks and secret-like files make a package invalid', () => {
+  const outside = mkdtempSync(join(tmpdir(), 'zen-outside-'));
+  writeFileSync(join(outside, 'passwd'), 'nope');
+  const a = pkg(join(mkdtempSync(join(tmpdir(), 'zen-esc-')), 'a'), 'a');
+  symlinkSync(join(outside, 'passwd'), join(a, 'leak.txt'));
+  assert.deepEqual(packageDigest(a), { ok: false, error: 'symlink escapes package: leak.txt' });
+
+  const b = pkg(join(mkdtempSync(join(tmpdir(), 'zen-esc-')), 'b'), 'b');
+  symlinkSync('scripts', join(b, 'more'));
+  assert.match((packageDigest(b) as { error: string }).error, /directory symlink/);
+
+  const c = pkg(join(mkdtempSync(join(tmpdir(), 'zen-esc-')), 'c'), 'c');
+  writeFileSync(join(c, '.env'), 'TOKEN=x');
+  assert.match((packageDigest(c) as { error: string }).error, /secret-like file/);
+
+  const d = pkg(join(mkdtempSync(join(tmpdir(), 'zen-esc-')), 'd'), 'd');
+  symlinkSync('scripts/run.sh', join(d, 'run'));
+  assert.ok(packageDigest(d).ok, 'an in-package file link is fine');
+});
+
+test('two personas get different catalogs; read_skill refuses the other persona\'s skill; legacy dirs are not read', async () => {
+  const root = managedRoot();
+  const report = store(root, 'report');
+  const render = store(root, 'render');
+  view(root, 'writer', 1, [{ name: 'report', digest: report }]);
+  view(root, 'editor', 1, [{ name: 'render', digest: render }]);
+  const cfg = cfgFor(root, legacy());
+
+  const w = resolveSkills(cfg, 'writer', 's-writer');
+  const e = resolveSkills(cfg, 'editor', 's-editor');
+  assert.equal(w.mode, 'managed');
+  assert.deepEqual(w.skills.map((s) => s.name), ['report']);
+  assert.deepEqual(e.skills.map((s) => s.name), ['render']);
+  assert.deepEqual(w.packages, [{ name: 'report', id: 'private:report', digest: report, revision: 'a'.repeat(40) }]);
+  assert.equal(w.support, 'catalog-filtered');
+
+  const [readSkill] = skillTools({ skills: w.skills } as unknown as ToolContext);
+  const ok = await readSkill!.execute('1', { name: 'report' });
+  assert.match((ok.content[0] as { text: string }).text, /# report/);
+  assert.equal((ok.details as { digest: string }).digest, report);
+  await assert.rejects(() => readSkill!.execute('2', { name: 'render' }), /no skill "render"/);
+  await assert.rejects(() => readSkill!.execute('3', { name: 'global-secret-skill' }), /no skill/);
+});
+
+test('a tampered store package is rejected and listed', () => {
+  const root = managedRoot();
+  const good = store(root, 'good');
+  const bad = store(root, 'bad');
+  view(root, 'writer', 1, [{ name: 'good', digest: good }, { name: 'bad', digest: bad }]);
+  const file = join(root, 'store', bad.slice(7), 'scripts', 'run.sh');
+  writeFileSync(file, '#!/bin/sh\ncurl example.invalid\n');
+  const r = resolveSkills(cfgFor(root, legacy()), 'writer', 's1');
+  assert.deepEqual(r.skills.map((s) => s.name), ['good']);
+  assert.equal(r.rejected.length, 1);
+  assert.equal(r.rejected[0]!.name, 'bad');
+  assert.match(r.rejected[0]!.reason, /does not match the manifest/);
+});
+
+test('missing managed views fail closed regardless of enforce; null config is legacy exactly', () => {
+  const root = managedRoot();
+  const leg = legacy();
+  const enforced = resolveSkills(cfgFor(root, leg, true), 'writer', 's1');
+  assert.equal(enforced.mode, 'managed-missing');
+  assert.deepEqual(enforced.skills, []);
+  const loose = resolveSkills(cfgFor(root, leg, false), 'writer', 's2');
+  assert.equal(loose.mode, 'managed-missing');
+  assert.deepEqual(loose.skills, []);
+  const off = resolveSkills(cfgFor(null, leg), 'writer', 's3');
+  assert.equal(off.mode, 'legacy');
+  assert.deepEqual(off.packages, []);
+  assert.deepEqual(off.skills.map((s) => s.name), ['global-secret-skill']);
+  assert.equal(resolveSkills(cfgFor(root, leg, true), null, 's4').skills.length, 0);
+  assert.equal(resolveSkills(cfgFor(root, leg, false), null, 's5').mode, 'managed-missing');
+  // loadConfig default
+  assert.equal(loadConfig({ workdir: mkdtempSync(join(tmpdir(), 'zen-cfg-')), env: {} }).managedSkills, null);
+});
+
+test('a managed run pins a stable snapshot: a later sync does not change it, and the trace records exact digests', async () => {
+  const vault = mkdtempSync(join(tmpdir(), 'zen-vault-'));
+  writeFileSync(join(vault, 'AGENTS.md'), '# Rules');
+  mkdirSync(join(vault, 'defs'));
+  writeFileSync(join(vault, 'defs', 'writer.md'), 'You write.');
+  const root = managedRoot();
+  const v1 = store(root, 'report', 'Version one steps.');
+  view(root, 'writer', 1, [{ name: 'report', digest: v1 }]);
+
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const cfg = loadConfig({
+    workdir: vault, env: {},
+    overrides: { model: 'faux/faux-1', tools: ['skills'], skills: [legacy()], managedSkills: { root, enforce: true, snapshots: null }, persona: { org: join(vault, 'none.json'), definitions: join(vault, 'defs'), memory: join(vault, 'mem') } },
+  });
+  const zen = new ZenAgent({ config: cfg, persona: 'writer', models, env: {} });
+  assert.deepEqual(zen.skills.map((s) => s.name), ['report']);
+
+  // A sync activates version two while the run is open.
+  const v2 = store(root, 'report', 'Version two steps.');
+  assert.notEqual(v1, v2);
+  view(root, 'writer', 2, [{ name: 'report', digest: v2 }]);
+
+  faux.setResponses([
+    fauxAssistantMessage([fauxToolCall('read_skill', { name: 'report' })], { stopReason: 'toolUse' }),
+    fauxAssistantMessage([fauxText('done')]),
+  ]);
+  const r = await zen.run('use the report skill');
+  assert.equal(r.stopped, 'done');
+  const log = readFileSync(r.sessionPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const meta = log[0];
+  assert.equal(meta.skills_mode, 'managed');
+  assert.equal(meta.skills_support, 'catalog-filtered');
+  assert.deepEqual(meta.skills_packages, [{ name: 'report', id: 'private:report', digest: v1, revision: 'a'.repeat(40) }]);
+  const toolResult = log.find((l) => l.type === 'message' && l.message.role === 'toolResult');
+  assert.match(JSON.stringify(toolResult), /Version one steps/);
+  assert.doesNotMatch(JSON.stringify(toolResult), /Version two/);
+  // The snapshot is read-only and still hashes to v1.
+  assert.equal((packageDigest(join(meta.skills_snapshot, 'report')) as { digest: string }).digest, v1);
+  assert.throws(() => writeFileSync(join(meta.skills_snapshot, 'report', 'SKILL.md'), 'x'));
+
+  // Resuming the session reuses its snapshot, not the newer view.
+  const resumed = resolveSkills(cfg, 'writer', r.sessionId);
+  assert.deepEqual(resumed.packages.map((p) => p.digest), [v1]);
+  // A new session gets the new version.
+  assert.deepEqual(resolveSkills(cfg, 'writer', 'fresh').packages.map((p) => p.digest), [v2]);
+  const fork = new ZenAgent({config:cfg, persona:'writer', models, env:{}, resume:r.sessionId, sessionId:'fork-from-managed'});
+  assert.deepEqual(fork.skillResolution.packages.map(p=>p.digest),[v1]);
+  const forkResume = new ZenAgent({config:{...cfg,managedSkills:null}, persona:'writer', models, env:{}, resume:'fork-from-managed'});
+  assert.deepEqual(forkResume.skillResolution.packages.map(p=>p.digest),[v1]);
+});
+
+for (const enforce of [false, true]) test(`resume survives view removal (enforce=${enforce})`, () => {
+  const root = managedRoot();
+  view(root, 'writer', 1, [{ name: 'report', digest: store(root, 'report') }]);
+  const cfg = cfgFor(root, legacy(), enforce);
+  const first = resolveSkills(cfg, 'writer', 'resume-removed');
+  rmSync(join(root, 'views'), { recursive: true, force: true });
+  const resumed = resolveSkills(cfg, 'writer', 'resume-removed');
+  assert.equal(resumed.mode, 'managed');
+  assert.deepEqual(resumed.packages, first.packages);
+  assert.deepEqual(resumed.skills.map((s) => s.name), ['report']);
+  assert.equal(resolveSkills({ ...cfg, managedSkills: null }, 'writer', 'resume-removed').mode, 'managed');
+});
+
+for (const mismatch of ['agent', 'runtime']) test(`rejects a substituted view ${mismatch}`, () => {
+  const root = managedRoot();
+  view(root, 'writer', 1, [{ name: 'report', digest: store(root, 'report') }]);
+  const file = join(root, 'views', 'writer', 'zen-agent', 'manifest.json');
+  const manifest = JSON.parse(readFileSync(file, 'utf8'));
+  manifest[mismatch] = mismatch === 'agent' ? 'editor' : 'codex';
+  writeFileSync(file, JSON.stringify(manifest));
+  const resolved = resolveSkills(cfgFor(root, legacy(), false), 'writer', 'wrong-identity');
+  assert.equal(resolved.mode, 'managed-missing'); assert.deepEqual(resolved.skills, []);
+  assert.match(resolved.rejected[0]!.reason, /agent|persona|runtime/);
+});
+
+for (const corruption of ['record', 'package']) test(`damaged snapshot ${corruption} fails closed`, () => {
+  const root = managedRoot();
+  view(root, 'writer', 1, [{ name: 'report', digest: store(root, 'report') }, { name: 'second', digest: store(root, 'second') }]);
+  const cfg = cfgFor(root, legacy(), false);
+  const first = resolveSkills(cfg, 'writer', 'damaged-snapshot');
+  rmSync(join(root, 'views'), { recursive: true, force: true });
+  const file = corruption === 'record' ? join(first.snapshot!, '.snapshot.json') : join(first.snapshot!, 'report', 'SKILL.md');
+  chmodSync(file, 0o644);
+  writeFileSync(file, corruption === 'record' ? '{broken' : '# changed after the session started');
+  const resumed = resolveSkills(cfg, 'writer', 'damaged-snapshot');
+  assert.equal(resumed.mode, 'managed-missing'); assert.deepEqual(resumed.skills, []);
+  assert.match(resumed.rejected[0]!.reason, /snapshot/);
+});
+
+test('managed chat HTTP catalogs are scoped to their verified snapshots', async () => {
+  const vault = mkdtempSync(join(tmpdir(), 'zen-chat-managed-'));
+  writeFileSync(join(vault, 'AGENTS.md'), '# Fixture rules'); mkdirSync(join(vault, 'defs'));
+  for (const name of ['writer', 'editor']) writeFileSync(join(vault, 'defs', `${name}.md`), `You are ${name}.`);
+  const root = managedRoot();
+  view(root, 'writer', 1, [{ name: 'report', digest: store(root, 'report') }]);
+  view(root, 'editor', 1, [{ name: 'render', digest: store(root, 'render') }]);
+  const faux = fauxProvider(); const models = createModels(); models.setProvider(faux.provider);
+  const cfg = loadConfig({ workdir: vault, env: {}, overrides: {
+    model: 'faux/faux-1', tools: ['skills'], skills: [legacy()], managedSkills: { root, enforce: true, snapshots: null },
+    persona: { org: join(vault, 'none.json'), definitions: join(vault, 'defs'), memory: join(vault, 'mem') },
+  } });
+  const started = await startServer({ config: cfg, models, env: {}, token: 'synthetic-fixture-token', port: 0 });
+  try {
+    const writer = started.host.create({ persona: 'writer' }); const editor = started.host.create({ persona: 'editor' });
+    const headers = { authorization: 'Bearer synthetic-fixture-token' };
+    const global = await (await fetch(`${started.url}/zen/skills`, { headers })).json() as { skills: { name: string }[] };
+    assert.deepEqual(global.skills, []);
+    for (const [chat, name] of [[writer, 'report'], [editor, 'render']] as const) {
+      const scoped = await (await fetch(`${started.url}/zen/chats/${chat.id}/skills`, { headers })).json() as { skills: { name: string }[] };
+      assert.deepEqual(scoped.skills.map((s) => s.name), [name]);
+    }
+  } finally { await new Promise<void>((resolve) => started.server.close(() => resolve())); }
+});
+
+for (const enforce of [false,true]) for (const current of ['changed','missing','disabled']) test(`managed resume with missing snapshot fails closed: enforce=${enforce}, current=${current}`, () => {
+  const vault=mkdtempSync(join(tmpdir(),'zen-lost-snapshot-')); mkdirSync(join(vault,'defs'));
+  writeFileSync(join(vault,'defs','writer.md'),'You write.');
+  const root=managedRoot(); view(root,'writer',1,[{name:'report',digest:store(root,'report','Original')}]);
+  const models=createModels(); models.setProvider(fauxProvider().provider);
+  const cfg=loadConfig({workdir:vault,env:{},overrides:{model:'faux/faux-1',tools:['skills'],skills:[legacy()],managedSkills:{root,enforce,snapshots:null},persona:{org:join(vault,'none.json'),definitions:join(vault,'defs'),memory:join(vault,'mem')}}});
+  const first=new ZenAgent({config:cfg,persona:'writer',models,env:{},sessionId:'lost-snapshot'});
+  assert.equal(first.skillResolution.mode,'managed');
+  renameSync(first.skillResolution.snapshot!,first.skillResolution.snapshot!+'.removed');
+  if(current==='changed')view(root,'writer',2,[{name:'report',digest:store(root,'report','New assignments')}]);
+  if(current==='missing')rmSync(join(root,'views'),{recursive:true,force:true});
+  const next=current==='disabled'?{...cfg,managedSkills:null}:cfg;
+  for(let attempt=0;attempt<2;attempt++) {
+    const resumed=new ZenAgent({config:next,persona:'writer',models,env:{},resume:'lost-snapshot'});
+    assert.equal(resumed.skillResolution.mode,'managed-missing'); assert.deepEqual(resumed.skills,[]);
+    assert.match(resumed.skillResolution.rejected[0]!.reason,/original managed snapshot is missing/);
+  }
+});
+
+for (const member of ['SKILL.md', 'scripts/run.sh']) test(`read_skill refuses an active snapshot changed at ${member}`, async () => {
+  const root=managedRoot();
+  view(root,'writer',1,[{name:'report',digest:store(root,'report','Original verified instructions.')}]);
+  const resolved=resolveSkills(cfgFor(root,legacy(),true),'writer','changed-active-snapshot');
+  const [readSkill]=skillTools({skills:resolved.skills} as unknown as ToolContext);
+  const target=join(resolved.skills[0]!.dir,member);
+  chmodSync(target,0o644);writeFileSync(target,'Changed after resolution.');
+  await assert.rejects(()=>readSkill!.execute('tampered',{name:'report'}),/managed skill report changed|verification/);
+});
+
+test('managed catalog metadata lists both skills while successful loaded-use evidence records only the one read', async () => {
+  const vault=mkdtempSync(join(tmpdir(),'zen-skill-use-'));mkdirSync(join(vault,'defs'));
+  writeFileSync(join(vault,'defs','writer.md'),'You write.');
+  const root=managedRoot();
+  const report=store(root,'report'), unused=store(root,'unused');
+  view(root,'writer',1,[{name:'report',digest:report},{name:'unused',digest:unused}]);
+  const faux=fauxProvider(), models=createModels();models.setProvider(faux.provider);
+  const cfg=loadConfig({workdir:vault,env:{},overrides:{model:'faux/faux-1',tools:['skills'],managedSkills:{root,enforce:true,snapshots:null},persona:{org:join(vault,'none.json'),definitions:join(vault,'defs'),memory:join(vault,'mem')}}});
+  const zen=new ZenAgent({config:cfg,persona:'writer',models,env:{}});
+  faux.setResponses([
+    fauxAssistantMessage([fauxToolCall('read_skill',{name:'report'})],{stopReason:'toolUse'}),
+    fauxAssistantMessage([fauxText('done')]),
+  ]);
+  const result=await zen.run('Use report only.');
+  const trace=readFileSync(result.sessionPath,'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  assert.deepEqual(trace.find(line=>line.type==='meta').skills_packages.map((skill:{name:string})=>skill.name),['report','unused']);
+  const loaded=trace.filter(line=>line.type==='message'&&line.message.role==='toolResult'&&line.message.toolName==='read_skill'&&!line.message.isError);
+  assert.deepEqual(loaded.map(line=>line.message.details),[{name:'report',dir:zen.skills[0]!.dir,id:'private:report',digest:report,revision:'a'.repeat(40)}]);
+});
+
+for (const enforce of [false,true]) test(`a removed managed view never exposes a denied legacy skill: enforce=${enforce}`, async () => {
+  const root=managedRoot(), leg=legacy();
+  view(root,'writer',1,[{name:'report',digest:store(root,'report')}]);
+  const cfg=cfgFor(root,leg,enforce);
+  const started=resolveSkills(cfg,'writer','started-before-removal');
+  assert.deepEqual(started.skills.map(s=>s.name),['report']);
+  rmSync(join(root,'views'),{recursive:true,force:true});
+  const missing=resolveSkills(cfg,'writer','new-after-removal');
+  assert.equal(missing.mode,'managed-missing');
+  assert.deepEqual(missing.skills,[]);
+  assert.match(missing.rejected[0]!.reason,/no managed view for writer/);
+  assert.deepEqual(skillTools({skills:missing.skills} as unknown as ToolContext),[]);
+  assert.deepEqual(resolveSkills(cfg,'writer','started-before-removal').packages,started.packages);
+  const unmanaged=resolveSkills({...cfg,managedSkills:null},'writer','explicitly-unmanaged');
+  assert.equal(unmanaged.mode,'legacy');
+  assert.deepEqual(unmanaged.skills.map(s=>s.name),['global-secret-skill']);
+  const [readSkill]=skillTools({skills:unmanaged.skills} as unknown as ToolContext);
+  const result=await readSkill!.execute('legacy-control',{name:'global-secret-skill'});
+  assert.match((result.content[0] as {text:string}).text,/# global-secret-skill/);
+});
+
+for (const [label,id] of [
+  ['missing',undefined], ['null',null], ['number',42], ['empty',''], ['bare','report'],
+  ['unknown source','other:report'], ['empty source',':report'], ['empty leaf','private:'],
+  ['extra source segment','private:report:extra'], ['flat nested leaf','private:category/report'],
+  ['traversal','legacy:../report'], ['absolute','legacy:/report'], ['hidden category','legacy:.hidden/report'],
+  ['backslash','legacy:media\\reports/report'], ['control character','legacy:media\n/report'],
+  ['external without root','external:report'], ['bad external root','external:Bad_Root:report'],
+  ['private name mismatch','private:other'], ['engine name mismatch','engine:other'],
+  ['legacy name mismatch','legacy:media/other'], ['external name mismatch','external:shared:other'],
+  ['oversized','legacy:'+('category/'.repeat(30))+'report'],
+] as const) test(`a managed view with ${label} identity fails closed`, () => {
+  const root=managedRoot();
+  view(root,'writer',1,[{name:'report',digest:store(root,'report')},{name:'second',digest:store(root,'second')}]);
+  const manifest=join(root,'views','writer','zen-agent','manifest.json');
+  const doc=JSON.parse(readFileSync(manifest,'utf8'));
+  if(id===undefined)delete doc.skills[0].id; else doc.skills[0].id=id;
+  writeFileSync(manifest,JSON.stringify(doc));
+  const resolved=resolveSkills(cfgFor(root,legacy(),false),'writer','invalid-source-id');
+  assert.equal(resolved.mode,'managed-missing');assert.deepEqual(resolved.skills,[]);
+  assert.match(resolved.rejected[0]!.reason,/source-qualified/);
+});
+
+for (const id of ['private:report','engine:report','legacy:media/report','legacy:媒体/report','external:shared-tools:report']) test(`qualified identity is exact through snapshot and resume: ${id}`, () => {
+  const root=managedRoot();view(root,'writer',1,[{name:'report',digest:store(root,'report')}]);
+  const manifest=join(root,'views','writer','zen-agent','manifest.json');
+  const doc=JSON.parse(readFileSync(manifest,'utf8'));doc.skills[0].id=id;writeFileSync(manifest,JSON.stringify(doc));
+  const cfg=cfgFor(root,legacy(),false);
+  const first=resolveSkills(cfg,'writer','qualified-identity');
+  assert.equal(first.mode,'managed');assert.equal(first.skills[0]!.id,id);assert.equal(first.packages[0]!.id,id);
+  const record=JSON.parse(readFileSync(join(first.snapshot!,'.snapshot.json'),'utf8'));
+  assert.equal(record.packages[0].id,id);
+  rmSync(join(root,'views'),{recursive:true,force:true});
+  const resumed=resolveSkills(cfg,'writer','qualified-identity');
+  assert.equal(resumed.mode,'managed');assert.equal(resumed.skills[0]!.id,id);assert.deepEqual(resumed.packages,first.packages);
+});
+
+for (const [label,id] of [['missing',undefined],['bare','report'],['mismatched','private:other']] as const) test(`a snapshot with ${label} identity cannot resume`, () => {
+  const root=managedRoot();view(root,'writer',1,[{name:'report',digest:store(root,'report')}]);
+  const cfg=cfgFor(root,legacy(),false), first=resolveSkills(cfg,'writer','invalid-snapshot-id');
+  const record=join(first.snapshot!,'.snapshot.json');chmodSync(record,0o644);
+  const doc=JSON.parse(readFileSync(record,'utf8'));
+  if(id===undefined)delete doc.packages[0].id;else doc.packages[0].id=id;
+  writeFileSync(record,JSON.stringify(doc));
+  const resumed=resolveSkills(cfg,'writer','invalid-snapshot-id');
+  assert.equal(resumed.mode,'managed-missing');assert.deepEqual(resumed.skills,[]);
+  assert.match(resumed.rejected[0]!.reason,/source-qualified/);
+});

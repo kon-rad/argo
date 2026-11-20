@@ -1,3 +1,4 @@
+import { toolResult } from './toolResult.js';
 import { DatabaseSync } from 'node:sqlite';
 import { clean, sha256 } from './clean.js';
 import type { Host, ParsedMessage, SessionInput } from './types.js';
@@ -42,7 +43,7 @@ export function readHermes(dbPath: string, host: Host, source: SessionInput['sou
         sessionExternalId: String(r.session_id),
         seq: id, externalId: `msg:${id}`, parentExternalId: null,
         role: String(r.role), kind: String(r.role), ts: epoch(r.timestamp),
-        contentText: clean(parts.filter(Boolean).join('\n')),
+        contentText: clean(toolResult(raw)?.text ?? parts.filter(Boolean).join('\n')),
         raw: clean(raw), rawSha: sha256(json), isSidechain: false,
       };
     });

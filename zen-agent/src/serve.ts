@@ -215,7 +215,13 @@ export class ChatHost {
   }
 
   skills(): { name: string; description: string }[] {
+    // No persona is selected on this endpoint. Managed catalogs are only exposed per chat.
+    if (this.cfg.managedSkills) return [];
     return discoverSkills(this.cfg.skills).map((s) => ({ name: s.name, description: s.description }));
+  }
+
+  chatSkills(id: string): { name: string; description: string }[] {
+    return this.agentOf(this.live(id)).skills.map((s) => ({ name: s.name, description: s.description }));
   }
 
   // ----- chats -----
@@ -428,6 +434,7 @@ const ROUTES: [string, RegExp, Handler][] = [
     return h.create(parseCreate(body));
   }],
   ['GET', new RegExp(`^/zen/chats/(${CHAT})$`), (h, m) => h.get(m[1]!)],
+  ['GET', new RegExp(`^/zen/chats/(${CHAT})/skills$`), (h, m) => ({ skills: h.chatSkills(m[1]!) })],
   ['GET', new RegExp(`^/zen/chats/(${CHAT})/events$`), (h, m, _b, url) => h.page(m[1]!, Math.max(0, Number(url.searchParams.get('offset') ?? 0) || 0))],
   ['POST', new RegExp(`^/zen/chats/(${CHAT})/messages$`), async (h, m, body) => {
     await h.refreshMachines();

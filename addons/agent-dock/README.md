@@ -53,7 +53,44 @@ The Hermes menu is built from two places:
 
 The same `choices` list works for Claude Code, Codex and zen-agent when you want a model menu there.
 
-## Build the app
+## Optional installation on a Mac
+
+Agent Dock is an optional desktop add-on stored entirely in this engine repository at `addons/agent-dock/`. Vault setup and server deployment do not build, install or start it. It needs no entry in `addons` or `MODULES`; `agentDock` settings only configure it after installation. The web app works without it.
+
+Build on the Mac where you will use it, including an Apple silicon M4. Install Xcode or its command line tools, check `swift --version`, and confirm macOS is 14 or newer. Python 3.9+ must be available as `python3` on the app's PATH. Install and sign in to at least one supported agent harness in your login shell before opening the app. Ghostty is optional; Terminal.app is the fallback.
+
+Use a checkout containing the merged Agent Dock code. In a vault, follow your normal engine submodule update process first; do not build from an older pin that lacks this directory. From the vault root:
+
+```bash
+cd .secondbrain/addons/agent-dock/app
+./build.sh --vault ../../../.. --install
+open /Applications/AgentDock.app
+```
+
+This compiles locally, bundles the Python CLI and copies the app to `/Applications/AgentDock.app`. It does not install agent harnesses, model weights, board credentials or a background service. If `/Applications` is not writable, omit `--install` and copy `build/AgentDock.app` to `~/Applications` using Finder.
+
+On first launch:
+
+1. Choose the vault with **File > Choose Vault** if it is not already selected.
+2. Confirm the compiled roster exists at `.agents/org/org-agents.json`. Compile it with `secondbrain org compile` on your configured org host if necessary, then sync the generated roster and persona files to this Mac.
+3. Confirm an installed harness is available, click an agent and allow terminal automation when macOS prompts. If the terminal cannot open, check **System Settings > Privacy & Security > Automation**. Allow Documents access if macOS requests it for a vault there.
+4. Confirm the chat can list vault folders and appears under **Running**. Each harness needs its own login; verifying Claude does not verify Codex, Hermes or zen-agent.
+
+The GUI and terminal can have different PATH values. If a harness is greyed out despite working in a terminal, set `agentDock.runtimes.<id>.command` to its absolute executable path. Python must still be available to the bundled CLI.
+
+### Board access from chats
+
+Board access is a separate setup step, documented in [Kanban board](../../docs/kanban-board.md). On a fresh Mac, install the engine's CLI wrappers with `bin/secondbrain-vault --vault /path/to/vault clis install` from the engine root, then inspect `bin/secondbrain-vault --vault /path/to/vault clis status`. The board client needs Node.js 22+, the client bundle build dependencies in `app/`, and `BOARD_URL` and `BOARD_TOKEN` in the environment or vault `.env`. Keep credentials out of `secondbrain.json`.
+
+The generic installer gives `cli-board` an HTTPS client; `cli-org` and `cli-projects` report that they are server-only. Existing custom SSH wrappers are preserved, not replaced. If status reports a conflicting wrapper, review it before replacing it. The token determines the board identity. The app does not choose whether a chat writes as its bot or as the owner.
+
+### Update and remove
+
+After updating the engine, run the same build command on each Mac. Quit and reopen Agent Dock to use the new bundle; close and relaunch existing agent tabs to pick up launcher changes.
+
+To uninstall, quit the app and move `AgentDock.app` from Applications to Trash. Local history remains in `~/.local/state/secondbrain/agent-dock/`, and the chosen vault remains in macOS preferences. Removing the app does not remove your vault, harnesses or separately installed CLI wrappers.
+
+## Build options
 
 ```bash
 cd addons/agent-dock/app

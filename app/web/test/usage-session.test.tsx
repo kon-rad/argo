@@ -138,3 +138,18 @@ it('links to Observatory only when enabled and anchors the requested recorded pa
   expect(new URLSearchParams(href.split('?')[1]).get('cursor')).toBe(String(Date.parse(SESSION.started_at)));
   expect(document.getElementById('step-3')).toBeTruthy();
 });
+
+it('labels unknown, success and recorded run failure separately from tool failures', async () => {
+  renderWith({ session: { ...SESSION, unknown_outcomes: 1, run_failures: 1 }, runs: [], next: null,
+    steps: [
+      step({ id: 1, step: 'tool_call', toolCallId: 'unknown', toolName: 'terminal', text: '{}' }),
+      step({ id: 2, step: 'tool_result', toolCallId: 'unknown', text: 'partial', isError: null }),
+      step({ id: 3, step: 'tool_call', toolCallId: 'success', toolName: 'terminal', text: '{}' }),
+      step({ id: 4, step: 'tool_result', toolCallId: 'success', text: 'ok', isError: false }),
+    ] });
+  await screen.findByText('outcome unknown');
+  expect(screen.getByText('success')).toBeTruthy();
+  expect(screen.queryByText('✗ error')).toBeNull();
+  expect(document.body.textContent).toContain('1 tool outcomes unknown');
+  expect(document.body.textContent).toContain('1 recorded run failures (separate from tools)');
+});

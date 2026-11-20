@@ -13,7 +13,8 @@ import { query, type TxClient } from '../db.js';
  *
  * A subagent (or a Hermes compression continuation) takes its parent's bot. A name that is not a bot in
  * `org_agents` is never stored (the column's foreign key enforces it too); a session with none of these stays
- * unattributed. Never guessed from a folder name or a title. A session that already has a bot is not read again.
+ * unattributed. Unknown candidates retain their origin and status without being reassigned by a later roster.
+ * Never guessed from a folder name or a title. A session that already has a bot is not read again.
  */
 
 /**
@@ -27,15 +28,16 @@ export const INJECTED_PROMPT_RE = String.raw`^\s*(<environment_context>|<user_in
 
 const CANDIDATES = `
   WITH s AS (
-    SELECT a.id, a.source, a.host, a.harness, a.parent_external_id, a.meta
+    SELECT a.id, a.source, a.host, a.harness, a.parent_external_id, a.meta, a.persona_evidence
       FROM archive_sessions a
-     WHERE a.id = ANY ($1::bigint[]) AND a.bot IS NULL),
+     WHERE a.id = ANY ($1::bigint[]) AND a.bot IS NULL AND (a.persona_evidence IS NULL OR a.persona_evidence->>'status'='known')),
   cand AS (
     SELECT s.id,
       (SELECT p.bot FROM archive_sessions p
         WHERE s.parent_external_id IS NOT NULL AND p.host = s.host AND p.source = s.source
           AND p.external_id = s.parent_external_id AND p.bot IS NOT NULL LIMIT 1) AS parent_bot,
       CASE
+        WHEN s.persona_evidence->>'status'='known' THEN s.persona_evidence->>'candidate'
         WHEN s.harness = 'zen-agent' THEN nullif(s.meta ->> 'persona', '')
         WHEN s.harness = 'claude-code' THEN
           (SELECT m.raw ->> 'agentSetting' FROM archive_messages m
@@ -47,10 +49,13 @@ const CANDIDATES = `
             ORDER BY m.seq LIMIT 1)
       END AS own
     FROM s)
-  UPDATE archive_sessions a SET bot = o.name
-    FROM cand JOIN org_agents o ON o.name = coalesce(cand.parent_bot, cand.own) AND o.runtime <> 'human'
-   WHERE a.id = cand.id AND a.bot IS NULL
-  RETURNING a.id`;
+  UPDATE archive_sessions a SET bot = o.name,
+    persona_evidence = jsonb_build_object('candidate',coalesce(cand.parent_bot,cand.own),
+      'origin', CASE WHEN cand.parent_bot IS NOT NULL THEN 'parent' ELSE 'native-persona' END,
+      'status', CASE WHEN o.name IS NULL THEN 'unknown' ELSE 'known' END)
+    FROM cand LEFT JOIN org_agents o ON o.name = coalesce(cand.parent_bot, cand.own) AND o.runtime <> 'human'
+   WHERE a.id = cand.id AND a.bot IS NULL AND coalesce(cand.parent_bot,cand.own) IS NOT NULL
+  RETURNING a.id, a.bot`;
 
 /**
  * Sets the bot on each of these sessions that has none and says who it is. Returns how many were labelled.
@@ -63,7 +68,7 @@ export async function attributeBots(tx: TxClient | null, sessionIds: number[]): 
   let labelled = 0;
   for (let pass = 0; pass < 2; pass++) {
     const r = await run(CANDIDATES, [ids, PERSONA_LINE_RE, INJECTED_PROMPT_RE]);
-    labelled += r.rowCount ?? 0;
+    labelled += r.rows.filter(r => r.bot !== null).length;
     if (!r.rowCount) break;
   }
   return labelled;

@@ -46,6 +46,7 @@ export function sortCards(cards: BoardCard[], sort: string | null | undefined): 
 }
 
 const KINDS = ['work', 'spec', 'build', 'review', 'verify', 'doc', 'status', 'improve', 'revert'];
+const cybazaarJob = (card: BoardCard): string | undefined => card.contract?.cybazaarJobId;
 
 export const age = (iso: string | null): string => {
   if (!iso) return '';
@@ -206,9 +207,10 @@ export default function Board() {
                 </h2>
                 <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto">
                   {rows.map((c) => (
-                    <li key={c.id} className={`rounded border hover:bg-[var(--paper-sunk)] ${cardId === c.id ? 'border-[var(--accent)]' : 'border-[var(--rule)]'}`}>
+                    <li key={c.id} className={`rounded border hover:bg-[var(--paper-sunk)] ${cybazaarJob(c) ? 'border-l-4 border-l-[#68DFFF]' : ''} ${cardId === c.id ? 'border-[var(--accent)]' : 'border-[var(--rule)]'}`}>
                       <button type="button" onClick={() => navigate(`/board/${c.id}${location.search}`)} className="w-full px-2 py-1.5 text-left text-sm">
                         <div className="line-clamp-3">{c.ship_now && <span title="ship-now">🚀 </span>}{c.title}</div>
+                        {cybazaarJob(c) && <span className="mt-1 inline-block rounded border border-[#68DFFF] px-1.5 py-0.5 text-[0.7rem] font-medium text-[var(--ink)]">Cybazaar</span>}
                         <div className="mt-1 flex items-center gap-2 text-xs text-[var(--ink-dim)]">
                           <AgentChip name={c.assignee} chart={chart.data} />
                           {c.kind !== 'work' && <span className="rounded bg-[var(--paper-sunk)] px-1">{c.kind}{c.rounds ? ` r${c.rounds}` : ''}</span>}
@@ -294,7 +296,7 @@ function NewCard({ board, chart, onCreated }: { board: string | undefined; chart
 }
 
 function Contract({ c }: { c: BoardCard['contract'] }) {
-  const entries = Object.entries(c ?? {}).filter(([, v]) => v !== undefined && v !== null && !(Array.isArray(v) && !v.length));
+  const entries = Object.entries(c ?? {}).filter(([key, v]) => !['cybazaarJobId', 'deskJobRef'].includes(key) && v !== undefined && v !== null && !(Array.isArray(v) && !v.length));
   if (!entries.length) return null;
   return (
     <section className="rounded border border-[var(--rule)] p-2 text-sm" aria-label="Contract">
@@ -361,6 +363,7 @@ function CardPanel({ id, chart, onClose }: { id: string; chart: OrgChart | null;
         {c && (
           <>
             <h2 className="text-base font-semibold">{c.ship_now && <span title="ship-now">🚀 </span>}{c.title}</h2>
+            {cybazaarJob(c) && <div className="flex flex-wrap items-center gap-2 text-xs"><span className="rounded border border-[#68DFFF] px-1.5 py-0.5 font-medium">Cybazaar</span><Link className="text-[var(--accent)] underline" to={`/desk?marketJob=${encodeURIComponent(cybazaarJob(c)!)}`}>Open commission</Link>{c.contract.deskJobRef && <Link className="text-[var(--accent)] underline" to={`/desk?job=${encodeURIComponent(c.contract.deskJobRef)}`}>Open Desk job</Link>}</div>}
             <p className="text-xs text-[var(--ink-dim)]">
               {c.board_slug} · {c.kind}{c.work_type ? ` · ${c.work_type}` : ''}{c.needs ? ` · needs ${c.needs}` : ''} · p{c.priority} · by {c.created_by} {age(c.created_at)} ago
               {c.area_slug && <> · <Link className="text-[var(--accent)]" to={`/projects?view=board`}>{c.area_slug}{c.project_slug ? `/${c.project_slug}` : ''}</Link></>}

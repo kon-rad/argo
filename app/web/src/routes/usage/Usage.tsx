@@ -1,3 +1,4 @@
+import CollectionHealth from './CollectionHealth.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -13,6 +14,7 @@ import { bucketEnd, formatTokens, money, TYPE_SERIES } from './format.js';
 import { zoned } from '../../lib/time.js';
 import { useAppTimezone } from '../../lib/useTimezone.js';
 import AgentSessions from './AgentSessions.js';
+import LocalModels from './LocalModels.js';
 import Summaries from './Summaries.js';
 import LiveAgents, { useLiveCount } from './LiveAgents.js';
 import Subscriptions from './Subscriptions.js';
@@ -331,6 +333,8 @@ function UsageLedger({ claudeConfigured, onSelectBucketZone }: { claudeConfigure
         </DataTable>
       </section>
 
+      <LocalModels from={from} to={to} bucket={bucket} tz={tz} fmtBucket={fmtBucket} />
+
       <section>
         <h2 className="text-sm font-semibold">Agent wakes (the company board)</h2>
         <p className="text-xs text-[var(--ink-dim)]">Each wake is one <code>claude -p</code> run against the shared daily cap. Open = waiting or running. Tokens are the bot's calls in this range.</p>
@@ -432,6 +436,7 @@ export default function Usage() {
   const labels: Record<UsageSection, string> = { running: 'Running now', ledger: 'Ledger', sessions: 'Sessions', summaries: 'Summaries' };
   return (
     <div className="flex h-full flex-col">
+      <CollectionHealth />
       <div className="flex shrink-0 flex-wrap gap-1 border-b border-[var(--rule)] px-4 pt-2">
         <div role="tablist" aria-label="Usage views" className="flex flex-wrap gap-1">
           {sections.map((section) => tab(section, labels[section]))}

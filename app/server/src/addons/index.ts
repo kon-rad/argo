@@ -9,6 +9,8 @@
 import type { AppOptions } from '../app.js';
 import type { Feature, FeatureContext, FeatureRoute } from '../features/types.js';
 import agentsManifest from './agents/manifest.js';
+import localaiManifest from './localai/manifest.js';
+import { routes as localaiRoutes } from './localai/routes.js';
 import { routes as agentsRoutes } from './agents/routes.js';
 import chatManifest from './chat/manifest.js';
 import warehouseManifest from './warehouse/manifest.js';
@@ -32,6 +34,8 @@ import voiceManifest from './voice/manifest.js';
 import { routes as voiceRoutes } from './voice/routes.js';
 import observatoryManifest from './observatory/manifest.js';
 import { routes as observatoryRoutes } from './observatory/routes.js';
+import skillsManifest from './skills/manifest.js';
+import { routes as skillsRoutes } from './skills/routes.js';
 import deskManifest from './desk/manifest.js';
 import { routes as deskRoutes } from './desk/routes.js';
 
@@ -47,6 +51,7 @@ type AppConfig = typeof import('../config.js').config;
 
 /** Every addon that mounts routes, with its manifest, in config.ts's ADDON_MODULES order. */
 export const ADDON_FEATURES: readonly AddonFeature[] = [
+  { ...localaiManifest, routes: localaiRoutes },
   { ...ringManifest, routes: ringRoutes },
   { ...agentsManifest, routes: agentsRoutes },
   { ...mapManifest, routes: mapRoutes },
@@ -58,6 +63,7 @@ export const ADDON_FEATURES: readonly AddonFeature[] = [
   { ...chatManifest, routes: chatRoutes },
   { ...voiceManifest, routes: voiceRoutes },
   { ...warehouseManifest, routes: warehouseRoutes },
+  { ...skillsManifest, routes: skillsRoutes },
   { ...observatoryManifest, routes: observatoryRoutes },
   {
     ...deskManifest,

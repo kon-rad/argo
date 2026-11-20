@@ -1,5 +1,6 @@
 import { lazy, Suspense, type ReactElement } from 'react';
 import { Route } from 'react-router-dom';
+import MediaSchedule from './routes/MediaSchedule.js';
 import BoardPage from './routes/board/Board.js';
 import Memory from './routes/Memory.js';
 import Org from './routes/org/Org.js';
@@ -10,9 +11,12 @@ import Projects from './routes/Projects.js';
 import LiveAgents from './routes/usage/LiveAgents.js';
 import Usage from './routes/usage/Usage.js';
 import UsageSession from './routes/usage/UsageSession.js';
+import { Loading as SkillsLoading } from './routes/skills/ui.js';
 
 const Observatory = lazy(() => import('./routes/observatory/Observatory.js'));
 const Desk = lazy(() => import('./routes/Desk.js'));
+const Skills = lazy(() => import('./routes/skills/Skills.js'));
+const skills = (view: 'library' | 'matrix' | 'machines' | 'changes' | 'detail' | 'agent') => <Suspense fallback={<SkillsLoading what="skills" />}><Skills view={view} /></Suspense>;
 
 /**
  * The page routes of each core feature, by module name. The server's manifest
@@ -21,6 +25,7 @@ const Desk = lazy(() => import('./routes/Desk.js'));
  * renders the entries of the modules /api/meta says are on.
  */
 export const FEATURE_ROUTES: Record<string, ReactElement[]> = {
+  social: [<Route key="media-schedule" path="/media-schedule" element={<MediaSchedule />} />],
   projects: [
     <Route key="areas" path="/areas" element={<Areas />} />,
     <Route key="area" path="/areas/:slug" element={<AreaPage />} />,
@@ -42,4 +47,12 @@ export const FEATURE_ROUTES: Record<string, ReactElement[]> = {
   ],
   observatory: [<Route key="observatory" path="/observatory" element={<Suspense fallback={null}><Observatory /></Suspense>} />],
   desk: [<Route key="desk" path="/desk" element={<Suspense fallback={null}><Desk /></Suspense>} />],
+  skills: [
+    <Route key="skills" path="/skills" element={skills('library')} />,
+    <Route key="skills-matrix" path="/skills/matrix" element={skills('matrix')} />,
+    <Route key="skills-machines" path="/skills/machines" element={skills('machines')} />,
+    <Route key="skills-changes" path="/skills/changes" element={skills('changes')} />,
+    <Route key="skills-skill" path="/skills/s/:name" element={skills('detail')} />,
+    <Route key="skills-agent" path="/skills/agents/:agent" element={skills('agent')} />,
+  ],
 };

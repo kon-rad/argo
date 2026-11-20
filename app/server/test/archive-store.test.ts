@@ -135,3 +135,19 @@ describe('archive store', () => {
     expect(r.rows[0]!.content_text).toBe('b');
   });
 });
+
+it('rederives a recorded result after a parser version change with the same SHA', async () => {
+  await truncateAll();
+  const raw = { harness: 'codex', payload: { type: 'function_call_output', call_id: 'fake-call', output: { output: 'denied', exit_code: 255 } } };
+  const message = { ...msg(1, 'old text'), raw, rawSha: sha256(JSON.stringify(raw)) };
+  const id = await withTransaction(async tx => {
+    const s = await store.upsertSession(tx, session({ source: 'codex' }));
+    await store.upsertMessages(tx, s.id, [message]);
+    return s.id;
+  });
+  await query(`UPDATE archive_messages SET result_parser_version=0, content_text='[object Object]', is_error=NULL WHERE session_id=$1`, [id]);
+  expect(await withTransaction(tx => store.upsertMessages(tx, id, [message]))).toBe(1);
+  expect(await withTransaction(tx => store.upsertMessages(tx, id, [message]))).toBe(0);
+  expect((await query('SELECT raw_sha, content_text, is_error FROM archive_messages WHERE session_id=$1', [id])).rows[0])
+    .toMatchObject({ raw_sha: message.rawSha, content_text: 'denied', is_error: true });
+});

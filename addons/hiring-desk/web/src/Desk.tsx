@@ -5,10 +5,13 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Approval, DeskOperatorApi, Mutation, OperatorJob, Provider, ReleaseRequest, Result, WorkerResult } from '@secondbrain/desk-contracts/desk';
 import { createHttpDeskOperatorApi } from './api.js';
+import { MarketDesk } from './MarketDesk.js';
 
-type View = 'overview' | 'inbox' | 'jobs' | 'agents';
+type View = 'overview' | 'inbox' | 'active' | 'review' | 'jobs' | 'agents' | 'commissions';
 const VIEWS: { id: View; label: string }[] = [
-  { id: 'overview', label: 'Overview' }, { id: 'inbox', label: 'Inbox' }, { id: 'jobs', label: 'Jobs' }, { id: 'agents', label: 'Agents' },
+  { id: 'overview', label: 'Overview' }, { id: 'inbox', label: 'Inbox' }, { id: 'active', label: 'Active' },
+  { id: 'review', label: 'Review' }, { id: 'jobs', label: 'Jobs' }, { id: 'agents', label: 'Agents' },
+  { id: 'commissions', label: 'Commissions' },
 ];
 const box = 'rounded border border-[var(--rule)] bg-[var(--paper)] p-3';
 const inputClass = 'min-w-0 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-sm';
@@ -45,7 +48,7 @@ function JobCard({ job, selected, onSelect }: { job: OperatorJob; selected: bool
     <button type="button" onClick={onSelect} aria-pressed={selected} className={`w-full rounded border p-3 text-left ${selected ? 'border-[var(--accent)]' : 'border-[var(--rule)]'} hover:bg-[var(--paper-sunk)]`}>
       <span className="flex items-start justify-between gap-2"><span className="font-medium">{publicJob?.skill ?? 'Desk job'}</span><StateTag tone={job.execution === 'failed' ? 'warn' : 'muted'}>{executionLabel(job.execution)}</StateTag></span>
       <span className="mt-1 block line-clamp-2 text-xs text-[var(--ink-dim)]">{publicJob?.brief ?? job.id}</span>
-      <span className="mt-2 block text-xs text-[var(--ink-faint)]">Revision {job.revision} · {publicJob?.jobId ?? job.id}</span>
+      <span className="mt-2 block text-xs text-[var(--ink-faint)]">{publicJob?.client && <>Client {publicJob.client.length > 18 ? `${publicJob.client.slice(0, 10)}…${publicJob.client.slice(-6)}` : publicJob.client} · </>}{job.publicState.offer && <>Offer {money(job.publicState.offer.amountAtomic)} {job.publicState.offer.asset} · </>}Revision {job.revision} · {publicJob?.jobId ?? job.id}</span>
     </button>
   );
 }
@@ -187,7 +190,7 @@ function JobDetail({ job, api, onChanged, onStale }: { job: OperatorJob; api: De
 
 /** Private Desk page. The lead owns app route and navigation registration; this component owns its content. */
 export default function Desk({ operatorApi = httpOperatorApi }: { operatorApi?: DeskOperatorApi }) {
-  const [view, setView] = useState<View>('overview');
+  const [view, setView] = useState<View>(() => new URLSearchParams(window.location.search).has('marketJob') ? 'commissions' : 'overview');
   const [inbox, setInbox] = useState<OperatorJob[] | null>(null);
   const [jobs, setJobs] = useState<OperatorJob[] | null>(null);
   const [providers, setProviders] = useState<Provider[] | null>(null);
@@ -217,6 +220,11 @@ export default function Desk({ operatorApi = httpOperatorApi }: { operatorApi?: 
     else setDetailError(`${result.kind}: ${result.message}`);
   }, [operatorApi]);
 
+  useEffect(() => {
+    const jobId = new URLSearchParams(window.location.search).get('job');
+    if (jobId) { setView('jobs'); void loadJob(jobId); }
+  }, [loadJob]);
+
   const updateJob = useCallback((job: OperatorJob) => {
     setSelectedJob(job);
     setDetailError('');
@@ -237,16 +245,20 @@ export default function Desk({ operatorApi = httpOperatorApi }: { operatorApi?: 
     }
   }, [operatorApi, selectedId]);
 
-  const list = view === 'inbox' ? inbox : jobs;
+  const list = view === 'inbox' ? inbox : view === 'active' ? jobs?.filter((job) => ['approved', 'queued', 'running'].includes(job.execution)) : view === 'review' ? jobs?.filter((job) => job.execution === 'review') : jobs;
+  const listError = view === 'inbox' ? errors.inbox : errors.jobs;
+  const listLabel = view === 'inbox' ? 'Inbox' : view === 'active' ? 'Active' : view === 'review' ? 'Review' : 'Jobs';
+  const emptyLabel = view === 'inbox' ? 'No jobs waiting for approval.' : view === 'active' ? 'No active jobs.' : view === 'review' ? 'No deliveries are waiting for review.' : 'No jobs.';
   return <main className="flex h-full min-h-0 flex-col">
-    <header className="flex flex-wrap items-center gap-3 border-b border-[var(--rule)] px-4 py-3"><div><h1 className="text-xl font-semibold">Hiring Desk</h1><p className="text-xs text-[var(--ink-dim)]">Private operator console</p></div><nav aria-label="Desk sections" className="ml-auto flex flex-wrap gap-1">{VIEWS.map((item) => <button type="button" key={item.id} aria-current={view === item.id ? 'page' : undefined} onClick={() => setView(item.id)} className={`rounded px-3 py-1.5 text-sm ${view === item.id ? 'bg-[var(--paper-sunk)] font-medium' : 'text-[var(--ink-dim)] hover:bg-[var(--paper-sunk)]'}`}>{item.label}</button>)}</nav><button type="button" className={secondary} disabled={refreshing || loading} onClick={() => void refresh(true)}>{refreshing ? 'Refreshing…' : 'Refresh'}</button></header>
+    <header className="flex flex-wrap items-center gap-3 border-b border-[var(--rule)] px-4 py-3"><div><h1 className="text-xl font-semibold">Hiring Desk</h1><p className="text-xs text-[var(--ink-dim)]">Private operator console</p></div><nav aria-label="Desk sections" className="ml-auto flex flex-wrap gap-1">{VIEWS.map((item) => <button type="button" key={item.id} aria-current={view === item.id ? 'page' : undefined} onClick={() => { setSelectedId(null); setSelectedJob(null); setView(item.id); }} className={`rounded px-3 py-1.5 text-sm ${view === item.id ? 'bg-[var(--paper-sunk)] font-medium' : 'text-[var(--ink-dim)] hover:bg-[var(--paper-sunk)]'}`}>{item.label}</button>)}</nav><button type="button" className={secondary} disabled={refreshing || loading} onClick={() => void refresh(true)}>{refreshing ? 'Refreshing…' : 'Refresh'}</button></header>
     <div className="min-h-0 flex-1 overflow-auto p-3 md:p-4">
+      {view === 'commissions' && <MarketDesk />}
       {loading && <p role="status" className="py-8 text-center text-sm text-[var(--ink-dim)]">Loading Desk…</p>}
       {!loading && view === 'overview' && (errors.jobs || errors.providers) && <div role="alert" className="mb-3 rounded border border-[var(--warn)] p-2 text-sm text-[var(--warn)]">{errors.jobs || errors.providers}</div>}
       {!loading && view === 'overview' && <Overview jobs={jobs ?? []} providers={providers ?? []} />}
       {!loading && view === 'agents' && <section aria-label="Agents" className="space-y-2">{errors.providers && <div role="alert" className="rounded border border-[var(--warn)] p-2 text-sm">Agents unavailable: {errors.providers}</div>}{providers?.length ? providers.map((provider) => <article key={provider.providerId} className={box}><h2 className="font-semibold">{provider.providerId}</h2><p className="text-sm">{provider.skill} · {provider.skillVersion}</p><p className="break-all text-xs text-[var(--ink-dim)]">Payment address: {provider.paymentAddress}</p><p className="text-xs text-[var(--ink-faint)]">Identity references: {provider.identityRefs.join(', ') || 'none'}</p></article>) : !errors.providers && <p className="text-sm text-[var(--ink-faint)]">No agents are registered.</p>}</section>}
-      {!loading && (view === 'inbox' || view === 'jobs') && <div className="grid min-h-[30rem] gap-3 lg:grid-cols-[minmax(16rem,0.8fr)_minmax(0,2fr)]">
-        <section aria-label={view === 'inbox' ? 'Inbox jobs' : 'All jobs'} className="space-y-2">{errors[view] && <div role="alert" className="rounded border border-[var(--warn)] p-2 text-sm">{view === 'inbox' ? 'Inbox' : 'Jobs'} unavailable: {errors[view]}</div>}{list?.map((job) => <JobCard key={job.id} job={job} selected={selectedId === job.id} onSelect={() => void loadJob(job.id)} />)}{list?.length === 0 && <p className="rounded border border-dashed border-[var(--rule)] p-4 text-sm text-[var(--ink-faint)]">No {view === 'inbox' ? 'jobs waiting for review' : 'jobs'}.</p>}{!list && !errors[view] && <p className="text-sm text-[var(--ink-faint)]">No data available.</p>}</section>
+      {!loading && (view === 'inbox' || view === 'active' || view === 'review' || view === 'jobs') && <div className="grid min-h-[30rem] gap-3 lg:grid-cols-[minmax(16rem,0.8fr)_minmax(0,2fr)]">
+        <section aria-label={`${listLabel} jobs`} className="space-y-2">{listError && <div role="alert" className="rounded border border-[var(--warn)] p-2 text-sm">{listLabel} unavailable: {listError}</div>}{list?.map((job) => <JobCard key={job.id} job={job} selected={selectedId === job.id} onSelect={() => void loadJob(job.id)} />)}{list?.length === 0 && <p className="rounded border border-dashed border-[var(--rule)] p-4 text-sm text-[var(--ink-faint)]">{emptyLabel}</p>}{!list && !listError && <p className="text-sm text-[var(--ink-faint)]">No data available.</p>}</section>
         <section aria-label="Selected job" className={`${box} min-h-[24rem]`}>{detailError && <div role="alert" className="mb-3 rounded border border-[var(--warn)] p-2 text-sm text-[var(--warn)]">{detailError}{/STALE_REVISION|stale revision|revision conflict/i.test(detailError) && <button type="button" className="ml-2 underline" onClick={() => void refreshAfterConflict()}>Reload latest revision</button>}</div>}{selectedId && !selectedJob && !detailError && <p role="status" className="text-sm">Loading job…</p>}{selectedJob && <JobDetail key={`${selectedJob.id}:${selectedJob.revision}`} job={selectedJob} api={operatorApi} onChanged={updateJob} onStale={() => void refreshAfterConflict()} />}{!selectedId && <p className="py-8 text-center text-sm text-[var(--ink-faint)]">Select a job to review its terms and execution.</p>}</section>
       </div>}
     </div>

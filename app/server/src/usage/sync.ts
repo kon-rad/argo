@@ -1,7 +1,11 @@
+import { ingestLaunch, launchSchema } from './provenance.js';
+
+import { producerHealth } from './producerHealth.js';
+import { combineMeasurements, measureJsonl } from './sourceHealth.js';
 import { sha256 } from '../archive/clean.js';
 import { parseCodex } from './codex.js';
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { withTransaction, type TxClient } from '../db.js';
+import { query, withTransaction, type TxClient } from '../db.js';
 import { parseClaudeJsonl } from '../archive/claude.js';
 import { readFrom } from '../archive/ingest.js';
 import { walk } from '../archive/run.js';
@@ -85,6 +89,15 @@ export async function ingestZenTrace(tx: TxClient, host: Host, path: string, buf
   if (keepRun) runs = await store.upsertRuns(tx, [t.run!]);
   const calls = await store.upsertCalls(tx, t.calls);
   if (t.session) {
+    // The trace meta is durable before the child can exit, unlike its final stdout.
+    const dispatch = t.session.input.meta.dispatch as Record<string, unknown> | undefined;
+    let evidence = dispatch?.launch_v1;
+    if (typeof evidence === 'string') { try { evidence = JSON.parse(evidence); } catch { evidence = null; } }
+    const launch = launchSchema.safeParse(evidence);
+    if (launch.success && launch.data.source === 'zen-agent' && launch.data.runtime === 'zen-agent'
+      && launch.data.runId === dispatch?.run_id) {
+      await ingestLaunch(tx, host, { ...launch.data, sessionId: t.session.input.externalId });
+    }
     const s = await archive.upsertSession(tx, t.session.input);
     if (s.changed) sessions++;
     messages = await archive.upsertMessages(tx, s.id, t.session.messages);
@@ -92,6 +105,20 @@ export async function ingestZenTrace(tx: TxClient, host: Host, path: string, buf
   }
   if (keepRun && opts.wakeRunsOnly) await store.attachCallsToRuns(tx, host);
   return { runs, calls, sessions, messages, consumedBytes, lines };
+}
+
+/** Keep poison complete lines before their source cursor advances. */
+async function retainMalformed(host: Host, path: string, buf: Buffer, startLine = 0) {
+  const { importLines } = await import('./importer.js');
+  const end = buf.lastIndexOf(10);
+  const lines = buf.subarray(0, end + 1).toString('utf8').split('\n').slice(0, -1);
+  const poison: string[] = [];
+  for (const [index, text] of lines.entries()) {
+    try { JSON.parse(text); } catch {
+      poison.push(JSON.stringify({ t: 'quarantine', path, sourceLine: startLine + index, text }));
+    }
+  }
+  if (poison.length) await importLines(poison, host, { quarantine: true });
 }
 
 async function syncAppendOnly(host: Host, path: string,
@@ -105,6 +132,7 @@ async function syncAppendOnly(host: Host, path: string,
   const offset = keep ? keep.offsetBytes : 0;
   const startLine = keep ? keep.lines : 0;
   const buf = readFrom(path, offset);
+  await retainMalformed(host, path, buf, startLine);
   await withTransaction(async (tx) => {
     const r = await apply(tx, buf, startLine);
     await store.saveCursor(tx, host, path, {
@@ -114,6 +142,11 @@ async function syncAppendOnly(host: Host, path: string,
 }
 
 export async function syncUsage(paths: UsageSyncPaths, host: Host): Promise<UsageSyncCounts> {
+  const startedAt = new Date().toISOString();
+  for (const [runtime, root] of [['claude-code', paths.claudeProjectsDir], ['codex', paths.codexSessionsDir],
+    ['zen', paths.zenSessionsDir], ['runs', paths.runsDir], ['plan', paths.statuslineLog]]) {
+    if (root) await producerHealth(host, 'usage-sync', runtime!, root, startedAt, null, true);
+  }
   const c: UsageSyncCounts = { files: 0, calls: 0, sessions: 0, messages: 0, runs: 0, plan: 0, attached: 0, errors: [] };
 
   await withTransaction(tx => tx.query('INSERT INTO usage_hosts (slug, display, kind) VALUES ($1,$1,\'laptop\') ON CONFLICT DO NOTHING', [host]).then(() => undefined));
@@ -137,13 +170,15 @@ export async function syncUsage(paths: UsageSyncPaths, host: Host): Promise<Usag
       try {
         const st = statSync(path);
         const prev = await store.getCursor(host, path);
-        if (prev && prev.sizeBytes === st.size) continue;
-        const { records, consumedBytes, lines } = splitJsonLines(readFileSync(path));
+        const buf = readFileSync(path);
+        if (prev?.fingerprint === sha256(buf.subarray(0, splitJsonLines(buf).consumedBytes))) continue;
+        await retainMalformed(host, path, buf);
+        const { records, consumedBytes, lines } = splitJsonLines(buf);
         const { runs, plan } = parseRunLog(records, host, path, st.mtime);
         await withTransaction(async (tx) => {
           c.runs += await store.upsertRuns(tx, runs);
           c.plan += await store.insertPlanSnapshots(tx, plan);
-          await store.saveCursor(tx, host, path, { fingerprint: 'whole-file', offsetBytes: consumedBytes, lines, sizeBytes: st.size });
+          await store.saveCursor(tx, host, path, { fingerprint: sha256(buf.subarray(0, consumedBytes)), offsetBytes: consumedBytes, lines, sizeBytes: st.size });
         });
         c.files++;
       } catch (err) {
@@ -159,13 +194,14 @@ export async function syncUsage(paths: UsageSyncPaths, host: Host): Promise<Usag
       try {
         const st = statSync(path);
         const prev = await store.getCursor(host, path);
-        if (prev && prev.sizeBytes === st.size) continue;
         const buf = readFileSync(path);
+        if (prev?.fingerprint === sha256(buf.subarray(0, splitJsonLines(buf).consumedBytes))) continue;
+        await retainMalformed(host, path, buf);
         await withTransaction(async (tx) => {
           const r = await ingestZenTrace(tx, host, path, buf, st.mtime);
           const { consumedBytes, lines } = r;
           c.runs += r.runs; c.calls += r.calls; c.sessions += r.sessions; c.messages += r.messages;
-          await store.saveCursor(tx, host, path, { fingerprint: 'whole-file', offsetBytes: consumedBytes, lines, sizeBytes: st.size });
+          await store.saveCursor(tx, host, path, { fingerprint: sha256(buf.subarray(0, consumedBytes)), offsetBytes: consumedBytes, lines, sizeBytes: st.size });
         });
         c.files++;
       } catch (err) {
@@ -177,6 +213,7 @@ export async function syncUsage(paths: UsageSyncPaths, host: Host): Promise<Usag
   for (const path of paths.codexSessionsDir ? walk(paths.codexSessionsDir).filter(p => p.endsWith('.jsonl')).sort() : []) {
     try {
       const buf = readFileSync(path);
+      await retainMalformed(host, path, buf);
       const { consumedBytes } = splitJsonLines(buf);
       const prefix = buf.subarray(0, consumedBytes);
       const fingerprint = sha256(prefix);
@@ -208,6 +245,26 @@ export async function syncUsage(paths: UsageSyncPaths, host: Host): Promise<Usag
     } catch (err) {
       c.errors.push(`${paths.statuslineLog}: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+  for (const [runtime, root] of [
+    ['claude-code', paths.claudeProjectsDir], ['codex', paths.codexSessionsDir],
+    ['zen', paths.zenSessionsDir], ['runs', paths.runsDir], ['plan', paths.statuslineLog],
+  ] as const) {
+    if (!root) continue;
+    const measurements = [];
+    for (const path of (runtime === 'plan' ? (existsSync(root) ? [root] : []) : walk(root).filter(p => p.endsWith('.jsonl')))) {
+      const prev = await store.getCursor(host, path);
+      const size = statSync(path).size;
+      const content = runtime === 'claude-code' || runtime === 'plan' ? null : readFileSync(path);
+      const valid = prev && size >= prev.offsetBytes && (runtime === 'claude-code' || runtime === 'plan'
+        ? prev.fingerprint === (size ? fingerprintOf(path) : '') : prev.fingerprint === sha256(content!.subarray(0, splitJsonLines(content!).consumedBytes)));
+      const measurement = measureJsonl(path, valid ? prev.offsetBytes : 0);
+      const q = await query('SELECT count(*) n FROM usage_import_quarantine WHERE host=$1 AND origin_path=$2', [host, path]);
+      measurement.quarantined = Number(q.rows[0]!.n);
+      measurements.push(measurement);
+    }
+    await producerHealth(host, 'usage-sync', runtime, root, startedAt, combineMeasurements(measurements),
+      c.errors.length > 0 || !existsSync(root), existsSync(root) ? null : 'unsupported');
   }
   return c;
 }

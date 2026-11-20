@@ -52,6 +52,7 @@ const Schema = z.object({
   PROJECTS_BY: z.string().optional(),
   // Local agent and usage filesystem locations.
   PLAN_USAGE_LOG: z.string().optional(),
+  PLAN_ALERTS: z.enum(['on', 'off']).default('on'),
   CLAUDE_PROJECTS_DIR: z.string().optional(),
   CLAUDE_BIN: z.string().optional(),
   CC_RUNS_DIR: z.string().optional(),
@@ -63,10 +64,17 @@ const Schema = z.object({
   USAGE_SYNC_TOKEN: z.string().optional(),
   USAGE_PUSH_HOST: z.string().optional(),
   USAGE_PUSH_STATE: z.string().optional(),
+  USAGE_PUSH_TICK_MS: z.coerce.number().int().positive().max(120000).default(30000),
+  USAGE_PUSH_DEADLINE_MS: z.coerce.number().int().positive().max(600000).default(180000),
+  USAGE_PUSH_BACKFILL_MS: z.coerce.number().int().positive().max(1800000).default(600000),
   USAGE_PUSH_MAX_BYTES: z.coerce.number().int().positive().default(20_000_000),
+  // Internal supervisor recursion guard; supplied only to the owned child process.
+  SB_ATTEMPT_CHILD: z.string().optional(),
   // Standalone ledger location and an optional token override.
   SB_LEDGER_DIR: z.string().optional(),
   SB_LEDGER_TOKEN: z.string().optional(),
+  // Destination for machine skill-deployment acknowledgements; the CLI can also pass --server.
+  SECONDBRAIN_SERVER: z.string().url().optional(),
   // Archive and agent-sync machine paths and commands.
   BOT_REPOS_FILE: z.string().optional(),
   HERMES_ENV_FILE: z.string().optional(),
@@ -170,6 +178,13 @@ const Schema = z.object({
   DESK_MAX_RESPONSE_BYTES: z.string().optional(),
   DESK_MAX_ARTIFACT_BYTES: z.string().optional(),
   DESK_PUBLICATION_DESTINATION: z.string().optional(),
+  // Optional addon configuration is validated only when the market is enabled.
+  CYBA_MARKET_ENABLED: z.string().optional(),
+  CYBA_ENVELOPE_SECRET: z.string().optional(),
+  CYBA_ARTIFACT_ROOT: z.string().optional(),
+  CYBA_BASE_RPC_URL: z.string().optional(),
+  CYBA_PROFILES_JSON: z.string().optional(),
+  CYBA_EXECUTION_AGENT: z.string().optional(),
   // Deprecated (one release): `SUMMARIES=on` used to install the summaries timer; `summaries` is a module now.
   SUMMARIES: z.string().optional(),
   // Shown in the TOTP app and as the comment author on the Agents board.
@@ -258,6 +273,8 @@ const Schema = z.object({
   // localhost only. Used by the voice module's Listen button; never on a server.
   TTS_URL: z.string().url().default('http://127.0.0.1:8880'),
   TTS_MODEL: z.string().default('mlx-community/Kokoro-82M-bf16'),
+  LOCAL_AI_EXPORT_URL: z.string().url().optional(),
+  LOCAL_AI_HOST: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/).default('local'),
   // social module: LinkedIn is the first provider. App-level OAuth credentials
   // from developer.linkedin.com; one app serves every connected account.
   LINKEDIN_CLIENT_ID: z.string().optional(),
@@ -421,6 +438,12 @@ export const config = {
     maxResponseBytes: parsed.data.DESK_MAX_RESPONSE_BYTES,
     maxArtifactBytes: parsed.data.DESK_MAX_ARTIFACT_BYTES,
     publicationDestination: parsed.data.DESK_PUBLICATION_DESTINATION,
+    marketEnabled: parsed.data.CYBA_MARKET_ENABLED,
+    marketEnvelopeSecret: parsed.data.CYBA_ENVELOPE_SECRET,
+    marketArtifactRoot: parsed.data.CYBA_ARTIFACT_ROOT,
+    marketBaseRpcUrl: parsed.data.CYBA_BASE_RPC_URL,
+    marketProfiles: parsed.data.CYBA_PROFILES_JSON,
+    marketExecutionAgent: parsed.data.CYBA_EXECUTION_AGENT,
   },
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,
@@ -462,6 +485,8 @@ export const config = {
   boardToken: parsed.data.BOARD_TOKEN,
   ttsUrl: parsed.data.TTS_URL.replace(/\/+$/, ''),
   ttsModel: parsed.data.TTS_MODEL,
+  localAiExportUrl: parsed.data.LOCAL_AI_EXPORT_URL?.replace(/\/+$/, ''),
+  localAiHost: parsed.data.LOCAL_AI_HOST,
   webDist: resolve(appRoot, 'web', 'dist'),
   linkedinClientId: parsed.data.LINKEDIN_CLIENT_ID,
   linkedinClientSecret: parsed.data.LINKEDIN_CLIENT_SECRET,

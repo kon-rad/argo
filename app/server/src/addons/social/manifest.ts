@@ -4,7 +4,7 @@ export default defineFeature({
   name: 'social',
   core: false,
   summary: 'Schedule and publish posts with images or a video to LinkedIn, and to Instagram/YouTube/X through Buffer',
-  nav: [],
+  nav: [{ section: 'Work', label: 'Media schedule', path: '/media-schedule' }],
   cli: [
     {
       command: 'social',

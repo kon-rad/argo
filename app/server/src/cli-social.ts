@@ -8,9 +8,20 @@ import { HttpError } from './routes/http.js';
 import { checkImageCount, toPostMedia, toVideoMedia } from './social/media.js';
 import { checkPost, type VideoProbe } from './social/rules.js';
 import { BUFFER_PROVIDER_KEY, checkReauthNeeded, pollHandedOff, runDuePosts } from './social/scheduler.js';
-import { accountIdForProvider, accountProvider, approvePost, cancelPost, listAccounts, listPosts, queuePost, saveConnectedAccount } from './social/store.js';
+import {
+  accountIdForProvider,
+  accountProvider,
+  approvePost,
+  cancelPost,
+  disconnectMissingBufferAccounts,
+  listAccounts,
+  listPosts,
+  movePost,
+  queuePost,
+  saveConnectedAccount,
+} from './social/store.js';
 import { hermesTelegram } from './livestream-x.js';
-import { PostOptionsSchema } from './routes/social.js';
+import { CARD_ID, PostOptionsSchema, SourcePath } from './routes/social.js';
 import { bufferProvider } from './social/providers/buffer.js';
 import { linkedinProvider } from './social/providers/linkedin.js';
 import type { PostMedia, PostOptions, SocialProvider } from './social/providers/types.js';
@@ -31,10 +42,12 @@ const USAGE = `cli-social: the social posting queue (Postgres; the server's time
   (no command) | run          one publishing pass (what the timer runs)
   accounts                    connected accounts: id, network, transport, name, token expiry
   connect-buffer              add (or refresh) one account per Instagram, YouTube and X channel
-                              connected in the Buffer account of BUFFER_API_KEY
+                              connected in the Buffer account of BUFFER_API_KEY; a Buffer account
+                              whose channel is gone from Buffer (swapped there) is disconnected here
   posts [--status S]          draft|queued|publishing|posted|failed|canceled, with their media
   queue --body-file F | --body T  [--image PATH --alt "text"]... | [--video PATH]
         [--account ID|linkedin|x|instagram|youtube] [--at ISO] [--draft]
+        [--card t_xxxxxxxx] [--source <vault path of the draft file>]
         [--option key=value]... [--options-file F.json]
                               queue a post; each --image needs an --alt, in the same order.
                               --account defaults to the only connected account; --at to now.
@@ -44,7 +57,10 @@ const USAGE = `cli-social: the social posting queue (Postgres; the server's time
                               title (YouTube, required), categoryId, privacy, madeForKids,
                               notifySubscribers, aiGenerated; thread (X) only in --options-file
   approve <post id> [--at ISO] queue a draft (for --at, else its own time or now)
-  cancel <post id>            cancel a post that is queued or a draft`;
+  cancel <post id>            cancel a post that is queued or a draft
+  move <post id>... --account ID|linkedin|x|instagram|youtube
+                              re-point drafts or queued posts to another connected account on the
+                              same network (after a channel swap); time, text and media stay`;
 
 function providers(): Record<string, SocialProvider> {
   const p: Record<string, SocialProvider> = {};
@@ -105,7 +121,9 @@ async function resolveAccount(value: string | undefined): Promise<number> {
 async function connectBuffer(): Promise<number> {
   if (!config.bufferApiKey) throw new HttpError(400, 'BUFFER_API_KEY is not set');
   const buffer = bufferProvider({ apiKey: config.bufferApiKey });
-  for (const c of await buffer.listChannels()) {
+  const channels = await buffer.listChannels();
+  const live: string[] = [];
+  for (const c of channels) {
     const name = c.displayName ?? c.name;
     if (!c.provider) {
       console.log(`skipped  ${c.service}  ${name}  (not relayed through Buffer)`);
@@ -126,7 +144,12 @@ async function connectBuffer(): Promise<number> {
       config.socialTokenEncKey,
       'buffer',
     );
+    live.push(c.id);
     console.log(`account ${id}  ${c.provider}  ${name}  via Buffer`);
+  }
+  for (const gone of await disconnectMissingBufferAccounts(live)) {
+    const hint = gone.waiting ? `; ${gone.waiting} draft/queued posts still on it: cli-social move <ids> --account ${gone.provider}` : '';
+    console.log(`disconnected account ${gone.id}  ${gone.provider}  (no longer connected in Buffer)${hint}`);
   }
   return 0;
 }
@@ -166,9 +189,15 @@ async function queue(argv: string[]): Promise<number> {
       draft: { type: 'boolean' },
       option: { type: 'string', multiple: true },
       'options-file': { type: 'string' },
+      card: { type: 'string' },
+      source: { type: 'string' },
     },
     strict: true,
   });
+  if (values.card !== undefined && !CARD_ID.test(values.card)) throw new HttpError(400, `bad --card ${values.card}; use a card id like t_0944bc6c`);
+  if (values.source !== undefined && !SourcePath.safeParse(values.source).success) {
+    throw new HttpError(400, `bad --source ${values.source}; use a vault-relative path of the draft file`);
+  }
 
   const body = (values['body-file'] ? readFileSync(values['body-file'], 'utf8') : (values.body ?? '')).trim();
   if (!body) throw new HttpError(400, 'the post needs --body or --body-file');
@@ -197,7 +226,10 @@ async function queue(argv: string[]): Promise<number> {
   const at = values.at && values.at !== 'now' ? new Date(values.at) : new Date();
   if (Number.isNaN(at.getTime())) throw new HttpError(400, `bad --at ${values.at}; use an ISO time like 2026-10-20T09:00:00+09:00`);
 
-  const post = await queuePost(accountId, body, media, at, options, values.draft ? 'draft' : 'queued');
+  const post = await queuePost(accountId, body, media, at, options, values.draft ? 'draft' : 'queued', {
+    cardId: values.card,
+    sourcePath: values.source,
+  });
   const verb = values.draft ? 'drafted' : 'queued';
   console.log(`${verb} post ${post.id} for ${account.provider} account ${accountId} at ${new Date(post.scheduled_for).toISOString()} (${body.length} characters)`);
   for (const m of post.media) console.log(`  media ${m.position + 1}: ${m.filename}, ${m.contentType}, ${kb(m.size)}${m.altText ? `, alt "${m.altText}"` : ''}`);
@@ -247,6 +279,23 @@ async function main(argv: string[]): Promise<number> {
       if (!(await cancelPost(id))) throw new HttpError(409, `post ${id} is not queued or a draft (already publishing, posted or canceled)`);
       console.log(`canceled post ${id}`);
       return 0;
+    }
+    case 'move': {
+      const { values, positionals } = parseArgs({ args: rest, options: { account: { type: 'string' } }, allowPositionals: true, strict: true });
+      const ids = positionals.map(Number);
+      if (!values.account || ids.length === 0 || ids.some((id) => !Number.isInteger(id) || id <= 0)) {
+        throw new HttpError(400, 'move <post id>... --account ID|linkedin|x|instagram|youtube');
+      }
+      const accountId = await resolveAccount(values.account);
+      let failed = 0;
+      for (const id of ids) {
+        if (await movePost(id, accountId)) console.log(`moved post ${id} to account ${accountId}`);
+        else {
+          console.log(`post ${id} not moved: not a draft or queued, or account ${accountId} is another network or disconnected`);
+          failed++;
+        }
+      }
+      return failed ? 1 : 0;
     }
     default:
       console.log(USAGE);

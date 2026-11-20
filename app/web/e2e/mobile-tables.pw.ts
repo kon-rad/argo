@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { CRON_JOB_ROUTE, FILE_ROUTE, NOW } from '../test/fixtures/tables.js';
+import { boardCards, CRON_JOB_ROUTE, FILE_ROUTE, NOW } from '../test/fixtures/tables.js';
 import { mockApi } from './mock-api.js';
 
 /**
@@ -250,6 +250,31 @@ for (const size of PHONES) {
       await jump.selectOption({ index: 4 });
       await expect.poll(async () => Math.round((await columns.nth(3).boundingBox())!.x)).toBeLessThanOrEqual(16);
       await page.screenshot({ path: join(SHOTS, `board-jumped-${size.width}.png`) });
+    });
+
+    test('board: only a sourced card has the Cybazaar rail and Desk link', async ({ page }) => {
+      await mockApi(page);
+      const sourced = boardCards.cards.map((card) => card.id === 't_0a11'
+        ? { ...card, contract: { ...card.contract, cybazaarJobId: 'market-job-42', deskJobRef: 'arkiv:test/job-42' } } : card);
+      await page.route('**/api/board/cards**', async (route) => {
+        const path = new URL(route.request().url()).pathname;
+        const id = path.split('/').at(-1);
+        const card = sourced.find((candidate) => candidate.id === id);
+        await route.fulfill({ json: card
+          ? { card, comments: [], events: [], depends_on: [], dependants: [], runs: [] }
+          : { cards: sourced } });
+      });
+      await page.setViewportSize(size);
+      await page.goto('/board');
+      const marked = page.getByText('Sort the inbox of testers who replied to the beta form and mark shared households').locator('xpath=ancestor::li[1]');
+      await expect(marked.getByText('Cybazaar')).toBeVisible();
+      await expect(marked).toHaveCSS('border-left-color', 'rgb(104, 223, 255)');
+      const plain = page.getByText('Idea: export a bed as a printable planting plan').locator('xpath=ancestor::li[1]');
+      await expect(plain.getByText('Cybazaar')).toHaveCount(0);
+      await page.screenshot({ path: join(SHOTS, `board-cybazaar-list-${size.width}.png`) });
+      await marked.getByRole('button').click();
+      await expect(page.getByRole('link', { name: 'Open Desk job' })).toHaveAttribute('href', '/desk?job=arkiv%3Atest%2Fjob-42');
+      await page.screenshot({ path: join(SHOTS, `board-cybazaar-${size.width}.png`) });
     });
 
     test('cron: every job row is a thumb-sized link', async ({ page }) => {

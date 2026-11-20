@@ -172,6 +172,7 @@ Everything beyond browse, search and the database page is a module. A module tha
 | `board` | The kanban board on `/board` (`cli-board`): cards next to the tracker and the org, written through `board_*` SQL functions, claimed and finished by lanes, reachable from any machine with a per-device token (see `docs/board-design.md`) |
 | `usage` | A ledger on `/usage`, with manifest-selected Claude Code/Codex subscription quotas, API credit balances and configurable sections; also the ingest route each machine's agent ledger syncs to (below) |
 | `observatory` | Optional evidence coverage/window/detail API and pure deterministic replay; see `docs/observatory.md` |
+| `skills` | Skill library, agent x skill assignments from a Git policy, reviewed draft/change workflow, verified per-machine deployments and acknowledgements on `/skills` (`cli-skills`); legacy behaviour until the policy says `mode: managed`; see `docs/skills.md` |
 | `summaries` | One summary per finished agent session (the Summaries tab of `/usage`, `secondbrain summarize`, the summarize timer); see `docs/summaries.md` |
 | `map` | A 3D brain map of the vault on `/map`, with a lean kiosk view and daily metrics |
 | `tv` | A player for rendered video episodes kept in the vault, on `/tv` |
@@ -280,3 +281,9 @@ These are enforced by tests and hold across the codebase.
 | `web/src/routes/` | Browse, Search, Sources |
 | `db/migrations/` | Plain SQL |
 | `bin/secondbrain` | The CLI — the single implementation of all launcher logic |
+
+**Recorded tool outcomes.** Codex and Hermes tool results now decode structured output and recorded exit/outcome fields. Session detail distinguishes failure, success and unknown, and keeps recorded run failures separate. Existing archives can be rebuilt through scoped `secondbrain archive-steps --results --runtime codex|hermes` dry-run/replay without changing tokens. See [the replay and canary procedure](../docs/tool-result-replay.md).
+
+### Themed roadmap
+
+`secondbrain projects roadmap [path]` renders configured `roadmap.themes` from the master board and tracker into a markdown file. Themes select whole `areas`, individual `projects` as `area/project`, card IDs, or title keywords. Configure `roadmap.boards` with existing board slugs and `roadmap.file` with the output path. Unknown boards or a failed read stop without writing. Existing handwritten files are never replaced. The projects manifest installs the hourly roadmap timer.

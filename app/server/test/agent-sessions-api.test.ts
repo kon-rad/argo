@@ -24,7 +24,7 @@ const cc = (type: string, content: unknown) => ({ type, message: { content } });
 const call = (id: string, sid: string, msg: string, out: number): UsageCall => ({
   source: 'claude-code', host: 'mac', callId: id, requestId: null, sessionExternalId: sid, messageExternalId: msg,
   ts: new Date('2026-10-18T10:00:00Z'), model: 'claude-opus-5-5', entrypoint: 'cli', cwd: null, isSidechain: false,
-  inputTokens: 10, cacheWriteTokens: 1, cacheReadTokens: 100, outputTokens: out, thinkingTokens: 5, webSearchRequests: 0,
+  inputTokens: 10, cacheWriteTokens: 1, cacheReadTokens: 100, outputTokens: out, thinkingTokens: 5, webSearchRequests: 0, tool: null, action: null,
 });
 
 beforeEach(async () => {
@@ -65,7 +65,22 @@ const list = (q: Record<string, string> = {}) => request(app).get('/api/usage/ag
   .query({ from: '2026-10-18T00:00:00Z', to: '2026-10-19T00:00:00Z', ...q });
 
 describe('agent sessions api', () => {
+  it('exports a harness-neutral restart transcript without old system or thinking text', async () => {
+    const claude = await request(app).get('/api/usage/agent-sessions/mac/s1/portable').query({ source: 'claude-code' });
+    expect(claude.status).toBe(200);
+    expect(claude.body.source).toMatchObject({ host: 'mac', harness: 'claude-code', external_id: 's1' });
+    expect(claude.body.turns.map((t: { role: string }) => t.role)).toEqual(['user', 'tool', 'tool', 'assistant']);
+    expect(JSON.stringify(claude.body)).not.toContain('look at the route');
+    const hermes = await request(app).get('/api/usage/agent-sessions/mac/h1/portable').query({ source: 'hermes' });
+    expect(hermes.status).toBe(200);
+    expect(hermes.body.turns[0]).toMatchObject({ role: 'user', text: 'run my stand-up' });
+    expect((await request(app).get('/api/usage/agent-sessions/mac/s1/portable').query({ source: 'hermes' })).status).toBe(404);
+  });
   it('returns distinct tickets for the matching host and runtime, with empty tickets for unrelated sessions', async () => {
+    await query(`INSERT INTO org_agents (name,runtime,role,org_version) VALUES ('guide','claude-code','Engineer','v')`);
+    await query(`INSERT INTO boards (slug,name) VALUES ('example','Example')`);
+    await query(`INSERT INTO cards (id,board_slug,title,created_by) VALUES
+      ('t_1234abcd','example','First','guide'), ('t_abcdef12','example','Second','guide')`);
     await query(`INSERT INTO usage_runs (host, run_id, session_id, task_id, log_path, runtime) VALUES
       ('mac', 'run-a', 's1', 't_1234abcd', '/tmp/a.jsonl', 'claude-code'),
       ('mac', 'run-b', 's1', 't_1234abcd', '/tmp/b.jsonl', 'claude-code'),
@@ -223,4 +238,78 @@ describe('agent sessions api', () => {
     const full = await request(app).get(`/api/usage/messages/${id}`).query({ full: '1' });
     expect(full.body.text).toBe('fix the usage page');
   });
+});
+
+it.each(['codex', 'hermes'] as const)('%s replay agrees with list, filter and detail while preserving IDs and tokens', async runtime => {
+  const { replayResults } = await import('../src/archive/replayResults.js');
+  const rawOf = (id: string, output: unknown) => runtime === 'codex'
+    ? { harness: 'codex', payload: { type: 'function_call_output', call_id: id, output } }
+    : { role: 'tool', session_id: 'replay-session', tool_call_id: id, content: JSON.stringify(output) };
+  const id = await withTransaction(async tx => {
+    const s = await archive.upsertSession(tx, sess({ source: runtime, externalId: 'replay-session',
+      startedAt: new Date('2026-10-18T10:00:00Z'), inputTokens: 111, outputTokens: 22 }));
+    const results = [
+      rawOf('failed', { output: 'denied', exit_code: 255 }),
+      rawOf('failed', { output: 'denied', exit_code: 255 }), // expanded rendering
+      rawOf('retry', { output: 'denied', exit_code: 255 }), // distinct retry
+      rawOf('success', [{ type: 'text', text: 'ok' }, { type: 'text', text: '{"exit_code":0}' }]),
+      rawOf('unknown', { output: 'partial timeout error' }),
+    ];
+    await archive.upsertMessages(tx, s.id, results.map((raw, i) => m(`result-${i}`, '2026-10-18T10:00:01Z', raw)));
+    await usage.upsertCalls(tx, [{ ...call('replay-call', 'replay-session', 'result-3', 20), source: runtime }]);
+    return s.id;
+  });
+  // Simulate the previous parser without changing raw, source SHA or identity.
+  await query(`UPDATE archive_messages SET content_text='[object Object]', is_error=NULL, result_parser_version=NULL WHERE session_id=$1`, [id]);
+  const identity = () => query(`SELECT id, session_id, external_id, seq, ts, raw, raw_sha FROM archive_messages WHERE session_id=$1 ORDER BY id`, [id]);
+  const tokens = () => query(`SELECT id, input_tokens, output_tokens, meta, started_at, updated_at FROM archive_sessions WHERE id=$1`, [id]);
+  const before = (await identity()).rows;
+  const beforeTokens = (await tokens()).rows;
+  const usageBefore = (await query('SELECT * FROM usage_calls ORDER BY id')).rows;
+  const opts = { runtime, sessionId: id, dryRun: true, batch: 2 };
+  expect(await replayResults(opts)).toEqual({ scanned: 5, changed: 5, failures: 3, successes: 1, unknown: 1 });
+  expect((await query('SELECT content_text FROM archive_messages WHERE session_id=$1', [id])).rows.every(r => r.content_text === '[object Object]')).toBe(true);
+  expect((await replayResults({ ...opts, dryRun: false })).changed).toBe(5);
+  expect((await replayResults({ ...opts, dryRun: false })).changed).toBe(0);
+  expect((await identity()).rows).toEqual(before);
+  expect((await tokens()).rows).toEqual(beforeTokens);
+  expect((await query('SELECT * FROM usage_calls ORDER BY id')).rows).toEqual(usageBefore);
+  const l = await list({ harness: runtime, errors: '1' });
+  expect(l.status).toBe(200);
+  expect(l.body.sessions.find((s: { id: number }) => s.id === id)).toMatchObject({ errors: 2, unknown_outcomes: 1 });
+  const detail = await request(app).get('/api/usage/agent-sessions/mac/replay-session').query({ source: runtime });
+  expect(detail.status).toBe(200);
+  expect(detail.body.session).toMatchObject({ errors: 2, unknown_outcomes: 1 });
+  expect(detail.body.steps.filter((s: { isError: boolean }) => s.isError === true)).toHaveLength(2);
+  expect(detail.body.steps.map((s: { isError: boolean | null }) => s.isError)).toEqual([true, true, false, null]);
+  expect(detail.body.steps.some((s: { text: string }) => s.text.includes('[object Object]'))).toBe(false);
+  const scoped = await replayResults({ runtime, sessionId: id, seq: before[0]!.seq, dryRun: true });
+  expect(scoped.scanned).toBe(1);
+});
+
+it('shows recorded run failures when no tool ran without adding tool errors', async () => {
+  await query(`DELETE FROM archive_messages WHERE session_id=(SELECT id FROM archive_sessions WHERE external_id='s1')`);
+  await query(`INSERT INTO usage_runs (host, run_id, session_id, log_path, runtime, is_error) VALUES
+    ('mac', 'failed-launch', 's1', '/tmp/fake-launch.jsonl', 'claude-code', true)`);
+  const r = await list({ errors: '1' });
+  const s = r.body.sessions.find((s: { external_id: string }) => s.external_id === 's1');
+  expect(s).toMatchObject({ errors: 0, run_failures: 1 });
+});
+
+it('preserves a retry that reuses the invocation id after another recorded call', async () => {
+  await withTransaction(async tx => {
+    const s = await archive.upsertSession(tx, sess({ source: 'codex', externalId: 'reused-id', startedAt: new Date('2026-10-18T10:00:00Z') }));
+    const raw = (type: string) => ({ harness: 'codex', payload: { type, call_id: 'reused', name: 'terminal', output: { exit_code: 255, output: 'denied' } } });
+    await archive.upsertMessages(tx, s.id, [
+      m('call-1', '2026-10-18T10:00:00Z', raw('function_call')),
+      m('result-1', '2026-10-18T10:00:01Z', raw('function_call_output')),
+      m('display-1', '2026-10-18T10:00:01Z', raw('function_call_output')),
+      m('call-2', '2026-10-18T10:00:02Z', raw('function_call')),
+      m('result-2', '2026-10-18T10:00:03Z', raw('function_call_output')),
+    ]);
+  });
+  const d = await request(app).get('/api/usage/agent-sessions/mac/reused-id').query({ source: 'codex' });
+  expect(d.status).toBe(200);
+  expect(d.body.session).toMatchObject({ errors: 2, tool_calls: 2 });
+  expect(d.body.steps.filter((s: { step: string }) => s.step === 'tool_result')).toHaveLength(2);
 });

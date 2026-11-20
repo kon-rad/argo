@@ -6,6 +6,10 @@ export default defineFeature({
   summary: 'What your agents cost: a ledger of every run by bot, task, project and host, manifest-selected subscription quotas and API credit balances',
   nav: [{ section: 'Work', label: 'Usage', path: '/usage' }],
   cli: [
+    { command: 'session-restart', entry: 'cli-session-restart.js', summary: 'restart an archived Usage session here with a chosen persona, harness, provider and model' },
+    { command: 'plan-alert', entry: 'cli-plan-alert.js', summary: '[--dry-run] alert at 60/80/90% of the plan windows' },
+
+    { command: 'usage-quarantine', entry: 'cli-usage-quarantine.js', summary: 'list, inspect, replay retained imports or clean expired attempt history' },
     { command: 'usage-sync', entry: 'cli-usage-sync.js', summary: "this machine's Claude Code and Codex usage into the ledger" },
     { command: 'usage-push', entry: 'cli-usage-push.js', summary: 'send new Claude Code and Codex usage to the server ledger over one SSH call' },
     { command: 'usage-backfill', entry: 'cli-usage-backfill.js', summary: 'wire lines for archived sessions (pipe to the server importer); --actions, --bots label what is already in the ledger' },
@@ -43,6 +47,6 @@ export default defineFeature({
   ],
   wrappers: [],
   health: { label: 'the usage tables answer', tables: ['usage_runs', 'usage_calls', 'usage_hosts', 'usage_files'] },
-  env: ['ORG_CODEX_COMMAND', 'ORG_CODEX_HOST', 'CODEX_HOME', 'USAGE_HOST', 'USAGE_PUSH_HOST', 'USAGE_PUSH_STATE', 'ZEN_SESSIONS_DIR', 'USAGE_SYNC_SERVER', 'USAGE_SYNC_TOKEN'],
+  env: ['PLAN_ALERTS', 'ORG_CODEX_COMMAND', 'ORG_CODEX_HOST', 'CODEX_HOME', 'USAGE_HOST', 'USAGE_PUSH_HOST', 'USAGE_PUSH_STATE', 'ZEN_SESSIONS_DIR', 'USAGE_SYNC_SERVER', 'USAGE_SYNC_TOKEN'],
   docs: 'docs/modules.md#usage',
 });

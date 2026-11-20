@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { mediaScheduleRouter } from '../../routes/mediaSchedule.js';
 import { json } from 'express';
 import { config } from '../../config.js';
 import type { FeatureRoutes } from '../../features/types.js';
@@ -38,6 +39,7 @@ export const routes: FeatureRoutes = ({ opts, vaultRoot, sessionGate }) => {
     encKey: config.socialTokenEncKey, ...opts.instagramUnified,
   }, vaultRoot, sessionGate);
   return [
+    { path: '/api/media/brands', router: mediaScheduleRouter(vaultRoot) },
     { path: '/', router: ig.callback, mount: 'public' },
     { path: '/api/social', router: ig.start },
     { path: '/api/social/posts', router: Router().use(json({ limit: '30mb' })), mount: 'raw' },

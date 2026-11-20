@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BoardCardsResponseSchema } from '@secondbrain/contracts/board';
+import { BoardCardsResponseSchema, BoardContractSchema } from '@secondbrain/contracts/board';
 import { TrackerReportSchema } from '@secondbrain/contracts/projects';
 import { SearchResponseSchema } from '@secondbrain/contracts/search';
 
@@ -16,6 +16,11 @@ describe('shared browser contracts', () => {
 
   it('parses a board response', () => {
     expect(BoardCardsResponseSchema.parse({ cards: [] })).toEqual({ cards: [] });
+  });
+
+  it('retains a Cybazaar source job in the board contract without adding one to plain cards', () => {
+    expect(BoardContractSchema.parse({ objective: 'Create reel', cybazaarJobId: 'market-job-42', deskJobRef: 'arkiv:test/job-42' })).toEqual({ objective: 'Create reel', cybazaarJobId: 'market-job-42', deskJobRef: 'arkiv:test/job-42' });
+    expect(BoardContractSchema.parse({ objective: 'Internal work' })).toEqual({ objective: 'Internal work' });
   });
 
   it('parses a projects report response', () => {

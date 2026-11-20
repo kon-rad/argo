@@ -78,7 +78,7 @@ NODE="$(command -v node)"
 (cd "$APP_ROOT" && npm run -w server build >/dev/null)
 mkdir -p "$BUNDLE/usage" "$BUNDLE/archive" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 cp "$APP_ROOT/server/dist/cli-usage-push.js" "$BUNDLE/"
-for f in push readFrom walkFiles lines statusline types wire; do cp "$APP_ROOT/server/dist/usage/$f.js" "$BUNDLE/usage/"; done
+for f in push readFrom walkFiles lines statusline types wire upload supervise sourceHealth; do cp "$APP_ROOT/server/dist/usage/$f.js" "$BUNDLE/usage/"; done
 for f in stage clean redact; do cp "$APP_ROOT/server/dist/archive/$f.js" "$BUNDLE/archive/"; done
 printf '{"type":"module"}\n' > "$BUNDLE/package.json"
 cp "$APP_ROOT/bin/statusline-usage.mjs" "$DEST/statusline-usage.mjs"
@@ -87,7 +87,7 @@ export USAGE_PUSH_HOST USAGE_HOST
 python3 - "$PLIST" "$LABEL" "$NODE" "$BUNDLE" <<'PY'
 import os, plistlib, sys
 path, label, node, bundle = sys.argv[1:]
-keys = ['USAGE_PUSH_HOST', 'USAGE_HOST', 'USAGE_PUSH_STATE', 'CODEX_HOME', 'CLAUDE_PROJECTS_DIR', 'USAGE_PUSH_MAX_BYTES', 'ZEN_SESSIONS_DIR', 'VAULT_ROOT']
+keys = ['USAGE_PUSH_HOST', 'USAGE_HOST', 'USAGE_PUSH_STATE', 'CODEX_HOME', 'CLAUDE_PROJECTS_DIR', 'USAGE_PUSH_MAX_BYTES', 'USAGE_PUSH_TICK_MS', 'USAGE_PUSH_DEADLINE_MS', 'USAGE_PUSH_BACKFILL_MS', 'ZEN_SESSIONS_DIR', 'VAULT_ROOT']
 config = dict(Label=label, EnvironmentVariables={k: os.environ[k] for k in keys if k in os.environ},
     ProgramArguments=[node, '--no-warnings', bundle + '/cli-usage-push.js'], StartInterval=60,
     RunAtLoad=True, ProcessType='Background',

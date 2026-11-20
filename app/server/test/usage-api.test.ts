@@ -231,3 +231,74 @@ describe('usage api', () => {
     expect((await request(app).get('/api/usage/hosts')).body.hosts.map((h: { slug: string }) => h.slug)).toContain('droplet');
   });
 });
+
+describe('usage api: provider, Hermes per-request calls and Hermes jobs on Codex', () => {
+  const range = { from: '2026-10-13T00:00:00Z', to: '2026-10-15T00:00:00Z' };
+  type Row = { key: string; calls: number; input: number; output: number };
+  const series = async (group: string, extra: Record<string, string> = {}): Promise<Map<string, Row>> => {
+    const r = await request(app).get('/api/usage/series').query({ ...range, bucket: 'day', tz: 'UTC', group, ...extra });
+    expect(r.status).toBe(200);
+    // One row per day and key: add the days up.
+    const out = new Map<string, Row>();
+    for (const x of r.body.rows as Row[]) {
+      const t = out.get(x.key) ?? { key: x.key, calls: 0, input: 0, output: 0 };
+      out.set(x.key, { key: x.key, calls: t.calls + Number(x.calls), input: t.input + Number(x.input), output: t.output + Number(x.output) });
+    }
+    return out;
+  };
+  const snap = (sid: string, at: string, n: number, cost: number | null) => query(
+    `INSERT INTO hermes_usage_snapshots (host, profile, session_id, observed_at, model, billing_provider, input_tokens, output_tokens, api_calls, cost_usd)
+     VALUES ('droplet', 'main', $1, $2, 'glm', 'together', $3::bigint, $3::bigint, $3::int, $4::double precision)`, [sid, at, n, cost]);
+
+  it('labels each call with its own provider, falling back to the harness for rows without one', async () => {
+    await withTransaction((tx) => store.upsertCalls(tx, [
+      call('cx1', '2026-10-14T03:00:00Z', { source: 'codex', sessionExternalId: 'cx', provider: 'openai', model: 'gpt' }),
+      call('cx2', '2026-10-14T03:01:00Z', { source: 'codex', sessionExternalId: 'cx', provider: null, model: 'gpt' }),
+      call('z1', '2026-10-14T03:02:00Z', { source: 'zen-agent', host: 'droplet', sessionExternalId: 'z', provider: 'together', model: 'ds' }),
+    ]));
+    const by = await series('provider');
+    expect(by.get('anthropic')?.calls).toBe(3);   // the three Claude Code calls of the fixture, none carrying a provider
+    expect(by.get('openai')?.calls).toBe(2);
+    expect(by.get('together')?.calls).toBe(1);
+    expect((await series('source', { provider: 'openai' })).get('codex')?.calls).toBe(2);
+    // The runs table accepts the same filter.
+    expect((await request(app).get('/api/usage/runs').query({ ...range, provider: 'anthropic' })).status).toBe(200);
+  });
+
+  it('takes a Hermes session\'s tokens from its per-request rows and keeps the counters only for cost', async () => {
+    await withTransaction((tx) => store.upsertCalls(tx, [
+      call('hc1', '2026-10-14T04:00:00Z', { source: 'hermes', host: 'droplet', sessionExternalId: 'hm', provider: 'together', model: 'glm',
+        inputTokens: 300, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 30 }),
+      call('hc2', '2026-10-14T04:05:00Z', { source: 'hermes:lena', host: 'droplet', sessionExternalId: 'hp', provider: 'together', model: 'glm',
+        inputTokens: 7, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 3 }),
+    ]));
+    await snap('hm', '2026-10-14T04:10:00Z', 100, 2);     // the counters undercount this session: ignored for tokens
+    await snap('old', '2026-10-14T05:00:00Z', 40, 0.5);   // no per-request rows: the counters are all there is
+    const hermes = (await series('source')).get('hermes');
+    expect(hermes).toMatchObject({ input: 347, output: 73, calls: 42 });   // 300 + 7 + 40; 30 + 3 + 40; 2 calls + 40
+    expect([...(await series('agent', { source: 'hermes' })).keys()].sort()).toEqual(['lena', 'main']);
+    expect((await series('provider', { source: 'hermes' })).get('together')?.input).toBe(347);
+    const d = await request(app).get('/api/usage/sessions/droplet/hm').query({ source: 'hermes' });
+    expect(d.body.session).toMatchObject({ source: 'hermes', input: 300, output: 30, calls: 1, cost_usd: 2 });
+  });
+
+  it('keeps a Hermes job\'s tokens on its Codex thread, labelled with the job, and never counts its counters', async () => {
+    await query(`INSERT INTO archive_sessions (source, host, external_id, title, started_at, meta) VALUES
+      ('hermes', 'droplet', 'cron_a_1', 'standup-briefing · Oct 14 06:54', '2026-10-14T06:00:00Z', $1::jsonb),
+      ('codex', 'droplet', 'thread-1', NULL, '2026-10-14T06:00:01Z', '{}'::jsonb)`,
+      [JSON.stringify({ model_config: JSON.stringify({ max_iterations: 150, codex_thread_id: 'thread-1' }) })]);
+    await withTransaction((tx) => store.upsertCalls(tx, [
+      call('t1', '2026-10-14T06:01:00Z', { source: 'codex', host: 'droplet', sessionExternalId: 'thread-1', provider: 'openai', model: 'gpt',
+        entrypoint: 'exec', inputTokens: 500, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 20 }),
+      call('t2', '2026-10-14T06:02:00Z', { source: 'codex', host: 'droplet', sessionExternalId: 'other-thread', provider: 'openai', model: 'gpt' }),
+    ]));
+    await snap('cron_a_1', '2026-10-14T06:03:00Z', 9, null);   // Hermes saw almost none of the tokens
+    const jobs = await series('job');
+    expect(jobs.get('standup-briefing')).toMatchObject({ calls: 1, input: 500, output: 20 });
+    const sources = await series('source', { job: 'standup-briefing' });
+    expect([...sources.keys()]).toEqual(['codex']);
+    expect((await series('source')).get('hermes')?.input ?? 0).toBe(0);
+    expect((await request(app).get('/api/usage/facets').query(range)).body.facets.job.map((f: { value: string }) => f.value))
+      .toContain('standup-briefing');
+  });
+});

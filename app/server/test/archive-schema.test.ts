@@ -5,13 +5,13 @@ import { truncateAll } from './helpers.js';
 describe('archive schema', () => {
   beforeAll(truncateAll);
 
-  it('creates the five archive tables', async () => {
-    const { rows } = await query<{ table_name: string }>(
-      `SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'archive_%'`,
+  it('creates the archive tables with their intended relation types', async () => {
+    const { rows } = await query<{ table_name: string; table_type: string }>(
+      `SELECT table_name, table_type FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'archive_%'`,
     );
-    expect(rows.map((r) => r.table_name).sort()).toEqual([
-      'archive_files', 'archive_log_lines', 'archive_memory_versions', 'archive_messages', 'archive_sessions',
-    ]);
+    expect(rows.sort((a, b) => a.table_name < b.table_name ? -1 : a.table_name > b.table_name ? 1 : 0)).toEqual([
+      'archive_files', 'archive_log_lines', 'archive_memory_versions', 'archive_messages', 'archive_session_tasks', 'archive_sessions',
+    ].sort().map(table_name => ({ table_name, table_type: 'BASE TABLE' })));
   });
 
   it('builds a search vector from content_text', async () => {

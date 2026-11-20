@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api, type AgentSessionRun, type AgentStep } from '../../lib/api.js';
+import { api, type AgentSessionRow, type AgentSessionRun, type AgentStep } from '../../lib/api.js';
 import { clock, span, startedStamp, zoned } from '../../lib/time.js';
 import { useAppTimezone } from '../../lib/useTimezone.js';
 import { AgentAvatar } from '../../components/AgentAvatar.js';
@@ -72,7 +72,7 @@ function StepView({ step, show }: { step: AgentStep; show: Show }) {
     <article aria-label={step.step === 'prompt' ? 'User message' : step.step === 'response' ? 'Assistant message' : label}
       className={`my-3 rounded-xl border border-[var(--rule)] p-4 ${step.step === 'prompt' ? 'ml-auto w-[92%] bg-[var(--paper-sunk)]' : 'mr-auto w-full'} ${step.subagent ? 'ml-6 border-l border-[var(--rule)] pl-2 max-md:w-[calc(100%-1.5rem)]' : ''}`}>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-dim)]">
-        <span className="font-semibold text-[var(--ink)]">{label}</span><span>{time(step.ts)}</span><Sub name={step.subagent} />{details}
+        <span className="font-semibold text-[var(--ink)]">{label}</span>{step.step === 'tool_result' && <span>{step.isError === null ? 'outcome unknown' : step.isError ? 'error' : 'success'}</span>}<span>{time(step.ts)}</span><Sub name={step.subagent} />{details}
       </div>
       <SessionContent text={step.text} literal={step.step === 'tool_result'} /><FullText step={step} />
     </article>
@@ -90,6 +90,8 @@ function ToolCard({ pair, show }: { pair: ToolPair; show: Show }) {
         <span>{time(call.ts)}</span>
         {pair.durationMs !== null && <span>{duration(pair.durationMs)}</span>}
         {failed && <span className="font-semibold text-red-600">✗ error</span>}
+        {result && result.isError === null && <span>outcome unknown</span>}
+        {result?.isError === false && <span>success</span>}
         {!result && <span>no result on this page</span>}
         <Sub name={call.subagent} />
       </summary>
@@ -121,6 +123,37 @@ function Runs({ runs, tz }: { runs: AgentSessionRun[]; tz: string }) {
       )}
     </div>
   ))}</>;
+}
+
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
+function RestartSession({ session: s }: { session: AgentSessionRow }) {
+  const [harness, setHarness] = useState('zen-agent');
+  const [provider, setProvider] = useState(s.provider ?? '');
+  const [model, setModel] = useState(s.models[0] ?? '');
+  const [persona, setPersona] = useState(s.persona ?? '');
+  const [archiveApi, setArchiveApi] = useState('');
+  const [copied, setCopied] = useState(false);
+  const incompatible = harness === 'claude-code' && provider !== 'anthropic';
+  const ready = Boolean(provider.trim() && model.trim() && !incompatible);
+  const command = `secondbrain session-restart ${shellQuote(s.host)} ${shellQuote(s.external_id)} --source ${shellQuote(s.source)} --harness ${shellQuote(harness)} --provider ${shellQuote(provider)} --model ${shellQuote(model)}${persona.trim() ? ` --persona ${shellQuote(persona.trim())}` : ''}${archiveApi.trim() ? ` --api ${shellQuote(archiveApi.trim())}` : ''}`;
+  return <details className="my-3 rounded-lg border border-[var(--rule)] p-3">
+    <summary className="cursor-pointer text-sm font-medium">Restart this session on another machine</summary>
+    <p className="mt-2 text-xs text-[var(--ink-dim)]">Creates a new session from this archived conversation. The source stays unchanged. Run the command on the machine where you want the agent to work; it will ask for your new request.</p>
+    <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+      <label>Harness<select className="mt-1 w-full rounded border border-[var(--rule)] bg-[var(--paper)] p-1" value={harness} onChange={(e) => setHarness(e.target.value)}>
+        <option value="zen-agent">zen-agent</option><option value="hermes">Hermes</option><option value="codex">Codex</option><option value="claude-code">Claude Code</option>
+      </select></label>
+      <label>Persona<input className="mt-1 w-full rounded border border-[var(--rule)] bg-[var(--paper)] p-1" value={persona} onChange={(e) => setPersona(e.target.value)} placeholder="optional roster name" /></label>
+      <label>Provider<input className="mt-1 w-full rounded border border-[var(--rule)] bg-[var(--paper)] p-1" value={provider} onChange={(e) => setProvider(e.target.value)} placeholder="anthropic, openai, openrouter…" /></label>
+      <label>Model<input className="mt-1 w-full rounded border border-[var(--rule)] bg-[var(--paper)] p-1" value={model} onChange={(e) => setModel(e.target.value)} placeholder="model id" /></label>
+      <label className="sm:col-span-2">Archive API through SSH tunnel (if this machine cannot reach Postgres)<input className="mt-1 w-full rounded border border-[var(--rule)] bg-[var(--paper)] p-1" value={archiveApi} onChange={(e) => setArchiveApi(e.target.value)} placeholder="http://127.0.0.1:5123" /></label>
+    </div>
+    {incompatible && <p className="mt-2 text-xs text-red-600">Claude Code supports Anthropic models. Choose another harness for {provider || 'this provider'}.</p>}
+    <textarea readOnly aria-label="Session restart command" className="mt-3 w-full rounded border border-[var(--rule)] bg-[var(--paper-sunk)] p-2 font-mono text-xs" rows={3} value={ready ? command : ''} />
+    <button type="button" className="rounded border border-[var(--rule)] px-2 py-1 text-xs" disabled={!ready} onClick={async () => { await navigator.clipboard.writeText(command); setCopied(true); }}>{copied ? 'Copied' : 'Copy command'}</button>
+    <p className="mt-2 text-xs text-[var(--ink-dim)]">The machine needs archive database access or a loopback SSH tunnel with KNOWLEDGE_TOKEN, plus the selected harness, model credentials, and the named persona installed.</p>
+  </details>;
 }
 
 export default function UsageSession() {
@@ -165,6 +198,9 @@ export default function UsageSession() {
         <dt className="text-[var(--ink-dim)]">Started</dt><dd className="tabular-nums">{s.started_at ? `${startedStamp(s.started_at, tz)} (${tz})` : 'unknown'}</dd>
         <dt className="text-[var(--ink-dim)]">Duration</dt><dd title="elapsed from the first to the last recorded step">{dur ?? 'unknown'}</dd>
         <dt className="text-[var(--ink-dim)]">Type</dt><dd>{s.session_type ?? 'unknown'}</dd>
+        <dt className="text-[var(--ink-dim)]">Runtime entrypoint</dt><dd>{s.runtime_entrypoint ?? 'unknown'}</dd>
+        <dt className="text-[var(--ink-dim)]">Outer trigger</dt><dd>{s.outer_trigger ?? 'unknown'}</dd>
+        <dt className="text-[var(--ink-dim)]">Tickets</dt><dd>{s.task_ids?.length ? s.task_ids.map(id => <Link key={id} to={`/board/${encodeURIComponent(id)}`} className="block underline">{id}</Link>) : (s.task_unresolved_reason ?? 'none verified')}</dd>
         <dt className="text-[var(--ink-dim)]">Bot persona</dt><dd>{persona.text}{s.channel_bot && s.channel_bot !== s.persona ? ` (bot ${s.channel_bot})` : ''}</dd>
         <dt className="text-[var(--ink-dim)]">Machine</dt><dd>{s.host}</dd>
         <dt className="text-[var(--ink-dim)]">Model</dt><dd>{s.models.join(', ') || 'unknown'}{s.provider ? ` via ${s.provider}` : ' (provider unknown)'}</dd>
@@ -174,6 +210,10 @@ export default function UsageSession() {
           {ctx ? `${ctx} at the latest call${s.context_at ? ` (${clock(s.context_at, tz)})` : ''}` : 'not recorded'}
           {s.context_tokens != null && s.context_window == null ? ' · capacity unknown' : ''}</dd>
       </dl>
+      <RestartSession session={s} />
+      {s.launches?.length ? <details><summary>Launch evidence ({s.launches.length})</summary>
+        {s.launches.map(l => <p key={l.runId} className="text-xs">{l.runId}: runtime {l.entrypoint ?? 'unknown'}, trigger {l.trigger ?? 'unknown'}, channel {l.channel ?? 'unknown'}, persona origin {l.personaOrigin ?? 'unknown'}</p>)}
+      </details> : null}
       <details className="my-3 rounded-lg border border-[var(--rule)] p-3"><summary className="cursor-pointer text-sm font-medium">Session metadata</summary>
       <SessionContent text={JSON.stringify(s, null, 2)} literal />
       <div className="text-xs text-[var(--ink-dim)]">
@@ -183,6 +223,8 @@ export default function UsageSession() {
       <div className="text-xs text-[var(--ink-dim)]">
         {s.calls} calls · in {formatTokens(s.input)} · cache w {formatTokens(s.cache_write)} · cache r {formatTokens(s.cache_read)} · out {formatTokens(s.output)}
         {s.reasoning ? ` · reasoning ${formatTokens(s.reasoning)}` : ''} · {s.tool_calls} tool calls{s.errors ? ` (${s.errors} failed)` : ''}
+        {s.unknown_outcomes ? ` · ${s.unknown_outcomes} tool outcomes unknown` : ''}
+        {s.run_failures ? ` · ${s.run_failures} recorded run failures (separate from tools)` : ''}
         {s.subagents ? ` · ${s.subagents} subagents` : ''}
         {s.harness !== 'claude-code' && s.cost_usd != null && ` · ${Number(s.cost_usd).toFixed(2)} USD`}
       </div>

@@ -1,3 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { settings } from '../../settings.js';
+import { getBoard } from './service/index.js';
+import { writeIfChanged } from './cli-shared.js';
+import { fetchCards, mayOverwrite, renderRoadmap, RoadmapError } from '../../roadmap.js';
 import { exitFlushed } from '../../cli-exit.js';
 import { config } from '../../config.js';
 import { pool } from '../../db.js';
@@ -16,6 +22,7 @@ export { runAreasCli } from './cli-areas.js';
 const USAGE = `cli-projects: the projects of the tracker (Postgres). A project is an outcome with an end, inside
 one area. Every agent and the company-report skill use this. Areas themselves: see cli-areas.
 
+  roadmap [path]                                    cards and projects by roadmap.themes; never replaces a handwritten file
   report [--format markdown|standup|telegram|json]   the company report (default: telegram); same as cli-areas report
   list [--area A] [--stage S] [--due-before D] [--archived]   projects across areas, one line each
   add <area>/<project> --outcome "what done means" [--title T] [fields]
@@ -55,6 +62,19 @@ async function projectsCli(argv: string[], io: CliIo): Promise<number> {
   const vault = io.vaultRoot ?? config.vaultRoot;
 
   switch (cmd) {
+    case 'roadmap': {
+      const rs = settings(vault).roadmap;
+      const path = pos[0] ?? join(vault, rs.file);
+      const [cards, board] = await Promise.all([fetchCards(rs), getBoard(vault)]);
+      if (!mayOverwrite(path)) throw new RoadmapError(`${path} exists and is not a generated roadmap`);
+      const { text, counts } = renderRoadmap(cards, board, rs);
+      const stable = (t: string): string => t.replace(/^\*\*Generated at:\*\* \S+/m, '');
+      let same = false;
+      try { same = stable(readFileSync(path, 'utf8')) === stable(text); } catch { /* missing */ }
+      if (!same) writeIfChanged(path, text);
+      io.out(`${same ? 'unchanged' : 'wrote'} ${path}: ${counts.map((c) => `${c.id} ${c.projects} projects, ${c.cards} tickets`).join('; ') || 'no themes'}`);
+      return 0;
+    }
     // The stand-up and every skill call `cli-projects report`, and it only reads: it stays for good.
     case 'report':
       return runAreasCli(['report', ...rest], io);

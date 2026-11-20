@@ -25,12 +25,18 @@ Every feature is wired in one place, a manifest: a core feature at `app/server/s
 | [`tv`](#tv) | `/tv` | A player for video episodes kept in your vault |
 | [`voice`](#voice) | (a Listen button) | Read a note aloud through a local speech server |
 | [`livestream`](#livestream) | (a public JSON) | Stream stats for YouTube, Twitch and Kick |
+| [`localai`](#localai) | (a section on `/usage`) | Calls your own model host served: tokens, speed and energy by model and caller |
 | [`ring`](#ring) | `/ring` | Data from a wearable ring, pushed in by a client |
 | [`fund`](#fund) | `/fund` | A read-only view of an agentic fund: wallet balances, transactions, pending approvals, committee and run health |
 | [`social`](#social) | (connect + queue, no page UI yet) | Schedule and publish posts with images to LinkedIn (more platforms planned) |
 | [`chat`](#chat) | (a button in the header) | Ask your notes: conversations with an assistant that answers from retrieved passages, with citations, on the provider and model you pick |
 | [`desk`](#desk) | `/desk` | Hiring desk operator console under Work; requires production service wiring for operations |
 | [`observatory`](#observatory) | API only | Authorized evidence windows, coverage and deterministic replay |
+| [`skills`](#skills) | `/skills` | Skill library, agent assignments, machine deployments and reviewed changes |
+
+## skills
+
+Off by default. Enable `skills` through the vault addons list or `MODULES` for the **Skills** page under Work, `/api/skills`, the device-token acknowledgement route and `secondbrain skills` (`cli-skills`). With no policy file every runtime keeps its own skill folders, as before; the page is read-only inventory until the Git-tracked policy says `mode: managed`. No timers. Tables: `skill_view_acks`, `skill_ack_log` (machine acknowledgements) and `skill_policy_approvals` (exact owner approval receipts, no editable policy). Pack and sync require online HTTPS device-token verification against a clean committed approved policy. See [Skills](skills.md).
 
 ## observatory
 
@@ -233,7 +239,7 @@ A ledger of Claude Code, Codex, zen-agent and Hermes usage: tokens per run, whic
 |---|---|
 | Page | `/usage`, with filters in the URL |
 | Settings | `usage.subscriptions`, `usage.credits` and `usage.sections` in `secondbrain.json`; [provider configuration](configuration.md#usage-page-providers-and-sections) |
-| CLI | `secondbrain usage-sync`, `usage-push`, `usage-backfill`, `credits`, `ingest-device`, `ledger` |
+| CLI | `secondbrain usage-sync`, `usage-push`, `usage-backfill`, `session-restart`, `credits`, `ingest-device`, `ledger` |
 | Timers (server) | `usage-sync`, `credits-sync`, and the usage importer |
 | Summaries | The Summaries tab, `summarize` and the summarize timer are the `summaries` module ([summaries.md](summaries.md)) |
 
@@ -247,6 +253,10 @@ A ledger of Claude Code, Codex, zen-agent and Hermes usage: tokens per run, whic
 | zen-agent | the trace's `persona`, when no dispatcher labelled the run |
 
 A subagent (and a Hermes compression continuation) takes its parent's bot. Nothing is guessed from a folder name or a title; a session with none of these stays unattributed. Owner chats appear in the agent filter, the sessions list and the by-bot totals; the wake panel (`/org-wakes`), the wake counts and the bots' daily token cap (`ORG_DISPATCH_DAILY_TOKENS`) count dispatcher wakes only. A zen-agent trace with no dispatcher labels is a chat: its run carries no agent, and when it comes from a laptop the server stores no run for it. `usage-push` sends a laptop's zen-agent traces (`ZEN_SESSIONS_DIR`, gitignored in a vault, so this is the only way they reach the server), each one whole when it changes, with the same cursor rules as Codex. For sessions imported before this, run `secondbrain usage-backfill --bots` once on the server; it is safe to run again.
+
+**Restart an archived session.** Open any session under `/usage?view=sessions`, choose a harness, provider, model and optional roster persona, then copy the generated `secondbrain session-restart` command to the machine where the new session should run. The CLI asks for a new request, reads the stored conversation, starts a new local process, and leaves the source untouched. For example: `secondbrain session-restart laptop old-id --source codex --harness zen-agent --provider openrouter --model example/model --persona builder`. A named persona is read from that machine's vault roster. Claude Code accepts Anthropic models only; Codex needs the selected `model_provider` configured; Hermes and zen-agent need their selected provider configured. A restart carries user and assistant text plus historical tool records; thinking and system messages are excluded. Native tool state and the original harness's session ID cannot be transferred. Sessions with no archived text or more than 50,000 records or 2 million characters return an explicit error. The destination model must have enough context for the assembled prompt.
+
+Machines without database access can use `--api http://127.0.0.1:5123 --token-env KNOWLEDGE_TOKEN` through an SSH tunnel to the server's loopback port. The token stays in the environment and the portable read endpoint uses the same loopback-only knowledge gate as vault search. The browser session can also read `GET /api/usage/agent-sessions/:host/:id/portable?source=...` under its normal login.
 
 Subscription quotas and prepaid balances are shown only for configured providers. Codex quota windows come from its subscription-authenticated CLI app-server, including five-hour and weekly limits when reported by the account. Header quota meters are consolidated here. Missing CLI/login or a failed refresh is visible in the provider panel; there is no API billing fallback.
 
@@ -291,6 +301,20 @@ A poller that checks your channels every minute and writes a public summary JSON
 | Settings | `livestream.youtube`, `.twitch`, `.kick` in `secondbrain.json` |
 | Timers (server) | the minute poller |
 | Skill | `livestream-x` (adds an X stream by link) |
+
+## localai
+
+Usage for models you run yourself. A home model host (for example a Mac running Ollama and a speech server) puts a logging gateway in front of its model ports; the gateway stores every call with its token counts, timings, energy and full text, and serves the rows at `GET /api/export?table=<t>&after=<seq>&limit=<n>` in change order. The server pulls them every 5 minutes into `local_ai_runs`, `local_ai_texts`, `local_ai_run_texts`, `local_models` and `local_model_loads`, one cursor per table, and `/usage` shows a "Local models" section: tokens over time by caller, per-model calls, tokens, tok/s and watt-hours, per-caller totals and the latest calls. Clients name themselves with an `X-Argo-Caller: <agent>/<role>` header.
+
+| | |
+|---|---|
+| Settings | `LOCAL_AI_EXPORT_URL` (the gateway's web base URL), `LOCAL_AI_HOST` (a `usage_hosts` slug; register it first) |
+| API | `/api/local-ai/summary`, `/api/local-ai/runs`, `/api/local-ai/runs/:host/:id` (one call with its texts) |
+| CLI | `secondbrain local-ai-pull` (the server's timer runs it) |
+| Timers (server) | `local-ai-pull` every 5 minutes |
+| Privacy | The full prompt and response text is copied to the server. Caller IP, PID and command line stay on the host |
+
+The host being off is normal: each table records the error on its cursor, `/usage` shows "last try failed", and the next run picks up where the cursor stopped.
 
 ## ring
 
@@ -341,13 +365,13 @@ A standard LinkedIn app gets a 60-day access token and **no refresh token** (Lin
 | | |
 |---|---|
 | API | `GET/DELETE /api/social/accounts`, `GET /api/social/accounts/:provider/connect` + `/callback`, `GET/POST/DELETE /api/social/posts`, `POST /api/social/posts/:id/approve`, public `GET /api/social/media/:token/:filename` |
-| CLI | `cli-social` (on the app user's PATH): no command = one pass (publish due posts, check on posts handed to Buffer, then the reauth check); `accounts`, `connect-buffer`, `posts [--status S]`, `queue --body-file F [--image P --alt T]... | [--video P] [--account ID or network] [--at ISO] [--draft] [--option k=v]... [--options-file F]`, `approve ID [--at ISO]`, `cancel ID` |
+| CLI | `cli-social` (on the app user's PATH): no command = one pass (publish due posts, check on posts handed to Buffer, then the reauth check); `accounts`, `connect-buffer`, `posts [--status S]`, `queue --body-file F [--image P --alt T]... | [--video P] [--account ID or network] [--at ISO] [--draft] [--option k=v]... [--options-file F]`, `approve ID [--at ISO]`, `cancel ID`, `move ID... --account ID or network` |
 | Settings | `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `SOCIAL_REDIRECT_BASE_URL`, `SOCIAL_TOKEN_ENC_KEY`, `BUFFER_API_KEY`, `SOCIAL_MEDIA_BASE_URL`, `SOCIAL_X_MAX_CHARS` |
 | Timers (server) | the minute publisher/reauth-check (`secondbrain-social`) |
 | Design | `Projects/secondbrain-app/social-linkedin-plan.md` and `social-buffer-plan.md` in the vault |
 | OAuth callback | Served before the login check (the session cookie is SameSite=Strict, so LinkedIn's redirect arrives without it); the one-time `state` from a logged-in `/connect` guards it |
 
-**Setting up Buffer.** Connect each account in Buffer once (the free plan has 3 channels and a lifetime limit on new connections, so don't connect test accounts). Instagram must be a Business or Creator account for automatic publishing. Put `BUFFER_API_KEY` in the server's env, then run `cli-social connect-buffer`: it adds one account per Instagram, YouTube and X channel and skips the rest.
+**Setting up Buffer.** Connect each account in Buffer once (the free plan has 3 channels and a lifetime limit on new connections, so don't connect test accounts). Instagram must be a Business or Creator account for automatic publishing. Put `BUFFER_API_KEY` in the server's env, then run `cli-social connect-buffer`: it adds one account per Instagram, YouTube and X channel and skips the rest. **Swapping a channel** (say, Shorts to another YouTube channel): disconnect the old one in Buffer, connect the new one, then run `connect-buffer` again. The old account is marked disconnected here, and the command names any drafts or queued posts still on it. Re-point those with `cli-social move <ids> --account youtube`; their time, text and video stay. Until then they fail when they come due.
 
 Instagram metrics can also use the social addon's authenticated [Unified Login connect page](social-metrics.md#unified-login) at `/socials/ig/auth`. It is experimental, accepts only verified expiring Facebook USER tokens for Page-linked assets, and requires private Facebook env configuration. The existing map timer collects its typed credentials; publishing providers are independent.
 
@@ -441,3 +465,20 @@ secrets embedded in prose. The collector never reads `.env` or authentication
 files. Server-local `secondbrain usage-sync` also discovers the same Codex home.
 
 The Running now tab lists all machines with observations in the last three minutes. The collector and server importer run every 60 seconds. Installing the collector preserves and wraps an existing Claude command status line to record quota observations; disable restores it if it has not been edited since. Unchanged quota readings refresh at least once per minute while Claude emits status updates.
+
+### Trusted launch and task provenance
+
+Usage task links now accept trusted launches and validated historical launch envelopes,
+independently of dispatcher wakes. Producers should use the versioned
+[launch contract](usage-provenance.md). Runtime entrypoint, outer trigger and original
+channel stay separate. Ticket cells link only verified associations; missing producer
+evidence is reported explicitly. A scoped historical replay defaults to dry-run:
+
+```bash
+secondbrain usage-backfill --provenance --sessions=101,102
+secondbrain usage-backfill --provenance --sessions=101,102 --apply
+```
+
+The replay writes only task associations. It never creates wakes or rewrites messages,
+token calls, counters or token identities. Unknown persona evidence stays unknown even
+if that name joins the roster later. Existing bot labels remain supported.

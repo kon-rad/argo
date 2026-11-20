@@ -51,7 +51,13 @@ function readSlice(path: string, offset: number, max: number): Buffer {
 export function collectClaude(ledger: Ledger, dir: string, provider: string, maxBytesPerFile = 8 * 1024 * 1024): CollectCounts {
   const c = emptyCounts();
   if (!existsSync(dir)) return c;
-  for (const path of walkFiles(dir).filter((p) => p.endsWith('.jsonl')).sort()) {
+  const started = Date.now();
+  let consumed = 0;
+  const files = walkFiles(dir).filter(p => p.endsWith('.jsonl')).sort();
+  const last = ledger.meta('claude_last_path');
+  const ordered = [...files.filter(p => !last || p > last), ...files.filter(p => last && p <= last)];
+  for (const path of ordered) {
+    if (Date.now() - started >= 30_000 || consumed >= 20_000_000) break;
     try {
       const size = statSync(path).size;
       if (!size) continue;
@@ -65,6 +71,7 @@ export function collectClaude(ledger: Ledger, dir: string, provider: string, max
       const buf = readSlice(path, offset, maxBytesPerFile);
       const { records, consumedBytes, lines } = splitJsonLines(buf);
       if (!consumedBytes) continue; // only a partial line so far
+      consumed += consumedBytes;
       const ids = transcriptIds(path);
       const sid = ids.sessionExternalId;
       const chunk = parseClaudeJsonl(buf.subarray(0, consumedBytes), startLine);
@@ -76,10 +83,10 @@ export function collectClaude(ledger: Ledger, dir: string, provider: string, max
           if (ledger.put('session', skey, {
             source: 'claude-code', externalId: sid, parentExternalId: ids.parentSid, project: ids.project,
             title: chunk.title ?? before?.title ?? null, model: chunk.model ?? before?.model ?? null, provider,
-          }, { source: 'claude-code', sessionKey: skey })) c.sessions++;
+          }, { path: dir, source: 'claude-code', sessionKey: skey })) c.sessions++;
           for (const m of chunk.messages) {
             const data = { ...m, ts: iso(m.ts), sessionExternalId: sid, isSidechain: ids.parentSid ? true : m.isSidechain };
-            if (ledger.put('message', `${skey}|${m.externalId}`, data, { source: 'claude-code', sessionKey: skey, ts: data.ts })) c.messages++;
+            if (ledger.put('message', `${skey}|${m.externalId}`, data, { path: dir, source: 'claude-code', sessionKey: skey, ts: data.ts })) c.messages++;
           }
         }
         for (const call of calls) {
@@ -89,10 +96,11 @@ export function collectClaude(ledger: Ledger, dir: string, provider: string, max
           // Claude Code repeats a response's usage on every content block: keep the fullest, timed at the first.
           if (before && before.outputTokens > call.outputTokens) continue;
           const data = { ...noHost(call), ts: before && before.ts < ts ? before.ts : ts, provider };
-          if (ledger.put('call', key, data, { source: 'claude-code', sessionKey: `claude-code|${sid}`, ts: data.ts })) c.calls++;
+          if (ledger.put('call', key, data, { path: dir, source: 'claude-code', sessionKey: `claude-code|${sid}`, ts: data.ts })) c.calls++;
         }
         ledger.setCursor(name, { fingerprint, offset: offset + consumedBytes, lines: startLine + lines } satisfies ClaudeCursor);
       });
+      ledger.setMeta('claude_last_path', path);
       c.files++;
     } catch (err) {
       c.errors.push(`claude ${path}: ${(err as Error).message}`);
@@ -126,7 +134,7 @@ export function collectHermesCalls(ledger: Ledger, dir: string, source: string, 
         for (const call of calls) {
           const data = { ...noHost(call), ts: iso(call.ts)! };
           const skey = `${source}|${call.sessionExternalId}`;
-          if (ledger.put('call', `${source}|${call.callId}`, data, { source, sessionKey: skey, ts: data.ts })) c.calls++;
+          if (ledger.put('call', `${source}|${call.callId}`, data, { path: dir, source, sessionKey: skey, ts: data.ts })) c.calls++;
         }
         ledger.setCursor(name, sig);
       });
@@ -175,18 +183,18 @@ export async function collectHermes(ledger: Ledger, homes: Array<{ dir: string; 
             if (copies.has(s.externalId)) continue;
             const skey = `${source}|${s.externalId}`;
             const data = { ...noHost(s), source, startedAt: iso(s.startedAt), endedAt: iso(s.endedAt), meta: { ...s.meta, ...meta } };
-            writes.push(() => { if (ledger.put('session', skey, data, { source, sessionKey: skey, ts: data.startedAt })) c.sessions++; });
+            writes.push(() => { if (ledger.put('session', skey, data, { path: h.dir, source, sessionKey: skey, ts: data.startedAt })) c.sessions++; });
           }
           for (const m of messages) {
             if (copies.has(m.sessionExternalId)) continue;
             const skey = `${source}|${m.sessionExternalId}`;
             const data = { ...m, ts: iso(m.ts) };
-            writes.push(() => { if (ledger.put('message', `${skey}|${m.externalId}`, data, { source, sessionKey: skey, ts: data.ts })) c.messages++; });
+            writes.push(() => { if (ledger.put('message', `${skey}|${m.externalId}`, data, { path: h.dir, source, sessionKey: skey, ts: data.ts })) c.messages++; });
           }
           for (const k of counters) {
             if (copies.has(k.sessionId)) continue;
             const data = { ...noHost(k), startedAt: iso(k.startedAt), endedAt: iso(k.endedAt) };
-            writes.push(() => { if (ledger.put('counter', `${profile}|${k.sessionId}`, data, { source, sessionKey: `${source}|${k.sessionId}`, ts: data.endedAt })) c.counters++; });
+            writes.push(() => { if (ledger.put('counter', `${profile}|${k.sessionId}`, data, { path: h.dir, source, sessionKey: `${source}|${k.sessionId}`, ts: data.endedAt })) c.counters++; });
           }
           for (let i = 0; i < writes.length; i += HERMES_TX_ROWS) ledger.tx(() => writes.slice(i, i + HERMES_TX_ROWS).forEach((w) => w()));
           ledger.setCursor(name, sig);
