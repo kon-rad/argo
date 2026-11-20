@@ -1,3 +1,5 @@
+import { thinkingDetail } from './adapters.js';
+import { redactor } from '../../archive/redact.js';
 import { config } from '../../config.js';
 import { Router } from 'express';
 import { z } from 'zod';
@@ -33,9 +35,14 @@ export function observatoryRouter(modules: ReadonlySet<string>): Router {
   router.get('/events/:id', wrap(async (req, res) => {
     const q = parseOr400(z.object({ export: z.uuid() }).strict(), req.query);
     const event = exports.event(owner(res), q.export, String(req.params.id));
-    await readSnapshot(db => authorizeDetail(db, event, modules));
-    // Return a verified source pointer and pinned metadata. No hidden thinking or transcript text.
-    res.json({ event, detail: { source: event.source, availability: event.kind === 'thinking' ? 'availability-only' : 'source-pointer', content: 'not-included' } });
+    const thinking = await readSnapshot(async db => {
+      await authorizeDetail(db, event, modules);
+      if (event.kind !== 'thinking' || event.source.table !== 'archive_messages') return undefined;
+      const result = await db.query<{ raw: unknown }>(`SELECT CASE WHEN octet_length(raw::text) <= 1048576 THEN raw ELSE NULL END AS raw FROM archive_messages WHERE id = $1`, [event.source.id]);
+      const detail = thinkingDetail(result.rows[0]?.raw);
+      return detail.availability === 'authorized-summary' ? { ...detail, summary: redactor().text(detail.summary) } : detail;
+    });
+    res.json({ event, detail: { source: event.source, availability: 'source-pointer', content: 'not-included', ...(thinking ? { thinking } : {}) } });
   }));
   return router;
 }
