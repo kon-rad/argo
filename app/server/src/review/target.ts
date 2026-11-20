@@ -22,12 +22,15 @@ export async function targetMain(args: string[]): Promise<void> {
   const run = async (argv:string[]) => command(argv[0]!,[...argv.slice(1),revision!,key!],cfg.cwd,childEnv(cfg.home),540_000);
   const health = async () => Health.parse(JSON.parse(await run(cfg.healthArgv)));
   const receiptFile = join(cfg.stateDir,`${key}.json`);
+  const syncDirectory = async () => {
+    const directory=await open(cfg.stateDir,'r');try{await directory.sync();}finally{await directory.close();}
+  };
   const durable = async (path:string,data:unknown,exclusive=false) => {
     const temp=exclusive?path:`${path}.tmp`;
     const handle=await open(temp,exclusive?'wx':'w',0o600);
     try {await handle.writeFile(JSON.stringify(data));await handle.sync();}finally{await handle.close();}
     if(!exclusive) await rename(temp,path);
-    const directory=await open(cfg.stateDir,'r');try{await directory.sync();}finally{await directory.close();}
+    await syncDirectory();
   };
   const write = (data:unknown) => durable(receiptFile,data);
   try {
@@ -46,9 +49,14 @@ export async function targetMain(args: string[]): Promise<void> {
     }
     const result = await health();
     if (result.revision!==revision || !result.healthy) throw new Error('Target health does not attest exact revision; effect remains unresolved');
-    if (previous?.state==='inflight' || action==='deploy') {
+    // A crash can leave only the barrier, or a healthy receipt with its barrier.
+    // Exact health reconciles either state, without replaying deployment.
+    if (previous?.state==='inflight' || action==='deploy' || inflight) {
       await write({revision,state:'healthy'});
-      if (inflight || action==='deploy') await rm(barrier,{force:true});
+      if (inflight || action==='deploy') {
+        await rm(barrier,{force:true});
+        await syncDirectory();
+      }
     }
     console.log(JSON.stringify({revision,healthy:true,key}));
   } finally { await rm(lock,{recursive:true,force:true}); }
