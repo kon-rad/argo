@@ -8,6 +8,8 @@ export interface EvidenceEvent {
   actor: { kind: 'human' | 'agent' | 'automation' | 'unknown'; sender: string | null; channel: string | null; evidence: string };
   source: { table: SourceTable; id: string; part: string }; precision: 'millisecond' | 'unknown'; confidence: 'recorded';
   parent?: string; occurrence?: string; tool?: string; outcome?: 'success' | 'error' | 'unknown';
+  /** Explicit structured path only; operation attempt, never proof of changed bytes. */
+  target?: { path: string; operation: 'read' | 'write' | 'edit' };
   ticket?: string; status?: string; thinking?: 'available-in-source';
   usage?: { model: string; input: number; output: number; reasoning: number };
 }

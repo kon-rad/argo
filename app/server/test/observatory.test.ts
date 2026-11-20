@@ -29,6 +29,15 @@ describe('observatory replay', () => {
   });
 });
 describe('archive evidence adapter', () => {
+  it('exposes bounded structured path attempts without arguments, shell guesses or file contents', () => {
+    const row = (id: number, tool: string, args: unknown) => ({ id, session_id: 1, seq: id, ts: new Date(id), role: 'assistant', kind: 'assistant', raw: { role: 'assistant', session_id: 's', tool_calls: [{ id: String(id), function: { name: tool, arguments: JSON.stringify(args) } }] }, text: '', host: 'lab', source: 'hermes', external_id: 's', harness: 'hermes', observed_at: null });
+    const events = archiveEvents([row(1, 'read_file', { path: 'src/demo.ts' }), row(2, 'Write', { file_path: 'src/new.ts', content: 'SECRET_CONTENT' }), row(3, 'Bash', { command: 'cat src/demo.ts', path: 'guessed' })]);
+    expect(events[0]?.target).toEqual({ path: 'src/demo.ts', operation: 'read' });
+    expect(events[1]?.target).toEqual({ path: 'src/new.ts', operation: 'write' });
+    expect(events[2]?.target).toBeUndefined();
+    expect(JSON.stringify(events)).not.toMatch(/SECRET_CONTENT|cat src/);
+  });
+
   it('expands parts, scopes reused IDs by session and occurrence, excludes text and human guesses', () => {
     const row = (id: number, session_id: number, seq: number, raw: unknown, role = 'assistant') => ({ id, session_id, seq, ts: new Date(id * 1000), role, kind: role, raw, text: 'private text', host: 'test-host', source: 'hermes', external_id: String(id), harness: 'hermes', observed_at: null });
     const call = { role: 'assistant', session_id: 's', tool_calls: [{ id: 'reuse', function: { name: 'read', arguments: '{}' } }] };
@@ -70,7 +79,7 @@ describe('boundary, pagination and authorization', () => {
     for (let i = 0; i < 8; i++) cache.put('a', exportFixture());
     expect(() => cache.get('a', token)).toThrow(/expired/);
   });
-  it('does not mount disabled module or advertise a UI', () => {
+  it('does not mount disabled module', () => {
     expect(moduleSet('')).not.toContain('observatory');
     expect(addonRoutes(new Set(), {} as never)).toEqual([]);
     const routes = addonRoutes(new Set(['observatory']), { opts: { modules: new Set(['observatory']) } } as never);
@@ -150,4 +159,25 @@ describe('recorded ordering', () => {
     expect(new Set(events.map(e => e.id)).size).toBe(4);
     expect(() => replay(window(), 100)).toThrow(/outside/);
   });
+});
+
+describe('recorded sender provenance', () => {
+  it('exports explicit archive senders and keeps role-only prompts unknown', () => {
+    const rows = ['human', 'agent', 'unknown'].map((kind, i) => ({ id: i + 1, session_id: 1, seq: i, ts: new Date(10 + i), role: 'user', kind: 'user', raw: { type: 'user', sender: { kind, id: 'fixture-sender', channel: 'fixture' }, message: { content: 'private prompt' } }, text: '', host: 'lab', source: 'claude-code', external_id: 's', harness: 'claude-code', observed_at: null }));
+    expect(archiveEvents(rows).map(e => e.actor.kind)).toEqual(['human', 'agent', 'unknown']);
+  });
+  it('uses org sender kind recorded at insertion, never current roster', async () => {
+    const db = dbFixture(() => ['human', 'agent', null].map((author_kind, id) => ({ id, created_at: new Date(10), author: 'fixture', author_kind, channel_slug: 'fixture', thread_id: null, task_id: null })));
+    const data = await loadWindow(db, { from: 0, to: 100 }, new Set(['org']));
+    expect(data.window.events.map(e => e.actor.kind)).toEqual(['human', 'agent', 'unknown']);
+  });
+});
+
+import { thinkingDetail } from '../src/addons/observatory/adapters.js';
+it('returns existing Codex summary only and distinguishes hidden from unavailable', () => {
+  expect(thinkingDetail({ harness: 'codex', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'Synthetic authorized summary' }], encrypted_content: 'secret' } })).toEqual({ availability: 'authorized-summary', summary: 'Synthetic authorized summary' });
+  expect(thinkingDetail({ harness: 'codex', payload: { type: 'reasoning', encrypted_content: 'secret' } })).toEqual({ availability: 'hidden' });
+  expect(thinkingDetail({ harness: 'codex', payload: { type: 'reasoning', summary: [] } })).toEqual({ availability: 'unavailable' });
+  expect(thinkingDetail({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'secret' }] } })).toEqual({ availability: 'unavailable' });
+  expect(thinkingDetail({ message: { content: [{ type: 'redacted_thinking' }] } })).toEqual({ availability: 'hidden' });
 });

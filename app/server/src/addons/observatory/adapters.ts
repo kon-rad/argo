@@ -10,6 +10,42 @@ export function envelope(table: EvidenceEvent['source']['table'], id: string, at
     source: { table, id, part: '0' }, precision: 'unknown', confidence: 'recorded',
     actor: { kind: 'unknown', sender: null, channel: null, evidence: 'unrecorded' } };
 }
+const object = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
+/** Explicit source metadata only. Roles, handles and channel names cannot establish origin. */
+export function recordedSender(raw: unknown): EvidenceEvent['actor'] {
+  const sender = object(object(raw).sender);
+  const kind = sender.kind === 'human' || sender.kind === 'agent' || sender.kind === 'automation' ? sender.kind : 'unknown';
+  return { kind, sender: typeof sender.id === 'string' ? sender.id.slice(0, 256) : null,
+    channel: typeof sender.channel === 'string' ? sender.channel.slice(0, 256) : null,
+    evidence: kind === 'unknown' ? 'unrecorded-sender-kind' : 'archive-recorded-sender' };
+}
+export type ThinkingDetail = { availability: 'authorized-summary'; summary: string } | { availability: 'hidden' | 'unavailable' };
+/** Codex explicitly separates public summary_text from encrypted/internal reasoning. Never return thinking bodies. */
+export function thinkingDetail(raw: unknown): ThinkingDetail {
+  const r = object(raw), p = object(r.payload);
+  if (r.harness === 'codex' && p.type === 'reasoning') {
+    const summary = Array.isArray(p.summary) ? p.summary.flatMap(b => { const block = object(b); return block.type === 'summary_text' && typeof block.text === 'string' ? [block.text] : []; }).join('\n').slice(0, 20000) : '';
+    if (summary.trim()) return { availability: 'authorized-summary', summary };
+    if (p.encrypted_content) return { availability: 'hidden' };
+    return { availability: 'unavailable' };
+  }
+  const content = object(r.message).content;
+  if (Array.isArray(content) && content.some(b => object(b).type === 'redacted_thinking' || object(b).redacted === true)) return { availability: 'hidden' };
+  // A raw reasoning body is not a summary the workspace may display.
+  return { availability: 'unavailable' };
+}
+/** Retain explicit file targets, never argument bodies or guessed shell targets. */
+function fileTarget(tool: string | null, text: string): EvidenceEvent['target'] {
+  const operations: Record<string, 'read' | 'write' | 'edit'> = { read: 'read', read_file: 'read', Read: 'read', write_file: 'write', Write: 'write', edit_file: 'edit', Edit: 'edit' };
+  const operation = tool && Object.hasOwn(operations, tool) ? operations[tool] : undefined;
+  if (!operation || text.length > 1000000) return undefined;
+  try {
+    const input = JSON.parse(text) as Record<string, unknown>;
+    const path = input.file_path ?? input.path;
+    if (typeof path === 'string' && path.length > 0 && path.length <= 1024 && !/[\x00-\x1f]/.test(path)) return { path, operation };
+  } catch { /* Non-JSON input is not structured path evidence. */ }
+  return undefined;
+}
 /** Pair only within a numeric archive session, in recorded sequence order. A repeated ID starts a new occurrence. */
 export function archiveEvents(rows: ArchiveRow[]): EvidenceEvent[] {
   const pending = new Map<string, EvidenceEvent[]>();
@@ -21,8 +57,10 @@ export function archiveEvents(rows: ArchiveRow[]): EvidenceEvent[] {
       e.context = { host: row.host, runtime: row.harness, source: row.source, externalSession: row.external_id };
       // Archive updated_at is session freshness, not observation time for this particular message.
       if (['response', 'thinking', 'tool_call', 'tool_result'].includes(part.step)) e.actor = { kind: 'agent', sender: null, channel: null, evidence: 'archive-step' };
+      if (part.step === 'prompt') e.actor = recordedSender(row.raw);
       if (part.step === 'thinking') e.thinking = 'available-in-source';
       if (part.toolName) e.tool = part.toolName;
+      if (part.step === 'tool_call') e.target = fileTarget(part.toolName, part.text);
       const scope = `${row.session_id}:${part.toolCallId}`;
       if (part.step === 'tool_call') { e.occurrence = e.id; if (part.toolCallId) pending.set(scope, [...(pending.get(scope) ?? []), e]); }
       if (part.step === 'tool_result') {
