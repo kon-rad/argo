@@ -19,6 +19,11 @@ it('pins layout, preserves renderer on seek, pauses when idle and destroys on un
   const view = render(<Workspace {...props} />);
   expect(graph.cooldownTicks).toHaveBeenCalledWith(0);
   expect(graph.warmupTicks).toHaveBeenCalledWith(0);
+  const lookAt = graph.cameraPosition!.mock.calls[0]![1] as { x: number; y: number; z: number };
+  expect(lookAt.x).toBeGreaterThanOrEqual(Math.min(...first.nodes.map(n => n.fx)));
+  expect(lookAt.x).toBeLessThanOrEqual(Math.max(...first.nodes.map(n => n.fx)));
+  expect(lookAt.z).toBeGreaterThanOrEqual(Math.min(...first.nodes.map(n => n.fz)));
+  expect(lookAt.z).toBeLessThanOrEqual(Math.max(...first.nodes.map(n => n.fz)));
   vi.advanceTimersByTime(1200);
   expect(graph.pauseAnimation).toHaveBeenCalled();
   view.rerender(<Workspace {...props} nodes={second.nodes} links={second.links} />);

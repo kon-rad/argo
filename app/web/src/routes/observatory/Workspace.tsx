@@ -25,7 +25,12 @@ export default function Workspace({ nodes, links, onSelect }: { nodes: SceneNode
           resources.current.push(mesh); return mesh;
         }).linkColor(l => (l as SceneLink).result ? '#22d3ee' : '#64748b').linkDirectionalArrowLength(l => (l as SceneLink).result ? 4 : 0);
       graph.current = g;
-      g.cameraPosition({ x: 0, y: 650, z: 1200 });
+      // Frame the first evidenced scene once; scrubbing preserves the viewer's camera.
+      const axes = (key: 'fx' | 'fy' | 'fz') => nodes.length ? [Math.min(...nodes.map(n => n[key])), Math.max(...nodes.map(n => n[key]))] : [0, 0];
+      const [minX, maxX] = axes('fx'), [minY, maxY] = axes('fy'), [minZ, maxZ] = axes('fz');
+      const center = { x: (minX! + maxX!) / 2, y: (minY! + maxY!) / 2, z: (minZ! + maxZ!) / 2 };
+      const span = Math.max(180, maxX! - minX!, maxY! - minY!, maxZ! - minZ!);
+      g.cameraPosition({ x: center.x, y: center.y + span * 1.2, z: center.z + span * 1.8 }, center);
       let timer: ReturnType<typeof setTimeout>;
       wake.current = () => { if (document.hidden) return; g.resumeAnimation(); clearTimeout(timer); timer = setTimeout(() => g.pauseAnimation(), 1200); };
       const interaction = () => wake.current();
