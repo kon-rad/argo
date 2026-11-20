@@ -173,3 +173,16 @@ it('projects only bounded commit request bindings and preserves invalid capture 
   expect(events[1]?.parent).toBeUndefined();
   expect(events[1]?.writeEvidence).toBeUndefined();
 });
+
+it('preserves the Hermes protocol with explicit IDs and an omitted optional tool_name', () => {
+  const call = { role: 'assistant', session_id: 's', tool_calls: JSON.stringify([{ id: 'hermes-call', function: { name: 'write_file', arguments: JSON.stringify({ path: 'notes/demo.md' }) } }]) };
+  const result = { role: 'tool', session_id: 's', tool_call_id: 'hermes-call', content: 'written' };
+  const rows = (output: unknown, harness = 'hermes') => [{ ...row(1, call), harness, source: harness }, { ...row(2, output), harness, source: harness }];
+  const events = archiveEvents(rows(result));
+  expect(events[1]?.parent).toBe(events[0]?.id);
+  expect(events[1]?.target).toEqual(events[0]?.target);
+  expect(events[1]?.change).toBeUndefined();
+  expect(events[1]?.writeEvidence).toBeUndefined(); // Plain content does not prove success.
+  expect(archiveEvents(rows({ ...result, tool_name: 'edit_file' }))[1]?.parent).toBeUndefined();
+  expect(archiveEvents(rows(result, 'unknown'))[1]?.parent).toBeUndefined();
+});

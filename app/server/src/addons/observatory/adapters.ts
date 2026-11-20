@@ -79,7 +79,8 @@ function knownNamelessResult(row: ArchiveRow): boolean {
   const raw = object(row.raw);
   return (row.harness === 'codex' && raw.harness === 'codex' &&
     ['function_call_output', 'custom_tool_call_output'].includes(String(object(raw.payload).type))) ||
-    (row.harness === 'claude-code' && raw.type === 'user');
+    (row.harness === 'claude-code' && raw.type === 'user') ||
+    (row.harness === 'hermes' && raw.role === 'tool' && typeof raw.tool_call_id === 'string' && raw.tool_call_id.length > 0);
 }
 /** Compare the exact argument to capture identity, never basename/suffix alone. */
 function capturedTarget(call: EvidenceEvent, change: NonNullable<EvidenceEvent['change']>, request?: InspectChangeRequest): boolean {
@@ -117,7 +118,7 @@ export function archiveEvents(rows: ArchiveRow[], root?: string): EvidenceEvent[
         const candidate = candidates?.length === 1 ? candidates[0] : undefined;
         const captured = capturedChange(row.raw);
         const hasCapture = captureMetadataPresent(row.raw);
-        // Codex and Claude omit result names by protocol; an explicitly contradictory name never pairs.
+        // Codex, Claude and Hermes can omit result names by protocol; an explicitly contradictory name never pairs.
         const toolMatches = candidate && (part.toolName !== null ? candidate.tool === part.toolName : knownNamelessResult(row));
         const call = candidate && toolMatches &&
           (!hasCapture || (captured && capturedTarget(candidate, captured, commitRequests.get(candidate.id)))) ? candidate : undefined;
