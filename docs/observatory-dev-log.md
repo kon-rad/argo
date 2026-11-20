@@ -69,6 +69,13 @@ The browser scenario now contains a deterministic 500-node/1,500-edge renderer b
 
 Local correction verification: `cd app && npm run build` exits 0, with the existing bundle-size warning; `cd app && npx vitest run --project web` reports `41 passed` files and `313 passed` tests; the database-free Observatory config reports `21 passed` tests. `npm run e2e:observatory -w web -- --list` lists two scenarios without rendering. `git diff --check` passes. The public leak script passes with exit 0 over all tracked and new nonignored source files. A whole-directory scan also traversed ignored build/cache artifacts and flagged bundled Three.js and pytest cache data, so it is not reported as a clean whole-directory scan.
 
+
+## Coordinator acceptance after correction
+
+The coordinator executed both rendered Playwright scenarios after the review corrections, not merely test discovery. Native Chrome confirmed ANGLE Metal on Apple M1 Max. The synthetic 500-node/1,500-edge harness sampled 40 synchronous scene updates plus two animation frames and 120 awake frame intervals: p95 33.8 ms and 60.0 requestAnimationFrame fps. The ordinary replay/source-navigation scenario also passed. This supersedes earlier worker-only browser limitations; exact-head receipts remain with the PR handoff.
+
+Dedicated migrated-database fixtures pass all three tests, including insertion-time sender snapshots and historical roster changes. The sender migration's missing Up Migration header was repaired before deployment. All 315 web tests pass, including first-empty-to-active camera framing, explicit refit and standalone human input without a fabricated execution. The engine build passes. Source/detail authorization and hidden/unavailable summary cases remain covered by the correction fixtures. No self-approval, merge, deployment or universal production-history claim is made here.
+
 ## Observatory 5: bounded archive windows
 
 Card `t_07c1c871` adds a rebuildable content-free archive projection through the importer and bounded resumable `archive-steps --observatory` batches. Replay selects window metadata and prior tool context, retaining occurrence pairing and exact boundary provenance without fetching narrative prefixes. Selected raw bytes still have a 4 MiB guard. Missing relevant projection fails 503. See [rollout and limits](observatory.md#observatory-5-projection-and-rollout).

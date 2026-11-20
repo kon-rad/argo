@@ -63,3 +63,15 @@ it('opens later session evidence and uses recorded steps when start is missing',
   }
   expect(activityWindow({ id: 12, host: 'lab', started_at: null, ended_at: null }, [])).toBeNull();
 });
+
+it('renders evidenced human input without inventing an active agent', () => {
+  const time = demoWindow.from + 7000;
+  const human = { ...demoWindow.events.find(e => e.id === 'human')!, at: time, execution: null, ticket: 'recorded-ticket' };
+  const window = { ...demoWindow, events: [human] };
+  const scene = sceneAt(window, time, { origin: 'human' });
+  expect(scene.active).toEqual([]);
+  expect(scene.nodes.some(n => n.id === human.id && n.kind === 'event' && n.origin === 'human')).toBe(true);
+  expect(scene.nodes.some(n => n.kind === 'execution' || n.kind === 'machine')).toBe(false);
+  expect(scene.links).toContainEqual({ source: human.id, target: 'ticket:recorded-ticket' });
+  expect(sceneAt(window, time + 2001, {}).nodes).toEqual([]);
+});
