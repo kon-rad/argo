@@ -30,6 +30,13 @@ it('adds read circles and write triangles beside pinned notes without rebuilding
   const meshes = scene.children[0]!.children as Mesh[];
   expect(meshes.map(m => m.geometry.type)).toEqual(['TorusGeometry', 'ConeGeometry']);
   expect(meshes.map(m => m.position.toArray())).toEqual([[-4, 14, 5], [10, 14, 5]]);
+  for (const notes of [false, true]) {
+    view.rerender(<FullMap {...props} layers={{ ...props.layers, notes }} activity={activity} />);
+    const visible = graph.nodeVisibility!.mock.calls.at(-1)![0] as (node: typeof note) => boolean;
+    expect(visible(note)).toBe(notes);
+    expect(scene.children[0]!.visible).toBe(notes);
+    expect(scene.children[0]!.children).toEqual(meshes);
+  }
   const disposals = meshes.map(m => [vi.spyOn(m.geometry, 'dispose'), vi.spyOn(m.material as MeshBasicMaterial, 'dispose')]);
   view.rerender(<FullMap {...props} activity={[]} />);
   expect(graph.graphData).toHaveBeenCalledTimes(1);

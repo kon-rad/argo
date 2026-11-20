@@ -6,6 +6,7 @@ import MapPage from '../src/routes/Map.js';
 import Observatory from '../src/routes/observatory/Observatory.js';
 import BrainActivity from '../src/routes/observatory/BrainActivity.js';
 import { mapGraph as graph, mapWindow as window } from './fixtures/observatoryMap.js';
+vi.mock('../src/components/map/KioskMap.js', () => ({ default: () => <div>Kiosk scene</div> }));
 vi.mock('../src/routes/observatory/Workspace.js', () => ({ default: () => <div>Workspace canvas mock</div> }));
 const mapProps = vi.hoisted(() => ({ activity: [] as any[] }));
 vi.mock('../src/components/map/FullMap.js', () => ({ FullMap: (props: any) => { mapProps.activity = props.activity; return <button onClick={() => props.onSelect('note:1')}>Pick map note</button>; } }));
@@ -72,4 +73,21 @@ it('bounds rendered operation rows while retaining all overlay evidence', async 
   expect(list.querySelectorAll('li')).toHaveLength(200);
   expect(list.textContent).toContain('archive_messages:4999');
   expect(list.textContent).not.toContain('archive_messages:0 part');
+});
+
+it('renders kiosk immediately while Observatory metadata remains pending', async () => {
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/map?kiosk=1&activity=1']}><MapPage /></MemoryRouter></QueryClientProvider>);
+  await screen.findByText('Kiosk scene');
+  expect(screen.queryByText('Loading map modules…')).toBeNull();
+});
+it('requests detail from the displayed layout and labels preview as current content', async () => {
+  const fetch = setup(false);
+  await screen.findByText('1 notes · 0 areas · 0 projects · layout v7');
+  fetch.mockImplementation(async (input) => new Response(JSON.stringify(String(input).includes('/map/node/')
+    ? { node: graph.nodes[0], neighbours: [], preview: 'Current fixture body' } : graph)));
+  fireEvent.click(screen.getByRole('button', { name: 'Pick map note' }));
+  await screen.findByText('Current fixture body');
+  expect(fetch.mock.calls.some(([url]) => String(url).includes('/map/node/note%3A1?version=7'))).toBe(true);
+  expect(screen.getByText('Current vault content')).toBeTruthy();
 });
