@@ -1,3 +1,4 @@
+-- Up Migration
 -- Capture sender identity at message insertion. Do not backfill historical rows from today's roster.
 ALTER TABLE org_messages ADD COLUMN author_kind text CHECK (author_kind IN ('human', 'agent', 'unknown'));
 CREATE FUNCTION org_messages_record_sender() RETURNS trigger LANGUAGE plpgsql AS $$
