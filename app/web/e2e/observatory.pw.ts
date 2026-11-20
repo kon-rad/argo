@@ -48,6 +48,33 @@ test('synthetic Observatory replay, restoration and recorded-part navigation', a
   await expect(page).toHaveURL(/part=2%3Acall/);
 });
 
+test('synthetic prospective write, commit and verified gate evidence stay distinct under reverse seek', async ({ page }) => {
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    await route.fulfill({ json: path === '/api/auth/me' ? { required: false, authenticated: true }
+      : path === '/api/meta' ? { modules: ['usage', 'observatory'], nav: [], timezone: 'UTC', owner: 'owner', version: 'test' } : {} });
+  });
+  const t = demoWindow.from;
+  await page.goto(`/observatory?demo=1&from=${t}&to=${demoWindow.to}&cursor=${t + 12000}&event=write-call`);
+  await expect(page.getByText(/Outcome at cursor: pending/)).toBeVisible();
+  await expect(page.getByLabel('Captured change evidence')).toHaveCount(0);
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12500));
+  await page.getByRole('button', { name: /tool_result/ }).last().click();
+  await expect(page.getByLabel('Captured change evidence')).toContainText('captured-diff');
+  await expect(page.getByLabel('Captured change evidence')).toContainText('notes/demo.md');
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 14000));
+  await page.getByRole('button', { name: /tool_result/ }).last().click();
+  await expect(page.getByLabel('Captured change evidence')).toContainText('local-object');
+  await expect(page.getByLabel('Captured change evidence')).toContainText('unknown');
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 18500));
+  await page.getByRole('button', { name: /artifact/ }).last().click();
+  await expect(page.getByLabel('PR evidence')).toContainText('merge-verified');
+  await expect(page.getByText('No evidenced active executions at this cursor.')).toBeVisible();
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12000));
+  await expect(page.getByLabel('Captured change evidence')).toHaveCount(0);
+  await expect(page.getByLabel('PR evidence')).toHaveCount(0);
+});
+
 test('records synthetic 500-node/1500-edge seek and frame budgets', async ({ page }, testInfo) => {
   test.setTimeout(120000);
   await page.goto('/e2e/observatory-benchmark.html');

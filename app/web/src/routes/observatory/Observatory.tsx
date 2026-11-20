@@ -59,12 +59,12 @@ export default function Observatory() {
   const selected = scene?.events.find(e => e.id === state.event);
   const execution = scene?.active.find(i => i.id === state.event);
   const selectedNode = scene?.nodes.find(n => n.id === state.event);
-  const showDetail = async () => {
+  const showDetail = async (diff = false) => {
     if (!selected || !snapshot) return;
     if (state.demo === '1') { setDetail({ event: selected, detail: 'Synthetic only, no recorded source exists' }); return; }
     detailRequest.current?.abort();
     const abort = new AbortController(); detailRequest.current = abort;
-    try { const data = await loadDetail(selected.id, snapshot.export, abort.signal); if (!abort.signal.aborted) setDetail(data); } catch (e) { if (!abort.signal.aborted) setDetail({ error: (e as Error).message }); }
+    try { const data = await loadDetail(selected.id, snapshot.export, abort.signal, diff); if (!abort.signal.aborted) setDetail(data); } catch (e) { if (!abort.signal.aborted) setDetail({ error: (e as Error).message }); }
   };
   const seek = (next: number) => { setPlay(0); setLive(false); update({ cursor: next, event: undefined }, true); };
   return <main className="h-full overflow-auto p-4 space-y-3">
@@ -115,10 +115,13 @@ export default function Observatory() {
           <p>Provenance: {selected.actor.evidence} · sender {selected.actor.sender ?? 'unknown'} · channel {selected.actor.channel ?? 'unknown'}</p>
           <p>Source {selected.source.table}:{selected.source.id} part {selected.source.part}</p>
           <p>Outcome at cursor: {scene.tools[selected.occurrence ?? selected.parent ?? ''] ?? 'unknown'}</p>
-          {selected.target && <p>{selected.target.operation} attempt: {selected.target.path}</p>}
+          {selected.target && <p>{selected.target.operation}: {selected.target.path} ({selected.change?.level ?? selected.writeEvidence ?? 'attempt'})</p>}
+          {selected.change && <pre className="whitespace-pre-wrap break-all" aria-label="Captured change evidence">{JSON.stringify({ ...selected.change, diffSource: selected.source }, null, 2)}</pre>}
+          {selected.artifact && <pre className="whitespace-pre-wrap break-all" aria-label="PR evidence">{JSON.stringify(selected.artifact, null, 2)}</pre>}
           {selected.kind === 'thinking' && <p>Thinking: {typeof detail?.detail === 'object' && detail.detail.thinking ? detail.detail.thinking.availability : 'not checked; verify source detail'}. No reasoning reconstructed.</p>}
           {typeof detail?.detail === 'object' && detail.detail.thinking?.availability === 'authorized-summary' && <div aria-label="Authorized thinking summary" className="whitespace-pre-wrap">{detail.detail.thinking.summary}</div>}
           <button className={field} onClick={() => void showDetail()}>Verify source detail</button>
+          {selected.change && <button className={field} onClick={() => void showDetail(true)}>Load captured diff</button>}
           {detail !== undefined && <><pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(detail, null, 2)}</pre>{detail.event && !detail.error && eventLink(selected) && state.demo !== '1' && <Link className="underline" to={eventLink(selected)!}>Open recorded session part</Link>}</>}
         </> : !execution && <p>Select an execution or recorded event. File targets require structured source evidence.</p>}
       </section>

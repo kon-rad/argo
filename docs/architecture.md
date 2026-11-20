@@ -199,3 +199,9 @@ See [collection health](collection-health.md) for compatibility and operator com
 ### Local model usage addon
 
 The optional `localai` addon imports local gateway export pages transactionally with their cursors. Its manifest registers the protected read-only `/api/local-ai` API, five-minute pull timer and `secondbrain local-ai-pull` command. The Usage ledger renders its separate local-call summary only when enabled; cloud usage facts stay independent.
+
+### Prospective file and review evidence
+
+Zen-agent's structured file tools capture one mutation's hashes, bounded replacement diff and opaque repository/worktree identities in runtime result details. Archive ingestion validates those records into `archive_messages.change_evidence` through a forward migration. That metadata is a rebuildable projection of the redacted raw observation; absence remains unknown. Observatory reads it without scanning checkouts or invoking a model. Explicit paired tool results, captured bytes and local commit-object verification are separate levels. Local commit verification does not establish authorship.
+
+PR and gate review evidence comes from append-only `review_attempts`, reconstructed in recorded order without borrowing current job snapshots. The trusted gate records `mergeVerified` only after its existing merge confirmation succeeds. A `merged` patch alone remains a recorded merge. All source/module/session permissions are rechecked for detail and continuation; diff bodies use a separate bounded lazy request. See [Observatory](observatory.md) for limits and coordinator verification.

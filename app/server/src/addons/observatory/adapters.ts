@@ -1,7 +1,9 @@
+import { capturedChange, sameChange } from '../../archive/changeEvidence.js';
 import { expandSteps } from '../../archive/steps.js';
 import { applyEvent, ordered, type BoundaryState, type EvidenceEvent, type ReplayWindow } from '@secondbrain/contracts/observatory';
 export interface ArchiveRow {
   id: number; session_id: number; seq: number; ts: Date | null; role: string; kind: string; raw: unknown; text: string;
+  change_evidence?: unknown;
   host: string; source: string; external_id: string; harness: string; observed_at: Date | null;
 }
 export const instant = (v: Date | string | null): number | null => v === null ? null : new Date(v).getTime();
@@ -60,7 +62,7 @@ export function archiveEvents(rows: ArchiveRow[]): EvidenceEvent[] {
       if (part.step === 'prompt') e.actor = recordedSender(row.raw);
       if (part.step === 'thinking') e.thinking = 'available-in-source';
       if (part.toolName) e.tool = part.toolName;
-      if (part.step === 'tool_call') e.target = fileTarget(part.toolName, part.text);
+      if (part.step === 'tool_call') { e.target = fileTarget(part.toolName, part.text); if (e.target && e.target.operation !== 'read') e.writeEvidence = 'attempt'; }
       const scope = `${row.session_id}:${part.toolCallId}`;
       if (part.step === 'tool_call') { e.occurrence = e.id; if (part.toolCallId) pending.set(scope, [...(pending.get(scope) ?? []), e]); }
       if (part.step === 'tool_result') {
@@ -69,6 +71,14 @@ export function archiveEvents(rows: ArchiveRow[]): EvidenceEvent[] {
         // A result with a contradictory timestamp cannot complete a future call.
         if (call && call.at !== null && e.at !== null && call.at <= e.at) { e.parent = call.id; e.occurrence = call.id; pending.delete(scope); }
         e.outcome = part.isError === true ? 'error' : part.isError === false ? 'success' : 'unknown';
+        const captured = row.change_evidence ? capturedChange(row.raw) : null;
+        // Revalidate against the archived result. A stale or hand-edited projection cannot upgrade evidence.
+        if (call && e.parent && captured && sameChange(captured, row.change_evidence)) e.change = captured;
+        if (call && e.parent && call.target) {
+          e.target = call.target;
+          if (call.target.operation !== 'read' && e.outcome === 'success') e.writeEvidence = 'tool-reported-success';
+        }
+        if (e.change && !e.target) e.target = { path: e.change.path, operation: 'edit' };
       }
       events.push(e);
     });

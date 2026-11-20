@@ -40,6 +40,29 @@ describe('Observatory workspace evidence', () => {
   });
 });
 
+it('seeks the full synthetic human, execution, ticket, write, commit and gate trace in both directions', () => {
+  const t = demoWindow.from;
+  const before = sceneAt(demoWindow, t + 12000, {});
+  expect(before.events.find(e => e.id === 'write-call')?.parent).toBe('human');
+  expect(before.active.find(i => i.id === 'run:lab:resumed')?.ticket).toBe('demo-ticket');
+  expect(before.events.find(e => e.id === 'write-result')).toBeUndefined();
+  const captured = sceneAt(demoWindow, t + 12500, {});
+  expect(captured.events.find(e => e.id === 'write-result')?.change?.path).toBe('notes/demo.md');
+  expect(captured.nodes.some(n => n.kind === 'file' && n.label.includes('captured-diff'))).toBe(true);
+  expect(captured.events.some(e => e.change?.commit)).toBe(false);
+  expect(sceneAt(demoWindow, t + 14000, {}).events.find(e => e.id === 'commit-result')?.change?.commit?.authorship).toBe('unknown');
+  expect(sceneAt(demoWindow, t + 18500, {}).events.at(-1)?.artifact?.stage).toBe('merge-verified');
+  expect(sceneAt(demoWindow, t + 18500, {}).active).toEqual([]);
+  expect(sceneAt(demoWindow, t + 12000, {})).toEqual(before);
+});
+
+it('separates identically named files in two recorded worktrees', () => {
+  const result = demoWindow.events.find(e => e.id === 'write-result')!;
+  const w = { ...demoWindow, events: [...demoWindow.events, { ...result, id: 'peer-result', change: { ...result.change!, worktree: '9'.repeat(64) } }] };
+  const files = sceneAt(w, demoWindow.from + 12500, {}).nodes.filter(n => n.kind === 'file' && n.label.includes('captured-diff'));
+  expect(new Set(files.map(n => n.id)).size).toBe(2);
+});
+
 it.each([{ ticket: 'demo-ticket' }, { persona: 'builder' }, { model: 'fixture-model' }])('retains historical events after end under %j', filters => {
   const w = structuredClone(demoWindow);
   w.events.push({ ...w.events[2]!, id: 'usage', kind: 'usage', at: w.from + 1500, usage: { model: 'fixture-model', input: 0, output: 0, reasoning: 0 } });
@@ -62,4 +85,12 @@ it('opens later session evidence and uses recorded steps when start is missing',
     expect(sceneAt({ ...demoWindow, from: state.from, to: state.to, events: [evidence] }, state.cursor, { session: state.session }).events).toEqual([evidence]);
   }
   expect(activityWindow({ id: 12, host: 'lab', started_at: null, ended_at: null }, [])).toBeNull();
+});
+
+it('namespaces opaque local worktree identities by recorded host', () => {
+  const result = demoWindow.events.find(e => e.id === 'write-result')!;
+  const peer = { ...result, id: 'other-host-result', execution: 'run:other:resumed', context: { ...result.context!, host: 'other' } };
+  const interval = { ...demoWindow.intervals.find(i => i.id === 'run:lab:resumed')!, id: peer.execution, host: 'other' };
+  const w = { ...demoWindow, intervals: [...demoWindow.intervals, interval], events: [...demoWindow.events, peer] };
+  expect(sceneAt(w, w.from + 12500, {}).nodes.filter(n => n.kind === 'file' && n.label.includes('captured-diff'))).toHaveLength(2);
 });

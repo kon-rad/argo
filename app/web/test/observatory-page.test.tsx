@@ -27,7 +27,7 @@ it('restores cursor, exposes accessible list and cuts off result until next even
 });
 it('verifies source lazily then links exact recorded part', async () => {
   const call = demoWindow.events.find(e => e.id === 'call')!;
-  const fetch = setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 2000}&event=call`, url => url.includes('/events/') ? { event: call, detail: { availability: 'source-pointer' } } : { window: demoWindow, export: 'token', total: 6, next: null, diagnostics: {} });
+  const fetch = setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 2000}&event=call`, url => url.includes('/events/') ? { event: call, detail: { availability: 'source-pointer' } } : { window: demoWindow, export: 'token', total: demoWindow.events.length, next: null, diagnostics: {} });
   await screen.findByText(/Outcome at cursor: pending/);
   expect(fetch.mock.calls.some(([u]) => String(u).includes('/events/'))).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: 'Verify source detail' }));
@@ -36,10 +36,10 @@ it('verifies source lazily then links exact recorded part', async () => {
 });
 it('rejects partial and changed pagination instead of replaying incomplete history', async () => {
   const state = { from: demoWindow.from, to: demoWindow.to, cursor: demoWindow.from };
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ window: { ...demoWindow, events: [] }, export: 'a', total: 6, next: null, diagnostics: {} }))));
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ window: { ...demoWindow, events: [] }, export: 'a', total: demoWindow.events.length, next: null, diagnostics: {} }))));
   await expect(loadSnapshot(state, new AbortController().signal)).rejects.toThrow(/Incomplete/);
   let count = 0;
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ window: { ...demoWindow, events: demoWindow.events.slice(0, 1) }, export: ++count === 1 ? 'a' : 'b', total: 6, next: 1, diagnostics: {} }))));
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ window: { ...demoWindow, events: demoWindow.events.slice(0, 1) }, export: ++count === 1 ? 'a' : 'b', total: demoWindow.events.length, next: 1, diagnostics: {} }))));
   await expect(loadSnapshot(state, new AbortController().signal)).rejects.toThrow(/Snapshot changed/);
 });
 it('shows permission denial without claiming empty coverage', async () => {
@@ -48,7 +48,7 @@ it('shows permission denial without claiming empty coverage', async () => {
   expect(screen.queryByText('No evidenced active executions at this cursor.')).toBeNull();
 });
 it('keeps denied detail explicit and offers no verified-source link', async () => {
-  setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 2000}&event=call`, url => url.includes('/events/') ? { error: { message: 'source no longer visible' } } : { window: demoWindow, export: 'token', total: 6, next: null, diagnostics: {} });
+  setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 2000}&event=call`, url => url.includes('/events/') ? { error: { message: 'source no longer visible' } } : { window: demoWindow, export: 'token', total: demoWindow.events.length, next: null, diagnostics: {} });
   await screen.findByText(/Outcome at cursor: pending/);
   // Use the actual HTTP denial after loading the window.
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { message: 'source no longer visible' } }), { status: 403 })));
@@ -58,15 +58,28 @@ it('keeps denied detail explicit and offers no verified-source link', async () =
 });
 it('assembles all immutable pages and preserves the export token', async () => {
   let count = 0;
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ window: { ...demoWindow, events: count++ === 0 ? demoWindow.events.slice(0, 3) : demoWindow.events.slice(3) }, export: 'same', total: 6, next: count === 1 ? 3 : null, diagnostics: {} }))));
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ window: { ...demoWindow, events: count++ === 0 ? demoWindow.events.slice(0, 3) : demoWindow.events.slice(3) }, export: 'same', total: demoWindow.events.length, next: count === 1 ? 3 : null, diagnostics: {} }))));
   const snapshot = await loadSnapshot({ from: demoWindow.from, to: demoWindow.to, cursor: demoWindow.from }, new AbortController().signal);
   expect(snapshot.window.events).toEqual(demoWindow.events);
   expect(snapshot.export).toBe('same');
 });
 
+it('loads bounded captured diff contents only on explicit request', async () => {
+  const result = demoWindow.events.find(e => e.id === 'write-result')!;
+  const fetch = setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 12500}&event=write-result`, url =>
+    url.includes('/diff?') ? { event: result, detail: { representation: 'redacted-source', diff: { format: 'replacement', before: '', after: 'synthetic diff body', truncated: false } } }
+      : { window: demoWindow, export: 'token', total: demoWindow.events.length, next: null, diagnostics: {} });
+  await screen.findByLabelText('Captured change evidence');
+  expect(fetch.mock.calls.some(([url]) => String(url).includes('/diff?'))).toBe(false);
+  expect(screen.queryByText(/synthetic diff body/)).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Load captured diff' }));
+  await screen.findByText(/synthetic diff body/);
+  expect(fetch.mock.calls.some(([url]) => String(url).includes('/diff?export=token'))).toBe(true);
+});
+
 it.each(['authorized-summary', 'hidden', 'unavailable'])('displays lazy thinking state %s', async availability => {
   const thinking = demoWindow.events.find(e => e.id === 'thinking')!;
-  setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 4500}&event=thinking`, url => url.includes('/events/') ? { event: thinking, detail: { thinking: { availability, ...(availability === 'authorized-summary' ? { summary: 'Synthetic permitted summary' } : {}) } } } : { window: demoWindow, export: 'thinking-token', total: 6, next: null, diagnostics: {} });
+  setup(`/observatory?from=${demoWindow.from}&to=${demoWindow.to}&cursor=${demoWindow.from + 4500}&event=thinking`, url => url.includes('/events/') ? { event: thinking, detail: { thinking: { availability, ...(availability === 'authorized-summary' ? { summary: 'Synthetic permitted summary' } : {}) } } } : { window: demoWindow, export: 'thinking-token', total: demoWindow.events.length, next: null, diagnostics: {} });
   await screen.findByText(/Thinking: not checked/);
   expect(screen.queryByLabelText('Authorized thinking summary')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Verify source detail' }));
