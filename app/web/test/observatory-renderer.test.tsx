@@ -20,6 +20,7 @@ it('pins layout, preserves renderer on seek, pauses when idle and destroys on un
   const view = render(<Workspace {...props} />);
   expect(graph.cooldownTicks).toHaveBeenCalledWith(0);
   expect(graph.warmupTicks).toHaveBeenCalledWith(0);
+  vi.advanceTimersByTime(40);
   const lookAt = graph.cameraPosition!.mock.calls[0]![1] as { x: number; y: number; z: number };
   expect(lookAt.x).toBeGreaterThanOrEqual(Math.min(...first.nodes.map(n => n.fx)));
   expect(lookAt.x).toBeLessThanOrEqual(Math.max(...first.nodes.map(n => n.fx)));
@@ -88,15 +89,49 @@ it('shares visual resources across markers and releases them on unmount', () => 
 });
 
 it('frames the first nonempty scene after an empty cursor and only refits later on request', () => {
+  vi.useFakeTimers();
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   const first = sceneAt(demoWindow, demoWindow.from + 2000, {});
   const view = render(<Workspace nodes={[]} links={[]} onSelect={() => {}} />);
   expect(graph.cameraPosition).not.toHaveBeenCalled();
   view.rerender(<Workspace nodes={first.nodes} links={first.links} onSelect={() => {}} />);
+  vi.advanceTimersByTime(40);
   expect(graph.cameraPosition).toHaveBeenCalledTimes(1);
   view.rerender(<Workspace nodes={[]} links={[]} onSelect={() => {}} />);
   view.rerender(<Workspace nodes={first.nodes} links={first.links} onSelect={() => {}} />);
   expect(graph.cameraPosition).toHaveBeenCalledTimes(1);
   fireEvent.click(view.getByRole('button', { name: 'Fit active workspace' }));
   expect(graph.cameraPosition).toHaveBeenCalledTimes(2);
+});
+
+function controlledFrames() {
+  const queue = new Map<number, FrameRequestCallback>(); let id = 0;
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { queue.set(++id, callback); return id; });
+  vi.stubGlobal('cancelAnimationFrame', (key: number) => queue.delete(key));
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  return { queue, tick() { const pending = [...queue.values()]; queue.clear(); pending.forEach(callback => callback(0)); } };
+}
+it('waits for library initialization and frames the latest scene once', () => {
+  const frames = controlledFrames();
+  const first = sceneAt(demoWindow, demoWindow.from + 2000, {});
+  const moved = first.nodes.map(n => ({ ...n, fx: n.fx + 1000 }));
+  const view = render(<Workspace nodes={first.nodes} links={first.links} onSelect={() => {}} />);
+  expect(graph.cameraPosition).not.toHaveBeenCalled();
+  frames.tick();
+  // Reproduce initialization replacing an earlier camera before the second frame.
+  expect(graph.cameraPosition).not.toHaveBeenCalled();
+  view.rerender(<Workspace nodes={moved} links={first.links} onSelect={() => {}} />);
+  expect(frames.queue.size).toBe(1);
+  frames.tick();
+  expect(graph.cameraPosition).toHaveBeenCalledTimes(1);
+  expect(graph.cameraPosition!.mock.calls[0]![1].x).toBeGreaterThan(1000);
+  view.rerender(<Workspace nodes={first.nodes} links={first.links} onSelect={() => {}} />);
+  frames.tick(); expect(graph.cameraPosition).toHaveBeenCalledTimes(1);
+});
+it.each([0, 1])('cancels deferred fit on unmount after %i frames', frameCount => {
+  const frames = controlledFrames(), first = sceneAt(demoWindow, demoWindow.from + 2000, {});
+  const view = render(<Workspace nodes={first.nodes} links={first.links} onSelect={() => {}} />);
+  if (frameCount) frames.tick();
+  view.unmount(); expect(frames.queue.size).toBe(0);
+  frames.tick(); expect(graph.cameraPosition).not.toHaveBeenCalled();
 });
