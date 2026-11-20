@@ -1,19 +1,19 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { Group, Mesh, MeshBasicMaterial } from 'three';
 import { FullMap } from '../src/components/map/FullMap.js';
 import type { MapGraph } from '../src/lib/mapData.js';
 import { demoWindow } from '../src/routes/observatory/demo.js';
 const graph = vi.hoisted(() => {
   const g: Record<string, ReturnType<typeof vi.fn>> = {};
-  for (const key of ['backgroundColor', 'showNavInfo', 'cooldownTicks', 'warmupTicks', 'enableNodeDrag', 'nodeRelSize', 'nodeResolution', 'linkOpacity', 'nodeLabel', 'width', 'height', 'cameraPosition', 'nodeThreeObject', 'graphData', 'nodeColor', 'nodeVisibility', 'linkVisibility', 'linkColor', 'onNodeClick', 'onBackgroundClick', '_destructor']) g[key] = vi.fn(() => g);
+  for (const key of ['backgroundColor', 'showNavInfo', 'cooldownTicks', 'warmupTicks', 'enableNodeDrag', 'nodeRelSize', 'nodeResolution', 'linkOpacity', 'nodeLabel', 'width', 'height', 'cameraPosition', 'pauseAnimation', 'resumeAnimation', 'nodeThreeObject', 'graphData', 'nodeColor', 'nodeVisibility', 'linkVisibility', 'linkColor', 'onNodeClick', 'onBackgroundClick', '_destructor']) g[key] = vi.fn(() => g);
   g.postProcessingComposer = vi.fn(() => ({ addPass: vi.fn() }));
   g.scene = vi.fn();
   return g;
 });
 vi.mock('3d-force-graph', () => ({ default: class { constructor() { return graph; } } }));
 vi.mock('three/examples/jsm/postprocessing/UnrealBloomPass.js', () => ({ UnrealBloomPass: class {} }));
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 it('adds read circles and write triangles beside pinned notes without rebuilding topology on seeks', () => {
   const scene = new Group(); graph.scene!.mockReturnValue(scene);
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
@@ -38,4 +38,27 @@ it('adds read circles and write triangles beside pinned notes without rebuilding
   view.unmount();
   expect(scene.children).toHaveLength(0);
   expect(graph._destructor).toHaveBeenCalledTimes(1);
+});
+
+it('escapes note titles in graph tooltips', () => {
+  const scene = new Group(); graph.scene!.mockReturnValue(scene);
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  render(<FullMap graph={{ version: 1, builtAt: '2026-01-01', nodes: [], edges: [] }} metrics={[]} layers={{ notes: true, links: true, structure: true, metrics: false }} selected={null} onSelect={() => {}} />);
+  const label = graph.nodeLabel!.mock.calls[0]![0] as (n: { label: string }) => string;
+  expect(label({ label: '<img src=x onerror=alert(1)>&' })).toBe('&lt;img src=x onerror=alert(1)&gt;&amp;');
+});
+it('pauses a static activity map and wakes on interaction without leaving timers after unmount', () => {
+  vi.useFakeTimers();
+  const scene = new Group(); graph.scene!.mockReturnValue(scene);
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const view = render(<FullMap renderOnDemand graph={{ version: 1, builtAt: '2026-01-01', nodes: [], edges: [] }} metrics={[]} layers={{ notes: true, links: true, structure: true, metrics: false }} selected={null} onSelect={() => {}} />);
+  vi.advanceTimersByTime(1200);
+  expect(graph.pauseAnimation).toHaveBeenCalled();
+  const before = graph.resumeAnimation!.mock.calls.length;
+  fireEvent.pointerDown(view.getByTestId('map-full'));
+  expect(graph.resumeAnimation!.mock.calls.length).toBeGreaterThan(before);
+  view.unmount();
+  const pauses = graph.pauseAnimation!.mock.calls.length;
+  vi.advanceTimersByTime(2000);
+  expect(graph.pauseAnimation!.mock.calls.length).toBe(pauses);
 });

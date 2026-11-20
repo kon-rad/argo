@@ -70,7 +70,10 @@ test('Brain Map exact note overlay, unresolved evidence and shared replay naviga
   await expect(page.getByText(/Repository\/path target/)).toBeVisible();
   await expect(page.locator('canvas').first()).toBeVisible();
   await expect(page).toHaveURL(/layout=7/);
-  // Inspect the rendered cyan circle and amber triangle at the existing note, then save evidence.
+  await page.getByRole('button', { name: 'Focus note Projects/demo.md', exact: true }).first().click();
+  await page.waitForTimeout(1800);
+  await page.locator('canvas').first().screenshot({ path: 'e2e/test-results/observatory-map-scene.png' });
+  // Inspect the rendered read/write glyphs with preserved origin colors at the existing note, then save evidence.
   await page.screenshot({ path: 'e2e/test-results/observatory-map-overlay.png', fullPage: true });
   await page.getByLabel('Active executions').getByRole('button', { name: /run:lab:parallel/ }).click();
   await expect(page.getByLabel('Note activity').getByRole('button', { name: /▲ W write attempt/ })).toBeVisible();
@@ -88,6 +91,16 @@ test('Brain Map exact note overlay, unresolved evidence and shared replay naviga
   await expect(page.getByLabel('Replay cursor', { exact: true })).toHaveValue(String(from + 2000));
   await page.getByLabel('Replay cursor', { exact: true }).fill(String(from + 7000));
   await expect(page.getByText('No evidenced active executions at this cursor.')).toBeVisible();
+  // Lose the actual WebGL context: the canvas must leave the layout, while HTML evidence survives.
+  await page.locator('canvas').first().evaluate((canvas: HTMLCanvasElement) => {
+    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+    const extension = gl?.getExtension('WEBGL_lose_context');
+    if (!extension) throw new Error('Context-loss extension unavailable');
+    extension.loseContext();
+  });
+  await expect(page.getByText(/3D map unavailable/)).toBeVisible();
+  await expect(page.locator('canvas')).toHaveCount(0);
+  await expect(page.getByLabel('Note activity').getByRole('button').first()).toBeVisible();
   // Historical operation evidence may remain on the map; ended executions must not remain active.
   await expect(page.getByText(/Current topology is context only/)).toBeVisible();
 });

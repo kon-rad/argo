@@ -1,7 +1,8 @@
 import type { EvidenceEvent } from '@secondbrain/contracts/observatory';
 import type { MapGraph, MapNodeData } from '../../lib/mapData.js';
-export function operationStyle(operation: 'read' | 'write' | 'edit') {
-  return operation === 'read' ? { glyph: '○ R', color: '#22d3ee' } : { glyph: '▲ W', color: '#fbbf24' };
+export function operationStyle(operation: 'read' | 'write' | 'edit', origin: EvidenceEvent['actor']['kind'] = 'unknown') {
+  const color = { human: '#fbbf24', agent: '#22d3ee', automation: '#9ca3af', unknown: '#9ca3af' }[origin];
+  return { glyph: operation === 'read' ? '○ R' : '▲ W', color };
 }
 export interface NoteActivity { event: EvidenceEvent; node?: MapNodeData; reason?: string }
 /** No basename, suffix, case-folding or inferred move resolution. Raw paths retain their evidence. */

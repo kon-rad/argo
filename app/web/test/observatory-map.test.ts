@@ -49,3 +49,9 @@ it('filters recorded note calls and paired results without showing future activi
   expect(sceneAt(window, window.from + 1999, { note: 'Projects/demo.md' }).events).toEqual([]);
   expect(sceneAt(window, window.from + 2000, { note: 'Projects/demo.md' })).toEqual(before);
 });
+
+it('keeps origin colors consistent across read and write glyphs', () => {
+  expect(operationStyle('write', 'agent').color).toBe(operationStyle('read', 'agent').color);
+  expect(operationStyle('read', 'human').color).not.toBe(operationStyle('read', 'agent').color);
+  expect(operationStyle('write', 'unknown').color).toBe(operationStyle('read', 'unknown').color);
+});
