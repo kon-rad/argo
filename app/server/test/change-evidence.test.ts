@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { capturedChange } from '../src/archive/changeEvidence.js';
-import { archiveEvents, makeWindow, type ArchiveRow } from '../src/addons/observatory/adapters.js';
+import { archiveEvents, makeWindow, inspectChangeRequest, captureMetadataPresent, type ArchiveRow } from '../src/addons/observatory/adapters.js';
 import { replay } from '@secondbrain/contracts/observatory';
 const hash = 'a'.repeat(64);
 const change = { version: 1, id: 'capture-a', repository: hash, worktree: 'b'.repeat(64), path: 'notes/demo.md', before: null, after: hash,
@@ -115,4 +115,61 @@ it('requires exact worktree identity for absolute captured paths', () => {
     expect(events[1]?.writeEvidence).toBeUndefined();
     expect(events[1]?.change).toBeUndefined();
   }
+});
+
+it.each(['codex', 'claude-code'])('pairs explicit call IDs from the known nameless %s result protocol', harness => {
+  const call = harness === 'codex'
+    ? { harness, type: 'response_item', payload: { type: 'function_call', call_id: 'protocol-call', name: 'write_file', arguments: JSON.stringify({ path: 'notes/demo.md' }) } }
+    : { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'protocol-call', name: 'write_file', input: { path: 'notes/demo.md' } }] } };
+  const result = harness === 'codex'
+    ? { harness, type: 'response_item', payload: { type: 'function_call_output', call_id: 'protocol-call', output: { isError: false, text: 'written' } } }
+    : { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'protocol-call', content: 'written' }] } };
+  const events = archiveEvents([{ ...row(1, call), harness, source: harness }, { ...row(2, result), harness, source: harness }]);
+  expect(events[1]?.parent).toBe(events[0]?.id);
+  expect(events[1]?.target).toEqual(events[0]?.target);
+  expect(events[1]?.change).toBeUndefined();
+  if (harness === 'codex') expect(events[1]?.writeEvidence).toBe('tool-reported-success');
+  else expect(events[1]?.writeEvidence).toBeUndefined(); // Claude's missing is_error is unknown, not success.
+  const unknown = archiveEvents([{ ...row(1, call), harness: 'unknown' }, { ...row(2, result), harness: 'unknown' }]);
+  expect(unknown[1]?.parent).toBeUndefined();
+});
+
+it.each(['capture', 'commit', 'missing-request'] as const)('does not attach a local commit to a mismatched %s request', mismatch => {
+  const commit = { sha: 'c'.repeat(40), verification: 'local-object', authorship: 'unknown' };
+  const captured = { ...change, commit };
+  const args = mismatch === 'capture' ? { capture: 'another-capture', commit: commit.sha }
+    : mismatch === 'commit' ? { capture: change.id, commit: 'd'.repeat(40) } : {};
+  const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'inspect_change_commit', arguments: args }] } };
+  const result = raw({ toolName: 'inspect_change_commit', details: { change: captured } });
+  const events = archiveEvents([row(1, call), row(2, result, capturedChange(result))]);
+  expect(events[1]?.parent).toBeUndefined();
+  expect(events[1]?.target).toBeUndefined();
+  expect(events[1]?.change).toBeUndefined();
+  expect(events[1]?.writeEvidence).toBeUndefined();
+});
+
+it('attaches a local commit only to the exact requested capture ID and commit SHA', () => {
+  const commit = { sha: 'c'.repeat(40), verification: 'local-object', authorship: 'unknown' };
+  const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'inspect_change_commit', arguments: { capture: change.id, commit: commit.sha } }] } };
+  const result = raw({ toolName: 'inspect_change_commit', details: { change: { ...change, commit } } });
+  const events = archiveEvents([row(1, call), row(2, result, capturedChange(result))]);
+  expect(events[1]?.parent).toBe(events[0]?.id);
+  expect(events[1]?.change?.commit?.sha).toBe(commit.sha);
+});
+
+it('projects only bounded commit request bindings and preserves invalid capture presence', () => {
+  const commit = 'c'.repeat(40);
+  expect(inspectChangeRequest('inspect_change_commit', JSON.stringify({ capture: 'capture-a', commit, content: 'do not retain' })))
+    .toEqual({ capture: 'capture-a', commit });
+  for (const args of [{ capture: 'x'.repeat(129), commit }, { capture: 'capture-a', commit: 'HEAD' }, {}])
+    expect(inspectChangeRequest('inspect_change_commit', JSON.stringify(args))).toBeUndefined();
+  expect(inspectChangeRequest('write_file', JSON.stringify({ capture: 'capture-a', commit }))).toBeUndefined();
+  expect(captureMetadataPresent(raw({ details: { change: null } }))).toBe(true);
+  expect(captureMetadataPresent(raw({ details: { change: { invalid: true } } }))).toBe(true);
+  expect(captureMetadataPresent(raw({ details: {} }))).toBe(false);
+  const call = { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'write_file', arguments: { path: change.path } }] } };
+  const invalid = raw({ details: { change: null } });
+  const events = archiveEvents([row(1, call), row(2, invalid)]);
+  expect(events[1]?.parent).toBeUndefined();
+  expect(events[1]?.writeEvidence).toBeUndefined();
 });

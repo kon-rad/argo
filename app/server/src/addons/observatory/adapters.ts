@@ -60,9 +60,31 @@ function fileTarget(tool: string | null, text: string, root?: string, harness?: 
   } catch { /* Non-JSON input is not structured path evidence. */ }
   return undefined;
 }
+export interface InspectChangeRequest { capture: string; commit: string }
+/** Safe request metadata for bounded collectors; discard all unrelated argument fields. */
+export function inspectChangeRequest(tool: string | null, text: string): InspectChangeRequest | undefined {
+  if (tool !== 'inspect_change_commit' || text.length > 1000000) return undefined;
+  try {
+    const args = object(JSON.parse(text));
+    if (typeof args.capture === 'string' && args.capture.length > 0 && args.capture.length <= 128 &&
+      typeof args.commit === 'string' && /^[a-f0-9]{40}$/.test(args.commit)) return { capture: args.capture, commit: args.commit };
+  } catch { /* Missing/invalid request bindings cannot establish commit attribution. */ }
+  return undefined;
+}
+/** Presence must survive bounded projection even when validation fails. */
+export function captureMetadataPresent(raw: unknown): boolean {
+  return object(object(object(raw).message).details).change !== undefined;
+}
+function knownNamelessResult(row: ArchiveRow): boolean {
+  const raw = object(row.raw);
+  return (row.harness === 'codex' && raw.harness === 'codex' &&
+    ['function_call_output', 'custom_tool_call_output'].includes(String(object(raw.payload).type))) ||
+    (row.harness === 'claude-code' && raw.type === 'user');
+}
 /** Compare the exact argument to capture identity, never basename/suffix alone. */
-function capturedTarget(call: EvidenceEvent, change: NonNullable<EvidenceEvent['change']>): boolean {
-  if (!call.target) return call.tool === 'inspect_change_commit';
+function capturedTarget(call: EvidenceEvent, change: NonNullable<EvidenceEvent['change']>, request?: InspectChangeRequest): boolean {
+  if (call.tool === 'inspect_change_commit') return !!request && request.capture === change.id && request.commit === change.commit?.sha;
+  if (!call.target) return false;
   const path = call.target.path;
   if (path === change.path) return true;
   const suffix = `/${change.path}`;
@@ -73,6 +95,7 @@ function capturedTarget(call: EvidenceEvent, change: NonNullable<EvidenceEvent['
 /** Pair only within a numeric archive session, in recorded sequence order. A repeated ID starts a new occurrence. */
 export function archiveEvents(rows: ArchiveRow[], root?: string): EvidenceEvent[] {
   const pending = new Map<string, EvidenceEvent[]>();
+  const commitRequests = new Map<string, InspectChangeRequest>();
   const events: EvidenceEvent[] = [];
   for (const row of [...new Map(rows.map(row => [row.id, row])).values()].sort((a, b) => a.session_id - b.session_id || a.seq - b.seq || a.id - b.id)) {
     expandSteps(row).forEach((part, index) => {
@@ -85,15 +108,19 @@ export function archiveEvents(rows: ArchiveRow[], root?: string): EvidenceEvent[
       if (part.step === 'thinking') e.thinking = 'available-in-source';
       if (part.toolName) e.tool = part.toolName;
       if (part.step === 'tool_call') { e.target = fileTarget(part.toolName, part.text, root, row.harness); if (e.target && e.target.operation !== 'read') e.writeEvidence = 'attempt'; }
+      const request = part.step === 'tool_call' ? inspectChangeRequest(part.toolName, part.text) : undefined;
+      if (request) commitRequests.set(e.id, request);
       const scope = `${row.session_id}:${part.toolCallId}`;
       if (part.step === 'tool_call') { e.occurrence = e.id; if (part.toolCallId) pending.set(scope, [...(pending.get(scope) ?? []), e]); }
       if (part.step === 'tool_result') {
         const candidates = part.toolCallId ? pending.get(scope) : undefined;
         const candidate = candidates?.length === 1 ? candidates[0] : undefined;
         const captured = capturedChange(row.raw);
-        const hasCapture = object(object(object(row.raw).message).details).change !== undefined;
-        const call = candidate && candidate.tool === part.toolName &&
-          (!hasCapture || (captured && capturedTarget(candidate, captured))) ? candidate : undefined;
+        const hasCapture = captureMetadataPresent(row.raw);
+        // Codex and Claude omit result names by protocol; an explicitly contradictory name never pairs.
+        const toolMatches = candidate && (part.toolName !== null ? candidate.tool === part.toolName : knownNamelessResult(row));
+        const call = candidate && toolMatches &&
+          (!hasCapture || (captured && capturedTarget(candidate, captured, commitRequests.get(candidate.id)))) ? candidate : undefined;
         // A result with a contradictory timestamp cannot complete a future call.
         if (call && call.at !== null && e.at !== null && call.at <= e.at) { e.parent = call.id; e.occurrence = call.id; pending.delete(scope); }
         e.outcome = part.isError === true ? 'error' : part.isError === false ? 'success' : 'unknown';
