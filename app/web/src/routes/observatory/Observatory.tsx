@@ -1,3 +1,4 @@
+import { fileEvidenceLevel, fileTargets } from './fileEvidence.js';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAppTimezone } from '../../lib/useTimezone.js';
@@ -66,6 +67,8 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
   const select = useCallback((id: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set('event', id); return next; }), [setParams]);
   useEffect(() => { setDetail(undefined); detailRequest.current?.abort(); return () => detailRequest.current?.abort(); }, [state.event, snapshot]);
   const selected = scene?.events.find(e => e.id === state.event);
+  const inspectedTarget = selected && scene ? fileTargets(scene.contextEvents, scene.evidenceContext).get(selected.id) : undefined;
+  const inspectedLevel = selected && scene ? fileEvidenceLevel(selected, new Map(scene.contextEvents.map(event => [event.id, event])), scene.evidenceContext) : 'attempt';
   const execution = scene?.active.find(i => i.id === state.event);
   const selectedNode = scene?.nodes.find(n => n.id === state.event);
   const showDetail = async (diff = false) => {
@@ -111,7 +114,7 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
       <label className="block">Seek: <output>{zoned(new Date(cursor).toISOString(), tz)} ({tz})</output>
         <input aria-label="Replay cursor" type="range" className="block w-full" min={snapshot.window.from} max={snapshot.window.to - 1} step="1" value={cursor} onChange={e => seek(Number(e.target.value))} /></label>
       <label><input type="checkbox" checked={webgl} onChange={e => setWebgl(e.target.checked)} />Show 3D {mode === 'map' ? 'map' : 'workspace'}</label>
-      {mode === 'map' && <Suspense fallback={<p>Loading map activity…</p>}><MapActivity events={scene.events} selected={state.event} note={state.note} layout={state.layout} pin={pinLayout} onNote={note => update({ note })} onSelect={select} show3d={webgl} /></Suspense>}
+      {mode === 'map' && <Suspense fallback={<p>Loading map activity…</p>}><MapActivity events={scene.events} contextEvents={scene.contextEvents} evidenceContext={scene.evidenceContext} selected={state.event} note={state.note} layout={state.layout} pin={pinLayout} onNote={note => update({ note })} onSelect={select} show3d={webgl} /></Suspense>}
       {mode === 'workspace' && webgl && <Suspense fallback={<p>Loading 3D renderer…</p>}><Workspace nodes={scene.nodes} links={scene.links} onSelect={select} /></Suspense>}
       <p>Origins filter event markers. Execution markers retain their recorded agent identity.</p>
       <p>{scene.active.length} active executions · {scene.nodes.length} nodes · {scene.links.length} edges · {scene.omittedNodes} nodes / {scene.omittedLinks} edges omitted at display budget</p>
@@ -127,7 +130,7 @@ export default function Observatory({ mode = 'workspace' }: { mode?: 'map' | 'wo
           <p>Provenance: {selected.actor.evidence} · sender {selected.actor.sender ?? 'unknown'} · channel {selected.actor.channel ?? 'unknown'}</p>
           <p>Source {selected.source.table}:{selected.source.id} part {selected.source.part}</p>
           <p>Outcome at cursor: {scene.tools[selected.occurrence ?? selected.parent ?? ''] ?? 'unknown'}</p>
-          {selected.target && <p>{selected.target.operation}: {selected.target.path} ({selected.change?.level ?? selected.writeEvidence ?? 'attempt'})</p>}
+          {inspectedTarget && <p>{inspectedTarget.operation}: {inspectedTarget.path} ({inspectedLevel})</p>}
           {selected.change && <pre className="whitespace-pre-wrap break-all" aria-label="Captured change evidence">{JSON.stringify({ ...selected.change, diffSource: selected.source }, null, 2)}</pre>}
           {selected.artifact && <pre className="whitespace-pre-wrap break-all" aria-label="PR evidence">{JSON.stringify(selected.artifact, null, 2)}</pre>}
           {selected.kind === 'thinking' && <p>Thinking: {typeof detail?.detail === 'object' && detail.detail.thinking ? detail.detail.thinking.availability : 'not checked; verify source detail'}. No reasoning reconstructed.</p>}

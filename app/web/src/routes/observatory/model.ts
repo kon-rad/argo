@@ -1,3 +1,4 @@
+import { fileEvidenceLevel, fileEvidenceRank, fileTargets } from './fileEvidence.js';
 import { ordered, applyEvent, type EvidenceEvent, type ReplayWindow } from '@secondbrain/contracts/observatory';
 import { sessionLink } from '../usage/AgentSessions.js';
 export type Origin = EvidenceEvent['actor']['kind'];
@@ -66,9 +67,11 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
       (!filters.persona || i?.persona === filters.persona) && (!filters.model || e.usage?.model === filters.model || (e.execution && models.get(e.execution)?.has(filters.model))) &&
       (!filters.origin || e.actor.kind === filters.origin);
   });
-  const targets = new Map(through.filter(e => e.target).map(e => [e.id, e.target!]));
-  const filteredEvents = filters.note ? events.filter(e => (e.target ?? targets.get(e.parent ?? ''))?.vaultPath === filters.note) : events;
+  const evidenceContext = { boundary: window.boundary, from: window.from };
+  const targets = fileTargets(through, evidenceContext);
+  const filteredEvents = filters.note ? events.filter(e => targets.get(e.id)?.vaultPath === filters.note) : events;
   const nodes: SceneNode[] = []; const links: SceneLink[] = []; const nodeMap = new Map<string, SceneNode>();
+  const fileRanks = new Map<string, number>();
   const add = (id: string, label: string, kind: SceneNode['kind'], origin: Origin, x: number, y: number, z: number) => {
     if (!nodeMap.has(id)) { const n = { id, label, kind, origin, fx: x, fy: y, fz: z }; nodeMap.set(id, n); nodes.push(n); }
   };
@@ -87,8 +90,16 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
     const owner = nodeMap.get(e.execution!)!;
     add(e.id, `${originStyle(e.actor.kind).glyph} ${e.kind} ${e.tool ?? ''}`, 'event', e.actor.kind, owner.fx + (hash(e.id) % 60) - 30, 55, owner.fz + 20);
     links.push({ source: e.execution!, target: e.id, result: e.kind === 'tool_result' });
-    const target = e.target ?? (e.parent ? byId.get(e.parent)?.target : undefined);
-    if (target) { const id = `file:${e.context?.host ?? e.execution ?? e.session ?? e.id}:${e.change ? `${e.change.repository}:${e.change.worktree}` : e.execution ?? e.session ?? e.id}:${target.path}`; add(id, `${target.operation}: ${target.path} (${e.change?.level ?? e.writeEvidence ?? 'attempt'})`, 'file', e.actor.kind, owner.fx + 85, 70, owner.fz); links.push({ source: e.id, target: id }); }
+    const target = targets.get(e.id);
+    if (target) {
+      const level = fileEvidenceLevel(e, byId, evidenceContext), rank = fileEvidenceRank(level);
+      const change = rank >= fileEvidenceRank('captured-hashes') ? e.change : undefined;
+      const id = `file:${e.context?.host ?? e.execution ?? e.session ?? e.id}:${change ? `${change.repository}:${change.worktree}` : e.execution ?? e.session ?? e.id}:${change?.path ?? target.path}`;
+      const label = `${target.operation}: ${target.path} (${level})`;
+      add(id, label, 'file', e.actor.kind, owner.fx + 85, 70, owner.fz);
+      if (rank > (fileRanks.get(id) ?? -1)) { nodeMap.get(id)!.label = label; fileRanks.set(id, rank); }
+      links.push({ source: e.id, target: id });
+    }
   }
   // A recorded human input is an event, not proof of an executing agent/session.
   // Keep its own short pulse visible even when no execution can be established.
@@ -103,5 +114,5 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
   }
   const limitedNodes = nodes.slice(0, 500), shown = new Set(limitedNodes.map(n => n.id));
   const limitedLinks = links.filter(l => shown.has(l.source) && shown.has(l.target)).slice(0, 1500);
-  return { ...state, active, events: filteredEvents, nodes: limitedNodes, links: limitedLinks, omittedNodes: nodes.length - limitedNodes.length, omittedLinks: links.length - limitedLinks.length };
+  return { ...state, active, events: filteredEvents, contextEvents: through, evidenceContext, nodes: limitedNodes, links: limitedLinks, omittedNodes: nodes.length - limitedNodes.length, omittedLinks: links.length - limitedLinks.length };
 }

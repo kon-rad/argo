@@ -107,3 +107,39 @@ it('renders evidenced human input without inventing an active agent', () => {
   expect(scene.links).toContainEqual({ source: human.id, target: 'ticket:recorded-ticket' });
   expect(sceneAt(window, time + 2001, {}).nodes).toEqual([]);
 });
+
+it('upgrades an uncaptured file only at its paired reported-success result and reverses to attempt', () => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const result = { ...demoWindow.events.find(e => e.id === 'write-result')!, change: undefined };
+  const window = { ...demoWindow, events: [call, result] };
+  const files = (offset: number) => sceneAt(window, window.from + offset, {}).nodes.filter(n => n.kind === 'file');
+  const before = files(12499);
+  expect(before).toHaveLength(1); expect(before[0]!.label).toContain('(attempt)');
+  const after = files(12500);
+  expect(after).toHaveLength(1); expect(after[0]!.id).toBe(before[0]!.id);
+  expect(after[0]!.label).toContain('(tool-reported-success)');
+  expect(after[0]!.label).not.toContain('captured');
+  expect(files(12499)).toEqual(before);
+  for (const bad of [{ ...result, outcome: 'error' as const }, { ...result, parent: undefined }, { ...result, parent: 'unrecorded-call' }]) {
+    expect(sceneAt({ ...window, events: [call, bad] }, window.from + 12500, {}).nodes.filter(n => n.kind === 'file').every(n => !n.label.includes('tool-reported-success'))).toBe(true);
+  }
+});
+it('ranks hashes, text diff and commit on the same canonical captured file without merging worktrees', () => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const result = demoWindow.events.find(e => e.id === 'write-result')!;
+  const hashes = { ...result, id: 'hashes', at: demoWindow.from + 12200, change: { ...result.change!, level: 'captured-hashes' as const } };
+  const diff = { ...result, id: 'diff', at: demoWindow.from + 12400 };
+  const inspect = { ...call, id: 'inspect-file', at: demoWindow.from + 12500, tool: 'inspect_change_commit', target: undefined };
+  const commit = { ...result, id: 'commit-file', parent: inspect.id, at: demoWindow.from + 12600, target: { ...result.target!, path: '/srv/fixture/Projects/demo.md' }, change: { ...result.change!, level: 'commit' as const, commit: { sha: 'c'.repeat(40), verification: 'local-object' as const, authorship: 'unknown' as const } } };
+  const peer = { ...diff, id: 'peer', change: { ...diff.change!, worktree: '9'.repeat(64) } };
+  const window = { ...demoWindow, events: [call, hashes, diff, inspect, commit, peer] };
+  for (const [offset, level] of [[12200, 'captured-hashes'], [12400, 'captured-diff'], [12600, 'commit']] as const) {
+    const scene = sceneAt(window, window.from + offset, {});
+    const own = scene.nodes.filter(n => n.kind === 'file' && n.id.includes(result.change!.worktree));
+    expect(own).toHaveLength(1); expect(own[0]!.label).toContain(`(${level})`);
+  }
+  const end = sceneAt(window, window.from + 12600, {}).nodes.filter(n => n.kind === 'file' && n.id.includes(result.change!.repository));
+  expect(end).toHaveLength(2);
+  expect(end.find(n => n.id.includes(peer.change!.worktree))!.label).toContain('(captured-diff)');
+  expect(sceneAt(window, window.from + 12200, {}).nodes.some(n => n.label.includes('(commit)'))).toBe(false);
+});

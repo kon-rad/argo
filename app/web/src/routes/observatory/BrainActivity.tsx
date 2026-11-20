@@ -1,3 +1,4 @@
+import { fileEvidenceLevel, type BoundaryContext } from './fileEvidence.js';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, Component, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { FullMapHandle } from '../../components/map/FullMap.js';
@@ -13,8 +14,8 @@ class MapRendererBoundary extends Component<{ children: ReactNode; onFailure: ()
 }
 const metrics: MapMetric[] = [];
 const layers = { notes: true, links: true, structure: true, metrics: false };
-export default function MapActivity({ events, selected, note, layout, pin, onNote, onSelect, show3d }: {
-  events: EvidenceEvent[]; selected?: string; note?: string; layout?: string; pin: (version: string) => void;
+export default function MapActivity({ events, contextEvents = events, evidenceContext, selected, note, layout, pin, onNote, onSelect, show3d }: {
+  events: EvidenceEvent[]; contextEvents?: EvidenceEvent[]; evidenceContext?: BoundaryContext; selected?: string; note?: string; layout?: string; pin: (version: string) => void;
   onNote: (path?: string) => void; onSelect: (id: string) => void; show3d: boolean;
 }) {
   const mapRef = useRef<FullMapHandle>(null);
@@ -36,7 +37,8 @@ export default function MapActivity({ events, selected, note, layout, pin, onNot
       pin(String(graph.data.version));
     }
   }, [graph.data, layout, pin, cache]);
-  const activity = useMemo(() => graph.data ? mapActivity(graph.data, events) : [], [graph.data, events]);
+  const activity = useMemo(() => graph.data ? mapActivity(graph.data, events, contextEvents, evidenceContext) : [], [graph.data, events, contextEvents, evidenceContext]);
+  const eventIndex = useMemo(() => new Map(contextEvents.map(event => [event.id, event])), [contextEvents]);
   const selectedExecution = events.some(e => e.execution === selected);
   const marked = useMemo(() => activity.filter(a => !selectedExecution || a.event.execution === selected), [activity, selectedExecution, selected]);
   const visible = marked.slice(-200);
@@ -52,7 +54,7 @@ export default function MapActivity({ events, selected, note, layout, pin, onNot
     {show3d && !rendererFailed && <div ref={rendererHost} style={{ height: 420 }}><MapRendererBoundary onFailure={() => setRendererFailed(true)}><Suspense fallback={<p>Loading map renderer…</p>}><FullMap ref={mapRef} renderOnDemand graph={data} metrics={metrics} layers={layers} selected={data.nodes.find(n => n.kind === 'note' && n.ref === note)?.id ?? null} onSelect={onPick} activity={marked} /></Suspense></MapRendererBoundary></div>}
     {omitted > 0 && <p role="status">Showing the latest {visible.length} of {marked.length} path operations. {omitted} earlier operations are omitted from this list; seek earlier or filter a note to inspect them. The map retains all recorded operations.</p>}
     <ul aria-label="Note activity">{visible.map(a => <li key={a.event.id}>
-      <button className="underline" onClick={() => onSelect(a.event.id)}>{operationStyle(a.event.target!.operation).glyph} {a.event.target!.operation} {a.event.change?.level ?? 'attempt'}: {a.event.target!.path}</button>
+      <button className="underline" onClick={() => onSelect(a.event.id)}>{operationStyle(a.event.target!.operation).glyph} {a.event.target!.operation} {fileEvidenceLevel(a.event, eventIndex, evidenceContext)}: {a.event.target!.path}</button>
       {a.node ? <> · <button className="underline" onClick={() => onNote(a.node!.ref!)}>Filter note {a.node.ref}</button> · <button className="underline" onClick={() => mapRef.current?.focus(a.node!.id)}>Focus note {a.node.ref}</button></> : <> · {a.reason}</>}
       <span> · Evidence {a.event.source.table}:{a.event.source.id} part {a.event.source.part}</span>
     </li>)}</ul>

@@ -81,6 +81,10 @@ test('synthetic prospective write, commit and verified gate evidence stay distin
   await page.getByRole('button', { name: /tool_result/ }).last().click();
   await expect(page.getByLabel('Captured change evidence')).toContainText('local-object');
   await expect(page.getByLabel('Captured change evidence')).toContainText('unknown');
+  await expect(page.getByLabel('Workspace targets').getByRole('button', { name: /\(commit\)/ })).toHaveCount(1);
+  await page.getByRole('link', { name: 'Brain Map replay', exact: true }).click();
+  await expect(page.getByLabel('Note activity').getByRole('button', { name: '▲ W write commit: Projects/demo.md', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Workspace replay', exact: true }).click();
   await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 18500));
   await expect(page.getByRole('button', { name: /artifact/ })).toHaveCount(4);
   await page.getByRole('button', { name: /artifact/ }).last().click();
@@ -89,6 +93,21 @@ test('synthetic prospective write, commit and verified gate evidence stay distin
   await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12000));
   await expect(page.getByLabel('Captured change evidence')).toHaveCount(0);
   await expect(page.getByLabel('PR evidence')).toHaveCount(0);
+  // A successful write without capture must stay tool-reported evidence in both views.
+  const reportedWindow = { ...demoWindow, events: demoWindow.events.map(event => event.id === 'write-result' ? { ...event, change: undefined } : event) };
+  await page.route('**/api/observatory/window*', route => route.fulfill({ json: { window: reportedWindow, total: reportedWindow.events.length, next: null, export: 'reported-fixture', diagnostics: { synthetic: true } } }));
+  await page.goto(`/observatory?from=${t}&to=${demoWindow.to}&cursor=${t + 12499}&event=write-call`);
+  const targets = page.getByLabel('Workspace targets');
+  await expect(targets.getByRole('button', { name: 'file: write: Projects/demo.md (attempt)', exact: true })).toBeVisible();
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12500));
+  await expect(targets.getByRole('button', { name: 'file: write: Projects/demo.md (tool-reported-success)', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Captured change evidence')).toHaveCount(0);
+  await page.getByRole('link', { name: 'Brain Map replay', exact: true }).click();
+  const reportedNote = page.getByLabel('Note activity').getByRole('button', { name: '▲ W write tool-reported-success: Projects/demo.md', exact: true });
+  await expect(reportedNote).toBeVisible();
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12499));
+  await expect(reportedNote).toHaveCount(0);
+  await expect(page.getByLabel('Note activity').getByRole('button', { name: '▲ W write attempt: Projects/demo.md', exact: true })).toBeVisible();
 });
 
 // Coordinator-only rendered scenario. API fixtures do not establish source permissions or production coverage.

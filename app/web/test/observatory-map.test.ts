@@ -64,3 +64,71 @@ it('replays the synthetic captured write on the exact pinned note and removes it
   expect(at(11999)).toEqual([]);
   expect(at(12500).find(a => a.event.id === 'write-result')?.node?.id).toBe('note:1');
 });
+
+it('shows paired reported-success without capture, including inherited targets, and reverses honestly', () => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const result = { ...demoWindow.events.find(e => e.id === 'write-result')!, change: undefined };
+  const window = { ...demoWindow, events: [call, result] };
+  const at = (offset: number) => mapActivity(mapGraph, sceneAt(window, window.from + offset, {}).events);
+  expect(at(12499).map(a => a.event.id)).toEqual([call.id]);
+  expect(at(12500).find(a => a.event.id === result.id)).toMatchObject({ node: { id: 'note:1' }, event: { writeEvidence: 'tool-reported-success' } });
+  expect(at(12500).every(a => !a.event.change)).toBe(true);
+  expect(at(12499).map(a => a.event.id)).toEqual([call.id]);
+  const inherited = mapActivity(mapGraph, [call, { ...result, target: undefined }]);
+  expect(inherited.find(a => a.event.id === result.id)?.node?.id).toBe('note:1');
+  for (const bad of [{ ...result, outcome: 'error' as const }, { ...result, parent: undefined }, { ...result, parent: 'unrecorded-call' }])
+    expect(mapActivity(mapGraph, [call, bad]).map(a => a.event.id)).toEqual([call.id]);
+});
+
+it('retains only exact prior capture scope for the real commit target fallback', () => {
+  const call = demoWindow.events.find(e => e.id === 'write-call')!;
+  const result = demoWindow.events.find(e => e.id === 'write-result')!;
+  const inspect = demoWindow.events.find(e => e.id === 'commit-call')!;
+  const commit = { ...demoWindow.events.find(e => e.id === 'commit-result')!, target: { path: result.change!.path, operation: 'edit' as const } };
+  const events = [call, result, inspect, commit];
+  expect(mapActivity(mapGraph, events).find(a => a.event.id === commit.id)?.node?.id).toBe('note:1');
+  for (const changed of [
+    { ...commit, change: { ...commit.change!, id: 'unrelated-capture' } },
+    { ...commit, change: { ...commit.change!, worktree: '9'.repeat(64) } },
+    { ...commit, context: { ...commit.context!, host: 'other-host' } },
+    { ...commit, target: { path: 'Projects/other.md', operation: 'edit' as const } },
+  ]) expect(mapActivity(mapGraph, [call, result, inspect, changed]).find(a => a.event.id === commit.id)?.node).toBeUndefined();
+  // The earlier cursor cannot borrow the scope of a later captured write result.
+  expect(mapActivity(mapGraph, [inspect, commit]).find(a => a.event.id === commit.id)?.node).toBeUndefined();
+  expect(mapActivity(mapGraph, [call, result, inspect]).some(a => a.event.id === commit.id)).toBe(false);
+});
+
+it('keeps validated causal context for a note-filtered commit without displaying unrelated parents', () => {
+  const scene = sceneAt(demoWindow, demoWindow.from + 14000, { note: 'Projects/demo.md' });
+  expect(scene.events.some(e => e.id === 'commit-call')).toBe(false);
+  const activity = mapActivity(mapGraph, scene.events, scene.contextEvents);
+  expect(activity.find(a => a.event.id === 'commit-result')).toMatchObject({ node: { id: 'note:1' }, event: { change: { level: 'commit' } } });
+  const before = sceneAt(demoWindow, demoWindow.from + 13999, { note: 'Projects/demo.md' });
+  expect(mapActivity(mapGraph, before.events, before.contextEvents).some(a => a.event.id === 'commit-result')).toBe(false);
+});
+
+it('preserves an authoritative paired result whose call precedes the requested window', () => {
+  const original = demoWindow.events.find(e => e.id === 'write-call')!;
+  const parent = `${original.source.table}:${original.source.id}:${original.source.part}`;
+  const result = { ...demoWindow.events.find(e => e.id === 'write-result')!, parent, occurrence: parent, change: undefined };
+  const boundary = { tickets: {}, tools: { [parent]: 'pending' }, provenance: { [`tool:${parent}`]: { event: parent, source: original.source, at: original.at } } };
+  const window = { ...demoWindow, from: demoWindow.from + 12100, boundary, events: [result] };
+  const before = sceneAt(window, demoWindow.from + 12499, {});
+  expect(before.tools[parent]).toBe('pending');
+  expect(mapActivity(mapGraph, before.events, before.contextEvents, before.evidenceContext)).toEqual([]);
+  const after = sceneAt(window, result.at!, {});
+  expect(after.nodes.find(n => n.kind === 'file')?.label).toContain('(tool-reported-success)');
+  expect(mapActivity(mapGraph, after.events, after.contextEvents, after.evidenceContext)[0]?.node?.id).toBe('note:1');
+  const reversed = sceneAt(window, demoWindow.from + 12499, {});
+  expect(reversed.tools[parent]).toBe('pending');
+  expect(reversed.nodes.some(n => n.kind === 'file')).toBe(false);
+  for (const badBoundary of [
+    { ...boundary, provenance: {} },
+    { ...boundary, tools: {} },
+    { ...boundary, provenance: { [`tool:${parent}`]: { event: 'different-call', source: original.source, at: original.at } } },
+  ]) {
+    const bad = sceneAt({ ...window, boundary: badBoundary }, result.at!, {});
+    expect(bad.nodes.some(n => n.label.includes('tool-reported-success'))).toBe(false);
+    expect(mapActivity(mapGraph, bad.events, bad.contextEvents, bad.evidenceContext)).toEqual([]);
+  }
+});
