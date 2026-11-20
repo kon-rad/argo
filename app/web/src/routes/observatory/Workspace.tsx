@@ -7,7 +7,9 @@ export default function Workspace({ nodes, links, onSelect }: { nodes: SceneNode
   const host = useRef<HTMLDivElement>(null), graph = useRef<ForceGraph3DInstance | null>(null);
   const resources = useRef(new Map<string, { geometry: BufferGeometry; material: MeshBasicMaterial }>()), meshes = useRef(new Map<string, Mesh>()), previous = useRef(''), wake = useRef(() => {}), select = useRef(onSelect);
   const nodeData = useRef(new Map<string, SceneNode & { x: number; y: number; z: number }>()), linkData = useRef(new Map<string, SceneLink>());
-  const framed = useRef(false);
+  const framed = useRef(false), fitFrame = useRef<number | null>(null), latestNodes = useRef(nodes);
+  latestNodes.current = nodes;
+  const cancelFit = () => { if (fitFrame.current !== null) cancelAnimationFrame(fitFrame.current); fitFrame.current = null; };
   select.current = onSelect;
   const [failed, setFailed] = useState(false);
   const release = () => { for (const resource of resources.current.values()) { resource.geometry.dispose(); resource.material.dispose(); } resources.current.clear(); meshes.current.clear(); nodeData.current.clear(); linkData.current.clear(); previous.current = ''; };
@@ -53,13 +55,13 @@ export default function Workspace({ nodes, links, onSelect }: { nodes: SceneNode
       const resize = new ResizeObserver(() => { g.width(el.clientWidth).height(420); interaction(); });
       resize.observe(el);
       for (const type of ['pointerdown', 'pointermove', 'wheel', 'keydown']) el.addEventListener(type, interaction);
-      const lost = (e: Event) => { e.preventDefault(); g.pauseAnimation(); setFailed(true); };
+      const lost = (e: Event) => { e.preventDefault(); cancelFit(); g.pauseAnimation(); setFailed(true); };
       el.addEventListener('webglcontextlost', lost, true);
       const visibility = () => { if (document.hidden) g.pauseAnimation(); else interaction(); };
       document.addEventListener('visibilitychange', visibility);
       interaction();
       cleanup = () => {
-        clearTimeout(timer); resize.disconnect(); document.removeEventListener('visibilitychange', visibility);
+        cancelFit(); framed.current = false; clearTimeout(timer); resize.disconnect(); document.removeEventListener('visibilitychange', visibility);
         for (const type of ['pointerdown', 'pointermove', 'wheel', 'keydown']) el.removeEventListener(type, interaction);
         el.removeEventListener('webglcontextlost', lost, true);
         g.pauseAnimation(); g._destructor(); release(); graph.current = null; wake.current = () => {}; el.replaceChildren();
@@ -92,7 +94,15 @@ export default function Workspace({ nodes, links, onSelect }: { nodes: SceneNode
     for (const id of linkData.current.keys()) if (!linkKeys.has(id)) linkData.current.delete(id);
     // The library binds scene objects by data-object identity, so retain surviving records.
     g.graphData({ nodes: nextNodes, links: nextLinks });
-    if (!framed.current && nodes.length) fit(nodes);
+    // The library initializes its default camera after graphData. Frame only after that setup.
+    if (!framed.current && nodes.length && fitFrame.current === null) {
+      fitFrame.current = requestAnimationFrame(() => {
+        fitFrame.current = requestAnimationFrame(() => {
+          fitFrame.current = null;
+          if (graph.current === g && !framed.current) fit(latestNodes.current);
+        });
+      });
+    }
     wake.current();
   }, [nodes, links, failed, fit]);
   return <><div ref={host} style={{ height: 420, display: failed ? 'none' : undefined }} aria-label="3D execution workspace" tabIndex={failed ? -1 : 0} />
