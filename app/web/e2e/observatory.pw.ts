@@ -95,8 +95,9 @@ test('records synthetic 500-node/1500-edge seek and frame budgets', async ({ pag
     const p95 = (samples: number[]) => [...samples].sort((a, b) => a - b)[Math.ceil(samples.length * .95) - 1]!;
     const canvas = document.querySelector('canvas')!;
     const gl = canvas.getContext('webgl2');
+    const debug = gl?.getExtension('WEBGL_debug_renderer_info');
     return { synthetic: true, nodes: 500, edges: 1500, seekMs, frameIntervalsMs: frames, p95SeekMs: p95(seekMs), rafFps: 1000 * frames.length / frames.reduce((a, b) => a + b, 0),
-      browser: navigator.userAgent, renderer: gl?.getParameter(gl.RENDERER), pixelRatio: 1, viewport: { width: innerWidth, height: innerHeight },
+      browser: navigator.userAgent, renderer: gl?.getParameter(debug?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER), pixelRatio: 1, viewport: { width: innerWidth, height: innerHeight },
       method: '40 synchronous React scene updates plus two animation frames; 120 interaction-awake requestAnimationFrame intervals. Not GPU completion timing or production workload.' };
   });
   await testInfo.attach('synthetic-performance.json', { body: JSON.stringify(measurement, null, 2), contentType: 'application/json' });

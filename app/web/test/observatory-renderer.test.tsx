@@ -86,3 +86,17 @@ it('shares visual resources across markers and releases them on unmount', () => 
   view.unmount();
   expect(geometryDispose).toHaveBeenCalledTimes(1); expect(materialDispose).toHaveBeenCalledTimes(1);
 });
+
+it('frames the first nonempty scene after an empty cursor and only refits later on request', () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const first = sceneAt(demoWindow, demoWindow.from + 2000, {});
+  const view = render(<Workspace nodes={[]} links={[]} onSelect={() => {}} />);
+  expect(graph.cameraPosition).not.toHaveBeenCalled();
+  view.rerender(<Workspace nodes={first.nodes} links={first.links} onSelect={() => {}} />);
+  expect(graph.cameraPosition).toHaveBeenCalledTimes(1);
+  view.rerender(<Workspace nodes={[]} links={[]} onSelect={() => {}} />);
+  view.rerender(<Workspace nodes={first.nodes} links={first.links} onSelect={() => {}} />);
+  expect(graph.cameraPosition).toHaveBeenCalledTimes(1);
+  fireEvent.click(view.getByRole('button', { name: 'Fit active workspace' }));
+  expect(graph.cameraPosition).toHaveBeenCalledTimes(2);
+});

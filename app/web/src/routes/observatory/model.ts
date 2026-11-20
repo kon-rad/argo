@@ -82,6 +82,17 @@ export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) 
     const target = e.target ?? (e.parent ? byId.get(e.parent)?.target : undefined);
     if (target) { const id = `file:${e.context?.host ?? e.execution ?? e.session ?? e.id}:${e.change ? `${e.change.repository}:${e.change.worktree}` : e.execution ?? e.session ?? e.id}:${target.path}`; add(id, `${target.operation}: ${target.path} (${e.change?.level ?? e.writeEvidence ?? 'attempt'})`, 'file', e.actor.kind, owner.fx + 85, 70, owner.fz); links.push({ source: e.id, target: id }); }
   }
+  // A recorded human input is an event, not proof of an executing agent/session.
+  // Keep its own short pulse visible even when no execution can be established.
+  for (const e of events.filter(e => e.actor.kind === 'human' && !e.execution && cursor - e.at! <= 2000).slice(-200)) {
+    const x = hash(e.actor.sender ?? e.id) % 200 - 100;
+    add(e.id, `${originStyle('human').glyph} ${e.kind}: ${e.actor.sender ?? 'recorded sender'}`, 'event', 'human', x, -90, 0);
+    if (e.ticket) {
+      const ticket = `ticket:${e.ticket}`;
+      add(ticket, `${e.ticket}: ${state.tickets[e.ticket] ?? 'historical state unknown'}`, 'ticket', 'unknown', x, 30, 0);
+      links.push({ source: e.id, target: ticket });
+    }
+  }
   const limitedNodes = nodes.slice(0, 500), shown = new Set(limitedNodes.map(n => n.id));
   const limitedLinks = links.filter(l => shown.has(l.source) && shown.has(l.target)).slice(0, 1500);
   return { ...state, active, events, nodes: limitedNodes, links: limitedLinks, omittedNodes: nodes.length - limitedNodes.length, omittedLinks: links.length - limitedLinks.length };
