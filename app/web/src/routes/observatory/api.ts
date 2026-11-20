@@ -22,6 +22,6 @@ export async function loadSnapshot(state: ViewState, signal: AbortSignal): Promi
   if (bytes > CACHE_BYTES || events.length > 5000 || ordered(events).length !== first.total) throw new Error('Incomplete or oversized window; narrow range and restart');
   return { window: { ...first.window, events: ordered(events) }, export: first.export, diagnostics: first.diagnostics };
 }
-export function loadDetail(id: string, token: string, signal: AbortSignal) {
-  return request<{ event: EvidenceEvent; detail: { availability: string; content: string; thinking?: { availability: 'authorized-summary' | 'hidden' | 'unavailable'; summary?: string } } }>(`/observatory/events/${encodeURIComponent(id)}`, { export: token }, { signal });
+export function loadDetail(id: string, token: string, signal: AbortSignal, diff = false) {
+  return request<{ event: EvidenceEvent; detail: { availability: string; content: string; thinking?: { availability: 'authorized-summary' | 'hidden' | 'unavailable'; summary?: string } } }>(`/observatory/events/${encodeURIComponent(id)}${diff ? '/diff' : ''}`, { export: token }, { signal });
 }

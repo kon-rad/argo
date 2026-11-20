@@ -43,6 +43,35 @@ describe('observatory scratch schema and join cardinalities', () => {
   });
 });
 
+import { readFileSync } from 'node:fs';
+import { withTransaction } from '../src/db.js';
+import { replay } from '@secondbrain/contracts/observatory';
+import type { ParsedMessage } from '../src/archive/types.js';
+import { upsertMessages } from '../src/archive/store.js';
+it('applies the capture migration twice and reingests one successful observation idempotently', async () => {
+  const migration = readFileSync(new URL('../../db/migrations/1756000020700_archive-change-evidence.sql', import.meta.url), 'utf8');
+  await withTransaction(async tx => { await tx.query(migration); await tx.query(migration); });
+  const session = (await query(`INSERT INTO archive_sessions(source,host,external_id) VALUES('zen-agent',$1,'capture') RETURNING id`, [host])).rows[0]!.id;
+  const raw = { harness: 'zen-agent', type: 'message', message: { role: 'toolResult', toolCallId: 'write-a', toolName: 'write_file', isError: false,
+    details: { change: { version: 1, id: 'capture-a', repository: 'a'.repeat(64), worktree: 'b'.repeat(64), path: 'notes/demo.md', before: null, after: 'c'.repeat(64), diff: { format: 'replacement', before: '', after: 'fixture', truncated: false } } } } };
+  const input: ParsedMessage[] = [{ seq: 2, externalId: 'capture-result', parentExternalId: null, role: 'tool', kind: 'message', ts: new Date('2025-01-01T00:00:01Z'), contentText: '', raw, rawSha: 'fixture-capture', isSidechain: false }];
+  input.unshift({ ...input[0]!, seq: 1, externalId: 'capture-call', ts: new Date('2025-01-01T00:00:00Z'), rawSha: 'fixture-call',
+    raw: { harness: 'zen-agent', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'write-a', name: 'write_file', arguments: { path: 'notes/demo.md' } }] } } });
+  expect(await withTransaction(tx => upsertMessages(tx, session, input))).toBe(2);
+  expect(await withTransaction(tx => upsertMessages(tx, session, input))).toBe(0);
+  const stored = (await query('SELECT change_evidence FROM archive_messages WHERE session_id=$1 AND change_evidence IS NOT NULL', [session])).rows;
+  expect(stored).toHaveLength(1);
+  expect(stored[0]!.change_evidence.level).toBe('captured-diff');
+  expect(JSON.stringify(stored[0])).not.toContain('fixture"');
+  const from = Date.parse('2025-01-01T00:00:00Z');
+  const data = await readSnapshot(db => loadWindow(db, { from, to: from + 5000, host }, new Set(['usage'])));
+  const call = data.window.events.find(e => e.kind === 'tool_call')!, result = data.window.events.find(e => e.kind === 'tool_result')!;
+  expect(result.change?.level).toBe('captured-diff');
+  expect(replay(data.window, from).tools[call.id]).toBe('pending');
+  expect(replay(data.window, from + 1000).tools[call.id]).toBe('success');
+  expect(replay(data.window, from).tools[call.id]).toBe('pending');
+});
+
 it('captures org sender at insertion and never rewrites history from a changed roster', async () => {
   const { withTransaction } = await import('../src/db.js');
   // Roll back all synthetic org rows, even if an assertion fails.

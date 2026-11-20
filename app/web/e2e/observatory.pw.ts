@@ -48,6 +48,95 @@ test('synthetic Observatory replay, restoration and recorded-part navigation', a
   await expect(page).toHaveURL(/part=2%3Acall/);
 });
 
+test('synthetic prospective write, commit and verified gate evidence stay distinct under reverse seek', async ({ page }) => {
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    await route.fulfill({ json: path === '/api/auth/me' ? { required: false, authenticated: true }
+      : path === '/api/meta' ? { modules: ['usage', 'observatory'], nav: [], timezone: 'UTC', owner: 'owner', version: 'test' }
+      : path === '/api/sources' ? { sources: [] }
+      : path === '/api/sync' ? { installed: false } : {} });
+  });
+  const t = demoWindow.from;
+  await page.goto(`/observatory?demo=1&from=${t}&to=${demoWindow.to}&cursor=${t + 12000}&event=write-call`);
+  await expect(page.getByText(/Outcome at cursor: pending/)).toBeVisible();
+  await expect(page.getByLabel('Captured change evidence')).toHaveCount(0);
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12500));
+  await expect(page.getByRole('button', { name: /tool_result/ })).toHaveCount(2);
+  await page.getByRole('button', { name: /tool_result/ }).last().click();
+  await expect(page.getByLabel('Captured change evidence')).toContainText('captured-diff');
+  await expect(page.getByLabel('Captured change evidence')).toContainText('notes/demo.md');
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 14000));
+  await expect(page.getByRole('button', { name: /tool_result/ })).toHaveCount(3);
+  await page.getByRole('button', { name: /tool_result/ }).last().click();
+  await expect(page.getByLabel('Captured change evidence')).toContainText('local-object');
+  await expect(page.getByLabel('Captured change evidence')).toContainText('unknown');
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 18500));
+  await expect(page.getByRole('button', { name: /artifact/ })).toHaveCount(4);
+  await page.getByRole('button', { name: /artifact/ }).last().click();
+  await expect(page.getByLabel('PR evidence')).toContainText('merge-verified');
+  await expect(page.getByText('No evidenced active executions at this cursor.')).toBeVisible();
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(t + 12000));
+  await expect(page.getByLabel('Captured change evidence')).toHaveCount(0);
+  await expect(page.getByLabel('PR evidence')).toHaveCount(0);
+});
+
+// Coordinator-only rendered scenario. API fixtures do not establish source permissions or production coverage.
+test('Brain Map exact note overlay, unresolved evidence and shared replay navigation', async ({ page }) => {
+  const { mapGraph, mapWindow } = await import('../test/fixtures/observatoryMap.js');
+  const from = mapWindow.from, to = mapWindow.to;
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url()), path = url.pathname;
+    const json = path === '/api/auth/me' ? { required: false, authenticated: true }
+      : path === '/api/meta' ? { modules: ['usage', 'map', 'observatory'], nav: [], timezone: 'UTC', owner: 'owner', version: 'test' }
+      : path === '/api/sources' ? { sources: [] }
+      : path === '/api/sync' ? { installed: false }
+      : path === '/api/map/graph' ? mapGraph
+      : path === '/api/observatory/window' ? { window: mapWindow, total: mapWindow.events.length, next: null, export: 'map-fixture', diagnostics: { synthetic: true, historicalCompleteness: 'unknown' } }
+      : {};
+    if (path === '/api/map/graph' && url.searchParams.has('version')) expect(url.searchParams.get('version')).toBe('7');
+    await route.fulfill({ json });
+  });
+  await page.goto(`/map?activity=1&from=${from}&to=${to}&cursor=${from + 2000}&event=read`);
+  await expect(page.getByText(/Current topology is context only/)).toBeVisible();
+  await expect(page.getByText(/Unresolved: missing, moved, deleted/)).toBeVisible();
+  await expect(page.getByText(/Repository\/path target/)).toBeVisible();
+  await expect(page.locator('canvas').first()).toBeVisible();
+  await expect(page).toHaveURL(/layout=7/);
+  await page.getByRole('button', { name: 'Focus note Projects/demo.md', exact: true }).first().click();
+  await page.waitForTimeout(1800);
+  await page.locator('canvas').first().screenshot({ path: 'e2e/test-results/observatory-map-scene.png' });
+  // Inspect the rendered read/write glyphs with preserved origin colors at the existing note, then save evidence.
+  await page.screenshot({ path: 'e2e/test-results/observatory-map-overlay.png', fullPage: true });
+  await page.getByLabel('Active executions').getByRole('button', { name: /run:lab:parallel/ }).click();
+  await expect(page.getByLabel('Note activity').getByRole('button', { name: /▲ W write attempt/ })).toBeVisible();
+  await expect(page.getByLabel('Note activity').getByRole('button', { name: /○ R read attempt/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Filter note Projects/demo.md', exact: true }).click();
+  await expect(page.getByText('Note activity filter: Projects/demo.md', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Workspace replay', exact: true }).click();
+  await expect(page).toHaveURL(/observatory\?/);
+  await expect(page.getByLabel('Replay cursor', { exact: true })).toHaveValue(String(from + 2000));
+  await expect(page).toHaveURL(/event=run%3Alab%3Aparallel/);
+  await expect(page).toHaveURL(/note=Projects%2Fdemo.md/);
+  await page.getByRole('link', { name: 'Brain Map replay', exact: true }).click();
+  await expect(page.getByText(/Current topology is context only/)).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Replay cursor', { exact: true })).toHaveValue(String(from + 2000));
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(from + 7000));
+  await expect(page.getByText('No evidenced active executions at this cursor.')).toBeVisible();
+  // Lose the actual WebGL context: the canvas must leave the layout, while HTML evidence survives.
+  await page.locator('canvas').first().evaluate((canvas: HTMLCanvasElement) => {
+    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+    const extension = gl?.getExtension('WEBGL_lose_context');
+    if (!extension) throw new Error('Context-loss extension unavailable');
+    extension.loseContext();
+  });
+  await expect(page.getByText(/3D map unavailable/)).toBeVisible();
+  await expect(page.locator('canvas')).toHaveCount(0);
+  await expect(page.getByLabel('Note activity').getByRole('button').first()).toBeVisible();
+  // Historical operation evidence may remain on the map; ended executions must not remain active.
+  await expect(page.getByText(/Current topology is context only/)).toBeVisible();
+});
+
 test('records synthetic 500-node/1500-edge seek and frame budgets', async ({ page }, testInfo) => {
   test.setTimeout(120000);
   await page.goto('/e2e/observatory-benchmark.html');

@@ -1,0 +1,64 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render } from '@testing-library/react';
+import { Group, Mesh, MeshBasicMaterial } from 'three';
+import { FullMap } from '../src/components/map/FullMap.js';
+import type { MapGraph } from '../src/lib/mapData.js';
+import { demoWindow } from '../src/routes/observatory/demo.js';
+const graph = vi.hoisted(() => {
+  const g: Record<string, ReturnType<typeof vi.fn>> = {};
+  for (const key of ['backgroundColor', 'showNavInfo', 'cooldownTicks', 'warmupTicks', 'enableNodeDrag', 'nodeRelSize', 'nodeResolution', 'linkOpacity', 'nodeLabel', 'width', 'height', 'cameraPosition', 'pauseAnimation', 'resumeAnimation', 'nodeThreeObject', 'graphData', 'nodeColor', 'nodeVisibility', 'linkVisibility', 'linkColor', 'onNodeClick', 'onBackgroundClick', '_destructor']) g[key] = vi.fn(() => g);
+  g.postProcessingComposer = vi.fn(() => ({ addPass: vi.fn() }));
+  g.scene = vi.fn();
+  return g;
+});
+vi.mock('3d-force-graph', () => ({ default: class { constructor() { return graph; } } }));
+vi.mock('three/examples/jsm/postprocessing/UnrealBloomPass.js', () => ({ UnrealBloomPass: class {} }));
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
+it('adds read circles and write triangles beside pinned notes without rebuilding topology on seeks', () => {
+  const scene = new Group(); graph.scene!.mockReturnValue(scene);
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const note = { id: 'note:1', kind: 'note' as const, ref: 'Projects/demo.md', label: 'Demo', parent: null, color: null, size: 1, x: 3, y: 4, z: 5, meta: {} };
+  const data: MapGraph = { version: 7, builtAt: '2026-11-01T00:00:00Z', nodes: [note], edges: [] };
+  const event = demoWindow.events.find(e => e.id === 'call')!;
+  const props = { graph: data, metrics: [], layers: { notes: true, links: true, structure: true, metrics: false }, selected: null, onSelect: vi.fn() };
+  const activity = [{ node: note, event: { ...event, target: { path: note.ref, operation: 'read' as const } } }, { node: note, event: { ...event, target: { path: note.ref, operation: 'write' as const } } }];
+  const view = render(<FullMap {...props} activity={activity} />);
+  expect(graph.cooldownTicks).toHaveBeenCalledWith(0);
+  expect(graph.warmupTicks).toHaveBeenCalledWith(0);
+  const pinned = graph.graphData!.mock.calls[0]![0] as { nodes: any[] };
+  expect(pinned.nodes[0]).toMatchObject({ fx: 3, fy: 4, fz: 5 });
+  const meshes = scene.children[0]!.children as Mesh[];
+  expect(meshes.map(m => m.geometry.type)).toEqual(['TorusGeometry', 'ConeGeometry']);
+  expect(meshes.map(m => m.position.toArray())).toEqual([[-4, 14, 5], [10, 14, 5]]);
+  const disposals = meshes.map(m => [vi.spyOn(m.geometry, 'dispose'), vi.spyOn(m.material as MeshBasicMaterial, 'dispose')]);
+  view.rerender(<FullMap {...props} activity={[]} />);
+  expect(graph.graphData).toHaveBeenCalledTimes(1);
+  expect(graph.cameraPosition).toHaveBeenCalledTimes(1);
+  expect(disposals.every(pair => pair.every(spy => spy.mock.calls.length === 1))).toBe(true);
+  view.unmount();
+  expect(scene.children).toHaveLength(0);
+  expect(graph._destructor).toHaveBeenCalledTimes(1);
+});
+
+it('escapes note titles in graph tooltips', () => {
+  const scene = new Group(); graph.scene!.mockReturnValue(scene);
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  render(<FullMap graph={{ version: 1, builtAt: '2026-01-01', nodes: [], edges: [] }} metrics={[]} layers={{ notes: true, links: true, structure: true, metrics: false }} selected={null} onSelect={() => {}} />);
+  const label = graph.nodeLabel!.mock.calls[0]![0] as (n: { label: string }) => string;
+  expect(label({ label: '<img src=x onerror=alert(1)>&' })).toBe('&lt;img src=x onerror=alert(1)&gt;&amp;');
+});
+it('pauses a static activity map and wakes on interaction without leaving timers after unmount', () => {
+  vi.useFakeTimers();
+  const scene = new Group(); graph.scene!.mockReturnValue(scene);
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const view = render(<FullMap renderOnDemand graph={{ version: 1, builtAt: '2026-01-01', nodes: [], edges: [] }} metrics={[]} layers={{ notes: true, links: true, structure: true, metrics: false }} selected={null} onSelect={() => {}} />);
+  vi.advanceTimersByTime(1200);
+  expect(graph.pauseAnimation).toHaveBeenCalled();
+  const before = graph.resumeAnimation!.mock.calls.length;
+  fireEvent.pointerDown(view.getByTestId('map-full'));
+  expect(graph.resumeAnimation!.mock.calls.length).toBeGreaterThan(before);
+  view.unmount();
+  const pauses = graph.pauseAnimation!.mock.calls.length;
+  vi.advanceTimersByTime(2000);
+  expect(graph.pauseAnimation!.mock.calls.length).toBe(pauses);
+});

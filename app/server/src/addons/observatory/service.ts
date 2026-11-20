@@ -1,3 +1,4 @@
+import { reviewEvents, type ReviewRow } from './reviews.js';
 import type { EvidenceEvent, ExecutionInterval, ReplayWindow, SourceTable } from '@secondbrain/contracts/observatory';
 import { withTransaction, type TxClient } from '../../db.js';
 import { HttpError } from '../../routes/http.js';
@@ -10,7 +11,7 @@ export interface Diagnostics {
 }
 export interface ExportData { window: ReplayWindow; diagnostics: Diagnostics; refs: Partial<Record<SourceTable, string[]>> }
 const LIMIT = 5000;
-const sources: Record<SourceTable, string> = { archive_messages: 'usage', usage_calls: 'usage', usage_runs: 'usage', card_events: 'board', org_messages: 'org' };
+const sources: Record<SourceTable, string> = { archive_messages: 'usage', usage_calls: 'usage', usage_runs: 'usage', card_events: 'board', org_messages: 'org', review_attempts: 'board' };
 export const sourceEnabled = (table: SourceTable, modules: ReadonlySet<string>): boolean => modules.has(sources[table]);
 function bounded<T>(rows: T[]): T[] {
   if (rows.length > LIMIT) throw new HttpError(413, 'evidence exceeds 5000 records; narrow range or select a session');
@@ -31,7 +32,7 @@ export async function readSnapshot<T>(fn: (db: TxClient) => Promise<T>): Promise
   }
 }
 
-export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySet<string>): Promise<ExportData> {
+export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySet<string>, vaultRoot?: string): Promise<ExportData> {
   const { from, to, host, session } = range;
   const args = [new Date(from), new Date(to), host ?? null, session ?? null];
   const events: EvidenceEvent[] = [];
@@ -53,22 +54,22 @@ export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySe
            FROM archive_messages m JOIN active a ON a.id=m.session_id
            WHERE (m.ts >= $1 AND m.ts < $2) OR m.ts IS NULL) AS oversized),
       candidates AS (
-        SELECT m.id, m.session_id, m.seq, m.ts, m.role, m.kind, m.observatory_projection FROM archive_messages m JOIN active a ON a.id=m.session_id
+        SELECT m.id, m.session_id, m.seq, m.ts, m.role, m.kind, m.observatory_projection, m.change_evidence FROM archive_messages m JOIN active a ON a.id=m.session_id
           WHERE (m.ts >= $1 AND m.ts < $2) OR m.ts IS NULL
         UNION ALL
-        SELECT m.id, m.session_id, m.seq, m.ts, m.role, m.kind, m.observatory_projection FROM archive_messages m JOIN active a ON a.id=m.session_id
+        SELECT m.id, m.session_id, m.seq, m.ts, m.role, m.kind, m.observatory_projection, m.change_evidence FROM archive_messages m JOIN active a ON a.id=m.session_id
           WHERE m.ts < $1 AND (
             m.observatory_projection->'parts' @> '[{"step":"tool_call"}]'::jsonb OR
             m.observatory_projection->'parts' @> '[{"step":"tool_result"}]'::jsonb))
       SELECT m.id, m.session_id, m.seq, m.ts, m.role, m.kind, NULL::jsonb AS raw,
-        m.observatory_projection, ''::text AS text, a.host, a.source, a.external_id, a.harness,
+        m.observatory_projection, m.change_evidence, ''::text AS text, a.host, a.source, a.external_id, a.harness,
         NULL::timestamptz AS observed_at, b.missing, b.oversized
       FROM budget b LEFT JOIN candidates m ON true LEFT JOIN active a ON a.id=m.session_id
       ORDER BY m.session_id, m.seq, m.id LIMIT 5001`, args)).rows;
     if (messages.some(m => m.missing)) throw new HttpError(503, 'archive replay projection incomplete; run archive-steps --observatory --apply in bounded batches');
     if (messages.some(m => m.oversized)) throw new HttpError(413, 'archive source exceeds 4 MiB; narrow range or select a session');
     bounded(messages);
-    events.push(...archiveEvents(messages.filter(m => m.id != null)));
+    events.push(...archiveEvents(messages.filter(m => m.id != null), vaultRoot));
     const runs = bounded((await db.query<{ host: string; run_id: string; session_id: string; runtime: string; agent_name: string | null; task_id: string | null; started_at: Date | null; ended_at: Date | null; archive_ids: number[] }>(
       `SELECT r.host, r.run_id, r.session_id, coalesce(r.runtime, 'claude-code') AS runtime, r.agent_name, r.task_id, r.started_at, r.ended_at,
         ARRAY(SELECT a.id FROM archive_sessions a WHERE a.host = r.host AND a.source = coalesce(r.runtime, 'claude-code') AND a.external_id = r.session_id) AS archive_ids
@@ -127,6 +128,15 @@ export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySe
       if (row.task_id) e.ticket = row.task_id; events.push(e);
     }
   }
+  if (!host && !session && modules.has('board')) {
+    const reviews = bounded((await db.query<ReviewRow>(`SELECT a.id, a.job, a.at, j.card, j.reviewer,
+        CASE WHEN sum(octet_length(a.patch::text)) OVER () <= 4194304 THEN a.patch ELSE '{"observatory_oversized":true}'::jsonb END AS patch
+      FROM review_attempts a JOIN review_jobs j ON j.id = a.job
+      WHERE a.at < $2 AND EXISTS (SELECT 1 FROM review_attempts w WHERE w.job = a.job AND w.at >= $1 AND w.at < $2)
+      ORDER BY a.at, a.id LIMIT 5001`, args.slice(0, 2))).rows);
+    if (reviews.some(r => (r.patch as { observatory_oversized?: boolean })?.observatory_oversized)) throw new HttpError(413, 'review source exceeds 4 MiB; narrow range');
+    events.push(...reviewEvents(reviews));
+  }
   bounded(events);
   diagnostics.sessionsWithoutIntervals = new Set(events.filter(e => e.session && !intervals.some(i => i.session === e.session)).map(e => e.session)).size;
   diagnostics.untimed = events.filter(e => e.at === null).length;
@@ -144,10 +154,11 @@ export async function loadWindow(db: TxClient, range: Range, modules: ReadonlySe
 
 export async function coverage(db: TxClient, range: Range, modules: ReadonlySet<string>) {
   const specs = [
-    { table: 'archive_messages', time: 'ts', group: "a.host, a.harness AS runtime", join: 'JOIN archive_sessions a ON a.id = t.session_id', filter: 'a.host', session: 't.session_id', extra: 'count(*) FILTER (WHERE t.ts IS NULL)::int AS untimed, max(a.updated_at) AS session_updated_at, count(*) FILTER (WHERE t.observatory_projection IS NULL)::int AS replay_projection_missing' },
+    { table: 'archive_messages', time: 'ts', group: "a.host, a.harness AS runtime", join: 'JOIN archive_sessions a ON a.id = t.session_id', filter: 'a.host', session: 't.session_id', extra: 'count(*) FILTER (WHERE t.ts IS NULL)::int AS untimed, max(a.updated_at) AS session_updated_at, count(*) FILTER (WHERE t.observatory_projection IS NULL)::int AS replay_projection_missing, count(*) FILTER (WHERE t.change_evidence IS NOT NULL)::int AS captured_changes' },
     { table: 'usage_calls', time: 'ts', group: 't.host, t.source AS runtime', join: '', filter: 't.host', session: `(SELECT a.id FROM archive_sessions a WHERE a.host=t.host AND a.source=t.source AND a.external_id=t.session_external_id)`, extra: '0 AS untimed' },
     { table: 'usage_runs', time: 'started_at', group: "t.host, coalesce(t.runtime, 'claude-code') AS runtime", join: '', filter: 't.host', session: `(SELECT a.id FROM archive_sessions a WHERE a.host=t.host AND a.source=coalesce(t.runtime, 'claude-code') AND a.external_id=t.session_id)`, extra: 'count(*) FILTER (WHERE t.ended_at IS NULL OR t.started_at IS NULL OR t.ended_at <= t.started_at)::int AS unknown_intervals' },
     { table: 'card_events', time: 'at', group: 'NULL::text AS host, NULL::text AS runtime', join: '', filter: 'NULL::text', session: 'NULL::bigint', extra: '0 AS untimed' },
+    { table: 'review_attempts', time: 'at', group: 'NULL::text AS host, NULL::text AS runtime', join: 'JOIN review_jobs j ON j.id=t.job', filter: 'NULL::text', session: 'NULL::bigint', extra: '0 AS untimed' },
     { table: 'org_messages', time: 'created_at', group: 'NULL::text AS host, NULL::text AS runtime', join: '', filter: 'NULL::text', session: 'NULL::bigint', extra: '0 AS untimed' },
   ] as const;
   const result = [];
@@ -164,13 +175,13 @@ export async function coverage(db: TxClient, range: Range, modules: ReadonlySet<
     result.push({ source: s.table, status: 'authorized-visible-subset', groups: rows.rows.slice(0, 200), truncatedGroups: rows.rows.length > 200 ? null : 0, hasMoreGroups: rows.rows.length > 200, policy,
       ingestionFreshness: 'unknown', historicalCompleteness: 'unknown', senderProvenance: 'unknown' });
   }
-  return { version: 1, from: range.from, to: range.to, sources: result, liveExecutions: 'unsupported', productionAudit: 'not-performed' };
+  return { version: 1, from: range.from, to: range.to, sources: result, liveExecutions: 'unsupported', productionAudit: 'not-performed', fileChanges: 'prospective zen-agent structured tools only; historical coverage unknown', reviewEvidence: 'visible trusted gate attempts only; no shared-checkout authorship' };
 }
 
 export async function authorizeDetail(db: TxClient, event: EvidenceEvent, modules: ReadonlySet<string>): Promise<void> {
   if (!sourceEnabled(event.source.table, modules)) throw new HttpError(403, 'source module disabled');
   // Table comes only from the pinned server-generated event, never from a request parameter.
-  const result = await db.query(`SELECT 1 FROM ${event.source.table} WHERE id = $1`, [event.source.id]);
+  const result = await db.query(event.source.table === 'review_attempts' ? 'SELECT 1 FROM review_attempts a JOIN review_jobs j ON j.id=a.job WHERE a.id=$1' : `SELECT 1 FROM ${event.source.table} WHERE id = $1`, [event.source.id]);
   if (!result.rows.length) throw new HttpError(404, 'source no longer visible');
 }
 
@@ -178,7 +189,7 @@ export async function authorizeDetail(db: TxClient, event: EvidenceEvent, module
 export async function authorizeExport(db: TxClient, data: ExportData, modules: ReadonlySet<string>): Promise<void> {
   for (const [table, ids] of Object.entries(data.refs) as [SourceTable, string[]][]) {
     if (!sourceEnabled(table, modules)) throw new HttpError(403, 'source module disabled');
-    const found = await db.query(`SELECT id FROM ${table} WHERE id = ANY($1::bigint[])`, [ids]);
+    const found = await db.query(table === 'review_attempts' ? 'SELECT a.id FROM review_attempts a JOIN review_jobs j ON j.id=a.job WHERE a.id=ANY($1::bigint[])' : `SELECT id FROM ${table} WHERE id = ANY($1::bigint[])`, [ids]);
     if (found.rows.length !== ids.length) throw new HttpError(403, 'export source visibility changed; restart window');
   }
   if (data.window.intervals.length) {

@@ -230,3 +230,11 @@ The package has no path that points back into the engine; `zen.example.json` ref
 ## License
 
 MIT.
+
+### Prospective file-change evidence
+
+`write_file` and `edit_file` capture successful changed bytes inside a Git working tree in result `details.change` (version 1). Each record contains an operation ID, SHA-256 before/after hashes, a repository-relative path, and opaque hashes of the canonical repository/common directory and worktree paths. A new file has `before: null`. Unchanged writes have no capture. Failed edits, shell commands and other worktree files produce no captured change. Capture failure leaves evidence unknown and does not turn a successful write into an error.
+
+A combined 16 KiB of valid UTF-8 before/after text is retained as a bounded replacement diff. Larger or binary inputs retain hashes with `diff.truncated: true`; existing files over 16 MiB and symlinks are unsupported. The archive collector redacts retained text before storage. Original hashes identify original bytes, not the redacted representation. Runtime traces retain their existing local source permissions.
+
+`inspect_change_commit` accepts a capture ID from this execution and a full 40-character local commit SHA. It compares the captured path's exact parent/commit blobs against the capture hashes, requiring a single-parent commit. Success attests local Git objects, with authorship explicitly unknown. It neither attributes other paths in the commit nor verifies a PR, review or merge. Capture handles are bounded to the latest 128 operations per tool instance and are unavailable after restart. No new network calls, settings or credentials are required. Concurrent outside writers, crashes and unsupported runtimes remain coverage gaps; this is not a claim to recover historical edits.

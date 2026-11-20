@@ -1,3 +1,4 @@
+import { changeDetail } from './changeDetail.js';
 import { thinkingDetail } from './adapters.js';
 import { redactor } from '../../archive/redact.js';
 import { config } from '../../config.js';
@@ -16,7 +17,7 @@ function range(input: unknown) {
   if (to <= from || to - from > 86400_000) throw new HttpError(400, 'range must be positive and at most 24 hours');
   return { ...q, from, to };
 }
-export function observatoryRouter(modules: ReadonlySet<string>): Router {
+export function observatoryRouter(modules: ReadonlySet<string>, vaultRoot?: string): Router {
   const router = Router(); const exports = new Exports();
   // Session middleware authenticates the sole owner on remote deployments. Local access is the local owner.
   const owner = (res: { locals: Record<string, unknown> }) => String(res.locals.sessionHash ?? 'local-owner');
@@ -29,13 +30,23 @@ export function observatoryRouter(modules: ReadonlySet<string>): Router {
       await readSnapshot(db => authorizeExport(db, data, modules));
       const { refs: _refs, ...page } = exports.page(owner(res), q.export, q.offset, q.limit); res.json(page); return;
     }
-    const q = range(req.query); const data = await readSnapshot(db => loadWindow(db, q, modules));
+    const q = range(req.query); const data = await readSnapshot(db => loadWindow(db, q, modules, vaultRoot));
     const token = exports.put(owner(res), data); const { refs: _refs, ...page } = exports.page(owner(res), token, 0, 500); res.json(page);
+  }));
+  router.get('/events/:id/diff', wrap(async (req, res) => {
+    const q = parseOr400(z.object({ export: z.uuid() }).strict(), req.query);
+    const data = exports.get(owner(res), q.export), event = exports.event(owner(res), q.export, String(req.params.id));
+    const detail = await readSnapshot(async db => {
+      await authorizeExport(db, data, modules);
+      return changeDetail(db, event, modules);
+    });
+    res.json({ event, detail });
   }));
   router.get('/events/:id', wrap(async (req, res) => {
     const q = parseOr400(z.object({ export: z.uuid() }).strict(), req.query);
     const event = exports.event(owner(res), q.export, String(req.params.id));
     const thinking = await readSnapshot(async db => {
+      await authorizeExport(db, exports.get(owner(res), q.export), modules);
       await authorizeDetail(db, event, modules);
       if (event.kind !== 'thinking' || event.source.table !== 'archive_messages') return undefined;
       const result = await db.query<{ raw: unknown }>(`SELECT CASE WHEN octet_length(raw::text) <= 1048576 THEN raw ELSE NULL END AS raw FROM archive_messages WHERE id = $1`, [event.source.id]);
@@ -46,4 +57,4 @@ export function observatoryRouter(modules: ReadonlySet<string>): Router {
   }));
   return router;
 }
-export const routes: FeatureRoutes = ({ opts }) => [{ path: '/api/observatory', router: observatoryRouter(opts.modules ?? config.modules) }];
+export const routes: FeatureRoutes = ({ opts }) => [{ path: '/api/observatory', router: observatoryRouter(opts.modules ?? config.modules, opts.vaultRoot ?? config.vaultRoot) }];

@@ -1,10 +1,11 @@
+import { capturedChange } from './changeEvidence.js';
 import { expandSteps, type StepPart, type StepRow } from './steps.js';
 import { fileTarget, recordedSender } from '../addons/observatory/adapters.js';
 import { query, withTransaction, type TxClient } from '../db.js';
 
 /** Rebuildable, content-free inputs to the existing adapter. Keys use 0 until a row ID is assigned. */
 export function projectObservatory(row: Omit<StepRow, 'text'> & { text: string | null }) {
-  return { version: 1, sender: recordedSender(row.raw), parts: expandSteps({ ...row, id: 0, text: row.text ?? '' }).map(part => {
+  return { version: 1, sender: recordedSender(row.raw), change: capturedChange(row.raw), parts: expandSteps({ ...row, id: 0, text: row.text ?? '' }).map(part => {
     const target = part.step === 'tool_call' ? fileTarget(part.toolName, part.text) : undefined;
     // Keep this allowlist explicit: future parser detail must not enter the projection.
     return { key: part.key, step: part.step, toolName: part.toolName,
@@ -12,7 +13,7 @@ export function projectObservatory(row: Omit<StepRow, 'text'> & { text: string |
       text: target ? JSON.stringify({ path: target.path }) : '' };
   }) };
 }
-export interface ObservatoryProjection { version: number; sender: ReturnType<typeof recordedSender>; parts: StepPart[] }
+export interface ObservatoryProjection { version: number; change?: ReturnType<typeof capturedChange>; sender: ReturnType<typeof recordedSender>; parts: StepPart[] }
 
 export async function projectMessages(tx: TxClient, ids: number[]): Promise<number> {
   if (!ids.length) return 0;

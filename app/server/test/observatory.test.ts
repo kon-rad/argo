@@ -96,7 +96,7 @@ describe('boundary, pagination and authorization', () => {
   it('marks disabled sources without querying them', async () => {
     const db = dbFixture(() => { throw new Error('unexpected source read'); });
     const result = await coverage(db, { from: 0, to: 100 }, new Set());
-    expect(result.sources.map(s => s.status)).toEqual(Array(5).fill('disabled'));
+    expect(result.sources.map(s => s.status)).toEqual(Array(6).fill('disabled'));
   });
   it('keeps usage rows separate from tools and rejects unknown execution ends', async () => {
     const db = dbFixture(sql => {

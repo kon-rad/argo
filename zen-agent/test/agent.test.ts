@@ -33,7 +33,7 @@ test('a run: tool call, final text, usage, and a complete session trace', async 
   const events: string[] = [];
   const zen = new ZenAgent({ config: cfg, models, env: {}, onEvent: (e) => events.push(e.type) });
   assert.equal(zen.model.id, 'faux-1');
-  assert.deepEqual(zen.tools.map((t) => t.name), ['read_file', 'write_file', 'edit_file', 'list_dir', 'bash']); // no skills dir → no read_skill
+  assert.deepEqual(zen.tools.map((t) => t.name), ['read_file', 'write_file', 'edit_file', 'list_dir', 'inspect_change_commit', 'bash']); // no skills dir → no read_skill
   assert.ok(zen.prompt.parts.some((p) => p.name === 'rules'));
   const r = await zen.run('What does hello.txt say?');
   assert.equal(r.stopped, 'done');

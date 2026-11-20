@@ -1,8 +1,11 @@
+import { capturedChange, sameChange } from '../../archive/changeEvidence.js';
+import { vaultPath } from './paths.js';
 import { expandSteps } from '../../archive/steps.js';
 import { applyEvent, ordered, type BoundaryState, type EvidenceEvent, type ReplayWindow } from '@secondbrain/contracts/observatory';
 export interface ArchiveRow {
   observatory_projection?: import('../../archive/observatoryProjection.js').ObservatoryProjection;
   id: number; session_id: number; seq: number; ts: Date | null; role: string; kind: string; raw: unknown; text: string;
+  change_evidence?: unknown;
   host: string; source: string; external_id: string; harness: string; observed_at: Date | null;
 }
 export const instant = (v: Date | string | null): number | null => v === null ? null : new Date(v).getTime();
@@ -36,19 +39,22 @@ export function thinkingDetail(raw: unknown): ThinkingDetail {
   return { availability: 'unavailable' };
 }
 /** Retain explicit file targets, never argument bodies or guessed shell targets. */
-export function fileTarget(tool: string | null, text: string): EvidenceEvent['target'] {
+export function fileTarget(tool: string | null, text: string, root?: string): EvidenceEvent['target'] {
   const operations: Record<string, 'read' | 'write' | 'edit'> = { read: 'read', read_file: 'read', Read: 'read', write_file: 'write', Write: 'write', edit_file: 'edit', Edit: 'edit' };
   const operation = tool && Object.hasOwn(operations, tool) ? operations[tool] : undefined;
   if (!operation || text.length > 1000000) return undefined;
   try {
     const input = JSON.parse(text) as Record<string, unknown>;
     const path = input.file_path ?? input.path;
-    if (typeof path === 'string' && path.length > 0 && path.length <= 1024 && !/[\x00-\x1f]/.test(path)) return { path, operation };
+    if (typeof path === 'string' && path.length > 0 && path.length <= 1024 && !/[\x00-\x1f]/.test(path)) {
+      const relative = vaultPath(path, root);
+      return { path, operation, ...(relative ? { vaultPath: relative } : {}) };
+    }
   } catch { /* Non-JSON input is not structured path evidence. */ }
   return undefined;
 }
 /** Pair only within a numeric archive session, in recorded sequence order. A repeated ID starts a new occurrence. */
-export function archiveEvents(rows: ArchiveRow[]): EvidenceEvent[] {
+export function archiveEvents(rows: ArchiveRow[], root?: string): EvidenceEvent[] {
   const pending = new Map<string, EvidenceEvent[]>();
   const events: EvidenceEvent[] = [];
   for (const row of [...new Map(rows.map(row => [row.id, row])).values()].sort((a, b) => a.session_id - b.session_id || a.seq - b.seq || a.id - b.id)) {
@@ -61,7 +67,7 @@ export function archiveEvents(rows: ArchiveRow[]): EvidenceEvent[] {
       if (part.step === 'prompt') e.actor = row.observatory_projection?.sender ?? recordedSender(row.raw);
       if (part.step === 'thinking') e.thinking = 'available-in-source';
       if (part.toolName) e.tool = part.toolName;
-      if (part.step === 'tool_call') e.target = fileTarget(part.toolName, part.text);
+      if (part.step === 'tool_call') { e.target = fileTarget(part.toolName, part.text, root); if (e.target && e.target.operation !== 'read') e.writeEvidence = 'attempt'; }
       const scope = `${row.session_id}:${part.toolCallId}`;
       if (part.step === 'tool_call') { e.occurrence = e.id; if (part.toolCallId) pending.set(scope, [...(pending.get(scope) ?? []), e]); }
       if (part.step === 'tool_result') {
@@ -70,6 +76,14 @@ export function archiveEvents(rows: ArchiveRow[]): EvidenceEvent[] {
         // A result with a contradictory timestamp cannot complete a future call.
         if (call && call.at !== null && e.at !== null && call.at <= e.at) { e.parent = call.id; e.occurrence = call.id; pending.delete(scope); }
         e.outcome = part.isError === true ? 'error' : part.isError === false ? 'success' : 'unknown';
+        const captured = row.change_evidence ? (row.observatory_projection?.change ?? capturedChange(row.raw)) : null;
+        // Compare independently normalized archive metadata; bounded reads never require result bodies.
+        if (call && e.parent && captured && sameChange(captured, row.change_evidence)) e.change = captured;
+        if (call && e.parent && call.target) {
+          e.target = call.target;
+          if (call.target.operation !== 'read' && e.outcome === 'success') e.writeEvidence = 'tool-reported-success';
+        }
+        if (e.change && !e.target) e.target = { path: e.change.path, operation: 'edit' };
       }
       events.push(e);
     });
