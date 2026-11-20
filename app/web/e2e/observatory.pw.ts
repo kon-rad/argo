@@ -48,6 +48,63 @@ test('synthetic Observatory replay, restoration and recorded-part navigation', a
   await expect(page).toHaveURL(/part=2%3Acall/);
 });
 
+// Coordinator-only rendered scenario. API fixtures do not establish source permissions or production coverage.
+test('Brain Map exact note overlay, unresolved evidence and shared replay navigation', async ({ page }) => {
+  const { mapGraph, mapWindow } = await import('../test/fixtures/observatoryMap.js');
+  const from = mapWindow.from, to = mapWindow.to;
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url()), path = url.pathname;
+    const json = path === '/api/auth/me' ? { required: false, authenticated: true }
+      : path === '/api/meta' ? { modules: ['usage', 'map', 'observatory'], nav: [], timezone: 'UTC', owner: 'owner', version: 'test' }
+      : path === '/api/sources' ? { sources: [] }
+      : path === '/api/sync' ? { installed: false }
+      : path === '/api/map/graph' ? mapGraph
+      : path === '/api/observatory/window' ? { window: mapWindow, total: mapWindow.events.length, next: null, export: 'map-fixture', diagnostics: { synthetic: true, historicalCompleteness: 'unknown' } }
+      : {};
+    if (path === '/api/map/graph' && url.searchParams.has('version')) expect(url.searchParams.get('version')).toBe('7');
+    await route.fulfill({ json });
+  });
+  await page.goto(`/map?activity=1&from=${from}&to=${to}&cursor=${from + 2000}&event=read`);
+  await expect(page.getByText(/Current topology is context only/)).toBeVisible();
+  await expect(page.getByText(/Unresolved: missing, moved, deleted/)).toBeVisible();
+  await expect(page.getByText(/Repository\/path target/)).toBeVisible();
+  await expect(page.locator('canvas').first()).toBeVisible();
+  await expect(page).toHaveURL(/layout=7/);
+  await page.getByRole('button', { name: 'Focus note Projects/demo.md', exact: true }).first().click();
+  await page.waitForTimeout(1800);
+  await page.locator('canvas').first().screenshot({ path: 'e2e/test-results/observatory-map-scene.png' });
+  // Inspect the rendered read/write glyphs with preserved origin colors at the existing note, then save evidence.
+  await page.screenshot({ path: 'e2e/test-results/observatory-map-overlay.png', fullPage: true });
+  await page.getByLabel('Active executions').getByRole('button', { name: /run:lab:parallel/ }).click();
+  await expect(page.getByLabel('Note activity').getByRole('button', { name: /▲ W write attempt/ })).toBeVisible();
+  await expect(page.getByLabel('Note activity').getByRole('button', { name: /○ R read attempt/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Filter note Projects/demo.md', exact: true }).click();
+  await expect(page.getByText('Note activity filter: Projects/demo.md', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Workspace replay', exact: true }).click();
+  await expect(page).toHaveURL(/observatory\?/);
+  await expect(page.getByLabel('Replay cursor', { exact: true })).toHaveValue(String(from + 2000));
+  await expect(page).toHaveURL(/event=run%3Alab%3Aparallel/);
+  await expect(page).toHaveURL(/note=Projects%2Fdemo.md/);
+  await page.getByRole('link', { name: 'Brain Map replay', exact: true }).click();
+  await expect(page.getByText(/Current topology is context only/)).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Replay cursor', { exact: true })).toHaveValue(String(from + 2000));
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(from + 7000));
+  await expect(page.getByText('No evidenced active executions at this cursor.')).toBeVisible();
+  // Lose the actual WebGL context: the canvas must leave the layout, while HTML evidence survives.
+  await page.locator('canvas').first().evaluate((canvas: HTMLCanvasElement) => {
+    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+    const extension = gl?.getExtension('WEBGL_lose_context');
+    if (!extension) throw new Error('Context-loss extension unavailable');
+    extension.loseContext();
+  });
+  await expect(page.getByText(/3D map unavailable/)).toBeVisible();
+  await expect(page.locator('canvas')).toHaveCount(0);
+  await expect(page.getByLabel('Note activity').getByRole('button').first()).toBeVisible();
+  // Historical operation evidence may remain on the map; ended executions must not remain active.
+  await expect(page.getByText(/Current topology is context only/)).toBeVisible();
+});
+
 test('records synthetic 500-node/1500-edge seek and frame budgets', async ({ page }, testInfo) => {
   test.setTimeout(120000);
   await page.goto('/e2e/observatory-benchmark.html');
@@ -77,4 +134,46 @@ test('records synthetic 500-node/1500-edge seek and frame budgets', async ({ pag
   console.log(JSON.stringify(measurement));
   expect(measurement.p95SeekMs, 'p95 seek target <100ms').toBeLessThan(100);
   expect(measurement.rafFps, 'requestAnimationFrame baseline target >=30fps').toBeGreaterThanOrEqual(30);
+});
+
+test('initial camera frames the rendered scene after library setup and survives seeking', async ({ page }) => {
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    await route.fulfill({ json: path === '/api/auth/me' ? { required: false, authenticated: true }
+      : path === '/api/meta' ? { modules: ['usage', 'observatory'], nav: [], timezone: 'UTC', owner: 'owner', version: 'test' }
+      : path === '/api/sources' ? { sources: [] } : path === '/api/sync' ? { installed: false } : {} });
+  });
+  const from = demoWindow.from;
+  await page.goto(`/observatory?demo=1&from=${from}&to=${demoWindow.to}&cursor=${from + 2000}`);
+  await expect(page.locator('canvas')).toBeVisible();
+  // Test-only introspection of the mounted library ref, with no application debug API.
+  const camera = () => page.evaluate(() => {
+    const host = document.querySelector('[aria-label="3D execution workspace"]') as unknown as Record<string, any>;
+    let fiber = host[Object.keys(host).find(key => key.startsWith('__reactFiber'))!];
+    while (fiber) {
+      let hook = fiber.memoizedState;
+      while (hook) {
+        const graph = hook.memoizedState?.current;
+        if (graph?.cameraPosition && graph?.graphData) {
+          const nodes = graph.graphData().nodes;
+          const center = (axis: string) => (Math.min(...nodes.map((n: any) => n[axis])) + Math.max(...nodes.map((n: any) => n[axis]))) / 2;
+          return { position: graph.camera().position.toArray(), target: graph.controls().target.toArray(), expected: [center('fx'), center('fy'), center('fz')] };
+        }
+        hook = hook.next;
+      }
+      fiber = fiber.return;
+    }
+    return null;
+  });
+  await expect.poll(async () => { const data = await camera(); return data ? Math.max(...data.target.map((value: number, i: number) => Math.abs(value - data.expected[i]))) : Infinity; }).toBeLessThan(1);
+  // The old race resets to [0, 0, 1000] after the immediate camera setter, so also check settled state.
+  await page.waitForTimeout(1500);
+  const initial = (await camera())!;
+  expect(Math.max(...initial.target.map((value: number, i: number) => Math.abs(value - initial.expected[i])))).toBeLessThan(1);
+  expect(initial.position).not.toEqual([0, 0, 1000]);
+  await page.locator('canvas').screenshot({ path: 'e2e/test-results/observatory-initial-camera.png' });
+  await page.getByLabel('Replay cursor', { exact: true }).fill(String(from + 7000));
+  await expect(page.getByText('No evidenced active executions at this cursor.')).toBeVisible();
+  const after = (await camera())!;
+  expect(after.position).toEqual(initial.position); expect(after.target).toEqual(initial.target);
 });

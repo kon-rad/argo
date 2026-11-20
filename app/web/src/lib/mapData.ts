@@ -44,15 +44,17 @@ export interface MapMetric {
 }
 
 export interface MapNodeDetail {
+  version: number;
+  previewContext: 'current-vault-content';
   node: Omit<MapNodeData, 'x' | 'y' | 'z' | 'size'>;
   neighbours: { id: string; kind: MapKind; label: string; ref: string | null; edge: string }[];
   preview: string | null;
 }
 
 export const mapApi = {
-  graph: () => request<MapGraph>('/map/graph'),
+  graph: (version?: string) => request<MapGraph>(`/map/graph${version ? `?version=${encodeURIComponent(version)}` : ''}`),
   metrics: (kiosk = false) => request<{ metrics: MapMetric[] }>(`/map/metrics${kiosk ? '?kiosk=1' : ''}`),
-  node: (id: string) => request<MapNodeDetail>(`/map/node/${encodeURIComponent(id)}`),
+  node: (id: string, version?: number) => request<MapNodeDetail>(`/map/node/${encodeURIComponent(id)}${version === undefined ? '' : `?version=${version}`}`),
 };
 
 /** One hue per division, picked by its slug so it stays put; notes take their division's hue. */

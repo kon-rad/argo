@@ -2,6 +2,8 @@ import { lazy, Suspense, useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { FullMapHandle, Layers } from '../components/map/FullMap.js';
+import { api } from '../lib/api.js';
+import { readState, replayHref } from './observatory/model.js';
 import { ageDays, formatValue, mapApi, nodeColor, type MapMetric } from '../lib/mapData.js';
 
 /**
@@ -13,6 +15,7 @@ import { ageDays, formatValue, mapApi, nodeColor, type MapMetric } from '../lib/
  */
 
 // Separate chunks: the Pi never downloads 3d-force-graph, the desktop never the kiosk scene.
+const Observatory = lazy(() => import('./observatory/Observatory.js'));
 const KioskMap = lazy(() => import('../components/map/KioskMap.js'));
 const FullMap = lazy(() => import('../components/map/FullMap.js').then((m) => ({ default: m.FullMap })));
 
@@ -49,8 +52,8 @@ function MetricCard({ m }: { m: MapMetric }) {
   );
 }
 
-function SidePanel({ id, metrics, onClose, onPick }: { id: string; metrics: MapMetric[]; onClose: () => void; onPick: (id: string) => void }) {
-  const q = useQuery({ queryKey: ['map-node', id], queryFn: () => mapApi.node(id) });
+function SidePanel({ id, version, metrics, onClose, onPick }: { id: string; version: number; metrics: MapMetric[]; onClose: () => void; onPick: (id: string) => void }) {
+  const q = useQuery({ queryKey: ['map-node', id, version], queryFn: () => mapApi.node(id, version) });
   const d = q.data;
   const metric = d?.node.kind === 'metric' ? metrics.find((m) => m.key === d.node.ref) : undefined;
   const open = d?.node.kind === 'note' && d.node.ref
@@ -67,11 +70,12 @@ function SidePanel({ id, metrics, onClose, onPick }: { id: string; metrics: MapM
         </div>
         <button type="button" onClick={onClose} className="text-sm text-[var(--ink-dim)] hover:text-[var(--ink)]" aria-label="Close">✕</button>
       </div>
+      {q.isError && <p role="alert">Node detail unavailable for layout v{version}: {(q.error as Error).message}</p>}
       {open && <Link to={open} className="self-start rounded bg-[var(--accent)] px-3 py-1 text-sm text-white">Open</Link>}
       {d?.node.meta['stage'] !== undefined && <div className="text-sm">Stage: <b>{String(d.node.meta['stage'])}</b></div>}
       {d?.node.meta['status'] !== undefined && <div className="text-sm">Status: {String(d.node.meta['status'])}</div>}
       {metric && <MetricCard m={metric} />}
-      {d?.preview && <pre className="max-h-64 overflow-hidden whitespace-pre-wrap rounded bg-[var(--paper-sunk)] p-2 text-xs text-[var(--ink-dim)]">{d.preview}</pre>}
+      {d?.preview && <div><p className="text-xs text-[var(--ink-dim)]">Current vault content</p><pre className="max-h-64 overflow-hidden whitespace-pre-wrap rounded bg-[var(--paper-sunk)] p-2 text-xs text-[var(--ink-dim)]">{d.preview}</pre></div>}
       {d && d.neighbours.length > 0 && (
         <div>
           <div className="mb-1 text-xs uppercase tracking-wide text-[var(--ink-dim)]">Connected ({d.neighbours.length})</div>
@@ -92,12 +96,16 @@ function SidePanel({ id, metrics, onClose, onPick }: { id: string; metrics: MapM
 
 export default function MapPage() {
   const [params] = useSearchParams();
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta });
   if (params.get('kiosk') === '1') return <Suspense fallback={null}><KioskMap /></Suspense>;
-  return <FullMapPage />;
+  if (params.get('activity') === '1' && meta.isPending) return <p>Loading map modules…</p>;
+  if (params.get('activity') === '1' && meta.data?.modules?.includes('observatory')) return <Suspense fallback={null}><Observatory mode="map" /></Suspense>;
+  return <FullMapPage observatory={meta.data?.modules?.includes('observatory') ?? false} />;
 }
 
-function FullMapPage() {
-  const graph = useQuery({ queryKey: ['map-graph'], queryFn: mapApi.graph, refetchInterval: 10 * 60_000 });
+function FullMapPage({ observatory }: { observatory: boolean }) {
+  const [params] = useSearchParams();
+  const graph = useQuery({ queryKey: ['map-graph'], queryFn: () => mapApi.graph(), refetchInterval: 10 * 60_000 });
   const metrics = useQuery({ queryKey: ['map-metrics'], queryFn: () => mapApi.metrics(false), refetchInterval: 60_000 });
   const [layers, setLayers] = useState<Layers>({ notes: true, links: true, structure: true, metrics: true });
   const [selected, setSelected] = useState<string | null>(null);
@@ -156,6 +164,7 @@ function FullMapPage() {
           {counts['note'] ?? 0} notes · {counts['project'] ?? 0} areas · {counts['feature'] ?? 0} projects
           {graph.data ? ` · layout v${graph.data.version}` : ''}
         </span>
+        {observatory && <Link className="underline" to={replayHref('map', { ...readState(params, Date.now()), layout: graph.data ? String(graph.data.version) : undefined, note: graph.data?.nodes.find(n => n.id === selected && n.kind === 'note')?.ref ?? undefined })}>Show activity</Link>}
         <Link to="/map?kiosk=1" className="ml-auto underline">TV view</Link>
       </div>
       <div className="relative min-h-0 flex-1">
@@ -176,7 +185,7 @@ function FullMapPage() {
             {headline.map((m) => <MetricCard key={m.key} m={m} />)}
           </div>
         )}
-        {selected && <SidePanel id={selected} metrics={metrics.data?.metrics ?? []} onClose={() => setSelected(null)} onPick={pick} />}
+        {selected && graph.data && <SidePanel id={selected} version={graph.data.version} metrics={metrics.data?.metrics ?? []} onClose={() => setSelected(null)} onPick={pick} />}
       </div>
     </div>
   );
