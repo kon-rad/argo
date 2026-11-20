@@ -1,4 +1,4 @@
-import { ordered, replay, type EvidenceEvent, type ReplayWindow } from '@secondbrain/contracts/observatory';
+import { ordered, applyEvent, type EvidenceEvent, type ReplayWindow } from '@secondbrain/contracts/observatory';
 import { sessionLink } from '../usage/AgentSessions.js';
 export type Origin = EvidenceEvent['actor']['kind'];
 export interface Filters { host?: string; session?: string; ticket?: string; runtime?: string; persona?: string; model?: string; origin?: string }
@@ -32,39 +32,54 @@ export function stepCursor(window: ReplayWindow, cursor: number, direction: -1 |
 export interface SceneNode { id: string; label: string; kind: 'machine' | 'execution' | 'ticket' | 'event' | 'file'; origin: Origin; fx: number; fy: number; fz: number }
 export interface SceneLink { source: string; target: string; result?: boolean }
 function hash(id: string): number { let n = 2166136261; for (const ch of id) n = Math.imul(n ^ ch.charCodeAt(0), 16777619); return n >>> 0; }
-/** Derive every frame from evidence through cursor. No wall clock, inferred activity or continuous forces. */
+// A loaded snapshot is immutable. Keep one sorted index per live window, reclaimed with it.
+const indexes = new WeakMap<ReplayWindow, { events: EvidenceEvent[]; intervals: Map<string, ReplayWindow['intervals'][number]> }>();
+/** Derive every frame from evidence through cursor. No wall clock or inferred activity. */
 export function sceneAt(window: ReplayWindow, cursor: number, filters: Filters) {
-  const state = replay(window, cursor);
-  const through = ordered(window.events).filter(e => e.at !== null && e.at <= cursor);
-  const active = state.active.filter(i => (!filters.host || i.host === filters.host) && (!filters.session || i.session === `archive:${filters.session}`) &&
+  if (!Number.isFinite(cursor) || cursor < window.from || cursor >= window.to) throw new RangeError('cursor outside window');
+  let index = indexes.get(window);
+  if (!index) { index = { events: ordered(window.events).filter(e => e.at !== null && e.at >= window.from), intervals: new Map(window.intervals.map(i => [i.id, i])) }; indexes.set(window, index); }
+  let lo = 0, hi = index.events.length;
+  while (lo < hi) { const mid = (lo + hi) >>> 1; if (index.events[mid]!.at! <= cursor) lo = mid + 1; else hi = mid; }
+  const through = index.events.slice(0, lo), byId = new Map(through.map(e => [e.id, e]));
+  const models = new Map<string, Set<string>>(), latestModel = new Map<string, string>();
+  const state = { tickets: { ...window.boundary.tickets }, tools: { ...window.boundary.tools }, provenance: { ...window.boundary.provenance } };
+  for (const e of through) {
+    applyEvent(state, e);
+    if (e.execution && e.usage) { let values = models.get(e.execution); if (!values) models.set(e.execution, values = new Set()); values.add(e.usage.model); latestModel.set(e.execution, e.usage.model); }
+  }
+  const matches = (i: ReplayWindow['intervals'][number]) => (!filters.host || i.host === filters.host) && (!filters.session || i.session === `archive:${filters.session}`) &&
     (!filters.ticket || i.ticket === filters.ticket) && (!filters.runtime || i.runtime === filters.runtime) && (!filters.persona || i.persona === filters.persona) &&
-    (!filters.model || through.some(e => e.execution === i.id && e.usage?.model === filters.model)));
+    (!filters.model || models.get(i.id)?.has(filters.model));
+  const active = window.intervals.filter(i => i.start <= cursor && cursor < i.end && matches(i)).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0).map(({ end: _end, ...i }) => i);
   const ids = new Set(active.map(i => i.id));
-  const events = through.filter(e => (!filters.host || e.context?.host === filters.host || active.some(i => i.id === e.execution && i.host === filters.host)) && (!filters.session || e.session === `archive:${filters.session}`) &&
-    (!filters.ticket || e.ticket === filters.ticket || active.some(i => i.id === e.execution && i.ticket === filters.ticket)) &&
-    (!filters.runtime || e.context?.runtime === filters.runtime || active.some(i => i.id === e.execution && i.runtime === filters.runtime)) &&
-    (!filters.persona || active.some(i => i.id === e.execution && i.persona === filters.persona)) &&
-    (!filters.model || e.usage?.model === filters.model || active.some(i => i.id === e.execution)) && (!filters.origin || e.actor.kind === filters.origin));
-  const nodes: SceneNode[] = []; const links: SceneLink[] = [];
+  const events = through.filter(e => {
+    const i = e.execution ? index.intervals.get(e.execution) : undefined;
+    return (!filters.host || e.context?.host === filters.host || i?.host === filters.host) && (!filters.session || e.session === `archive:${filters.session}`) &&
+      (!filters.ticket || e.ticket === filters.ticket || i?.ticket === filters.ticket) && (!filters.runtime || e.context?.runtime === filters.runtime || i?.runtime === filters.runtime) &&
+      (!filters.persona || i?.persona === filters.persona) && (!filters.model || e.usage?.model === filters.model || (e.execution && models.get(e.execution)?.has(filters.model))) &&
+      (!filters.origin || e.actor.kind === filters.origin);
+  });
+  const nodes: SceneNode[] = []; const links: SceneLink[] = []; const nodeMap = new Map<string, SceneNode>();
   const add = (id: string, label: string, kind: SceneNode['kind'], origin: Origin, x: number, y: number, z: number) => {
-    if (!nodes.some(n => n.id === id)) nodes.push({ id, label, kind, origin, fx: x, fy: y, fz: z });
+    if (!nodeMap.has(id)) { const n = { id, label, kind, origin, fx: x, fy: y, fz: z }; nodeMap.set(id, n); nodes.push(n); }
   };
   // All machine positions are deterministic, including when neighbouring machines disappear.
   const position = (host: string) => { const h = hash(host); return { x: (h % 7 - 3) * 180, z: (Math.floor(h / 7) % 7 - 3) * 180 }; };
   for (const i of active) {
     const p = position(i.host), a = hash(i.id) / 4294967296 * Math.PI * 2;
     add(`machine:${i.host}`, i.host, 'machine', 'unknown', p.x, -40, p.z);
-    const model = [...through].reverse().find(e => e.execution === i.id && e.usage)?.usage?.model ?? 'model unknown';
+    const model = latestModel.get(i.id) ?? 'model unknown';
     add(i.id, `${i.persona ?? 'persona unknown'} · ${i.runtime} · ${model} · ${i.id}`, 'execution', 'agent', p.x + Math.cos(a) * 65, 10, p.z + Math.sin(a) * 65);
     links.push({ source: i.id, target: `machine:${i.host}` });
     if (i.ticket) { add(`ticket:${i.ticket}`, `${i.ticket}: ${state.tickets[i.ticket] ?? 'historical state unknown'}`, 'ticket', 'unknown', p.x, 100, p.z); links.push({ source: i.id, target: `ticket:${i.ticket}` }); }
   }
   // A short trail represents recorded events only. Ended executions retain no attached nodes/edges.
   for (const e of events.filter(e => e.execution && ids.has(e.execution) && cursor - e.at! <= 2000).slice(-200)) {
-    const owner = nodes.find(n => n.id === e.execution)!;
+    const owner = nodeMap.get(e.execution!)!;
     add(e.id, `${originStyle(e.actor.kind).glyph} ${e.kind} ${e.tool ?? ''}`, 'event', e.actor.kind, owner.fx + (hash(e.id) % 60) - 30, 55, owner.fz + 20);
     links.push({ source: e.execution!, target: e.id, result: e.kind === 'tool_result' });
-    const target = e.target ?? (e.parent ? through.find(call => call.id === e.parent)?.target : undefined);
+    const target = e.target ?? (e.parent ? byId.get(e.parent)?.target : undefined);
     if (target) { const id = `file:${target.path}`; add(id, `${target.operation}: ${target.path} (attempt)`, 'file', e.actor.kind, owner.fx + 85, 70, owner.fz); links.push({ source: e.id, target: id }); }
   }
   const limitedNodes = nodes.slice(0, 500), shown = new Set(limitedNodes.map(n => n.id));

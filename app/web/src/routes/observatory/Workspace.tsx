@@ -1,30 +1,41 @@
 import { useEffect, useRef, useState } from 'react';
 import ForceGraph3D, { type ForceGraph3DInstance } from '3d-force-graph';
-import { BoxGeometry, Mesh, MeshBasicMaterial, OctahedronGeometry, SphereGeometry } from 'three';
+import { BoxGeometry, Mesh, MeshBasicMaterial, OctahedronGeometry, SphereGeometry, type BufferGeometry } from 'three';
 import { originStyle, type SceneNode, type SceneLink } from './model.js';
 
 export default function Workspace({ nodes, links, onSelect }: { nodes: SceneNode[]; links: SceneLink[]; onSelect: (id: string) => void }) {
   const host = useRef<HTMLDivElement>(null), graph = useRef<ForceGraph3DInstance | null>(null);
-  const resources = useRef<Mesh[]>([]), wake = useRef(() => {}), select = useRef(onSelect);
+  const resources = useRef(new Map<string, { geometry: BufferGeometry; material: MeshBasicMaterial }>()), meshes = useRef(new Map<string, Mesh>()), previous = useRef(''), wake = useRef(() => {}), select = useRef(onSelect);
+  const nodeData = useRef(new Map<string, SceneNode & { x: number; y: number; z: number }>()), linkData = useRef(new Map<string, SceneLink>());
   select.current = onSelect;
   const [failed, setFailed] = useState(false);
-  const release = () => { for (const mesh of resources.current) { mesh.geometry.dispose(); (mesh.material as MeshBasicMaterial).dispose(); } resources.current = []; };
+  const release = () => { for (const resource of resources.current.values()) { resource.geometry.dispose(); resource.material.dispose(); } resources.current.clear(); meshes.current.clear(); nodeData.current.clear(); linkData.current.clear(); previous.current = ''; };
   useEffect(() => {
     const el = host.current!;
     let cleanup = () => {};
     try {
-      const g = new ForceGraph3D(el, { controlType: 'orbit' }).backgroundColor('#080e18').showNavInfo(false)
+      const g = new ForceGraph3D(el, { controlType: 'orbit', rendererConfig: { antialias: false } }).backgroundColor('#080e18').showNavInfo(false)
         .cooldownTicks(0).warmupTicks(0).enableNodeDrag(false)
         // No untrusted text in the library's HTML tooltips. Labels live in accessible HTML.
         .nodeLabel(() => '').onNodeClick(n => select.current((n as SceneNode).id))
         .nodeThreeObject(raw => {
           const n = raw as SceneNode, style = originStyle(n.origin);
-          const geometry = n.kind === 'machine' ? new BoxGeometry(150, 4, 150) : n.kind === 'ticket' || n.kind === 'file' ? new BoxGeometry(12, 8, 6) :
-            style.shape === 'diamond' || style.shape === 'hollow' ? new OctahedronGeometry(6) : style.shape === 'box' ? new BoxGeometry(9, 9, 9) : new SphereGeometry(n.kind === 'execution' ? 9 : 4, 10, 8);
-          const mesh = new Mesh(geometry, new MeshBasicMaterial({ color: style.color, wireframe: style.shape === 'hollow' }));
-          resources.current.push(mesh); return mesh;
+          const meshKey = `${n.id}:${n.kind}:${n.origin}`;
+          const existing = meshes.current.get(meshKey);
+          if (existing) return existing;
+          const key = `${n.kind}:${n.origin}`;
+          let resource = resources.current.get(key);
+          if (!resource) {
+            const geometry = n.kind === 'machine' ? new BoxGeometry(150, 4, 150) : n.kind === 'ticket' || n.kind === 'file' ? new BoxGeometry(12, 8, 6) :
+              style.shape === 'diamond' || style.shape === 'hollow' ? new OctahedronGeometry(6) : style.shape === 'box' ? new BoxGeometry(9, 9, 9) : new SphereGeometry(n.kind === 'execution' ? 9 : 4, 8, 6);
+            resource = { geometry, material: new MeshBasicMaterial({ color: style.color, wireframe: style.shape === 'hollow' }) };
+            resources.current.set(key, resource);
+          }
+          const mesh = new Mesh(resource.geometry, resource.material);
+          meshes.current.set(meshKey, mesh); return mesh;
         }).linkColor(l => (l as SceneLink).result ? '#22d3ee' : '#64748b').linkDirectionalArrowLength(l => (l as SceneLink).result ? 4 : 0);
       graph.current = g;
+      g.renderer().setPixelRatio(1);
       // Frame the first evidenced scene once; scrubbing preserves the viewer's camera.
       const axes = (key: 'fx' | 'fy' | 'fz') => nodes.length ? [Math.min(...nodes.map(n => n[key])), Math.max(...nodes.map(n => n[key]))] : [0, 0];
       const [minX, maxX] = axes('fx'), [minY, maxY] = axes('fy'), [minZ, maxZ] = axes('fz');
@@ -54,8 +65,28 @@ export default function Workspace({ nodes, links, onSelect }: { nodes: SceneNode
   useEffect(() => {
     const g = graph.current;
     if (!g || failed) return;
-    g.pauseAnimation(); release();
-    g.graphData({ nodes: nodes.map(n => ({ ...n, x: n.fx, y: n.fy, z: n.fz })), links: links.map(l => ({ ...l })) });
+    // Many cursor changes alter only timeline state. Preserve the identical scene and GPU objects.
+    const signature = JSON.stringify([nodes, links]);
+    if (signature === previous.current) return;
+    previous.current = signature;
+    g.pauseAnimation();
+    const visible = new Set(nodes.map(n => `${n.id}:${n.kind}:${n.origin}`));
+    for (const id of meshes.current.keys()) if (!visible.has(id)) meshes.current.delete(id);
+    for (const id of nodeData.current.keys()) if (!visible.has(id)) nodeData.current.delete(id);
+    const nextNodes = nodes.map(n => {
+      const key = `${n.id}:${n.kind}:${n.origin}`;
+      const data = Object.assign(nodeData.current.get(key) ?? {}, n, { x: n.fx, y: n.fy, z: n.fz });
+      nodeData.current.set(key, data); return data;
+    });
+    const linkKeys = new Set<string>();
+    const nextLinks = links.map((l, i) => {
+      const key = JSON.stringify([i, l.source, l.target, l.result]); linkKeys.add(key);
+      const data = Object.assign(linkData.current.get(key) ?? {}, l);
+      linkData.current.set(key, data); return data;
+    });
+    for (const id of linkData.current.keys()) if (!linkKeys.has(id)) linkData.current.delete(id);
+    // The library binds scene objects by data-object identity, so retain surviving records.
+    g.graphData({ nodes: nextNodes, links: nextLinks });
     wake.current();
   }, [nodes, links, failed]);
   return <><div ref={host} style={{ height: 420, display: failed ? 'none' : undefined }} aria-label="3D execution workspace" tabIndex={failed ? -1 : 0} />

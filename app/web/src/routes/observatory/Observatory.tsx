@@ -15,7 +15,7 @@ export default function Observatory() {
   const state = readState(params, initialNow), stateKey = params.toString();
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [error, setError] = useState(''), [coverage, setCoverage] = useState<unknown>();
-  const [detail, setDetail] = useState<{ event?: unknown; error?: string; detail?: unknown }>();
+  const [detail, setDetail] = useState<{ event?: unknown; error?: string; detail?: { thinking?: { availability: string; summary?: string } } | string }>();
   const detailRequest = useRef<AbortController | null>(null);
   const [play, setPlay] = useState<0 | 1 | -1>(0), [live, setLive] = useState(false), [refresh, setRefresh] = useState(0);
   const [webgl, setWebgl] = useState(true);
@@ -116,7 +116,8 @@ export default function Observatory() {
           <p>Source {selected.source.table}:{selected.source.id} part {selected.source.part}</p>
           <p>Outcome at cursor: {scene.tools[selected.occurrence ?? selected.parent ?? ''] ?? 'unknown'}</p>
           {selected.target && <p>{selected.target.operation} attempt: {selected.target.path}</p>}
-          <p>Thinking: {selected.thinking ? 'recorded in source; summary availability must be checked in authorized viewer' : 'hidden or unavailable'}. No reasoning reconstructed.</p>
+          {selected.kind === 'thinking' && <p>Thinking: {typeof detail?.detail === 'object' && detail.detail.thinking ? detail.detail.thinking.availability : 'not checked; verify source detail'}. No reasoning reconstructed.</p>}
+          {typeof detail?.detail === 'object' && detail.detail.thinking?.availability === 'authorized-summary' && <div aria-label="Authorized thinking summary" className="whitespace-pre-wrap">{detail.detail.thinking.summary}</div>}
           <button className={field} onClick={() => void showDetail()}>Verify source detail</button>
           {detail !== undefined && <><pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(detail, null, 2)}</pre>{detail.event && !detail.error && eventLink(selected) && state.demo !== '1' && <Link className="underline" to={eventLink(selected)!}>Open recorded session part</Link>}</>}
         </> : !execution && <p>Select an execution or recorded event. File targets require structured source evidence.</p>}

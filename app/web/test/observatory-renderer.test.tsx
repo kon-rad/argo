@@ -6,6 +6,7 @@ import { sceneAt } from '../src/routes/observatory/model.js';
 const graph = vi.hoisted(() => {
   const g: Record<string, ReturnType<typeof vi.fn>> = {};
   for (const key of ['backgroundColor', 'showNavInfo', 'cooldownTicks', 'warmupTicks', 'enableNodeDrag', 'nodeLabel', 'onNodeClick', 'nodeThreeObject', 'linkColor', 'linkDirectionalArrowLength', 'cameraPosition', 'width', 'height', 'resumeAnimation', 'pauseAnimation', 'graphData', '_destructor']) g[key] = vi.fn(() => g);
+  g.renderer = vi.fn(() => ({ setPixelRatio: vi.fn() }));
   return g;
 });
 vi.mock('3d-force-graph', () => ({ default: class { constructor() { return graph; } } }));
@@ -48,4 +49,40 @@ it('hides the retained canvas when WebGL context is lost so HTML inspection stay
   expect(host.style.display).toBe('none');
   expect(view.getByRole('status').textContent).toContain('3D unavailable');
   expect(graph.pauseAnimation).toHaveBeenCalled();
+});
+
+it('does not rebuild an identical scene on a timeline-only seek', () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const scene = sceneAt(demoWindow, demoWindow.from + 2000, {});
+  const props = { nodes: scene.nodes, links: scene.links, onSelect: vi.fn() };
+  const view = render(<Workspace {...props} />);
+  const calls = graph.graphData!.mock.calls.length;
+  view.rerender(<Workspace {...props} nodes={scene.nodes.map(n => ({ ...n }))} links={scene.links.map(l => ({ ...l }))} />);
+  expect(graph.graphData).toHaveBeenCalledTimes(calls);
+});
+
+it('retains data identity when surviving markers move', () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const scene = sceneAt(demoWindow, demoWindow.from + 2000, {});
+  const props = { nodes: scene.nodes, links: scene.links, onSelect: vi.fn() };
+  const view = render(<Workspace {...props} />);
+  const first = graph.graphData!.mock.calls.at(-1)![0];
+  view.rerender(<Workspace {...props} nodes={scene.nodes.map(n => ({ ...n, fx: n.fx + 1 }))} />);
+  const next = graph.graphData!.mock.calls.at(-1)![0];
+  expect(next.nodes[0]).toBe(first.nodes[0]);
+  expect(next.links[0]).toBe(first.links[0]);
+});
+
+it('shares visual resources across markers and releases them on unmount', () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const scene = sceneAt(demoWindow, demoWindow.from + 2000, {});
+  const view = render(<Workspace nodes={scene.nodes} links={scene.links} onSelect={() => {}} />);
+  const make = graph.nodeThreeObject!.mock.calls.at(-1)![0] as (node: typeof scene.nodes[number]) => import('three').Mesh;
+  const node = scene.nodes.find(n => n.kind === 'execution')!;
+  const first = make(node), second = make({ ...node, id: 'synthetic:other' });
+  expect(second.geometry).toBe(first.geometry); expect(second.material).toBe(first.material);
+  const geometryDispose = vi.spyOn(first.geometry, 'dispose');
+  const materialDispose = vi.spyOn(first.material as import('three').MeshBasicMaterial, 'dispose');
+  view.unmount();
+  expect(geometryDispose).toHaveBeenCalledTimes(1); expect(materialDispose).toHaveBeenCalledTimes(1);
 });
