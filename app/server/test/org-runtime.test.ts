@@ -125,6 +125,10 @@ it('fences scoped launcher work, records partial failure, and restores the obser
     await refresh();
     const all = await previewRuntime('example',[],'owner');
     await expect(applyRuntime(all.token,'owner')).rejects.toThrow(/adapter/);
+    const expired = await previewRuntime('example',[cron,gateway],'owner');
+    await query("UPDATE org_runtime_targets SET checked_at=now()-interval '6 minutes' WHERE kind='cron-job'");
+    await expect(applyRuntime(expired.token,'owner')).rejects.toThrow(/stale/);
+    await refresh();
     const p = await previewRuntime('example',[cron,gateway],'owner');
     await expect(applyRuntime(p.token,'builder')).rejects.toThrow(/owner/);
     expect((await applyRuntime(p.token,'owner')).status).toBe('partially-applied');
@@ -147,7 +151,7 @@ it('fences scoped launcher work, records partial failure, and restores the obser
     expect((await runtimeStatus()).receipts).toHaveLength(4);
   } finally {
     for (const t of [cron,gateway]) await query(`UPDATE org_runtime_targets SET id='unregistered',
-      configured='{"runtime":"unknown","model":null,"provider":null}',observed=NULL,supported='[]',checked_at=NULL
+      configured='{"runtime":"unknown","model":null,"provider":null}',observed=NULL,supported='[]',probe_status='unsupported',checked_at=NULL
       WHERE kind=$1 AND id=$2`,[t.kind,t.id]);
   }
 });

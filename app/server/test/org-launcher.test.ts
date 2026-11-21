@@ -43,3 +43,10 @@ it('preserves independent host changes and rejects a host already on a newer ver
   expect(await runLauncher('cron-job',1,assignment,a)).toBe('stale');
   expect(a.apply).not.toHaveBeenCalled();
 });
+it('leaves the old gateway running when credential preflight fails', async () => {
+  const a = fixture();
+  a.preflight = async () => false;
+  expect(await runLauncher('telegram-gateway',1,assignment,a)).toBe('unhealthy');
+  expect(a.apply).not.toHaveBeenCalled();
+  expect((await a.inspect()).assignment).toEqual(before);
+});
