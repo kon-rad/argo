@@ -194,9 +194,10 @@ The shortcuts work while Agent Dock has focus. Use its microphone menu-bar item 
 
 | Adapter | Discovery and prerequisites |
 |---|---|
-| Parakeet Unified English 0.6B Q8_0 | Handy's headless `--transcribe-file` via transcribe.cpp. Scans the standard Handy models directory and Hugging Face snapshots, including `HF_HOME` and `HF_HUB_CACHE`. The pinned GGUF is 731,357,568 bytes, CC BY 4.0. Handy must resolve its catalog ID on this Mac. |
+| Parakeet Unified English 0.6B Q8_0 | A resident transcribe.cpp model opens the selected GGUF directly. Scans the standard Handy models directory and Hugging Face snapshots, including `HF_HOME` and `HF_HUB_CACHE`. The pinned GGUF is 731,357,568 bytes, CC BY 4.0. The runtime setup below reuses the file in place. |
 | whisper.cpp | Installed `whisper-cli` and cached `ggml-*.bin` under `~/.cache/whisper-cpp/models` or a folder selected in the app. The CPU adapter accepts 16 kHz mono WAV. |
 | faster-whisper | A local CTranslate2 snapshot with model, tokenizer, vocabulary and configuration, plus the `faster_whisper` Python package in the worker interpreter. The adapter uses CPU int8 and local-files-only mode. |
+| Local Kokoro synthesis | Choose Kokoro · Bella with the MLX Audio Python runtime and cached mlx-community/Kokoro-82M-bf16 snapshot including voices/af_bella.safetensors. The renderer loads once per session and runs with Hugging Face offline mode. Use an existing uv tool installation of mlx-audio, or install mlx-audio in a virtual environment at `~/Library/Application Support/AgentDockVoice/kokoro`. |
 | System synthesis | Pick an installed macOS voice. Synthesis speed and intelligibility are independently unmeasured. |
 
 Recognition uses rolling batch decodes and a final decode after about 700 ms of quiet, with a 25-second utterance limit. The mic uses macOS voice processing and an energy threshold. Cached files are opened read-only. The app remembers the model path, extra search folder, workspace and output voice in its local preferences. Model availability is checked on each start.
@@ -204,6 +205,19 @@ Recognition uses rolling batch decodes and a final decode after about 700 ms of 
 Only a SHA-256 match to the pinned Q8_0 file with Handy 0.10.1 receives the Handy ratings. English FLEURS test error is 3.99%. Reference throughput is 13.955 audio seconds per wall second on CPU and 25.28 on Vulkan, both on a Ryzen 4750U. The speed bar compares these two reference backends. Accuracy shows the complement of test error. Other variants, versions and adapters display Unrated. The source snapshot, engine revision and units are in [handy-reference.json](voice/handy-reference.json).
 
 A fresh Codex process reads the registered persona and model from the chosen vault's compiled roster. A private terminal socket lives in an owner-only temporary directory. The worker requests read-only access unless the roster allows both Edit and Write with acceptEdits. A general shell requires an unrestricted Bash entry. Command-specific Bash grants stay disabled in this adapter. The worker checks the effective workspace, model, sandbox and approval policy before capture. The worktree scopes edits. Codex's platform sandbox governs filesystem reads. Only finalized transcripts go to Codex. Hosted text inference and tool use can incur the configured provider's charges.
+
+### Enable cached Parakeet on Apple silicon
+
+Install CMake and the Xcode command line tools. From a terminal run the following once. It builds the recognition library and Python bindings for Agent Dock. Existing GGUF weights stay in their current location.
+
+```sh
+src="$HOME/Library/Application Support/AgentDockVoice/transcribe.cpp"
+git clone --recurse-submodules https://github.com/handy-computer/transcribe.cpp "$src"
+git -C "$src" checkout --detach cfa237c2551a4b2d3a56ff8fe5461e3c67c51772
+git -C "$src" submodule update --init --recursive
+cmake -S "$src" -B "$src/build" -DCMAKE_BUILD_TYPE=Release -DTRANSCRIBE_BUILD_SHARED=ON
+cmake --build "$src/build" --target transcribe -j 4
+```
 
 ### Doctor, replay and physical qualification
 

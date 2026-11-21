@@ -73,6 +73,7 @@ struct VoiceSetup: View {
             }.frame(height: 160)
             Picker("Speech output", selection: $voice.voiceID) {
                 Text("System default voice").tag("")
+                if KokoroOutput.interpreter != nil { Text("Kokoro · Bella (local MLX)").tag("kokoro:af_bella") }
                 ForEach(AVSpeechSynthesisVoice.speechVoices(), id: \.identifier) { v in
                     Text("\(v.name) (\(v.language))").tag(v.identifier)
                 }

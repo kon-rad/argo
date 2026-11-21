@@ -1,6 +1,8 @@
 """Local batch decoders, endpoint detection and opening-paragraph speech."""
 import array
 import asyncio
+import functools
+import threading
 import hashlib
 import json
 import math
@@ -67,19 +69,46 @@ def candidates(folder=None):
     return models
 
 
+# One worker process owns one selected model. Serialize partial and final inference
+# because cancelling an asyncio caller does not stop a native inference in flight.
+_inference_lock = threading.Lock()
+
+
+@functools.lru_cache(maxsize=1)
+def _parakeet(path):
+    source = Path.home() / "Library/Application Support/AgentDockVoice/transcribe.cpp"
+    if source.is_dir():
+        sys.path.insert(0, str(source / "bindings/python/src"))
+    try:
+        from transcribe_cpp import Model
+        return Model(path)
+    except (ImportError, OSError, RuntimeError) as error:
+        raise ValueError(f"Install the Agent Dock Parakeet runtime (see the voice guide): {error}") from error
+
+
+def parakeet_pcm(path, data):
+    samples = array.array("h")
+    samples.frombytes(data)
+    pcm = array.array("f", (sample / 32768.0 for sample in samples))
+    with _inference_lock, _parakeet(path).session() as session:
+        return session.run(pcm).text.strip()
+
+
 def decoder(model, wav):
     if model["adapter"] == "faster-whisper":
         return [sys.executable, str(Path(__file__).resolve()), model["path"], str(wav)]
     if not Path(model["path"]).is_file():
         raise ValueError("Cached model disappeared")
-    if model["adapter"] == "handy":
-        return ["/Applications/Handy.app/Contents/MacOS/handy", "--transcribe-file", str(wav),
-                "--model", REFERENCE["id"], "--json"]
     exe = shutil.which("whisper-cli") or "/opt/homebrew/bin/whisper-cli"
     return [exe, "-ng", "-np", "-nt", "-m", model["path"], "-f", str(wav)]
 
 
 async def transcribe(model, wav):
+    if model["adapter"] == "handy":
+        with wave.open(str(wav), "rb") as source:
+            if (source.getnchannels(), source.getsampwidth(), source.getframerate()) != (1, 2, 16000):
+                raise ValueError("Parakeet requires mono 16 kHz PCM16")
+            return await decode_pcm(model, source.readframes(source.getnframes()))
     process = await asyncio.create_subprocess_exec(*decoder(model, wav), stdout=asyncio.subprocess.PIPE,
                                                     stderr=asyncio.subprocess.PIPE)
     try:
@@ -91,12 +120,12 @@ async def transcribe(model, wav):
     if process.returncode:
         raise ValueError(f'{model["adapter"]} exited {process.returncode}: {err.decode(errors="replace")[-300:]}')
     text = out.decode().strip()
-    if model["adapter"] == "handy":
-        text = json.loads(text)["text"]
     return text.strip()
 
 
 async def decode_pcm(model, data):
+    if model["adapter"] == "handy":
+        return await asyncio.to_thread(parakeet_pcm, model["path"], data)
     with tempfile.TemporaryDirectory(prefix="dock-audio-") as directory:
         wav = Path(directory) / "input.wav"
         with wave.open(str(wav), "wb") as f:

@@ -259,3 +259,23 @@ def test_silence_while_final_decode_is_in_flight():
         await task
         assert submissions == [("old", False)]
     asyncio.run(replay())
+
+def test_cached_gguf_uses_selected_file_and_keeps_context(monkeypatch, tmp_path):
+    import speech
+    import types
+    loaded = []
+    class Context:
+        def __init__(self, path):
+            loaded.append(path)
+        def session(self):
+            import contextlib
+            return contextlib.nullcontext(self)
+        def run(self, pcm):
+            assert len(pcm) == 2
+            return types.SimpleNamespace(text="violet")
+    monkeypatch.setitem(sys.modules, "transcribe_cpp", types.SimpleNamespace(Model=Context))
+    model = tmp_path / "sample.gguf"
+    model.touch()
+    for _ in range(2):
+        assert speech.parakeet_pcm(str(model), b"\x00\x00\x01\x00") == "violet"
+    assert loaded == [str(model)]

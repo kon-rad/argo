@@ -102,12 +102,15 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
     private var sessionID = UUID()
     private var generation = 0
     private var mutedBeforePause = false
+    private let kokoro = KokoroOutput()
     private let synth = AVSpeechSynthesizer()
     private var utterances = Set<ObjectIdentifier>()
 
     override init() {
         super.init()
         synth.delegate = self
+        kokoro.report = { [weak self] in self?.fail($0) }
+        kokoro.speaking = { [weak self] in self?.playing = $0 }
     }
     nonisolated static var worker: URL {
         URL(fileURLWithPath: DockCLI.path).deletingLastPathComponent().appendingPathComponent("voice/worker.py")
@@ -175,7 +178,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
 
     func start(vault: String) {
         guard phase == .idle, !agent.isEmpty, !workspace.isEmpty, !model.isEmpty else { return }
-        if !voiceID.isEmpty && AVSpeechSynthesisVoice(identifier: voiceID) == nil {
+        if voiceID != "kokoro:af_bella" && !voiceID.isEmpty && AVSpeechSynthesisVoice(identifier: voiceID) == nil {
             problem = "The selected system voice is unavailable."
             return
         }
@@ -198,6 +201,9 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
             p.standardInput = stdin
             p.standardOutput = out
             do {
+                if voiceID == "kokoro:af_bella" {
+                    try kokoro.start(script: Self.worker.deletingLastPathComponent().appendingPathComponent("kokoro_output.py"))
+                }
                 try p.run()
                 process = p
                 input = stdin.fileHandleForWriting
@@ -234,6 +240,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
         case "silence": stopPlayback(); stamp("stop playback requested")
         case "clause":
             guard (phase == .live || phase == .muted), epoch == generation else { return }
+            if voiceID == "kokoro:af_bella" { kokoro.speak(text); return }
             let utterance = AVSpeechUtterance(string: text)
             if !voiceID.isEmpty { utterance.voice = AVSpeechSynthesisVoice(identifier: voiceID) }
             utterances.insert(ObjectIdentifier(utterance))
@@ -275,6 +282,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
         send(["kind":"captureOff"])
     }
     private func stopPlayback() {
+        kokoro.silence()
         utterances.removeAll()
         synth.stopSpeaking(at: .immediate)
         playing = ""
@@ -297,6 +305,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
     }
     private func fail(_ message: String) { end(); problem = message }
     func end() {
+        kokoro.end()
         sessionID = UUID()
         stopMic()
         stopPlayback()
