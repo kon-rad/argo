@@ -4,6 +4,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -11,12 +12,73 @@ from pathlib import Path
 import pytest
 
 CLI = Path(__file__).resolve().parents[1] / "bin" / "agent-dock"
+BUILD = Path(__file__).resolve().parents[1] / "app" / "build.sh"
+ICON_SVG = Path(__file__).resolve().parents[1] / "app" / "Resources" / "AgentDockIcon.svg"
+ICON_PNG = Path(__file__).resolve().parents[1] / "app" / "Resources" / "AgentDockIcon.png"
 loader = importlib.machinery.SourceFileLoader("agent_dock", str(CLI))
 spec = importlib.util.spec_from_loader("agent_dock", loader)
 dock = importlib.util.module_from_spec(spec)
 loader.exec_module(dock)
 
 PERSONA = "---\nname: ada\nmodel: some-model\n---\n\n# ada, Head of Research\n\nYou are **ada**. Read your memory file.\n"
+
+
+def test_app_build_packages_a_default_icon_and_keeps_the_override():
+    script = BUILD.read_text()
+    assert ICON_SVG.read_text().startswith("<svg")
+    assert ICON_PNG.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert 'icon="$here/Resources/AgentDockIcon.png"' in script
+    assert '--icon) icon="$2"; shift 2 ;;' in script
+    assert '<key>CFBundleIconFile</key><string>AppIcon</string>' in script
+    assert 'for size in 16 32 128 256 512' in script
+    assert 'icon_${size}x${size}.png' in script
+    assert 'icon_${size}x${size}@2x.png' in script
+    assert 'codesign --force --sign - "$app" >/dev/null 2>&1 || true' not in script
+
+
+def test_app_build_stops_before_success_or_install_when_codesign_fails(tmp_path):
+    addon = tmp_path / "addon"
+    app_dir = addon / "app"
+    resources = app_dir / "Resources"
+    cli_dir = addon / "bin"
+    fake_bin = tmp_path / "fake-bin"
+    swift_bin = tmp_path / "swift-bin"
+    resources.mkdir(parents=True)
+    cli_dir.mkdir()
+    fake_bin.mkdir()
+    swift_bin.mkdir()
+
+    build = app_dir / "build.sh"
+    shutil.copy2(BUILD, build)
+    shutil.copy2(ICON_PNG, resources / ICON_PNG.name)
+    (cli_dir / "agent-dock").write_text("#!/bin/sh\n")
+    (swift_bin / "AgentDock").write_text("binary")
+
+    scripts = {
+        "swift": '#!/bin/sh\ncase "$*" in *--show-bin-path*) printf "%s\\n" "$FAKE_SWIFT_BIN";; esac\n',
+        "sips": '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do [ "$1" = --out ] && { shift; : > "$1"; exit 0; }; shift; done\n',
+        "iconutil": '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do [ "$1" = -o ] && { shift; : > "$1"; exit 0; }; shift; done\n',
+        "codesign": "#!/bin/sh\nexit 23\n",
+        "rm": '#!/bin/sh\ncase "$*" in */Applications/AgentDock.app*) : > "$INSTALL_MARKER"; exit 99;; esac\nexec /bin/rm "$@"\n',
+        "cp": '#!/bin/sh\ncase "$*" in */Applications/AgentDock.app*) : > "$INSTALL_MARKER"; exit 99;; esac\nexec /bin/cp "$@"\n',
+    }
+    for name, script in scripts.items():
+        command = fake_bin / name
+        command.write_text(script)
+        command.chmod(0o755)
+
+    marker = tmp_path / "install-entered"
+    env = os.environ | {
+        "PATH": f"{fake_bin}{os.pathsep}/usr/bin{os.pathsep}/bin",
+        "FAKE_SWIFT_BIN": str(swift_bin),
+        "INSTALL_MARKER": str(marker),
+    }
+    result = subprocess.run([str(build), "--install"], capture_output=True, text=True, env=env)
+
+    assert result.returncode == 23
+    assert "built " not in result.stdout
+    assert "installed " not in result.stdout
+    assert not marker.exists()
 
 
 @pytest.fixture
