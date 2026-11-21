@@ -86,7 +86,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
     @Published var phase: VoicePhase = .idle
     @Published var settingsShown = false
     @Published var agent = ""
-    @Published var workspace = UserDefaults.standard.string(forKey: "voiceWorkspace") ?? ""
+    @Published var workspace = ""
     @Published var model = UserDefaults.standard.string(forKey: "voiceModel") ?? ""
     @Published var folder = UserDefaults.standard.string(forKey: "voiceModelFolder") ?? ""
     @Published var voiceID = UserDefaults.standard.string(forKey: "voiceOutput") ?? ""
@@ -95,6 +95,13 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
     @Published var playing = ""
     @Published var draft = ""
     @Published var problem = ""
+    @Published var captureStatus = "Waiting for microphone"
+    @Published var inputLevel: Double = 0
+    @Published var levels = Array(repeating: 0.0, count: 32)
+    private var captureTimer: Timer?
+    private var lastFrameTime: TimeInterval = 0
+    private var lastLoudTime: TimeInterval = 0
+    private var lastStatus = ""
     private var process: Process?
     private var input: FileHandle?
     private var capture: AVAudioEngine?
@@ -158,7 +165,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
         case .toggle:
             switch phase {
             case .idle:
-                if !agent.isEmpty && !workspace.isEmpty && !model.isEmpty { start(vault: vault) }
+                if !agent.isEmpty && !model.isEmpty { start(vault: vault) }
                 else { configure(agent) }
             case .paused: mutedBeforePause ? (phase = .muted) : listen()
             case .live, .muted:
@@ -177,7 +184,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
     }
 
     func start(vault: String) {
-        guard phase == .idle, !agent.isEmpty, !workspace.isEmpty, !model.isEmpty else { return }
+        guard phase == .idle, !agent.isEmpty, !model.isEmpty else { return }
         if voiceID != "kokoro:af_bella" && !voiceID.isEmpty && AVSpeechSynthesisVoice(identifier: voiceID) == nil {
             problem = "The selected system voice is unavailable."
             return
@@ -196,7 +203,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
             guard sessionID == id else { return }
             let p = Process(), out = Pipe(), stdin = Pipe()
             p.executableURL = Self.worker
-            p.arguments = ["session", "--agent", agent, "--vault", vault, "--workspace", workspace,
+            p.arguments = ["session", "--agent", agent, "--vault", vault, "--workspace", workspace.isEmpty ? vault : workspace,
                            "--model", model, "--folder", folder]
             p.standardInput = stdin
             p.standardOutput = out
@@ -218,7 +225,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
         }
     }
     private func saveSelection() {
-        for (value, key) in [(model,"voiceModel"), (workspace,"voiceWorkspace"), (folder,"voiceModelFolder"), (voiceID,"voiceOutput")] {
+        for (value, key) in [(model,"voiceModel"), (folder,"voiceModelFolder"), (voiceID,"voiceOutput")] {
             UserDefaults.standard.set(value, forKey: key)
         }
     }
@@ -256,13 +263,49 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
             let node = engine.inputNode
             try node.setVoiceProcessingEnabled(true)
             let format = node.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                throw DockCLI.Failed(message: "No usable microphone input. Choose an input in macOS Sound settings and start voice again.")
+            }
             let encoder = try PCMEncoder(format)
+            let device = AVCaptureDevice.default(for: .audio)
+            let route = device?.localizedName ?? "System input"
+            captureStatus = "Waiting for microphone frames · \(route)"
+            lastStatus = ""
+            lastFrameTime = 0
+            lastLoudTime = ProcessInfo.processInfo.systemUptime
+            captureTimer?.invalidate()
+            captureTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.captureID == id, self.phase == .live else { return }
+                    if let selected = AVCaptureDevice.default(for: .audio), selected.uniqueID != device?.uniqueID {
+                        self.stopMic()
+                        self.listen()
+                    } else {
+                        self.updateCaptureStatus(route: route)
+                    }
+                }
+            }
             node.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, _ in
                 do {
                     let data = try encoder.convert(buffer)
                     DispatchQueue.main.async {
                         guard let self, self.captureID == id, self.phase == .live else { return }
-                        self.send(["kind":"pcm", "data":data.base64EncodedString()])
+                        guard !data.isEmpty else { return }
+                        self.lastFrameTime = ProcessInfo.processInfo.systemUptime
+                        let level = data.withUnsafeBytes { bytes -> Double in
+                            let samples = bytes.bindMemory(to: Int16.self)
+                            guard !samples.isEmpty else { return 0 }
+                            return sqrt(samples.reduce(0.0) { $0 + pow(Double($1) / 32768, 2) } / Double(samples.count))
+                        }
+                        self.inputLevel = level
+                        self.levels.removeFirst()
+                        self.levels.append(min(1, sqrt(level * 3)))
+                        if level > 0.005 { self.lastLoudTime = self.lastFrameTime }
+                        self.updateCaptureStatus(route: route)
+                        for offset in stride(from: 0, to: data.count, by: 8192) {
+                            let chunk = data.subdata(in: offset..<min(offset + 8192, data.count))
+                            self.send(["kind":"pcm", "data":chunk.base64EncodedString()])
+                        }
                     }
                 } catch {
                     Task { @MainActor in if self?.captureID == id { self?.fail(error.localizedDescription) } }
@@ -273,13 +316,39 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
             phase = .live
         } catch { fail(error.localizedDescription) }
     }
+    private func updateCaptureStatus(route: String) {
+        guard phase == .live else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let status: String
+        if lastFrameTime == 0 || now - lastFrameTime > 5 {
+            status = "No microphone frames · \(route). Check input device and microphone permission."
+        } else if now - lastLoudTime > 3 {
+            status = "Microphone quiet · \(route). Check mute and input volume."
+        } else {
+            status = "Listening · \(route)"
+        }
+        if lastFrameTime == 0 || now - lastFrameTime > 2 {
+            inputLevel = 0
+            levels = Array(repeating: 0, count: 32)
+        }
+        captureStatus = status
+        if status != lastStatus {
+            lastStatus = status
+            send(["kind":"captureStatus", "text":status])
+        }
+    }
     private func stopMic() {
+        captureTimer?.invalidate()
+        captureTimer = nil
+        inputLevel = 0
+        levels = Array(repeating: 0, count: 32)
         captureID = UUID()
         capture?.stop()
         capture?.inputNode.removeTap(onBus: 0)
         capture = nil
         draft = ""
         send(["kind":"captureOff"])
+        send(["kind":"captureStatus", "text":"Microphone capture paused or muted"])
     }
     private func stopPlayback() {
         kokoro.silence()

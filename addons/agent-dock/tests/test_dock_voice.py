@@ -279,3 +279,9 @@ def test_cached_gguf_uses_selected_file_and_keeps_context(monkeypatch, tmp_path)
     for _ in range(2):
         assert speech.parakeet_pcm(str(model), b"\x00\x00\x01\x00") == "violet"
     assert loaded == [str(model)]
+
+
+def test_normal_directory_is_valid_workspace(tmp_path):
+    import runpy
+    workspace_root = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'voice/worker.py'))['workspace_root']
+    assert workspace_root(tmp_path) == tmp_path.resolve()

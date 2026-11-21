@@ -18,6 +18,17 @@ struct VoiceActions: View {
     }
 }
 
+struct VoiceShortcutInfo: View {
+    var body: some View {
+        Menu {
+            ForEach(VoiceCommand.allCases, id: \.self) { command in
+                Text(command.title(.live) + (command.key.map { "  ⌃⌥⌘" + String($0).uppercased() } ?? "  ·  menu"))
+            }
+        } label: { Image(systemName: "info.circle") }
+        .help("Voice shortcuts")
+    }
+}
+
 struct VoiceSetup: View {
     @EnvironmentObject var store: Store
     @ObservedObject var voice: VoiceController
@@ -31,7 +42,7 @@ struct VoiceSetup: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Start Voice").font(.title2)
+            HStack { Text("Start Voice").font(.title2); VoiceShortcutInfo() }
             Picker("Codex persona", selection: $voice.agent) {
                 Text("Choose a persona").tag("")
                 ForEach(store.roster?.agents.filter { $0.runtime == "codex" } ?? []) { agent in
@@ -39,8 +50,9 @@ struct VoiceSetup: View {
                 }
             }
             HStack {
-                Button("Choose worktree…") { folder("Use worktree") { voice.workspace = $0 } }
-                Text(voice.workspace).lineLimit(1).truncationMode(.middle)
+                Button("Choose alternate folder…") { folder("Use folder") { voice.workspace = $0 } }
+                Button("Use vault") { voice.workspace = "" }
+                Text(voice.workspace.isEmpty ? store.vault : voice.workspace).lineLimit(1).truncationMode(.middle)
             }
             HStack {
                 Text("Recognition").font(.headline)
@@ -72,7 +84,7 @@ struct VoiceSetup: View {
                 }
             }.frame(height: 160)
             Picker("Speech output", selection: $voice.voiceID) {
-                Text("System default voice").tag("")
+                Text("System default · \(AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())?.name ?? "System voice")").tag("")
                 if KokoroOutput.interpreter != nil { Text("Kokoro · Bella (local MLX)").tag("kokoro:af_bella") }
                 ForEach(AVSpeechSynthesisVoice.speechVoices(), id: \.identifier) { v in
                     Text("\(v.name) (\(v.language))").tag(v.identifier)
@@ -86,8 +98,32 @@ struct VoiceSetup: View {
                 Spacer()
                 Button("Cancel") { voice.settingsShown = false }
                 Button("Start Voice") { voice.start(vault: store.vault) }
-                    .disabled(voice.workspace.isEmpty || voice.model.isEmpty || voice.agent.isEmpty)
+                    .disabled(voice.model.isEmpty || voice.agent.isEmpty)
             }
         }.padding(20).frame(width: 550)
+    }
+}
+
+struct VoiceInputMonitor: View {
+    @ObservedObject var voice: VoiceController
+    var body: some View {
+        HStack {
+            Canvas { context, size in
+                let step = size.width / CGFloat(voice.levels.count)
+                for (index, level) in voice.levels.enumerated() {
+                    let height = max(1, size.height * level)
+                    let rect = CGRect(x: CGFloat(index) * step, y: (size.height - height) / 2,
+                                      width: max(1, step - 1), height: height)
+                    context.fill(Path(rect), with: .color(.accentColor))
+                }
+            }.frame(width: 96, height: 25).accessibilityLabel("Microphone level")
+            Text(voice.phase == .live ? voice.captureStatus : voice.micLabel)
+            Button("Sound input…") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            VoiceShortcutInfo()
+        }.padding(8)
     }
 }

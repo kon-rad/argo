@@ -64,6 +64,7 @@ class Codex:
         self.process = await asyncio.create_subprocess_exec(exe, "app-server", "--listen", "stdio://",
             cwd=params["cwd"], stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             limit=8*1024*1024)
+        self.closing = False
         self.reader = asyncio.create_task(self.read())
         await self.request("initialize", {"clientInfo":{"name":"agent_dock","title":"Agent Dock","version":"1"}})
         self.send({"method":"initialized"})
@@ -73,6 +74,7 @@ class Codex:
         self.emit("session", f'{self.thread} · {result["model"]} · {result["cwd"]} · {result["sandbox"]["type"]}')
 
     async def close(self):
+        self.closing = True
         if hasattr(self, "process") and self.process.returncode is None:
             self.process.stdin.close()
             try:
@@ -91,7 +93,8 @@ class Codex:
             for future in self.pending.values():
                 if not future.done():
                     future.set_exception(ConnectionError("Codex disconnected"))
-            self.emit("disconnect", "Codex disconnected")
+            if not self.closing and self.thread:
+                self.emit("disconnect", "Codex exited during the session")
 
     def receive(self, msg):
         key, method = msg.get("id"), msg.get("method")

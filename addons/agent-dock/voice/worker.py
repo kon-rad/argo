@@ -28,9 +28,8 @@ dock = runpy.run_path(str(cli if cli.is_file() else HERE.parent / "bin/agent-doc
 
 def workspace_root(workspace):
     path = Path(workspace).resolve(strict=True)
-    root = subprocess.check_output(["git", "-C", str(path), "rev-parse", "--show-toplevel"], text=True).strip()
-    if Path(root).resolve() != path or not (path / ".git").is_file():
-        raise ValueError("Choose the root of a linked Git worktree")
+    if not path.is_dir():
+        raise ValueError("Choose an existing folder")
     return path
 
 
@@ -94,7 +93,7 @@ class Session:
     async def recognize(self, data):
         try:
             return await decode_pcm(self.model, data)
-        except (ValueError, OSError, KeyError, asyncio.TimeoutError) as error:
+        except Exception as error:
             self.emit("disconnect", f"Recognition stopped: {error}")
             raise
 
@@ -115,6 +114,8 @@ class Session:
                         self.preview.cancel()
                     self.job(self.decode(event, self.uid, data, self.utterance_generation)).set_name("decode-final")
                     self.uid = None
+        elif kind == "captureStatus":
+            self.emit("capture", msg["text"])
         elif kind == "captureOff":
             self.reset_capture()
         elif kind == "silence":
@@ -146,7 +147,7 @@ class Session:
             self.emit("disconnect", "Ghostty closed")
 
     async def inputs(self):
-        reader = asyncio.StreamReader()
+        reader = asyncio.StreamReader(limit=8 * 1024 * 1024)
         transport, _ = await asyncio.get_running_loop().connect_read_pipe(
             lambda: asyncio.StreamReaderProtocol(reader), sys.stdin.buffer)
         try:
@@ -172,8 +173,12 @@ class Session:
                         if await launch.wait():
                             raise ValueError("Ghostty did not open")
                         await asyncio.wait_for(self.attached.wait(), 20)
-                        await self.harness.start(exe, params)
-                        self.emit("ready", "Listening")
+                        try:
+                            await self.harness.start(exe, params)
+                        except Exception as error:
+                            self.emit("error", f"Codex startup failed: {error}")
+                            raise
+                        self.emit("ready", "Recognizer ready; waiting for microphone")
                     setup_task = asyncio.create_task(setup())
                     stop_task = asyncio.create_task(self.stopped.wait())
                     try:
