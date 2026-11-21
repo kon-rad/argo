@@ -59,6 +59,7 @@ struct AgentsView: View {
 
 struct AgentCard: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var voice: VoiceController
     let agent: Agent
     let runtimes: [Runtime]
     @State private var hovering = false
@@ -92,6 +93,10 @@ struct AgentCard: View {
                 Text(agent.team_name).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
 
+            if agent.runtime == "codex" {
+                Button("Start Voice…") { voice.configure(agent.name) }
+                    .controlSize(.small).disabled(voice.phase != .idle)
+            }
             HStack(spacing: 4) {
                 ForEach(runtimes) { rt in
                     Group {
