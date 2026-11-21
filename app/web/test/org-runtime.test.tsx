@@ -40,6 +40,10 @@ it('reviews every target, names blockers and stacks labelled cells on phones', a
   const ledger = screen.getByRole('table', { name: 'Coverage ledger' });
   expect(ledger.getAttribute('data-phone')).toBe('cards');
   const row = within(ledger).getByText('guide', { exact: true }).closest('tr')!;
+  expect(row.getAttribute('aria-current')).toBe('true');
+  expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Review change' }));
+  expect(screen.getByRole('link', { name: 'Runtime settings' }).getAttribute('aria-current')).toBe('page');
+  expect(within(ledger).getAllByText('Unverified')).toHaveLength(4);
   for (const [label, value] of [['Configured','base-model'],['Effective now','effective-model'],['Last observed','observed-model'],['Proposed','next-model']]) {
     expect(row.querySelector('[data-label="' + label + '"]')?.textContent).toContain(value);
   }
@@ -73,4 +77,18 @@ it('shows partial reconciliation and the receipt, then confirms the exact versio
   fireEvent.click(screen.getByRole('button', { name: 'Confirm revert of version 1' }));
   await screen.findByText(/Version 2.*1 in scope.*4 outside scope/);
   expect(post).toHaveBeenCalledWith('/api/org/runtime/revert', { version: 1 });
+});
+
+it('discards whole-fleet review when the scope changes and keeps the excluded targets visible', async () => {
+  const post = setup();
+  await preview();
+  fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'org' } });
+  expect(screen.queryByRole('button', { name: /Apply/ })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Preview change' }));
+  await screen.findByRole('button', { name: 'Apply to future wakes' });
+  expect(screen.getByText('1 in scope · 0 blocked · 4 outside scope')).toBeTruthy();
+  expect(within(screen.getByRole('table')).getAllByText('Outside scope')).toHaveLength(4);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Preview change' }));
+  expect(post).toHaveBeenCalledTimes(2);
 });

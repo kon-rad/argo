@@ -34,6 +34,15 @@ const VIEWS: View[] = [
   { name: 'projects-goals', route: '/projects?view=goals', tables: [{ label: 'Goals', phone: 'cards' }] },
   { name: 'projects-report', route: '/projects?view=report', tables: [] },
   { name: 'board', route: '/board', tables: [] },
+  {
+    name: 'org-runtime-preview', route: '/org/runtime', tables: [{ label: 'Coverage ledger', phone: 'cards' }],
+    before: async page => {
+      await page.getByRole('button', { name: 'Preview change' }).press('Enter');
+      await expect(page.getByRole('heading', { name: 'Review change' })).toBeFocused();
+      await expect(page.getByRole('button', { name: 'Apply whole fleet' })).toBeDisabled();
+      await expect(page.getByText('Default poller inactive')).toBeVisible();
+    },
+  },
   { name: 'org-approvals', route: '/org/approvals', tables: [{ label: 'Board tokens', phone: 'cards' }] },
   {
     name: 'database', route: '/database', tables: [{ label: 'Query results', phone: 'scroll' }],

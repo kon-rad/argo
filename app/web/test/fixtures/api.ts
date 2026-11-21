@@ -2,6 +2,7 @@
  * One answer for every /api call the table views make, from the fake fixtures in tables.ts. Shared by the jsdom route
  * tests (test/tables-routes.test.tsx) and the browser checks (e2e/mock-api.ts), so both look at the same data.
  */
+import { runtimePreview, runtimeStatus } from './runtime.js';
 import * as fx from './tables.js';
 
 type Reply = unknown | ((url: URL) => unknown);
@@ -29,6 +30,8 @@ const EXACT: Record<string, Reply> = {
   'GET /board/cards': fx.boardCards,
   'GET /board/tokens': fx.boardTokens,
   // org
+  'GET /org/runtime': runtimeStatus,
+  'POST /org/runtime/preview': () => ({ ...runtimePreview(false), expiresAt: new Date(Date.parse(fx.NOW) + 300_000).toISOString() }),
   'GET /org/chart': fx.orgChart,
   'GET /org/approvals': fx.orgApprovals,
   'GET /org/channels': { channels: [] },
