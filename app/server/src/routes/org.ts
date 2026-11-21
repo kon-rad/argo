@@ -1,3 +1,4 @@
+import { runtimeRouter } from '../org-runtime/routes.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Router } from 'express';
@@ -83,6 +84,7 @@ async function readText(path: string): Promise<string | null> {
 
 export function orgRouter(vaultRoot: string): Router {
   const router = Router();
+  router.use('/runtime', runtimeRouter());
 
   // Every handler reads and writes as the owner; resolve them once per request.
   router.use((_req, res, next) => {

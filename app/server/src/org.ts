@@ -1,3 +1,4 @@
+import { guardRuntimeImport } from './org-runtime/import-guard.js';
 import { z } from 'zod';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -242,6 +243,7 @@ export interface WriteOrgOpts {
  * channels and memberships. A team or channel the file names is live again (archived_at cleared).
  */
 export async function writeOrg(tx: TxClient, doc: OrgDocT, opts: WriteOrgOpts): Promise<{ channels: number; retired: number }> {
+  await guardRuntimeImport(tx, doc.agents);
   const keep = opts.keep ?? new Map<string, string | null>();
   // One row, replaced whole: the org file is the only author of the wake rules, and a missing block means defaults.
   await tx.query(

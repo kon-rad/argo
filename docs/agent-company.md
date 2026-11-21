@@ -148,3 +148,99 @@ The most-used commands (run `cli-org help` for all of them):
 2. `ORG_AGENT=<a member> cli-org read <a channel it is not in>` is refused.
 3. `ORG_AGENT=<owner> cli-org dm <lead> "ping"` inserts one wakeup (`cli-org wakeups --all`).
 4. With a dispatcher running, that wakeup becomes one run and one `status` post, and `wake-done` closes it.
+
+### Versioned runtime profiles
+
+The org module has an owner-only runtime API and matching `cli-org runtime`
+commands. Every CLI verb, including status and history reads, requires the
+configured `ORG_OWNER` identity and an active human roster row. Use the owner
+database connection; the bot role has no access to runtime service tables.
+Profiles live in the database, separate from the compiled roster.
+No personal profile, model, provider, host or credential is seeded. Switches
+affect future claims and leave in-flight runs on their starting settings.
+
+```sh
+cli-org runtime show
+cli-org runtime profiles
+cli-org runtime save example /tmp/profile.json
+cli-org runtime preview example --scope org-agent:builder,org-agent:writer
+cli-org runtime apply <preview-token>
+cli-org runtime history
+cli-org runtime revert <version>
+cli-org runtime register cron-job:daily /tmp/assignment.json
+```
+
+Output is JSON, including without `--json`. `save` appends a profile revision.
+`revert N` undoes the runtime/model selection recorded by desired version N,
+requires N to remain the current selection for every affected target and rejects
+changed runtime/model assignments. It validates the restored model against its
+original immutable profile revision and the current roster capabilities, then
+appends a new desired version. This provenance also survives another revert
+and is used by roster import validation. Before a target has any profile
+selection, declare its baseline model in the first profile to enable a protected
+capability revert. Older history without recorded restoration metadata cannot
+be reverted; preview a new selection instead.
+Pause and effort decisions are preserved. History is never deleted. To select
+an older profile definition, save that definition as a new revision and preview.
+
+A profile file has this shape (the model ID is a synthetic example):
+
+```json
+{
+  "name": "Example",
+  "default": { "runtime": "codex", "model": "example-code", "provider": null },
+  "exceptions": {},
+  "capabilities": {},
+  "models": { "example-code": { "tier": 3, "canCode": true } }
+}
+```
+
+Resolution takes the exception keyed by full target ID, such as
+`org-agent:builder`, then the first matching capability assignment in
+`deploy`, `merge`, `review`, `code` order, then the default. Every protected
+capability is checked, including when an exception supplies the assignment.
+Coding requires declared `canCode` metadata and tier 2 or higher; review,
+merge and deploy conservatively require tier 3. Metadata is an owner
+declaration, not a benchmark or provider health probe. A null model inherits
+the base roster model. Provider metadata must match a provider/model ID
+consumed by Hermes or Zen. Codex and Claude Code cannot consume a separate
+provider override. Never put credentials in profile or target definitions.
+
+HTTP routes under `/api/org/runtime` use the org module's owner session gate:
+
+| Method and path | Body or result |
+| --- | --- |
+| `GET /` | Profiles, base/effective assignments, last usage observations, history and receipts |
+| `GET /profiles`, `GET /history` | Profile revisions in use, or desired history |
+| `POST /profiles/:id` | Profile definition above, appends a revision |
+| `POST /preview` | `{profileId, scope: [{kind, id}]}` |
+| `POST /apply` | `{token}` |
+| `POST /revert` | `{version}` |
+| `POST /targets` | `{target: {kind, id}, configured: {runtime, model, provider}}` |
+
+Bodies cannot supply caller identity. CLI writes use `ORG_AGENT` and the
+existing restricted database connection when running as a bot. Database grants
+deny bot writes to profiles, previews, desired versions, registry and receipts,
+including when a bot supplies a human name.
+
+An empty scope requests the whole registry. Scoped previews list all uncovered
+targets. Previews expire in five minutes and bind roster fields, overrides,
+registry, profile revision and last desired version. Concurrent switches,
+imports, registrations and overrides require a new preview. Invalid assignments
+or unsupported adapters block the selected scope. One transaction records the
+desired version, all org overrides and receipts. Imports preserve selections
+and validate effective pairs plus active profile capability floors.
+
+Status separates `configured`, `effective` and `lastObserved`. Org targets
+report `health: not-probed`. `org-applied` means selected org assignments were
+committed for future claims. Receipts say `effective-next-claim` and have no
+observed timestamp. Neither proves provider health or a successful canary.
+Usage observations retain their recorded timestamps. Previews list unfinished
+card runs, which retain their starting settings.
+
+Cron, Telegram gateway, Telegram poller and default-route inventory initially
+has visible `unregistered` placeholders. Registering actual launcher IDs replaces
+the placeholder for that kind, but all these launchers remain `unsupported`
+until reviewed host adapters exist. Whole-fleet apply is blocked in this
+release; explicitly scoped org changes remain usable. The engine never
+restarts services or writes privileged host files.

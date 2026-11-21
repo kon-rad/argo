@@ -1,3 +1,4 @@
+import { requireRuntimeOwner, runtimeStatus, registerRuntimeTarget, saveProfile, previewRuntime, applyRuntime, revertRuntime } from './org-runtime/index.js';
 import { exitFlushed } from './cli-exit.js';
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -94,6 +95,7 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   resume <agent|team|all>                  owner or dispatch bot only: clear the pause; the next claim succeeds
   pause lane:<runtime> / resume lane:<runtime>   the same for every bot whose effective runtime is that one (claude-code, zen-agent)
   set <agent> --runtime R --model M [--effort E]   owner only: override the roster for one bot from its next claim, no deploy; set <agent> --clear removes it
+  runtime show | profiles | register <kind:id> <assignment.json> | save <id> <file.json> | preview <id> [--scope kind:id,...] | apply <token> | history | revert <version>
   overrides                                owner or any bot: the overrides in force
   breaker [--dry-run]                      credit breaker: pause the zen-agent lane under the OpenRouter balance minimum, the claude-code lane after two rate-limit blocks in a row (owner or dispatch bot)
   board status [board] | board pause --reason "..." | board resume [board]   the board-wide dispatch switch (owner or dispatch bot only)
@@ -265,6 +267,32 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
   };
 
   switch (cmd) {
+    case 'runtime': {
+      const by = identityName();
+      await requireRuntimeOwner(by);
+      const [verb, arg] = pos;
+      let result: unknown;
+      if (verb === 'show') result = await runtimeStatus();
+      else if (verb === 'profiles') result = (await runtimeStatus()).profiles;
+      else if (verb === 'history') result = (await runtimeStatus()).history;
+      else if (verb === 'register' && arg && pos[2]) {
+        const colon = arg.indexOf(':');
+        result = await registerRuntimeTarget({kind:arg.slice(0,colon),id:arg.slice(colon+1)} as Parameters<typeof registerRuntimeTarget>[0],JSON.parse(readFileSync(pos[2],'utf8')),by);
+      }
+      else if (verb === 'save' && arg && pos[2]) result = await saveProfile(arg, JSON.parse(readFileSync(pos[2], 'utf8')), by);
+      else if (verb === 'preview' && arg) {
+        const scope = typeof opts.scope === 'string' ? opts.scope.split(',').map(t => {
+          const colon = t.indexOf(':');
+          return { kind: t.slice(0,colon), id: t.slice(colon+1) };
+        }) : [];
+        result = await previewRuntime(arg, scope as Parameters<typeof previewRuntime>[1], by);
+      } else if (verb === 'apply' && arg) result = await applyRuntime(arg,by);
+      else if (verb === 'revert' && arg && /^\d+$/.test(arg)) result = await revertRuntime(Number(arg),by);
+      else throw new OrgError('runtime show | profiles | register <kind:id> <assignment.json> | save <id> <file.json> | preview <id> [--scope kind:id,...] | apply <token> | history | revert <version>');
+      out(JSON.stringify(result,null,2));
+      return 0;
+    }
+
     case 'whoami': {
       const w = await whoami(await me());
       if (json) return (out(JSON.stringify(w, null, 2)), 0);

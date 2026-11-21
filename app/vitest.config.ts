@@ -27,7 +27,7 @@ export default defineConfig({
           // Clear ambient board settings before any test imports config (test/hermetic.ts).
           setupFiles: ['./test/hermetic.ts'],
           // Existing route tests exercise the optional modules; modules.test.ts turns them off itself.
-          env: { MODULES: 'ring,agents', RING_PULL_SSH_HOST: 'test-host', VAULT_ROOT: engineRoot, DEPLOYMENT: 'local' },
+          env: { ORG_OWNER: 'owner', MODULES: 'ring,agents', RING_PULL_SSH_HOST: 'test-host', VAULT_ROOT: engineRoot, DEPLOYMENT: 'local' },
           fileParallelism: false,
           testTimeout: 30000,
           hookTimeout: 60000,
