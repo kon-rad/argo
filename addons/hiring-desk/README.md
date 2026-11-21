@@ -34,6 +34,8 @@ The forward migration `1756000020700_cybazaar_marketplace_sync.sql` stores impor
 4. Reject, start, revision-request and completion decisions update the local Desk and enter a durable outbox. The connector retries idempotent state updates to Cybazaar. Only the client-safe status and optional summary are sent back.
 5. If Cybazaar is temporarily unreachable, previously imported requests remain visible and unsent updates stay queued for retry.
 
+Each actual local status transition gets a unique event key while the request row is locked. The outbox persists that key in the same transaction as the new status, so a revision cycle can emit `in_progress` twice and delivery retries keep the original key. Existing queued keys remain valid; no migration is required.
+
 A repeated poll uses the stored cursor and request UUID, so it does not create duplicate tickets. The board card body marks client input as untrusted and does not grant execution authority.
 
 ## Develop
@@ -46,3 +48,5 @@ npm test
 ```
 
 The package build includes server, web and workspace packages. PostgreSQL integration tests use a disposable scratch database and are opt-in through the documented test database variables. Production deployment still requires the package to be installed on the host and the migration to run through the normal Second Brain migration flow.
+
+Run the revision-cycle regression with `npx vitest run server/marketplace/cybazaar-integration.test.ts`. Set `SB_TEST_DB` to an isolated `sb_*_test` database and run `npx vitest run server/marketplace/cybazaar-integration.integration.test.ts` for the PostgreSQL durability check. It creates and removes a temporary schema in that database and uses the standard `PG*` connection settings.
