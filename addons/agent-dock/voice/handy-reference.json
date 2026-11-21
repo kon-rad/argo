@@ -1,0 +1,18 @@
+{
+  "release": "Handy 0.10.1",
+  "source": "https://github.com/cjpais/Handy/blob/v0.10.1/src-tauri/src/catalog/catalog.json",
+  "catalogSHA256": "822a3b2f5c8c13fbf48f9b00703ef822540305fb47134aca5aac05f5f191a87c",
+  "engine": "transcribe.cpp 0.4.0",
+  "id": "parakeet-unified-en-0.6b",
+  "variant": "Q8_0",
+  "revision": "7e948f21b7bdbac698d3318db9d350f1096f3b6c",
+  "file": "parakeet-unified-en-0.6b-Q8_0.gguf",
+  "bytes": 731357568,
+  "sha256": "4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795",
+  "dataset": "FLEURS English test",
+  "error": 3.99,
+  "host": "Ryzen 4750U",
+  "cpu": 13.955,
+  "vulkan": 25.28,
+  "speedUnit": "audio seconds per wall second"
+}

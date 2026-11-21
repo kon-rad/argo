@@ -49,6 +49,7 @@ def test_app_build_stops_before_success_or_install_when_codesign_fails(tmp_path)
     swift_bin.mkdir()
 
     build = app_dir / "build.sh"
+    shutil.copytree(BUILD.parent.parent / "voice", addon / "voice", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copy2(BUILD, build)
     shutil.copy2(ICON_PNG, resources / ICON_PNG.name)
     (cli_dir / "agent-dock").write_text("#!/bin/sh\n")

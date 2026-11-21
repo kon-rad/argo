@@ -411,6 +411,12 @@ def agent_info(vault: Path, settings: dict, name: str) -> dict:
     return info
 
 
+def cmd_voice(args):
+    from urllib.parse import urlencode
+    query = urlencode({"agent": args.agent, "workspace": str(Path(args.workspace).resolve())})
+    return subprocess.run(["open", "-b", "org.secondbrain.agent-dock", "agent-dock://voice?" + query]).returncode
+
+
 def cmd_launch(args) -> int:
     vault = find_vault(args.vault)
     settings = load_settings(vault)
@@ -776,6 +782,10 @@ def main(argv: list[str] | None = None) -> int:
         if vault:
             p.add_argument("--vault", help="the vault (default: $SECONDBRAIN_VAULT, or the one around the current folder)")
 
+    p = sub.add_parser("voice", help="open native voice setup for a Codex persona in the selected vault")
+    p.add_argument("agent")
+    p.add_argument("--workspace", default=".")
+    p.set_defaults(fn=cmd_voice)
     p = sub.add_parser("roster", help="the agents and the runtimes found on this machine")
     common(p)
     p.set_defaults(fn=cmd_roster)

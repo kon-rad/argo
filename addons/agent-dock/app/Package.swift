@@ -5,6 +5,7 @@ let package = Package(
     name: "AgentDock",
     platforms: [.macOS(.v14)],
     targets: [
-        .executableTarget(name: "AgentDock", path: "Sources/AgentDock")
+        .executableTarget(name: "AgentDock", path: "Sources/AgentDock"),
+        .testTarget(name: "AgentDockTests", dependencies: ["AgentDock"])
     ]
 )

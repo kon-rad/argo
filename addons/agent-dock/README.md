@@ -159,7 +159,7 @@ For a process it did not start, the agent's name is read from `--agent` or `--pe
 ## Tests
 
 ```bash
-python3 -m pytest addons/agent-dock        # the CLI: 29 tests, no network, fake runtimes
+python3 -m pytest addons/agent-dock        # CLI and voice regression tests
 cd addons/agent-dock/app && swift build    # the app compiles
 build/AgentDock.app/Contents/MacOS/AgentDock --snapshot /tmp/dock   # draws each view to a PNG and quits
 ```
@@ -171,3 +171,74 @@ build/AgentDock.app/Contents/MacOS/AgentDock --snapshot /tmp/dock   # draws each
 - No resume button. Use the harness's own (`claude --resume`, `codex resume`, `hermes chat --continue`).
 - No remote machines. It shows and starts what is on this Mac.
 - It does not change what an agent may do; that stays with the harness's settings and the vault's guard hook.
+
+## Local Codex voice (macOS 14+, Apple silicon)
+
+Build the native app with `app/build.sh --install` from this directory. Voice needs Ghostty with AppleScript enabled, a signed-in Codex CLI with the v2 app-server protocol, an installed system speech voice and a cached recognizer. The bundle includes the Python worker and replay fixtures. Voice is off until started. No speech weights are downloaded.
+
+1. Choose the vault in Agent Dock. Click **Start Voice** on a registered Codex persona and select the root of a linked Git worktree. From the CLI, `bin/agent-dock voice guide --workspace "$PWD"` opens the same setup using the app's selected vault.
+2. Select a recognition model and speech voice. Grant Agent Dock microphone access. The worker must transcribe the bundled violet sample and open a Ghostty session before the mic goes live. macOS may ask for permission to automate Ghostty.
+3. Speak, then leave a short pause. Ghostty updates one draft line, submits one final and streams the original reply, commands, output and diffs. Agent Dock speaks sentences from the opening paragraph. For a pending approval, inspect its details in Ghostty and type `allow ID` or `deny ID`.
+4. Speak over a reply to silence playback. During a task, “what is the current status?” reads the last runtime event locally. Other speech steers the active turn. **Stop Task** explicitly requests a Codex interruption. **End Voice** closes the session. Closing Ghostty or losing the worker ends capture. Starting again creates a fresh ephemeral thread.
+
+| Agent Dock Voice command | App-scoped shortcut | Effect |
+|---|---|---|
+| Start / Pause / Resume Voice | Control + Option + Command + V | Pause capture and playback together. Resume restores the earlier mute state. |
+| Mute / Unmute Mic | Control + Option + Command + M | Toggle capture while the task and reply continue. |
+| Silence Reply | Control + Option + Command + S | Stop speech and discard remaining audio for that reply. |
+| Stop Task / End Voice | Menu only | Interrupt the active turn / release the session. |
+
+The shortcuts work while Agent Dock has focus. Use its microphone menu-bar item from any app, including after closing the Dock window. It shows microphone state, task state, the draft and the sentence actually playing. No global shortcut registration is installed.
+
+### Models and permissions
+
+| Adapter | Discovery and prerequisites |
+|---|---|
+| Parakeet Unified English 0.6B Q8_0 | A resident transcribe.cpp model opens the selected GGUF directly. Scans the standard Handy models directory and Hugging Face snapshots, including `HF_HOME` and `HF_HUB_CACHE`. The pinned GGUF is 731,357,568 bytes, CC BY 4.0. The runtime setup below reuses the file in place. |
+| whisper.cpp | Installed `whisper-cli` and cached `ggml-*.bin` under `~/.cache/whisper-cpp/models` or a folder selected in the app. The CPU adapter accepts 16 kHz mono WAV. |
+| faster-whisper | A local CTranslate2 snapshot with model, tokenizer, vocabulary and configuration, plus the `faster_whisper` Python package in the worker interpreter. The adapter uses CPU int8 and local-files-only mode. |
+| Local Kokoro synthesis | Choose Kokoro · Bella with the MLX Audio Python runtime and cached mlx-community/Kokoro-82M-bf16 snapshot including voices/af_bella.safetensors. The renderer loads once per session and runs with Hugging Face offline mode. Use an existing uv tool installation of mlx-audio, or install mlx-audio in a virtual environment at `~/Library/Application Support/AgentDockVoice/kokoro`. |
+| System synthesis | Pick an installed macOS voice. Synthesis speed and intelligibility are independently unmeasured. |
+
+Recognition uses rolling batch decodes and a final decode after about 700 ms of quiet, with a 25-second utterance limit. The mic uses macOS voice processing and an energy threshold. Cached files are opened read-only. The app remembers the model path, extra search folder, workspace and output voice in its local preferences. Model availability is checked on each start.
+
+Only a SHA-256 match to the pinned Q8_0 file with Handy 0.10.1 receives the Handy ratings. English FLEURS test error is 3.99%. Reference throughput is 13.955 audio seconds per wall second on CPU and 25.28 on Vulkan, both on a Ryzen 4750U. The speed bar compares these two reference backends. Accuracy shows the complement of test error. Other variants, versions and adapters display Unrated. The source snapshot, engine revision and units are in [handy-reference.json](voice/handy-reference.json).
+
+A fresh Codex process reads the registered persona and model from the chosen vault's compiled roster. A private terminal socket lives in an owner-only temporary directory. The worker requests read-only access unless the roster allows both Edit and Write with acceptEdits. A general shell requires an unrestricted Bash entry. Command-specific Bash grants stay disabled in this adapter. The worker checks the effective workspace, model, sandbox and approval policy before capture. The worktree scopes edits. Codex's platform sandbox governs filesystem reads. Only finalized transcripts go to Codex. Hosted text inference and tool use can incur the configured provider's charges.
+
+### Enable cached Parakeet on Apple silicon
+
+Install CMake and the Xcode command line tools. From a terminal run the following once. It builds the recognition library and Python bindings for Agent Dock. Existing GGUF weights stay in their current location.
+
+```sh
+src="$HOME/Library/Application Support/AgentDockVoice/transcribe.cpp"
+git clone --recurse-submodules https://github.com/handy-computer/transcribe.cpp "$src"
+git -C "$src" checkout --detach cfa237c2551a4b2d3a56ff8fe5461e3c67c51772
+git -C "$src" submodule update --init --recursive
+cmake -S "$src" -B "$src/build" -DCMAKE_BUILD_TYPE=Release -DTRANSCRIBE_BUILD_SHARED=ON
+cmake --build "$src/build" --target transcribe -j 4
+```
+
+### Doctor, replay and physical qualification
+
+Run these commands from `addons/agent-dock`. The fixture creates two linked worktrees with different markers, a synthetic roster and a failing Python test. Set the fixture roster's model to one available on your Codex account.
+
+```sh
+fixture=$(python3 voice/bench/fixture.py)
+python3 voice/worker.py models
+# Use a path printed by models.
+python3 voice/worker.py doctor --model "$model" --workspace "$fixture/guide" --vault "$fixture/vault" --agent guide
+python3 voice/bench/replay.py
+python3 voice/bench/replay.py --model "$model"
+python3 -m pytest tests/test_dock_voice.py
+(cd app && swift test --disable-sandbox)
+```
+
+Doctor checks a real decoder sample, system synthesis to a WAV, Codex login and an ephemeral thread in the fixture. Replay shuffles 12 fixed synthetic WAVs five times. With a decoder it reports word errors, reference words, decoder failures, median and p95 decode time including model startup. The protocol tests simulate agent events and check draft replacement, interruption, approvals, steering, thread isolation and duplicate finals. Their fixture edit and Python test execute locally. Hosted answer correctness and speaker latency require the following desktop run.
+
+Repeat on a signed-in M4 and M1 separately. Record macOS, app revision, model revision, Codex model, voice, audio route, cold/warm state, expected marker, observed transcript, diff and test exit status.
+
+1. Install, run doctor, select the fixture vault, and start `guide` on its worktree. Confirm the thread ID, model, cwd and sandbox printed in Ghostty. Ask it to fix the color and run the test. Independently run `git -C "$fixture/guide" diff` and `(cd "$fixture/guide" && python3 -m unittest)`. Expect one edit to `color.py` and one passing test.
+2. Ask for status during a longer test, then correct a request during speech. Focus another app, talk over the speaker, and check that no old sentence resumes. Use the menu to mute, pause, resume and explicitly stop. Inspect the actual task completion or interruption in Ghostty.
+3. End voice, start the read-only `writer` on its own worktree, and ask for the marker. Expect silver and a fresh thread. Close Ghostty during capture. Confirm the mic closes and reconnect performs zero edits. Quit and reopen Dock, verify the saved selections, then remove the test app to check uninstall.
+4. Capture the mic and physical speaker on a common-clock recording. Time speech end to first useful audible clause and interruption onset to silence. Ghostty prints native monotonic timestamps for endpoint receipt, final, clause, synthesizer start and stop request. Compare these with the recording. Score source/fact correctness and isolation separately from ASR word error. Report sample count, failures, median, p95 and any timeouts per host, keeping cold starts separate. The plan targets warm p95 below two seconds to useful audio and 300 ms to silence.
