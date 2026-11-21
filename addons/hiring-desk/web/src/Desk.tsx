@@ -5,13 +5,13 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Approval, DeskOperatorApi, Mutation, OperatorJob, Provider, ReleaseRequest, Result, WorkerResult } from '@secondbrain/desk-contracts/desk';
 import { createHttpDeskOperatorApi } from './api.js';
-import { MarketDesk } from './MarketDesk.js';
+import { CybazaarInbox } from './CybazaarInbox.js';
 
-type View = 'overview' | 'inbox' | 'active' | 'review' | 'jobs' | 'agents' | 'commissions';
+type View = 'overview' | 'inbox' | 'active' | 'review' | 'jobs' | 'agents' | 'marketplace';
 const VIEWS: { id: View; label: string }[] = [
   { id: 'overview', label: 'Overview' }, { id: 'inbox', label: 'Inbox' }, { id: 'active', label: 'Active' },
   { id: 'review', label: 'Review' }, { id: 'jobs', label: 'Jobs' }, { id: 'agents', label: 'Agents' },
-  { id: 'commissions', label: 'Commissions' },
+  { id: 'marketplace', label: 'Marketplace' },
 ];
 const box = 'rounded border border-[var(--rule)] bg-[var(--paper)] p-3';
 const inputClass = 'min-w-0 rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-1 text-sm';
@@ -190,7 +190,7 @@ function JobDetail({ job, api, onChanged, onStale }: { job: OperatorJob; api: De
 
 /** Private Desk page. The lead owns app route and navigation registration; this component owns its content. */
 export default function Desk({ operatorApi = httpOperatorApi }: { operatorApi?: DeskOperatorApi }) {
-  const [view, setView] = useState<View>(() => new URLSearchParams(window.location.search).has('marketJob') ? 'commissions' : 'overview');
+  const [view, setView] = useState<View>('overview');
   const [inbox, setInbox] = useState<OperatorJob[] | null>(null);
   const [jobs, setJobs] = useState<OperatorJob[] | null>(null);
   const [providers, setProviders] = useState<Provider[] | null>(null);
@@ -252,7 +252,7 @@ export default function Desk({ operatorApi = httpOperatorApi }: { operatorApi?: 
   return <main className="flex h-full min-h-0 flex-col">
     <header className="flex flex-wrap items-center gap-3 border-b border-[var(--rule)] px-4 py-3"><div><h1 className="text-xl font-semibold">Hiring Desk</h1><p className="text-xs text-[var(--ink-dim)]">Private operator console</p></div><nav aria-label="Desk sections" className="ml-auto flex flex-wrap gap-1">{VIEWS.map((item) => <button type="button" key={item.id} aria-current={view === item.id ? 'page' : undefined} onClick={() => { setSelectedId(null); setSelectedJob(null); setView(item.id); }} className={`rounded px-3 py-1.5 text-sm ${view === item.id ? 'bg-[var(--paper-sunk)] font-medium' : 'text-[var(--ink-dim)] hover:bg-[var(--paper-sunk)]'}`}>{item.label}</button>)}</nav><button type="button" className={secondary} disabled={refreshing || loading} onClick={() => void refresh(true)}>{refreshing ? 'Refreshing…' : 'Refresh'}</button></header>
     <div className="min-h-0 flex-1 overflow-auto p-3 md:p-4">
-      {view === 'commissions' && <MarketDesk />}
+      {view === 'marketplace' && <CybazaarInbox />}
       {loading && <p role="status" className="py-8 text-center text-sm text-[var(--ink-dim)]">Loading Desk…</p>}
       {!loading && view === 'overview' && (errors.jobs || errors.providers) && <div role="alert" className="mb-3 rounded border border-[var(--warn)] p-2 text-sm text-[var(--warn)]">{errors.jobs || errors.providers}</div>}
       {!loading && view === 'overview' && <Overview jobs={jobs ?? []} providers={providers ?? []} />}

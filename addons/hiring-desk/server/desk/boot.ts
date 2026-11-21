@@ -15,9 +15,11 @@ import { ArcJsonRpcReader } from './settlement/rpc.js';
 import type { DeskPublicControls } from './routes.js';
 import type { DeskPrivateControls } from './operator/routes.js';
 import { createCybazaarBackend, cybazaarConfigSchema, type CybazaarOperationalDependencies } from './runtime.js';
+import { CybazaarIntegration } from '../marketplace/cybazaar-integration.js';
 
 export interface DeskBootSettings {
   marketEnabled?: string; marketEnvelopeSecret?: string; marketArtifactRoot?: string; marketBaseRpcUrl?: string; marketProfiles?: string; marketExecutionAgent?: string;
+  cybazaarApiOrigin?: string; cybazaarIntegrationSecret?: string;
   domain?: string; chainId?: string; paymentInterface?: string; usdcAddress?: string;
   rpcUrl?: string; publicOrigin?: string; runtimeModule?: string;
   arkivRpcUrl?: string; arkivChainId?: string; arkivPrivateKey?: string; arkivLifetimeBlocks?: string;
@@ -45,7 +47,7 @@ export interface DeskRuntimeModule {
   createDeskRuntime?(context: { domain: string; persistence: PgDeskPersistence }): Promise<DeskHostRuntime> | DeskHostRuntime;
   createCybazaarDependencies?(context: { domain: string; persistence: PgDeskPersistence }): Promise<CybazaarOperationalDependencies> | CybazaarOperationalDependencies;
 }
-export interface DeskBoot { public?: DeskPublicControls; operator?: DeskPrivateControls; market?: MarketControls }
+export interface DeskBoot { public?: DeskPublicControls; operator?: DeskPrivateControls; market?: MarketControls; marketplace?: CybazaarIntegration }
 type Query = <T extends Record<string, unknown> = Record<string, unknown>>(sql: string, params?: readonly unknown[]) => Promise<{ rows: T[]; rowCount: number | null }>;
 export interface DeskDatabase {
   marketBoard?: MarketBoardAdapter;
@@ -89,6 +91,13 @@ export async function bootDesk(
   database?: DeskDatabase,
 ): Promise<DeskBoot | undefined> {
   if (!modules.has('desk')) return undefined;
+  let marketplace: CybazaarIntegration | undefined;
+  const marketplaceConfigured = Boolean(raw.cybazaarApiOrigin || raw.cybazaarIntegrationSecret);
+  if (marketplaceConfigured) {
+    if (!raw.cybazaarApiOrigin || !raw.cybazaarIntegrationSecret || !database?.marketBoard) throw new Error('Cybazaar marketplace integration requires its HTTPS API origin, integration secret, database, and board adapter.');
+    marketplace = new CybazaarIntegration({ origin: raw.cybazaarApiOrigin, secret: raw.cybazaarIntegrationSecret, database, board: database.marketBoard });
+    if (process.env.NODE_ENV === 'production') marketplace.startPolling();
+  }
   if (raw.marketEnabled && !['true','false'].includes(raw.marketEnabled)) throw new Error('Invalid CYBA_MARKET_ENABLED');
   let market: MarketControls | undefined;
   if (raw.marketEnabled === 'true') {
@@ -104,8 +113,9 @@ export async function bootDesk(
       : {ens:createMarketEnsResolver({rpcUrl:configured.data.ensRpcUrl,chainId:configured.data.ensChainId,timeoutMs:configured.data.timeoutMs,maxResponseBytes:configured.data.maxResponseBytes})};
     market=createMarketRuntime({config:configured.data,database,board:database.marketBoard,operational});
     // The Base marketplace is a separate protocol and does not require legacy Arc settings.
-    if (![raw.chainId,raw.paymentInterface,raw.rpcUrl].some(Boolean)) return { market };
+    if (![raw.chainId,raw.paymentInterface,raw.rpcUrl].some(Boolean)) return { ...(market ? { market } : {}), ...(marketplace ? { marketplace } : {}) };
   }
+  if (marketplace && ![raw.domain,raw.chainId,raw.paymentInterface,raw.rpcUrl,raw.runtimeModule].some(Boolean)) return { marketplace };
   const parsed = settingsSchema.safeParse(raw);
   if (!parsed.success) {
     // Development may keep the rest of the server available while this optional
@@ -153,6 +163,7 @@ export async function bootDesk(
   const orchestrator = new DeskOrchestrator({ ...host, store: persistence, settlement });
   return {
     ...(market ? { market } : {}),
+    ...(marketplace ? { marketplace } : {}),
     public: {
       store: host.publicStore, identity: host.identity, settlement, snapshots: host.snapshots, paymentReader: reader,
       persistence, orchestrator, publicOrigin: settings.publicOrigin,
