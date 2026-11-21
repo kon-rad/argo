@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { MarketBoardAdapter } from '../market/board.js';
 
 type Query = <T extends Record<string, unknown> = Record<string, unknown>>(sql:string,params?:readonly unknown[])=>Promise<{rows:T[];rowCount:number|null}>
@@ -100,12 +100,14 @@ export class CybazaarIntegration{
     if(row.status===status)return this.flushOutbox()
     if(!transitions[row.status]?.includes(status))throw new CybazaarIntegrationError(409,'Invalid request lifecycle transition.')
     const card=status==='accepted'?await this.ensureCard(row):row.kanban_card_id
-    const key=`argo-${id}-${status}`
     await this.input.database.transact(async query=>{
       const locked=await query<{local_status:RequestStatus}>('SELECT local_status FROM desk_cybazaar_requests WHERE request_id=$1 FOR UPDATE',[id])
       const currentStatus=locked.rows[0]?.local_status
+      if(currentStatus===status)return
       if(!currentStatus||!transitions[currentStatus]?.includes(status))throw new CybazaarIntegrationError(409,'Request changed before the update was applied.')
       await query('UPDATE desk_cybazaar_requests SET local_status=$2,provider_summary=$3,kanban_card_id=COALESCE($4,kanban_card_id),updated_at=now() WHERE request_id=$1',[id,status,summary??null,card??null])
+      // Persist one identity per transition; retries read the same outbox row.
+      const key=`argo-${id}-${randomUUID()}`
       await query('INSERT INTO desk_cybazaar_outbox(request_id,status,summary,idempotency_key) VALUES($1,$2,$3,$4) ON CONFLICT(idempotency_key) DO NOTHING',[id,status,summary??null,key])
     })
     return this.flushOutbox()
