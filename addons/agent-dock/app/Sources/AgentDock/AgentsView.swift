@@ -94,6 +94,7 @@ struct AgentCard: View {
             }
 
             if agent.runtime == "codex" {
+                VoiceShortcutInfo()
                 Button("Start Voice…") { voice.configure(agent.name) }
                     .controlSize(.small).disabled(voice.phase != .idle)
             }

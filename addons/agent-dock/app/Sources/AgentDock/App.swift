@@ -35,6 +35,7 @@ struct AgentDockApp: App {
         }
         MenuBarExtra(isInserted: Binding(get: { voice.phase != .idle || !voice.problem.isEmpty }, set: { _ in })) {
             Text(voice.micLabel + " · " + voice.taskLabel)
+            if voice.phase == .live { Text(voice.captureStatus); Text("Input level: \(Int(voice.inputLevel * 100))%") }
             Text(voice.playing.isEmpty ? "Playback quiet" : "Speaking: " + voice.playing)
             if !voice.draft.isEmpty { Text(voice.draft) }
             if !voice.problem.isEmpty {
