@@ -176,14 +176,14 @@ build/AgentDock.app/Contents/MacOS/AgentDock --snapshot /tmp/dock   # draws each
 
 Build the native app with `app/build.sh --install` from this directory. Voice needs Ghostty with AppleScript enabled, a signed-in Codex CLI with the v2 app-server protocol, an installed system speech voice and a cached recognizer. The bundle includes the Python worker and replay fixtures. Voice is off until started. No speech weights are downloaded.
 
-1. Choose the vault in Agent Dock. Click **Start Voice** on a registered Codex persona and use the selected vault as the working folder. An alternate folder can be selected for this session. From the CLI, `bin/agent-dock voice guide --workspace "$PWD"` opens the same setup using the app's selected vault.
-2. Select a recognition model and speech voice. Grant Agent Dock microphone access. The worker must transcribe the bundled violet sample and open a Ghostty session before the mic goes live. macOS may ask for permission to automate Ghostty.
+1. On the desired persona card, check **Voice Mode**. Click its gear to select recognition and playback. Click the harness button (Codex, Claude, Hermes or Zen) on that same card. Its model menu overrides the harness default. Unchecked launches keep the normal terminal flow.
+2. Grant microphone access to Dock. Its top strip shows recent input levels while the harness prepares. Begin speaking once the harness is ready. The single upper-right info menu lists voice shortcuts. Codex streams tool events and approval prompts. The CLI adapters for Claude, Hermes and Zen run individual turns and use each harness's returned session ID for continuation; these adapters show the reply when its turn finishes.
 3. Speak, then leave a short pause. Ghostty updates one draft line, submits one final and streams the original reply, commands, output and diffs. Agent Dock speaks sentences from the opening paragraph. For a pending approval, inspect its details in Ghostty and type `allow ID` or `deny ID`.
 4. Speak over a reply to silence playback. During a task, “what is the current status?” reads the last runtime event locally. Other speech steers the active turn. **Stop Task** explicitly requests a Codex interruption. **End Voice** closes the session. Closing Ghostty or losing the worker ends capture. Starting again creates a fresh ephemeral thread.
 
 | Agent Dock Voice command | App-scoped shortcut | Effect |
 |---|---|---|
-| Start / Pause / Resume Voice | Control + Option + Command + V | Pause capture and playback together. Resume restores the earlier mute state. |
+| Pause / Resume Voice | Control + Option + Command + V | Pause capture and playback together. Resume restores the earlier mute state. |
 | Mute / Unmute Mic | Control + Option + Command + M | Toggle capture while the task and reply continue. |
 | Silence Reply | Control + Option + Command + S | Stop speech and discard remaining audio for that reply. |
 | Stop Task / End Voice | Menu only | Interrupt the active turn / release the session. |
@@ -248,7 +248,7 @@ Repeat on a signed-in M4 and M1 separately. Record macOS, app revision, model re
 ### Voice capture smoke check
 
 1. Build the signed bundle with `cd app && ./build.sh` and verify it with `codesign --verify --deep --strict build/AgentDock.app`. Quit Agent Dock only when the existing voice session is finished, then install the bundle using `./build.sh --install`.
-2. Select a vault and a registered Codex persona. Start Voice without choosing an alternate folder. Check Ghostty reports the selected vault and the expected sandbox.
+2. Select a vault and persona, check Voice Mode, and click Codex without choosing an alternate folder. Check Ghostty reports the selected vault and the expected sandbox.
 3. Speak a short sentence. Check the input route and level in the menu bar, confirm a transcript appears in Ghostty, and confirm the agent responds. Mute the input or lower its level and check the quiet guidance; disconnect the input and check the no-frames guidance.
 4. Mute, pause, resume, and unmute. Confirm no capture warnings occur while muted or paused and that the task continues until explicitly stopped. Check the shortcut reference beside Voice controls.
 

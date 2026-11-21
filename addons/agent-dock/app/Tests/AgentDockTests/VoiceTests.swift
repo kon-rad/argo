@@ -6,7 +6,7 @@ final class VoiceTests: XCTestCase {
     func testScopedCommands() {
         XCTAssertEqual(VoiceCommand.allCases.compactMap(\.key), ["v", "m", "s"])
         XCTAssertEqual(VoiceCommand.modifiers, [.control, .option, .command])
-        XCTAssertEqual(VoiceCommand.toggle.title(.idle), "Start Voice")
+        XCTAssertEqual(VoiceCommand.toggle.title(.idle), "Pause / Resume Voice")
         XCTAssertEqual(VoiceCommand.toggle.title(.live), "Pause Voice")
         XCTAssertEqual(VoiceCommand.toggle.title(.paused), "Resume Voice")
         XCTAssertFalse(VoiceCommand.mute.enabled(.paused))

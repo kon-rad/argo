@@ -18,7 +18,7 @@ enum VoiceCommand: CaseIterable {
         switch self {
         case .toggle:
             switch state {
-            case .idle: return "Start Voice"
+            case .idle: return "Pause / Resume Voice"
             case .paused: return "Resume Voice"
             default: return "Pause Voice"
             }
@@ -30,7 +30,7 @@ enum VoiceCommand: CaseIterable {
     }
     func enabled(_ state: VoicePhase) -> Bool {
         switch self {
-        case .toggle: return state != .preparing
+        case .toggle: return state != .idle && state != .preparing
         case .mute: return state == .live || state == .muted
         case .silence, .stop: return state != .idle && state != .preparing
         case .end: return state != .idle
@@ -86,6 +86,8 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
     @Published var phase: VoicePhase = .idle
     @Published var settingsShown = false
     @Published var agent = ""
+    private var backendReady = false
+    var runtime = "codex", agentModel = "", provider = "", baseURL = ""
     @Published var workspace = ""
     @Published var model = UserDefaults.standard.string(forKey: "voiceModel") ?? ""
     @Published var folder = UserDefaults.standard.string(forKey: "voiceModelFolder") ?? ""
@@ -190,7 +192,8 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
             return
         }
         problem = ""
-        taskLabel = "Preparing"
+        backendReady = false
+        taskLabel = "Connecting to " + runtime
         phase = .preparing
         settingsShown = false
         let id = UUID()
@@ -204,7 +207,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
             let p = Process(), out = Pipe(), stdin = Pipe()
             p.executableURL = Self.worker
             p.arguments = ["session", "--agent", agent, "--vault", vault, "--workspace", workspace.isEmpty ? vault : workspace,
-                           "--model", model, "--folder", folder]
+                           "--model", model, "--folder", folder, "--runtime", runtime, "--agent-model", agentModel, "--provider", provider, "--base-url", baseURL]
             p.standardInput = stdin
             p.standardOutput = out
             do {
@@ -214,9 +217,31 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
                 try p.run()
                 process = p
                 input = stdin.fileHandleForWriting
-                for try await line in out.fileHandleForReading.bytes.lines {
+                listen()
+                guard capture != nil, sessionID == id else { return }
+                Task {
+                    try? await Task.sleep(nanoseconds: 90_000_000_000)
+                    if sessionID == id && !backendReady { fail("The selected voice harness did not become ready. Check Ghostty and the model settings.") }
+                }
+                let handle = out.fileHandleForReading
+                let lines = AsyncStream<String> { continuation in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        var pending = Data()
+                        while true {
+                            let chunk = handle.availableData
+                            if chunk.isEmpty { break }
+                            pending.append(chunk)
+                            while let end = pending.firstIndex(of: 10) {
+                                continuation.yield(String(decoding: pending[..<end], as: UTF8.self))
+                                pending.removeSubrange(...end)
+                            }
+                        }
+                        continuation.finish()
+                    }
+                }
+                for await line in lines {
                     guard sessionID == id else { break }
-                    guard let msg = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                    guard let msg = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                           let kind = msg["kind"] as? String, let text = msg["text"] as? String else { continue }
                     receive(kind, text, epoch: msg["epoch"] as? Int ?? 0)
                 }
@@ -224,7 +249,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
             } catch { if sessionID == id { fail(error.localizedDescription) } }
         }
     }
-    private func saveSelection() {
+    func saveSelection() {
         for (value, key) in [(model,"voiceModel"), (folder,"voiceModelFolder"), (voiceID,"voiceOutput")] {
             UserDefaults.standard.set(value, forKey: key)
         }
@@ -236,8 +261,9 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
         if ["endpoint", "final", "clause"].contains(kind) { stamp(kind) }
         switch kind {
         case "ready":
+            backendReady = true
+            lastStatus = ""
             taskLabel = "Idle"
-            listen()
             if phase == .live { saveSelection() }
         case "draft", "final": if phase == .live { draft = text }
         case "task": taskLabel = text
@@ -302,6 +328,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
                         self.levels.append(min(1, sqrt(level * 3)))
                         if level > 0.005 { self.lastLoudTime = self.lastFrameTime }
                         self.updateCaptureStatus(route: route)
+                        guard self.backendReady else { return }
                         for offset in stride(from: 0, to: data.count, by: 8192) {
                             let chunk = data.subdata(in: offset..<min(offset + 8192, data.count))
                             self.send(["kind":"pcm", "data":chunk.base64EncodedString()])

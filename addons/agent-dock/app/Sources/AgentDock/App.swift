@@ -22,6 +22,7 @@ struct AgentDockApp: App {
                 .frame(minWidth: 760, minHeight: 520)
                 .onAppear {
                     store.start()
+                    if voice.models.isEmpty { voice.loadModels() }
                     SelfCheck.runIfAsked(store)
                 }
         }
@@ -81,6 +82,7 @@ struct ContentView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) { VoiceShortcutInfo() }
             ToolbarItem(placement: .principal) {
                 Picker("View", selection: $store.pane) {
                     ForEach(Pane.allCases) { p in

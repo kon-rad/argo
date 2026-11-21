@@ -42,13 +42,7 @@ struct VoiceSetup: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack { Text("Start Voice").font(.title2); VoiceShortcutInfo() }
-            Picker("Codex persona", selection: $voice.agent) {
-                Text("Choose a persona").tag("")
-                ForEach(store.roster?.agents.filter { $0.runtime == "codex" } ?? []) { agent in
-                    Text(agent.displayName).tag(agent.name)
-                }
-            }
+            Text("Voice settings").font(.title2)
             HStack {
                 Button("Choose alternate folder…") { folder("Use folder") { voice.workspace = $0 } }
                 Button("Use vault") { voice.workspace = "" }
@@ -96,9 +90,8 @@ struct VoiceSetup: View {
             if !voice.problem.isEmpty { Text(voice.problem).foregroundStyle(.orange) }
             HStack {
                 Spacer()
-                Button("Cancel") { voice.settingsShown = false }
-                Button("Start Voice") { voice.start(vault: store.vault) }
-                    .disabled(voice.model.isEmpty || voice.agent.isEmpty)
+                Button("Done") { voice.saveSelection(); voice.settingsShown = false }
+
             }
         }.padding(20).frame(width: 550)
     }
@@ -123,7 +116,6 @@ struct VoiceInputMonitor: View {
                     NSWorkspace.shared.open(url)
                 }
             }
-            VoiceShortcutInfo()
         }.padding(8)
     }
 }

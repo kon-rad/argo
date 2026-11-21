@@ -63,6 +63,7 @@ struct AgentCard: View {
     let agent: Agent
     let runtimes: [Runtime]
     @State private var hovering = false
+    @State private var voiceMode = false
 
     private var running: Int {
         store.snapshot?.runs.filter { $0.agent == agent.name }.count ?? 0
@@ -93,35 +94,36 @@ struct AgentCard: View {
                 Text(agent.team_name).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
 
-            if agent.runtime == "codex" {
-                VoiceShortcutInfo()
-                Button("Start Voice…") { voice.configure(agent.name) }
-                    .controlSize(.small).disabled(voice.phase != .idle)
+            HStack {
+                Toggle(isOn: $voiceMode) { Label("Voice Mode", systemImage: "mic") }
+                    .toggleStyle(.checkbox)
+                Button { voice.configure(agent.name) } label: { Image(systemName: "gearshape") }
+                    .buttonStyle(.borderless).help("Voice settings")
             }
             HStack(spacing: 4) {
                 ForEach(runtimes) { rt in
                     Group {
                         if rt.choices.isEmpty {
-                            Button(rt.short) { store.launch(agent, rt) }
+                            Button(rt.short) { launch(rt) }
                         } else {
                             // Click starts the default; the arrow lists every provider and model.
                             Menu(rt.short) {
                                 ForEach(rt.groups, id: \.name) { group in
                                     Section(group.name) {
                                         ForEach(group.choices) { choice in
-                                            Button(choice.menuTitle) { store.launch(agent, rt, choice) }
+                                            Button(choice.menuTitle) { launch(rt, choice) }
                                         }
                                     }
                                 }
                             } primaryAction: {
-                                store.launch(agent, rt)
+                                launch(rt)
                             }
                             .fixedSize()
                         }
                     }
                     .controlSize(.small)
                     .fixedSize()
-                    .disabled(!rt.installed)
+                    .disabled(!rt.installed || (voiceMode && voice.phase != .idle))
                     .help(help(rt))
                 }
             }
@@ -135,6 +137,17 @@ struct AgentCard: View {
         .onHover { hovering = $0 }
     }
 
+    private func launch(_ runtime: Runtime, _ choice: Choice? = nil) {
+        guard voiceMode else { store.launch(agent, runtime, choice); return }
+        voice.agent = agent.name
+        voice.runtime = runtime.id
+        voice.agentModel = choice?.model ?? runtime.model
+        voice.provider = choice?.provider ?? ""
+        voice.baseURL = choice?.base_url ?? ""
+        if voice.model.isEmpty { voice.configure(agent.name); return }
+        voice.start(vault: store.vault)
+    }
+
     private func help(_ rt: Runtime) -> String {
         guard rt.installed else { return "\(rt.label) is not installed on this machine" }
         let with = rt.model.isEmpty ? "" : " with \(rt.model)"
@@ -144,7 +157,7 @@ struct AgentCard: View {
     private var defaultRuntime: Runtime? { runtimes.first { $0.installed } }
 
     private func launchDefault() {
-        if let rt = defaultRuntime { store.launch(agent, rt) }
+        if let rt = defaultRuntime { launch(rt) }
     }
 
     @ViewBuilder private var portrait: some View {

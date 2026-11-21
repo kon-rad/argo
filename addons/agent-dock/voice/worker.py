@@ -6,6 +6,8 @@ import base64
 import contextlib
 import json
 import platform
+import os
+from cli_voice import CLIHarness
 from pathlib import Path
 import runpy
 import socket
@@ -228,6 +230,9 @@ async def main():
     for name in ("models", "doctor", "session"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--folder")
+        cmd.add_argument("--runtime", choices=("codex","claude","hermes","zen"), default="codex")
+        for flag in ("--agent-model", "--provider", "--base-url"):
+            cmd.add_argument(flag, default="")
         if name != "models":
             cmd.add_argument("--model", required=True)
             cmd.add_argument("--workspace", required=True)
@@ -248,10 +253,25 @@ async def main():
     vault = dock["find_vault"](args.vault)
     settings = dock["load_settings"](vault)
     info = dock["agent_info"](vault, settings, args.agent)
-    params = parameters(info, dock["persona_text"](vault, info), workspace)
-    exe = dock["resolve_command"](settings["runtimes"]["codex"]["command"])
+    runtime = args.runtime
+    argv, meta = dock["build_runtime_command"](args.agent, info, runtime, settings, vault,
+        model=args.agent_model or None, provider=args.provider or None, base_url=args.base_url or None)
+    exe = dock["resolve_command"](argv[0])
     if not exe:
-        raise ValueError("Codex is missing")
+        raise ValueError(f"{runtime} is missing")
+    argv[0] = exe
+    params = None
+    session = Session(model)
+    if runtime == "codex":
+        chosen = args.agent_model or settings["runtimes"]["codex"].get("model")
+        params = parameters(dict(info, runtime="codex", model=chosen), dock["persona_text"](vault, info), workspace)
+        if not chosen:
+            params.pop("model", None)
+    else:
+        env = dock["child_env"](os.environ, args.agent, runtime)
+        env.update(meta.get("env", {}))
+        session.harness = CLIHarness(session.emit, runtime, argv, env, workspace,
+            f"{args.agent} · {runtime} · {meta.get('model') or 'harness default'} · {workspace}")
     if args.action == "doctor":
         errors = []
         print("Host:", platform.machine(), platform.mac_ver()[0], flush=True)
@@ -273,19 +293,22 @@ async def main():
                 print("System voice:", frames, "frames", flush=True)
             except (OSError, EOFError, wave.Error, ValueError, subprocess.TimeoutExpired) as error:
                 errors.append(f"System voice: {error}")
-        status = await asyncio.create_subprocess_exec(exe, "login", "status")
-        if await status.wait():
-            errors.append("Codex login unavailable")
+        if runtime == "codex":
+            status = await asyncio.create_subprocess_exec(exe, "login", "status")
+            if await status.wait():
+                errors.append("Codex login unavailable")
+            else:
+                harness = Codex(lambda kind, text: print(kind, text))
+                try:
+                    await harness.start(exe, params)
+                finally:
+                    await harness.close()
         else:
-            harness = Codex(lambda kind, text: print(kind, text))
-            try:
-                await harness.start(exe, params)
-            finally:
-                await harness.close()
+            print(f"{runtime}: found {exe}; login and inference require a real turn")
         if errors:
             raise ValueError("; ".join(errors))
         return
-    await Session(model).run(exe, params)
+    await session.run(exe, params)
 
 
 if __name__ == "__main__":
