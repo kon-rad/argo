@@ -32,6 +32,7 @@ def test_app_build_packages_a_default_icon_and_keeps_the_override():
     assert 'for size in 16 32 128 256 512' in script
     assert 'icon_${size}x${size}.png' in script
     assert 'icon_${size}x${size}@2x.png' in script
+    assert 'codesign --force --sign - "$app" >/dev/null 2>&1 || true' not in script
 
 
 @pytest.fixture

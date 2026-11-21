@@ -64,7 +64,7 @@ $vault_key
 </dict></plist>
 PLIST
 
-codesign --force --sign - "$app" >/dev/null 2>&1 || true
+codesign --force --sign - "$app" >/dev/null 2>&1
 echo "built $app"
 if [ "$install" -eq 1 ]; then
   rm -rf "/Applications/AgentDock.app"
