@@ -6,6 +6,7 @@ import type { DeskRoutes } from '../host.js';
 import { HttpError, parseOr400, wrap } from '../http.js';
 import { deskOperatorRouter, type DeskPrivateControls } from './operator/routes.js';
 import { paymentContext, paymentStatus, publicObservation, snapshot, PublicDeskError, type DeskPublicControls } from './public-api.js';
+import { cybazaarRequestsRouter } from '../marketplace/routes.js';
 export type { DeskPublicControls } from './public-api.js';
 const reference = z.string().min(1).max(500).refine(isEntityRef);
 const hash = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
@@ -91,6 +92,12 @@ export const routes: DeskRoutes = ({ app, sessionGate, opts }) => {
   if (opts.desk) { app.locals.deskPublic = opts.desk.public; app.locals.deskOperator = opts.desk.operator; }
   const mounted: ReturnType<DeskRoutes> = [{ path: '/api/desk/public', router: publicDeskRouter(app), mount: 'raw' }];
   const market = opts.desk?.market ?? app.locals.cybaMarket as MarketControls | undefined;
+  const marketplace = opts.desk?.marketplace;
+  if (marketplace) {
+    app.locals.cybazaarMarketplace = marketplace;
+    if (sessionGate) mounted.push({path:'/api/desk/cybazaar',router:cybazaarRequestsRouter(marketplace,sessionGate),mount:'raw'});
+    else { const unavailable=Router();unavailable.use((_req,res)=>{res.status(503).json({error:{code:'unavailable',message:'Owner session gate is required.'}});});mounted.push({path:'/api/desk/cybazaar',router:unavailable,mount:'raw'}); }
+  }
   if (market) {
     app.locals.cybaMarket = market;
     if (sessionGate) mounted.push({path:'/api/desk/market/operator',router:marketOperatorRouter(market,sessionGate),mount:'raw'});

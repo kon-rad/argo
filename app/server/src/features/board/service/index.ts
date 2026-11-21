@@ -44,6 +44,8 @@ export interface Contract {
   verification?: string;
   /** Source job for a commission card. Present only when a Cybazaar job created this card. */
   cybazaarJobId?: string;
+  /** Source service request for a marketplace Hiring Desk ticket. */
+  cybazaarRequestId?: string;
   /** Operator assignment ID (Arkiv job ref), if a bridge has resolved it. */
   deskJobRef?: string;
 }

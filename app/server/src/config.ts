@@ -178,13 +178,15 @@ const Schema = z.object({
   DESK_MAX_RESPONSE_BYTES: z.string().optional(),
   DESK_MAX_ARTIFACT_BYTES: z.string().optional(),
   DESK_PUBLICATION_DESTINATION: z.string().optional(),
-  // Optional addon configuration is validated only when the market is enabled.
+  // Optional hiring marketplace integrations are validated only when configured.
   CYBA_MARKET_ENABLED: z.string().optional(),
   CYBA_ENVELOPE_SECRET: z.string().optional(),
   CYBA_ARTIFACT_ROOT: z.string().optional(),
   CYBA_BASE_RPC_URL: z.string().optional(),
   CYBA_PROFILES_JSON: z.string().optional(),
   CYBA_EXECUTION_AGENT: z.string().optional(),
+  CYBAZAAR_API_ORIGIN: z.string().optional(),
+  CYBAZAAR_INTEGRATION_SECRET: z.string().optional(),
   // Deprecated (one release): `SUMMARIES=on` used to install the summaries timer; `summaries` is a module now.
   SUMMARIES: z.string().optional(),
   // Shown in the TOTP app and as the comment author on the Agents board.
@@ -444,6 +446,8 @@ export const config = {
     marketBaseRpcUrl: parsed.data.CYBA_BASE_RPC_URL,
     marketProfiles: parsed.data.CYBA_PROFILES_JSON,
     marketExecutionAgent: parsed.data.CYBA_EXECUTION_AGENT,
+    cybazaarApiOrigin: parsed.data.CYBAZAAR_API_ORIGIN,
+    cybazaarIntegrationSecret: parsed.data.CYBAZAAR_INTEGRATION_SECRET,
   },
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,
