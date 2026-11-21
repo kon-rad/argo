@@ -42,3 +42,13 @@ it('requires the authenticated owner session on server deployments', async () =>
   const http = createApp({modules:ALL_MODULES,deployment:'server',auth:{passwordHash:'fake-hash',totpSecret:'JBSWY3DPEHPK3PXP',secureCookie:false,publicOrigin:'http://127.0.0.1'}});
   await request(http).post('/api/org/runtime/preview').set('Origin','http://127.0.0.1').send({profileId:'example'}).expect(401);
 });
+
+it('returns only receipts for the requested desired version', async () => {
+  const p = await cli(['preview','example','--scope','org-agent:writer']);
+  await cli(['apply',p.token]);
+  await cli(['revert','1']);
+  const {body} = await request(app()).get('/api/org/runtime/versions/1/receipts').expect(200);
+  expect(body).toHaveLength(1);
+  expect(body[0]).toMatchObject({version:1,kind:'org-agent',target_id:'writer',status:'effective-next-claim'});
+  await request(app()).get('/api/org/runtime/versions/invalid/receipts').expect(400);
+});

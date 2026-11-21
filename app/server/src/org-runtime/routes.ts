@@ -2,8 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { OrgError } from '../org-error.js';
-import { HttpError, wrap, parseOr400 } from '../routes/http.js';
-import { runtimeStatus, registerRuntimeTarget, requireRuntimeOwner, saveProfile, previewRuntime, applyRuntime, revertRuntime, TargetSchema } from './index.js';
+import { HttpError, wrap, parseOr400, intParam } from '../routes/http.js';
+import { runtimeReceipts, runtimeStatus, registerRuntimeTarget, requireRuntimeOwner, saveProfile, previewRuntime, applyRuntime, revertRuntime, TargetSchema } from './index.js';
 
 /** Mounted behind the org feature's existing owner session gate. Request bodies never supply identity. */
 export function runtimeRouter(): Router {
@@ -16,6 +16,9 @@ export function runtimeRouter(): Router {
     try { return await fn(); } catch (e) { if (e instanceof OrgError || e instanceof z.ZodError) throw new HttpError(400,e.message); throw e; }
   };
   router.get('/',wrap(async (_req,res) => { res.json(await runtimeStatus()); }));
+  router.get('/versions/:version/receipts',wrap(async (req,res) => {
+    res.json(await runtimeReceipts(intParam(req.params.version,'version')));
+  }));
   router.get('/profiles',wrap(async (_req,res) => { res.json((await runtimeStatus()).profiles); }));
   router.get('/history',wrap(async (_req,res) => { res.json((await runtimeStatus()).history); }));
   router.post('/profiles/:id',wrap(async (req,res) => { res.json(await run(() => saveProfile(String(req.params.id),req.body,config.orgOwner))); }));

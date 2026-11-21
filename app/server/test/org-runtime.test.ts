@@ -101,3 +101,61 @@ it('revert preserves independent pause and effort decisions', async () => {
   await revertRuntime(1,'owner');
   expect((await query(`SELECT runtime,model,paused,effort FROM org_agent_overrides WHERE agent='builder'`)).rows[0]).toEqual({runtime:null,model:null,paused:true,effort:'high'});
 });
+
+it('fences scoped launcher work, records partial failure, and restores the observed baseline', async () => {
+  const { refreshLaunchers, reconcileLaunchers } = await import('../src/org-runtime/controller.js');
+  const { vi } = await import('vitest');
+  const cron = {kind:'cron-job' as const,id:'daily'};
+  const gateway = {kind:'telegram-gateway' as const,id:'inbox'};
+  const base = {...profile.default,model:'example-before'};
+  function host() {
+    let state = {version:0,assignment:base,healthy:true};
+    return {
+      inspect:async () => state, preflight:async () => true,
+      apply:vi.fn(async (version:number,assignment:typeof base) => { state = {version,assignment,healthy:true}; }),
+      verify:vi.fn(async () => state),
+    };
+  }
+  const a = host(), b = host();
+  const registry = new Map([['cron-job:daily',a],['telegram-gateway:inbox',b]]);
+  const refresh = () => refreshLaunchers(registry,[base,profile.default]);
+  try {
+    for (const t of [cron,gateway]) await registerRuntimeTarget(t,base,'owner');
+    await saveProfile('example',profile,'owner');
+    await refresh();
+    const all = await previewRuntime('example',[],'owner');
+    await expect(applyRuntime(all.token,'owner')).rejects.toThrow(/adapter/);
+    const p = await previewRuntime('example',[cron,gateway],'owner');
+    await expect(applyRuntime(p.token,'builder')).rejects.toThrow(/owner/);
+    expect((await applyRuntime(p.token,'owner')).status).toBe('partially-applied');
+    b.verify.mockRejectedValueOnce(new Error('private diagnostic'));
+    await reconcileLaunchers(1,registry);
+    const partial = await runtimeStatus();
+    expect(partial.receipts.map(r => r.status)).toEqual(['verified','failed']);
+    expect(partial.history[0]?.status).toBe('partially-applied');
+    await reconcileLaunchers(1,registry);
+    expect(a.apply).toHaveBeenCalledTimes(1);
+    expect(b.apply).toHaveBeenCalledTimes(1);
+    expect((await runtimeStatus()).history[0]?.status).toBe('launchers-verified');
+    await refresh();
+    expect((await revertRuntime(1,'owner')).version).toBe(2);
+    await expect(reconcileLaunchers(1,registry)).rejects.toThrow(/stale/);
+    await expect(revertRuntime(1,'owner')).rejects.toThrow(/stale/);
+    await reconcileLaunchers(2,registry);
+    expect((await a.inspect()).assignment).toEqual(base);
+    expect((await b.inspect()).assignment).toEqual(base);
+    expect((await runtimeStatus()).receipts).toHaveLength(4);
+  } finally {
+    for (const t of [cron,gateway]) await query(`UPDATE org_runtime_targets SET id='unregistered',
+      configured='{"runtime":"unknown","model":null,"provider":null}',observed=NULL,supported='[]',checked_at=NULL
+      WHERE kind=$1 AND id=$2`,[t.kind,t.id]);
+  }
+});
+
+it('limits apply to the configured owner even with a second active human', async () => {
+  await query("UPDATE org_agents SET runtime='human' WHERE name='writer'");
+  await saveProfile('example',profile,'owner');
+  const p = await previewRuntime('example',[scope[0]!],'owner');
+  await expect(applyRuntime(p.token,'writer')).rejects.toThrow(/owner/);
+  expect((await runtimeStatus()).history).toHaveLength(0);
+});
