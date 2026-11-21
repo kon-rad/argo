@@ -183,3 +183,9 @@ describe('table views on a phone, from the app data shapes', () => {
     expect(into).toHaveBeenCalledWith({ inline: 'start', block: 'nearest', behavior: 'smooth' });
   });
 });
+
+it('opens Runtime settings through Org and labels each coverage field on phones', async () => {
+  open('/org/chart');
+  fireEvent.click(await screen.findByRole('link', { name: 'Runtime settings' }));
+  await table('Coverage ledger', 'cards', ['Target', 'Configured', 'Effective now', 'Last observed', 'Readiness', 'Latest receipt']);
+});

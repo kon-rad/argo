@@ -31,6 +31,7 @@ const DATA_TABLES: Record<string, string[]> = {
   'routes/Ring.tsx': ['scroll'],
   'routes/Warehouse.tsx': ['cards', 'scroll', 'cards', 'cards'],
   'routes/org/Org.tsx': ['cards'],
+  'routes/org/RuntimeSettings.tsx': ['cards'],
   'routes/skills/Library.tsx': ['cards'],
   'routes/skills/Machines.tsx': ['cards'],
   'routes/skills/Matrix.tsx': ['scroll'],
