@@ -1,11 +1,12 @@
 /** Derived only from recorded envelopes. Never search stdout for failure words. */
-export const RESULT_PARSER_VERSION = 1;
+export const RESULT_PARSER_VERSION = 2;
 export interface ToolResult { text: string; isError: boolean | null }
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): v is Obj => v !== null && typeof v === 'object' && !Array.isArray(v);
 const LIMIT = 65536;
 const bounded = (s: string) => s.length > LIMIT ? s.slice(0, LIMIT - 14) + '\n[truncated]' : s;
 const json = (v: unknown) => bounded(JSON.stringify(v, null, 2) ?? '');
+// Text-only blocks carry no outcome evidence; they cannot erase a recorded zero.
 const combine = (values: Array<boolean | null>): boolean | null => values.includes(true) ? true
   : values.includes(false) ? false : null;
 

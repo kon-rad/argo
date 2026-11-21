@@ -2,6 +2,8 @@
 
 Usage derives Codex and Hermes tool results from recorded result envelopes. Exit code 0 is success; a numeric nonzero exit code is failure. A generic `completed` status alone does not prove success. Explicit `is_error`, `isError`, `success`, outcome/status, cancellation and timeout fields are recognised. Missing or malformed outcome fields stay unknown. Ordinary stdout/stderr is never searched for error words or parsed as an outcome. A successful command can print a failing example.
 
+Across result blocks, failure evidence takes precedence, otherwise any recorded success establishes success. Text-only blocks contribute no outcome evidence, so ordinary text alongside an encoded zero exit stays successful. With no recorded outcome the result stays unknown.
+
 The decoder accepts text blocks, arrays, `output`, `content`, `result`, `structuredContent` and recognised JSON-encoded envelopes, including `metadata.exit_code`. Unknown objects render as JSON. Derived display text is limited to 64 KiB and nesting to 12 decoder levels. The redacted raw record remains available separately. This does not change token parsing or accounting.
 
 Session detail labels unknown tool outcomes and shows their count. Verified success has its own label. The API list/detail headers return `unknown_outcomes`; the existing `errors` count/filter uses derived failure flags. Identical result renderings for the same session and invocation ID are counted once when no recorded tool call intervenes. New invocation IDs, changed results, and retries separated by another recorded call remain distinct. Without an invocation ID, results are preserved independently. Raw archive rows are never deleted.
@@ -10,7 +12,7 @@ Session detail labels unknown tool outcomes and shows their count. Verified succ
 
 ## Deploy and canary
 
-Apply the additive migration and deploy parser/API support before replaying. `result_parser_version` tracks derived data independently of raw SHA. Live message upserts rederive after a parser-version change, even when the source hash is unchanged. Existing files skipped by a collector still need explicit replay.
+Apply the additive migration and deploy parser/API support before replaying. `result_parser_version` tracks derived data independently of raw SHA. Live message upserts rederive after a parser-version change, even when the source hash is unchanged. Existing files skipped by a collector still need explicit replay. Parser version 2 rederives version 1 mixed-block results, including previously unknown zero-exit results, even when the raw SHA is unchanged.
 
 Run on the trusted importer host using its usual database configuration. First select one archive session ID and source sequence from the private incident record. Generic examples:
 
