@@ -35,6 +35,11 @@ function setup(config: UsageConfig, providers: SubscriptionUsage[] = [codex, cla
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Usage manifest', () => {
+  it('links Account to the fleet settings when Org is enabled', async () => {
+    setup({ subscriptions: [], credits: [], sections: [] }, [], 200, ['usage', 'org']);
+    expect((await screen.findByRole('link', { name: 'Runtime settings' })).getAttribute('href')).toBe('/org/runtime');
+  });
+
   it('shows agent controls on Usage only with the agents module enabled', async () => {
     setup({ subscriptions: [], credits: [], sections: [] }, [], 200, ['usage', 'agents']);
     expect(await screen.findByRole('radiogroup', { name: 'Default agent' })).toBeTruthy();

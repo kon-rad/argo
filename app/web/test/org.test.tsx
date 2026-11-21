@@ -269,6 +269,7 @@ describe('Org page', () => {
   it('renders an agent page with inbox, runs, memory and a DM box', async () => {
     const calls = mount('/org/agents/atlas');
     await screen.findByText('Head of Platform');
+    expect(screen.getByRole('link', { name: 'Fleet runtime settings' }).getAttribute('href')).toBe('/org/runtime?agent=atlas');
     const rows = screen.getAllByRole('listitem').map((li) => li.textContent ?? '');
     expect(rows.some((t) => /owner 5 · waiting/.test(t))).toBe(true);
     expect(rows.some((t) => /routine daily-standup · done · org-atlas-1/.test(t))).toBe(true);
