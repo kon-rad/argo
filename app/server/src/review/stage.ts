@@ -16,7 +16,7 @@ export async function stage(client:pg.Client,root:string,input:unknown):Promise<
   const job=(await client.query('SELECT * FROM review_jobs WHERE card=$1 ORDER BY id DESC LIMIT 1',[a.card])).rows[0];
   if(!job)return {staged:false,reason:'No submitted review'};
   await client.query('SELECT review_context($1)',[job.id]);
-  if(job.state==='done')return {staged:false,reason:'Already completed'};
+  if(job.state==='done' || job.state==='superseded')return {staged:false,reason:'Already completed'};
   if(a.launch){if(a.launch.card!==a.card)return {staged:false,reason:'Launch registration is for a different card'};await registerLaunch(client,a.launch);}
   const dir=join(root,a.card),files=[['RESULT.md',a.result],['run.log',a.log]] as const;
   const values=files.map(([name,text])=>[name,`Builder revision: ${a.head}\nSource SHA256: ${digest(text)}\n\n${source(name,text).text}`] as const);
