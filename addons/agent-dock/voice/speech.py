@@ -5,8 +5,10 @@ import hashlib
 import json
 import math
 import os
+import plistlib
 import re
 import shutil
+import sys
 import tempfile
 import wave
 from pathlib import Path
@@ -15,8 +17,8 @@ HERE = Path(__file__).resolve().parent
 REFERENCE = json.loads((HERE / "handy-reference.json").read_text())
 
 
-def rating(digest, adapter):
-    if adapter == "handy" and digest == REFERENCE["sha256"]:
+def rating(digest, adapter, version):
+    if adapter == "handy" and f"Handy {version}" == REFERENCE["release"] and digest == REFERENCE["sha256"]:
         return REFERENCE
     return None
 
@@ -29,6 +31,11 @@ def candidates(folder=None):
     paths.extend((home / ".cache/whisper-cpp/models").glob("ggml-*.bin"))
     if folder:
         paths.extend(Path(folder).expanduser().rglob("ggml-*.bin"))
+    try:
+        with Path("/Applications/Handy.app/Contents/Info.plist").open("rb") as f:
+            handy_version = plistlib.load(f).get("CFBundleShortVersionString")
+    except (OSError, plistlib.InvalidFileException):
+        handy_version = None
     models = []
     seen = set()
     for path in sorted(paths):
@@ -44,13 +51,25 @@ def candidates(folder=None):
                     sha.update(block)
             digest = sha.hexdigest()
         adapter = "handy" if handy else "whisper"
-        if handy and not rating(digest, adapter):
+        if handy and digest != REFERENCE["sha256"]:
             continue
-        models.append(dict(path=str(path), name=path.name, adapter=adapter, reference=rating(digest, adapter)))
+        models.append(dict(path=str(path), name=path.name, adapter=adapter, reference=rating(digest, adapter, handy_version)))
+    snapshots = list(hub.glob("models--Systran--faster-whisper-*/snapshots/*"))
+    if folder:
+        snapshots.extend(p.parent for p in Path(folder).expanduser().rglob("model.bin"))
+    for path in sorted(snapshots):
+        if path.resolve() in seen or not all((path / name).is_file() for name in
+                ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")):
+            continue
+        seen.add(path.resolve())
+        name = path.parent.parent.name.split("--")[-1] if path.parent.name == "snapshots" else path.name
+        models.append(dict(path=str(path), name=name, adapter="faster-whisper", reference=None))
     return models
 
 
 def decoder(model, wav):
+    if model["adapter"] == "faster-whisper":
+        return [sys.executable, str(Path(__file__).resolve()), model["path"], str(wav)]
     if not Path(model["path"]).is_file():
         raise ValueError("Cached model disappeared")
     if model["adapter"] == "handy":
@@ -147,3 +166,15 @@ class Opening:
                 sentences.append(self.buffer.strip())
             self.silence()
         return sentences
+
+
+if __name__ == "__main__":
+    # A cancellable child owns the native CTranslate2 inference. Local files only.
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    from faster_whisper import WhisperModel
+    directory = Path(sys.argv[1]).resolve(strict=True)
+    if not all((directory / name).is_file() for name in ("model.bin", "config.json", "tokenizer.json", "vocabulary.txt")):
+        sys.exit("Incomplete CTranslate2 snapshot")
+    recognizer = WhisperModel(str(directory), device="cpu", compute_type="int8", local_files_only=True)
+    segments, _ = recognizer.transcribe(sys.argv[2], language="en", beam_size=1)
+    print(" ".join(segment.text.strip() for segment in segments))

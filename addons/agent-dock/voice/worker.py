@@ -5,7 +5,7 @@ import asyncio
 import base64
 import contextlib
 import json
-import os
+import platform
 from pathlib import Path
 import runpy
 import socket
@@ -14,6 +14,9 @@ import sys
 import tempfile
 import threading
 import uuid
+import wave
+
+sys.dont_write_bytecode = True
 
 from codex_voice import Codex, parameters
 from speech import Endpoint, candidates, decode_pcm, probe
@@ -36,6 +39,8 @@ class Session:
         self.model = model
         self.terminal = None
         self.epoch = 0
+        self.speech_generation = 0
+        self.utterance_generation = 0
         self.harness = Codex(self.emit)
         self.audio = Endpoint()
         self.uid = None
@@ -72,18 +77,26 @@ class Session:
                 task.cancel()
 
     def silence(self):
+        self.speech_generation += 1
         self.harness.opening.silence()
         self.emit("silence", "")
 
-    async def decode(self, kind, uid, data):
+    async def decode(self, kind, uid, data, generation):
         if kind == "partial":
-            text = await decode_pcm(self.model, data)
+            text = await self.recognize(data)
             if uid == self.uid:
                 self.emit("draft", text)
             return
         async with self.final_lock:
-            text = await decode_pcm(self.model, data)
-            await self.harness.final(uid, text)
+            text = await self.recognize(data)
+            await self.harness.final(uid, text, allow_speech=generation == self.speech_generation)
+
+    async def recognize(self, data):
+        try:
+            return await decode_pcm(self.model, data)
+        except (ValueError, OSError, KeyError, asyncio.TimeoutError) as error:
+            self.emit("disconnect", f"Recognition stopped: {error}")
+            raise
 
     def command(self, msg):
         kind = msg["kind"]
@@ -92,13 +105,15 @@ class Session:
                 if event == "onset":
                     self.uid = str(uuid.uuid4())
                     self.silence()
+                    self.utterance_generation = self.speech_generation
                     self.emit("draft", "")
                 elif event == "partial" and (not self.preview or self.preview.done()):
-                    self.preview = self.job(self.decode(event, self.uid, data))
+                    self.preview = self.job(self.decode(event, self.uid, data, self.utterance_generation))
                 elif event == "final":
+                    self.emit("endpoint", "")
                     if self.preview:
                         self.preview.cancel()
-                    self.job(self.decode(event, self.uid, data)).set_name("decode-final")
+                    self.job(self.decode(event, self.uid, data, self.utterance_generation)).set_name("decode-final")
                     self.uid = None
         elif kind == "captureOff":
             self.reset_capture()
@@ -107,6 +122,8 @@ class Session:
             self.silence()
         elif kind == "stop":
             self.job(self.harness.interrupt())
+        elif kind == "timing":
+            self.emit("timing", f'{msg["seconds"]:.6f}s {msg["stage"]}')
         elif kind == "end":
             self.stopped.set()
 
@@ -231,15 +248,37 @@ async def main():
     if not exe:
         raise ValueError("Codex is missing")
     if args.action == "doctor":
-        print("Decoder:", await probe(model), flush=True)
+        errors = []
+        print("Host:", platform.machine(), platform.mac_ver()[0], flush=True)
+        if not Path("/Applications/Ghostty.app").is_dir():
+            errors.append("Ghostty.app missing from /Applications")
+        try:
+            print("Decoder:", await probe(model), flush=True)
+        except (OSError, ValueError, KeyError, asyncio.TimeoutError) as error:
+            errors.append(f"Decoder: {error}")
+        with tempfile.TemporaryDirectory() as scratch:
+            wav = Path(scratch) / "voice.wav"
+            try:
+                speech = subprocess.run(["say", "-o", str(wav), "--file-format=WAVE", "--data-format=LEI16@16000",
+                                         "The sample color is violet."], timeout=15)
+                with wave.open(str(wav), "rb") as f:
+                    frames = f.getnframes()
+                if speech.returncode or frames == 0:
+                    raise ValueError("no synthesized audio")
+                print("System voice:", frames, "frames", flush=True)
+            except (OSError, EOFError, wave.Error, ValueError, subprocess.TimeoutExpired) as error:
+                errors.append(f"System voice: {error}")
         status = await asyncio.create_subprocess_exec(exe, "login", "status")
         if await status.wait():
-            raise ValueError("Codex login unavailable")
-        harness = Codex(lambda kind, text: print(kind, text))
-        try:
-            await harness.start(exe, params)
-        finally:
-            await harness.close()
+            errors.append("Codex login unavailable")
+        else:
+            harness = Codex(lambda kind, text: print(kind, text))
+            try:
+                await harness.start(exe, params)
+            finally:
+                await harness.close()
+        if errors:
+            raise ValueError("; ".join(errors))
         return
     await Session(model).run(exe, params)
 

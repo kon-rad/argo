@@ -33,10 +33,14 @@ struct AgentDockApp: App {
                 Button("Reload") { store.loadRoster(); store.refresh() }.keyboardShortcut("r")
             }
         }
-        MenuBarExtra(isInserted: Binding(get: { voice.phase != .idle }, set: { _ in })) {
+        MenuBarExtra(isInserted: Binding(get: { voice.phase != .idle || !voice.problem.isEmpty }, set: { _ in })) {
             Text(voice.micLabel + " · " + voice.taskLabel)
             Text(voice.playing.isEmpty ? "Playback quiet" : "Speaking: " + voice.playing)
             if !voice.draft.isEmpty { Text(voice.draft) }
+            if !voice.problem.isEmpty {
+                Text(voice.problem)
+                Button("Dismiss Error") { voice.problem = "" }
+            }
             Divider()
             VoiceActions(voice: voice, vault: store.vault, shortcuts: false)
         } label: {

@@ -8,7 +8,8 @@ struct VoiceActions: View {
 
     var body: some View {
         ForEach(VoiceCommand.allCases, id: \.self) { command in
-            let button = Button(command.title(voice.phase)) { voice.perform(command, vault: vault) }
+            let hint = shortcuts ? "" : (command.key.map { "  ⌃⌥⌘" + String($0).uppercased() } ?? "")
+            let button = Button(command.title(voice.phase) + hint) { voice.perform(command, vault: vault) }
                 .disabled(!command.enabled(voice.phase))
             if shortcuts, let key = command.key {
                 button.keyboardShortcut(KeyEquivalent(key), modifiers: VoiceCommand.modifiers)
@@ -59,7 +60,7 @@ struct VoiceSetup: View {
                         }.buttonStyle(.plain)
                         if let r = row.reference {
                             Text("Speed  \(r.cpu.formatted())× CPU · \(r.vulkan.formatted())× Vulkan")
-                            ProgressView(value: r.cpu / max(r.cpu, r.vulkan))
+                            ProgressView(value: r.cpu / max(r.cpu, r.vulkan)).accessibilityLabel("Reference CPU speed relative to Vulkan")
                             Text("Accuracy  \(r.error.formatted())% error · \(r.dataset)")
                             ProgressView(value: 1 - r.error / 100)
                             Text("\(r.release) · \(r.engine) · \(r.variant) · \(r.host) · \(r.speedUnit)")

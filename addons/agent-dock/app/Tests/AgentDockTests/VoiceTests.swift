@@ -13,6 +13,42 @@ final class VoiceTests: XCTestCase {
         XCTAssertFalse(VoiceCommand.stop.enabled(.idle))
     }
 
+    @MainActor func testPauseRestoresMutedCaptureAndKeepsTask() {
+        let controller = VoiceController()
+        controller.phase = .live
+        controller.taskLabel = "Running tests"
+        controller.perform(.mute, vault: "")
+        XCTAssertEqual(controller.phase, .muted)
+        controller.perform(.toggle, vault: "")
+        XCTAssertEqual(controller.phase, .paused)
+        controller.perform(.toggle, vault: "")
+        XCTAssertEqual(controller.phase, .muted)
+        controller.perform(.silence, vault: "")
+        XCTAssertEqual(controller.taskLabel, "Running tests")
+        controller.perform(.end, vault: "")
+        XCTAssertEqual(controller.phase, .idle)
+    }
+
+    func testReplayAllFixtureAudioThroughCaptureEncoder() throws {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<4 { root.deleteLastPathComponent() }
+        let bench = root.appendingPathComponent("voice/bench")
+        let wavs = try FileManager.default.contentsOfDirectory(at: bench, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "wav" }
+        XCTAssertEqual(wavs.count, 12)
+        for wav in wavs {
+            let file = try AVAudioFile(forReading: wav)
+            let encoder = try PCMEncoder(file.processingFormat)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 2048))
+            var byteCount = 0
+            while file.framePosition < file.length {
+                try file.read(into: buffer)
+                byteCount += try encoder.convert(buffer).count
+            }
+            XCTAssertEqual(byteCount, Int(file.length) * 2, wav.lastPathComponent)
+        }
+    }
+
     func testMicrophoneConverterWithSyntheticStereo() throws {
         let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
         let input = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4800)!

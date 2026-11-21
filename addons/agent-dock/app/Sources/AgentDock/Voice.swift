@@ -175,8 +175,9 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
 
     func start(vault: String) {
         guard phase == .idle, !agent.isEmpty, !workspace.isEmpty, !model.isEmpty else { return }
-        for (value, key) in [(model,"voiceModel"), (workspace,"voiceWorkspace"), (folder,"voiceModelFolder"), (voiceID,"voiceOutput")] {
-            UserDefaults.standard.set(value, forKey: key)
+        if !voiceID.isEmpty && AVSpeechSynthesisVoice(identifier: voiceID) == nil {
+            problem = "The selected system voice is unavailable."
+            return
         }
         problem = ""
         taskLabel = "Preparing"
@@ -210,15 +211,27 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
             } catch { if sessionID == id { fail(error.localizedDescription) } }
         }
     }
+    private func saveSelection() {
+        for (value, key) in [(model,"voiceModel"), (workspace,"voiceWorkspace"), (folder,"voiceModelFolder"), (voiceID,"voiceOutput")] {
+            UserDefaults.standard.set(value, forKey: key)
+        }
+    }
+    private func stamp(_ stage: String) {
+        send(["kind":"timing", "seconds":ProcessInfo.processInfo.systemUptime, "stage":stage])
+    }
     private func receive(_ kind: String, _ text: String, epoch: Int) {
+        if ["endpoint", "final", "clause"].contains(kind) { stamp(kind) }
         switch kind {
-        case "ready": taskLabel = "Idle"; listen()
+        case "ready":
+            taskLabel = "Idle"
+            listen()
+            if phase == .live { saveSelection() }
         case "draft", "final": if phase == .live { draft = text }
         case "task": taskLabel = text
         case "approval": taskLabel = "Waiting for approval in Ghostty"
         case "error": problem = text
         case "disconnect": fail(problem.isEmpty ? text : problem)
-        case "silence": stopPlayback()
+        case "silence": stopPlayback(); stamp("stop playback requested")
         case "clause":
             guard (phase == .live || phase == .muted), epoch == generation else { return }
             let utterance = AVSpeechUtterance(string: text)
@@ -240,7 +253,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
             node.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, _ in
                 do {
                     let data = try encoder.convert(buffer)
-                    Task { @MainActor in
+                    DispatchQueue.main.async {
                         guard let self, self.captureID == id, self.phase == .live else { return }
                         self.send(["kind":"pcm", "data":data.base64EncodedString()])
                     }
@@ -297,7 +310,10 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
     }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
         Task { @MainActor in
-            if utterances.contains(ObjectIdentifier(utterance)) { playing = utterance.speechString }
+            if utterances.contains(ObjectIdentifier(utterance)) {
+                playing = utterance.speechString
+                stamp("synthesizer started")
+            }
         }
     }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
