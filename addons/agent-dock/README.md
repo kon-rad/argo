@@ -219,6 +219,8 @@ cmake -S "$src" -B "$src/build" -DCMAKE_BUILD_TYPE=Release -DTRANSCRIBE_BUILD_SH
 cmake --build "$src/build" --target transcribe -j 4
 ```
 
+During a live session the main Agent Dock window displays recent microphone levels and the selected macOS input name. Use **Sound input…** to select a different default input. Dock checks for input-device changes while listening and reopens capture on the new input. Muting or pausing clears the meter. The info icon lists the commands and their shortcuts.
+
 ### Doctor, replay and physical qualification
 
 Run these commands from `addons/agent-dock`. The fixture creates two linked worktrees with different markers, a synthetic roster and a failing Python test. Set the fixture roster's model to one available on your Codex account.

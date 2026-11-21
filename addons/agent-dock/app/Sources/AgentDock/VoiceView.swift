@@ -103,3 +103,27 @@ struct VoiceSetup: View {
         }.padding(20).frame(width: 550)
     }
 }
+
+struct VoiceInputMonitor: View {
+    @ObservedObject var voice: VoiceController
+    var body: some View {
+        HStack {
+            Canvas { context, size in
+                let step = size.width / CGFloat(voice.levels.count)
+                for (index, level) in voice.levels.enumerated() {
+                    let height = max(1, size.height * level)
+                    let rect = CGRect(x: CGFloat(index) * step, y: (size.height - height) / 2,
+                                      width: max(1, step - 1), height: height)
+                    context.fill(Path(rect), with: .color(.accentColor))
+                }
+            }.frame(width: 96, height: 25).accessibilityLabel("Microphone level")
+            Text(voice.phase == .live ? voice.captureStatus : voice.micLabel)
+            Button("Sound input…") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            VoiceShortcutInfo()
+        }.padding(8)
+    }
+}

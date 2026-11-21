@@ -97,6 +97,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
     @Published var problem = ""
     @Published var captureStatus = "Waiting for microphone"
     @Published var inputLevel: Double = 0
+    @Published var levels = Array(repeating: 0.0, count: 32)
     private var captureTimer: Timer?
     private var lastFrameTime: TimeInterval = 0
     private var lastLoudTime: TimeInterval = 0
@@ -262,15 +263,27 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
             let node = engine.inputNode
             try node.setVoiceProcessingEnabled(true)
             let format = node.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                throw DockCLI.Failed(message: "No usable microphone input. Choose an input in macOS Sound settings and start voice again.")
+            }
             let encoder = try PCMEncoder(format)
-            let route = AVCaptureDevice.default(for: .audio)?.localizedName ?? "System input"
+            let device = AVCaptureDevice.default(for: .audio)
+            let route = device?.localizedName ?? "System input"
             captureStatus = "Waiting for microphone frames · \(route)"
             lastStatus = ""
             lastFrameTime = 0
             lastLoudTime = ProcessInfo.processInfo.systemUptime
             captureTimer?.invalidate()
             captureTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-                Task { @MainActor in self?.updateCaptureStatus(route: route) }
+                Task { @MainActor in
+                    guard let self, self.captureID == id, self.phase == .live else { return }
+                    if let selected = AVCaptureDevice.default(for: .audio), selected.uniqueID != device?.uniqueID {
+                        self.stopMic()
+                        self.listen()
+                    } else {
+                        self.updateCaptureStatus(route: route)
+                    }
+                }
             }
             node.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, _ in
                 do {
@@ -285,6 +298,8 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
                             return sqrt(samples.reduce(0.0) { $0 + pow(Double($1) / 32768, 2) } / Double(samples.count))
                         }
                         self.inputLevel = level
+                        self.levels.removeFirst()
+                        self.levels.append(min(1, sqrt(level * 3)))
                         if level > 0.005 { self.lastLoudTime = self.lastFrameTime }
                         self.updateCaptureStatus(route: route)
                         for offset in stride(from: 0, to: data.count, by: 8192) {
@@ -312,6 +327,10 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
         } else {
             status = "Listening · \(route)"
         }
+        if lastFrameTime == 0 || now - lastFrameTime > 2 {
+            inputLevel = 0
+            levels = Array(repeating: 0, count: 32)
+        }
         captureStatus = status
         if status != lastStatus {
             lastStatus = status
@@ -322,6 +341,7 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
         captureTimer?.invalidate()
         captureTimer = nil
         inputLevel = 0
+        levels = Array(repeating: 0, count: 32)
         captureID = UUID()
         capture?.stop()
         capture?.inputNode.removeTap(onBus: 0)

@@ -173,7 +173,11 @@ class Session:
                         if await launch.wait():
                             raise ValueError("Ghostty did not open")
                         await asyncio.wait_for(self.attached.wait(), 20)
-                        await self.harness.start(exe, params)
+                        try:
+                            await self.harness.start(exe, params)
+                        except Exception as error:
+                            self.emit("error", f"Codex startup failed: {error}")
+                            raise
                         self.emit("ready", "Recognizer ready; waiting for microphone")
                     setup_task = asyncio.create_task(setup())
                     stop_task = asyncio.create_task(self.stopped.wait())

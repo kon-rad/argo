@@ -64,6 +64,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if voice.phase != .idle { VoiceInputMonitor(voice: voice) }
             if !voice.problem.isEmpty { Banner(text: voice.problem, tint: .orange) { Button("Dismiss") { voice.problem = "" } } }
             if let problem = store.problem {
                 Banner(text: problem, tint: .orange) {
