@@ -3,7 +3,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { main } from '../src/cli-org.js';
 import { importOrg } from '../src/org.js';
-import { query } from '../src/db.js';
+import { query, setDatabaseUrl } from '../src/db.js';
 import { saveProfile } from '../src/org-runtime/index.js';
 import { truncateAll, ALL_MODULES } from './helpers.js';
 const profile = {name:'Example',default:{runtime:'codex',model:'example-next',provider:null},models:{}};
@@ -41,4 +41,25 @@ it('does not accept a caller identity in HTTP payloads and denies bot CLI writes
 it('requires the authenticated owner session on server deployments', async () => {
   const http = createApp({modules:ALL_MODULES,deployment:'server',auth:{passwordHash:'fake-hash',totpSecret:'JBSWY3DPEHPK3PXP',secureCookie:false,publicOrigin:'http://127.0.0.1'}});
   await request(http).post('/api/org/runtime/preview').set('Origin','http://127.0.0.1').send({profileId:'example'}).expect(401);
+});
+
+it('denies every runtime CLI verb for a second human even on a privileged connection', async () => {
+  await query(`INSERT INTO org_agents(name,runtime,role,org_version) VALUES ('other-human','human','Guest','v1')`);
+  vi.stubEnv('ORG_AGENT','other-human');
+  for (const args of [['show'],['profiles'],['history'],['save','x','missing.json'],['register','cron-job:x','missing.json'],['preview','example'],['apply','unused'],['revert','1']]) {
+    await expect(cli(args)).rejects.toThrow(/owner/);
+  }
+});
+it('denies bot CLI reads over SB_ORG_DB_URL and allows owner reads over the privileged connection', async () => {
+  const ownerUrl = `postgres://${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${process.env.SB_TEST_DB}`;
+  vi.stubEnv('ORG_AGENT','writer');
+  vi.stubEnv('SB_ORG_DB_URL',`postgres://sb_org@${process.env.PGHOST ?? 'localhost'}:${process.env.PGPORT ?? '5432'}/${process.env.SB_TEST_DB}`);
+  try {
+    for (const verb of ['show','profiles','history']) await expect(cli([verb])).rejects.toThrow(/owner/);
+  } finally {
+    vi.unstubAllEnvs();
+    setDatabaseUrl(ownerUrl);
+  }
+  vi.stubEnv('ORG_AGENT','owner');
+  for (const verb of ['show','profiles','history']) await expect(cli([verb])).resolves.toBeDefined();
 });

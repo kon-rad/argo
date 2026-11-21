@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { query, withTransaction, type TxClient } from '../db.js';
+import { config } from '../config.js';
+import { selectedRuntimeProfiles, type ProfileRevision } from './selections.js';
 import { OrgError } from '../org-error.js';
 
 export { TargetSchema, ProfileSchema } from './types.js';
@@ -14,6 +16,7 @@ const db: TxClient = { query };
 const key = (t: Target) => `${t.kind}:${t.id}`;
 const hash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 export async function requireRuntimeOwner(by: string, tx: TxClient = db): Promise<void> {
+  if (by !== config.orgOwner) throw new OrgError('only the owner can manage runtime profiles');
   const r = await tx.query(`SELECT 1 FROM org_agents WHERE name=$1 AND runtime='human' AND retired_at IS NULL`, [by]);
   if (!r.rows.length) throw new OrgError('only the owner can manage runtime profiles');
 }
@@ -86,10 +89,19 @@ export async function previewRuntime(profileId: string, scope: Target[], by: str
     return preview;
   });
 }
-async function commit(tx: TxClient, s: Awaited<ReturnType<typeof snapshot>>, p: Preview, by: string, revert: number | null = null, restore?: (Override | null)[]) {
+async function commit(tx: TxClient, s: Awaited<ReturnType<typeof snapshot>>, p: Preview, by: string, revert: number | null = null, restore?: (Override | null)[], restoredProfiles?: (ProfileRevision|null)[]) {
   const version = s.latest+1;
   const previous = p.changes.map(c => s.overrides.find(o => o.agent === c.target.id) ?? null);
-  await tx.query(`INSERT INTO org_runtime_versions(version,profile_id,profile_version,changes,previous_overrides,applied_by,reverted_version,status,uncovered) VALUES ($1,$2,$3,$4,$5,$6,$7,'org-applied',$8)`, [version,p.profileId,p.profileVersion,JSON.stringify(p.changes),JSON.stringify(previous),by,revert,JSON.stringify(p.uncovered)]);
+  const selected = await selectedRuntimeProfiles(tx);
+  const ownProfile = {id:p.profileId,version:p.profileVersion};
+  const previousProfiles = p.changes.map(c => {
+    const prior = selected.find(s => s.agent === c.target.id);
+    // Before the first selection the owner declares baseline models in this
+    // profile. Later selections always retain their original revision.
+    return prior ? prior.profile : ownProfile;
+  });
+  const appliedProfiles = restoredProfiles ?? p.changes.map(() => ownProfile);
+  await tx.query(`INSERT INTO org_runtime_versions(version,profile_id,profile_version,changes,previous_overrides,applied_by,reverted_version,status,uncovered,applied_profiles,previous_profiles) VALUES ($1,$2,$3,$4,$5,$6,$7,'org-applied',$8,$9,$10)`, [version,p.profileId,p.profileVersion,JSON.stringify(p.changes),JSON.stringify(previous),by,revert,JSON.stringify(p.uncovered),JSON.stringify(appliedProfiles),JSON.stringify(previousProfiles)]);
   for (const [i,c] of p.changes.entries()) {
     if (restore) {
       const o = restore[i];
@@ -130,19 +142,27 @@ export async function applyRuntime(token: string, by: string) {
 export async function revertRuntime(version: number, by: string) {
   return withTransaction(async tx => {
     await lock(tx); await requireRuntimeOwner(by,tx);
-    const r = (await tx.query<{profile_id:string;profile_version:number;changes:Change[];previous_overrides:(Override|null)[]}>(`SELECT * FROM org_runtime_versions WHERE version=$1`,[version])).rows[0];
+    const r = (await tx.query<{profile_id:string;profile_version:number;changes:Change[];previous_overrides:(Override|null)[];previous_profiles:(ProfileRevision|null)[]}>(`SELECT * FROM org_runtime_versions WHERE version=$1`,[version])).rows[0];
     if (!r) throw new OrgError('unknown desired version');
     const s = await snapshot(tx);
-    const definition = (await tx.query<{definition:Profile}>(`SELECT definition FROM org_runtime_profiles WHERE id=$1 AND version=$2`,[r.profile_id,r.profile_version])).rows[0]!.definition;
+    const selected = await selectedRuntimeProfiles(tx);
+    const definitions = await tx.query<{id:string;version:number;definition:Profile}>('SELECT id,version,definition FROM org_runtime_profiles');
     const changes = r.changes.map((c,i) => {
       const t = s.targets.find(t => key(t) === key(c.target));
       if (!t || !t.adapter) throw new OrgError('revert target unavailable');
+      if (selected.find(s => s.agent === t.id)?.selectionVersion !== version ||
+          t.effective.runtime !== c.to.runtime || t.effective.model !== c.to.model) {
+        throw new OrgError('revert blocked: selection is no longer current or assignment changed');
+      }
+      const prior = r.previous_profiles[i];
+      const definition = definitions.rows.find(p => p.id === prior?.id && p.version === prior?.version)?.definition;
+      if (!definition) throw new OrgError('revert blocked: previous selection metadata unavailable');
       const o = r.previous_overrides[i];
       const to = {runtime:o?.runtime ?? t.configured.runtime,model:o?.model ?? t.configured.model,provider:null};
       const problem = assignmentProblem(to,t.capabilities,definition);
       if (problem) throw new OrgError(`revert blocked: ${problem}`);
       return {target:c.target,from:t.effective,to,problem:null};
     });
-    return commit(tx,s,{token:'',profileId:r.profile_id,profileVersion:r.profile_version,rosterVersion:s.fingerprint,changes,uncovered:s.targets.filter(t => !changes.some(c => key(c.target) === key(t))).map(t => ({kind:t.kind,id:t.id})),expiresAt:'',inFlight:[]},by,version,r.previous_overrides);
+    return commit(tx,s,{token:'',profileId:r.profile_id,profileVersion:r.profile_version,rosterVersion:s.fingerprint,changes,uncovered:s.targets.filter(t => !changes.some(c => key(c.target) === key(t))).map(t => ({kind:t.kind,id:t.id})),expiresAt:'',inFlight:[]},by,version,r.previous_overrides,r.previous_profiles);
   });
 }

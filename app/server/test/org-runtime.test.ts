@@ -101,3 +101,64 @@ it('revert preserves independent pause and effort decisions', async () => {
   await revertRuntime(1,'owner');
   expect((await query(`SELECT runtime,model,paused,effort FROM org_agent_overrides WHERE agent='builder'`)).rows[0]).toEqual({runtime:null,model:null,paused:true,effort:'high'});
 });
+
+it('rejects all runtime mutations by a second active human', async () => {
+  await query(`INSERT INTO org_agents(name,runtime,role,org_version) VALUES ('other-human','human','Guest','v1')`);
+  const p = await preview();
+  for (const action of [
+    () => saveProfile('guest', profile, 'other-human'),
+    () => registerRuntimeTarget({kind:'cron-job',id:'guest'},profile.default,'other-human'),
+    () => previewRuntime('example',scope,'other-human'),
+    () => applyRuntime(p.token,'other-human'),
+    () => revertRuntime(1,'other-human'),
+  ]) await expect(action()).rejects.toThrow(/owner/);
+  expect((await applyRuntime(p.token,'owner')).version).toBe(1);
+});
+it('rejects reverting an older selection or a manually changed assignment atomically', async () => {
+  await applyRuntime((await preview()).token,'owner');
+  await saveProfile('second',{...profile,default:{...profile.default,model:'example-second'},models:{'example-second':{tier:3,canCode:true}}},'owner');
+  await applyRuntime((await previewRuntime('second',scope,'owner')).token,'owner');
+  await expect(revertRuntime(1,'owner')).rejects.toThrow(/current|changed/);
+  expect((await runtimeStatus()).targets.find(t => t.id==='builder')?.effective.model).toBe('example-second');
+  await query(`UPDATE org_agent_overrides SET model='example-manual' WHERE agent='writer'`);
+  await expect(revertRuntime(2,'owner')).rejects.toThrow(/current|changed/);
+  expect((await runtimeStatus()).history).toHaveLength(2);
+  expect((await runtimeStatus()).targets.find(t => t.id==='builder')?.effective.model).toBe('example-second');
+});
+it('restores the prior immutable model declaration, including revert of revert and import', async () => {
+  await applyRuntime((await preview()).token,'owner');
+  // The second profile deliberately disagrees about the prior model's capability.
+  await saveProfile('second',{...profile,default:{...profile.default,model:'example-second'},models:{'example-second':{tier:2,canCode:true},'example-next':{tier:0,canCode:false}}},'owner');
+  await applyRuntime((await previewRuntime('second',scope,'owner')).token,'owner');
+  await saveProfile('example',{...profile,models:{}},'owner');
+  await revertRuntime(2,'owner');
+  expect((await runtimeStatus()).targets.find(t => t.id==='builder')?.effective.model).toBe('example-next');
+  await applyOrg({...org,version:'v2',agents:{...org.agents,builder:{...org.agents.builder,capabilities:['review']}}});
+  await expect(revertRuntime(3,'owner')).rejects.toThrow(/floor/);
+  expect((await runtimeStatus()).history).toHaveLength(3);
+});
+it('does not let a newer declaration approve restoring a weak previous model', async () => {
+  await saveProfile('weak',{...profile,models:{'example-next':{tier:2,canCode:true}}},'owner');
+  await applyRuntime((await previewRuntime('weak',scope,'owner')).token,'owner');
+  await saveProfile('strong',{...profile,default:{...profile.default,model:'example-strong'},models:{'example-strong':{tier:3,canCode:true},'example-next':{tier:3,canCode:true}}},'owner');
+  await applyRuntime((await previewRuntime('strong',scope,'owner')).token,'owner');
+  await applyOrg({...org,version:'v2',agents:{...org.agents,builder:{...org.agents.builder,capabilities:['review']}}});
+  await expect(revertRuntime(2,'owner')).rejects.toThrow(/floor/);
+  expect((await runtimeStatus()).targets.find(t => t.id==='builder')?.effective.model).toBe('example-strong');
+});
+it('denies bot reads of all runtime service tables', async () => {
+  for (const table of ['profiles','targets','versions','receipts','previews']) {
+    await expect(withTransaction(async tx => {
+      await tx.query('SET LOCAL ROLE sb_org');
+      await tx.query(`SELECT * FROM org_runtime_${table}`);
+    })).rejects.toThrow(/permission denied/);
+  }
+});
+
+it('blocks legacy revert without provenance but permits a fresh reviewed selection', async () => {
+  await applyRuntime((await preview()).token,'owner');
+  await query(`UPDATE org_runtime_versions SET previous_profiles='[]',applied_profiles='[]' WHERE version=1`);
+  await expect(revertRuntime(1,'owner')).rejects.toThrow(/metadata/);
+  await applyRuntime((await previewRuntime('example',scope,'owner')).token,'owner');
+  expect((await runtimeStatus()).history).toHaveLength(2);
+});

@@ -1,4 +1,4 @@
-import { runtimeStatus, registerRuntimeTarget, saveProfile, previewRuntime, applyRuntime, revertRuntime } from './org-runtime/index.js';
+import { requireRuntimeOwner, runtimeStatus, registerRuntimeTarget, saveProfile, previewRuntime, applyRuntime, revertRuntime } from './org-runtime/index.js';
 import { exitFlushed } from './cli-exit.js';
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -269,6 +269,7 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
   switch (cmd) {
     case 'runtime': {
       const by = identityName();
+      await requireRuntimeOwner(by);
       const [verb, arg] = pos;
       let result: unknown;
       if (verb === 'show') result = await runtimeStatus();

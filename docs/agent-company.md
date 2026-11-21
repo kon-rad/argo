@@ -152,7 +152,10 @@ The most-used commands (run `cli-org help` for all of them):
 ### Versioned runtime profiles
 
 The org module has an owner-only runtime API and matching `cli-org runtime`
-commands. Profiles live in the database, separate from the compiled roster.
+commands. Every CLI verb, including status and history reads, requires the
+configured `ORG_OWNER` identity and an active human roster row. Use the owner
+database connection; the bot role has no access to runtime service tables.
+Profiles live in the database, separate from the compiled roster.
 No personal profile, model, provider, host or credential is seeded. Switches
 affect future claims and leave in-flight runs on their starting settings.
 
@@ -169,7 +172,14 @@ cli-org runtime register cron-job:daily /tmp/assignment.json
 
 Output is JSON, including without `--json`. `save` appends a profile revision.
 `revert N` undoes the runtime/model selection recorded by desired version N,
-validates against the current roster and appends a new desired version.
+requires N to remain the current selection for every affected target and rejects
+changed runtime/model assignments. It validates the restored model against its
+original immutable profile revision and the current roster capabilities, then
+appends a new desired version. This provenance also survives another revert
+and is used by roster import validation. Before a target has any profile
+selection, declare its baseline model in the first profile to enable a protected
+capability revert. Older history without recorded restoration metadata cannot
+be reverted; preview a new selection instead.
 Pause and effort decisions are preserved. History is never deleted. To select
 an older profile definition, save that definition as a new revision and preview.
 

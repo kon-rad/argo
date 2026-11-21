@@ -202,6 +202,13 @@ The optional `localai` addon imports local gateway export pages transactionally 
 
 Brain Map replay at `/map?activity=1` shares Observatory's replay component and URL state. A separate read/write overlay uses exact scoped note references on one pinned stored layout. Optional version selection on `/api/map/graph` never substitutes the newest layout for an unavailable pin. The original graph retains its coordinates and zero simulation ticks while the overlay changes. Current topology and historical activity remain explicitly distinct; unresolved paths retain source evidence and repository targets stay separate. Raw absolute tool paths are scoped only beneath the configured vault root, without guessing relative working directories or historical moves. Both map and Observatory modules must be enabled; ordinary map and kiosk behavior remain available without Observatory. See [Brain Map activity](observatory.md#brain-map-activity-observatory-3).
 
+Runtime history retains immutable profile revisions per target for applied and
+previous assignments. Revert requires each target to still select the version
+being undone and to match its applied runtime/model. Capability validation and
+roster import use the restored selection revision, including after a revert.
+The configured owner is required for every runtime CLI verb; bot roles read
+effective org assignments without access to profile or runtime audit tables.
+
 The org runtime profile service (`app/server/src/org-runtime/`) is shared by
 owner HTTP routes and `cli-org runtime`. Append-only profile revisions feed
 expiring previews bound to a roster/override/registry snapshot. Apply serializes
