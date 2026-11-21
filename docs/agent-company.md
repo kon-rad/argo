@@ -169,7 +169,7 @@ cli-org runtime register cron-job:daily /tmp/assignment.json
 
 Output is JSON, including without `--json`. `save` appends a profile revision.
 `revert N` undoes the runtime/model selection recorded by desired version N,
-validates against the current roster and appends a new desired version.
+requires N to be the latest version, validates the current assignments and appends a new desired version.
 Pause and effort decisions are preserved. History is never deleted. To select
 an older profile definition, save that definition as a new revision and preview.
 
@@ -202,6 +202,7 @@ HTTP routes under `/api/org/runtime` use the org module's owner session gate:
 | --- | --- |
 | `GET /` | Profiles, base/effective assignments, last usage observations, history and receipts |
 | `GET /profiles`, `GET /history` | Profile revisions in use, or desired history |
+| `GET /versions/:version/receipts` | Per-target desired assignments, reconciliation outcomes and check timestamps for that version |
 | `POST /profiles/:id` | Profile definition above, appends a revision |
 | `POST /preview` | `{profileId, scope: [{kind, id}]}` |
 | `POST /apply` | `{token}` |
@@ -228,9 +229,42 @@ observed timestamp. Neither proves provider health or a successful canary.
 Usage observations retain their recorded timestamps. Previews list unfinished
 card runs, which retain their starting settings.
 
-Cron, Telegram gateway, Telegram poller and default-route inventory initially
-has visible `unregistered` placeholders. Registering actual launcher IDs replaces
-the placeholder for that kind, but all these launchers remain `unsupported`
-until reviewed host adapters exist. Whole-fleet apply is blocked in this
-release; explicitly scoped org changes remain usable. The engine never
-restarts services or writes privileged host files.
+Cron jobs, Telegram gateways, Telegram pollers and default routes start with
+unsupported inventory placeholders. Register each actual launcher ID with the
+owner CLI. Apply requires a successful controller probe for the exact proposed
+assignment on each selected launcher within the last five minutes.
+
+A separately installed, trusted host process imports `refreshLaunchers` and
+`reconcileLaunchers` from `server/dist/org-runtime/controller.js`. Give it a
+database connection with read access to desired versions, targets and receipts,
+and update access to target observations, receipts and reconciliation status.
+Keep that connection and the adapter registry outside the web process. The map
+keys are full target IDs such as `cron-job:daily`. Its values implement
+`LauncherAdapter` from `org-runtime/launcher.ts`.
+
+1. Periodically call `refreshLaunchers(registry, candidates)` with the assignments
+   the installation supports, including rollback assignments. Each adapter
+   inspects the running service and preflights each candidate's prerequisites
+   and credential availability. Only assignment identifiers leave the host.
+2. Read the current desired version and call `reconcileLaunchers(version, registry)`
+   after apply and on subsequent ticks. A superseded version rejects before host
+   work. Reconciliation retains earlier intent for launchers outside a newer
+   scope. Host calls run outside database transactions.
+3. Implement bounded, version-fenced apply and readback even across process
+   restarts. Cron adapters preserve schedules and script-only jobs. Gateways
+   drain or defer conversations and atomically reload reviewed configuration.
+   Pollers must enforce exclusive token ownership and report one active
+   poller. Routes must confirm the selected destination is healthy at cutover
+   and retain the previous healthy route on failure. Verify both version and
+   effective assignment, including the required host canary.
+
+An apply that includes launchers starts as `partially-applied`, with a
+`pending` receipt for each selected launcher. Missing adapters, failed
+preflights, drift, stale host versions and failed readback leave individual
+receipts for retry. The controller handles routes last. A failed poller check
+holds the route. `launchers-verified` covers the launchers selected in that
+version. Check the uncovered list, observation times and org run evidence
+before drawing conclusions about the rest of the fleet.
+
+Refresh probes before reverting. Revert restores the assignments observed at
+preview under a new version. An unexpected third assignment blocks restoration.

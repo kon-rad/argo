@@ -208,5 +208,7 @@ expiring previews bound to a roster/override/registry snapshot. Apply serializes
 with roster imports and commits desired versions, org overrides and receipts in
 one Postgres transaction. The effective org view continues to drive future
 claims, leaving active runs unchanged. Unsupported launcher inventory is visible
-and blocks fleet scope; future host controllers must reconcile outside the app
-transaction and sandbox. See `docs/agent-company.md` for status semantics.
+and blocks fleet scope. A separately installed controller publishes expiring
+adapter preflight results and reconciles versioned intent for external launchers.
+A Postgres advisory lock serializes host operations with new desired versions.
+Each verified or failed receipt commits with the corresponding version status. See `docs/agent-company.md` for status semantics.
