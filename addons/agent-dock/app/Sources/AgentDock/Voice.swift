@@ -343,17 +343,19 @@ final class VoiceController: NSObject, ObservableObject, AVSpeechSynthesizerDele
             phase = .live
         } catch { fail(error.localizedDescription) }
     }
+    static func inputStatus(route: String, now: TimeInterval, lastFrameTime: TimeInterval, lastLoudTime: TimeInterval) -> String {
+        if lastFrameTime == 0 || now - lastFrameTime > 5 {
+            return "No microphone frames · \(route). Check input device and microphone permission."
+        } else if now - lastLoudTime > 3 {
+            return "Microphone quiet · \(route). Check mute and input volume."
+        } else {
+            return "Listening · \(route)"
+        }
+    }
     private func updateCaptureStatus(route: String) {
         guard phase == .live else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        let status: String
-        if lastFrameTime == 0 || now - lastFrameTime > 5 {
-            status = "No microphone frames · \(route). Check input device and microphone permission."
-        } else if now - lastLoudTime > 3 {
-            status = "Microphone quiet · \(route). Check mute and input volume."
-        } else {
-            status = "Listening · \(route)"
-        }
+        let status = Self.inputStatus(route: route, now: now, lastFrameTime: lastFrameTime, lastLoudTime: lastLoudTime)
         if lastFrameTime == 0 || now - lastFrameTime > 2 {
             inputLevel = 0
             levels = Array(repeating: 0, count: 32)
