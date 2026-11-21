@@ -9,6 +9,7 @@ import { useStickToBottom } from '../../lib/useStickToBottom.js';
 import { ChatInput } from '../../components/ChatInput.js';
 import { VaultMarkdown } from '../../components/VaultMarkdown.js';
 import { AgentAvatar } from '../../components/AgentAvatar.js';
+import RuntimeSettings from './RuntimeSettings.js';
 import DataTable from '../../components/DataTable.js';
 import { teamColor } from '../../lib/teamColor.js';
 import { useAppTimezone } from '../../lib/useTimezone.js';
@@ -513,6 +514,7 @@ function AgentPage() {
           {p.agent.reports_to && ` · reports to `}
           {p.agent.reports_to && <Link className="text-[var(--accent)]" to={`/org/agents/${p.agent.reports_to}`}>{p.agent.reports_to}</Link>}
         </span>
+        {p.agent.runtime !== 'human' && <Link className="text-sm text-[var(--accent)]" to={`/org/runtime?agent=${encodeURIComponent(name)}`}>Fleet runtime settings</Link>}
         {skillsOn && p.agent.runtime !== 'human' && (
           <Link className="text-sm text-[var(--accent)]" to={`/skills/agents/${encodeURIComponent(p.agent.name)}`}>Skills</Link>
         )}
@@ -628,10 +630,12 @@ export default function Org() {
         <NavLink to="/org/chart" className={tab}>Org chart</NavLink>
         <NavLink to="/org/live" className={tab}>Live</NavLink>
         <NavLink to="/org/approvals" className={tab}>Approvals</NavLink>
+        <NavLink to="/org/runtime" className={tab}>Runtime settings</NavLink>
       </nav>
       <div className="min-h-0 flex-1">
         <Routes>
           <Route index element={<Channels />} />
+          <Route path="runtime" element={<RuntimeSettings />} />
           <Route path="chart" element={<Chart />} />
           <Route path="live" element={<Live />} />
           <Route path="approvals" element={<div className="h-full overflow-y-auto"><Approvals /><div className="px-4 pb-4"><Tokens /></div></div>} />

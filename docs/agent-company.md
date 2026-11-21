@@ -167,7 +167,23 @@ cli-org runtime revert <version>
 cli-org runtime register cron-job:daily /tmp/assignment.json
 ```
 
-Output is JSON, including without `--json`. `save` appends a profile revision.
+Open **Org → Runtime settings** or follow the link from **Usage → Account**.
+An agent's detail page links to its highlighted ledger row. Each row shows the
+configured assignment, effective settings for the next claim, the last observed
+run and its timestamp when available, and the latest versioned receipt.
+Unsupported cron jobs, Telegram launchers and default routes show unverified
+effective settings until their adapters can report them.
+
+Choose a profile and scope, then select **Preview change** to review the proposed
+assignments, named blockers, targets outside scope and in-flight runs. A blocker
+disables whole-fleet apply. Select **All org agents** and preview again to review
+an org-only change. An expired or stale preview requires a fresh review. After
+applying, check the version and target receipts in **History**. A next-claim
+receipt records the assignment for future work. Use the Usage links to inspect
+actual sessions and running agents. **Revert version** asks for confirmation
+before restoring that version's prior assignments as a new audited change.
+
+Output from the CLI is JSON, including without `--json`. `save` appends a profile revision.
 `revert N` undoes the runtime/model selection recorded by desired version N,
 validates against the current roster and appends a new desired version.
 Pause and effort decisions are preserved. History is never deleted. To select

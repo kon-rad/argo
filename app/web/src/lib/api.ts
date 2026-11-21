@@ -2,6 +2,7 @@
 import { ApiError, json, request, url, type Params } from './http.js';
 import { searchApi } from './searchApi.js';
 import { boardApi } from '../routes/board/api.js';
+import { runtimeApi } from '../routes/org/runtimeApi.js';
 import { projectsApi } from '../routes/Projects.api.js';
 
 export { ApiError, AUTH_EXPIRED_EVENT, fileHref, request } from './http.js';
@@ -1130,6 +1131,7 @@ export const api = {
   meta: () => request<AppMeta>('/meta'),
   syncState: () => request<SyncState>('/sync'),
   fund: (refresh = false) => request<FundOverview>('/fund', refresh ? { refresh: '1' } : undefined),
+  ...runtimeApi,
   orgChart: () => request<OrgChart>('/org/chart'),
   orgChannels: () => request<{ channels: OrgChannel[] }>('/org/channels'),
   orgMembers: (slug: string) => request<{ members: OrgMember[] }>(`/org/channels/${encodeURIComponent(slug)}/members`),

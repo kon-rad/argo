@@ -449,6 +449,7 @@ export default function Usage() {
         {view === 'account' ? (
       <div className="h-full overflow-auto pb-4">
         {config.data.subscriptions.length === 0 && config.data.credits.length === 0 && <p className="px-4 pt-4 text-sm text-[var(--ink-dim)]">No account providers configured. Add subscriptions or credits to the Usage settings in secondbrain.json.</p>}
+        {meta.data?.modules?.includes('org') && <Link className="mx-4 mt-4 inline-block text-sm text-[var(--accent)]" to="/org/runtime">Runtime settings</Link>}
         {(meta.data?.modules ?? []).includes('agents') && <section className="px-4 pt-4" aria-label="Agent controls"><AgentToggle /></section>}
         <Subscriptions providers={config.data.subscriptions} />
         <Credits providers={config.data.credits} />
