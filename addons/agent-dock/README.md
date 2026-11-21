@@ -29,7 +29,7 @@ All four harnesses get the same agent: the persona file the roster names (`promp
 | Hermes | `hermes chat -m <model> --provider <provider> --base-url <url> -q "<persona>"` | The opening message. See "Hermes: provider and model" below |
 | zen-agent | `zen-agent chat --persona <name> --model <provider/model>` | By name: zen-agent builds the prompt itself from the roster, the definition file and the memory file |
 
-The model is, in order: `--model` on the command line, the roster's model when the roster runs that agent on the same harness, then the setting. A roster model for another harness is never passed on (a Codex model name would stop Claude Code from starting).
+For Codex, both text and voice use the model you explicitly select, then the Agent Dock Codex setting, then the Codex CLI default. Your selected persona supplies its instructions. Other harnesses use an explicit choice, then the matching roster model, then the harness setting.
 
 The agent runs in the vault folder, through your login shell, so it sees the same `PATH`, keys, hooks and permission rules as one you type by hand. Agent Dock adds no permissions and removes none.
 

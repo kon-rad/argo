@@ -265,7 +265,7 @@ def chat_block(name: str, host: str) -> str:
 def pick_model(runtime: str, info: dict, settings: dict, override: str | None) -> str:
     if override:
         return override
-    if ROSTER_RUNTIME.get(info.get("runtime") or "") == runtime and info.get("model"):
+    if runtime != "codex" and ROSTER_RUNTIME.get(info.get("runtime") or "") == runtime and info.get("model"):
         return info["model"]
     return settings["runtimes"][runtime].get("model") or ""
 

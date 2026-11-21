@@ -263,7 +263,7 @@ async def main():
     params = None
     session = Session(model)
     if runtime == "codex":
-        chosen = args.agent_model or settings["runtimes"]["codex"].get("model")
+        chosen = meta["model"]
         params = parameters(dict(info, runtime="codex", model=chosen), dock["persona_text"](vault, info), workspace)
         if not chosen:
             params.pop("model", None)
