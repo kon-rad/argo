@@ -94,11 +94,11 @@ To uninstall, quit the app and move `AgentDock.app` from Applications to Trash. 
 
 ```bash
 cd addons/agent-dock/app
-./build.sh --vault ~/path/to/vault            # writes build/AgentDock.app
-./build.sh --vault ~/path/to/vault --icon ~/logo.png --install   # your own Dock icon, copied to /Applications
+./build.sh --vault ~/path/to/vault            # writes build/AgentDock.app with the bundled icon
+./build.sh --vault ~/path/to/vault --icon ~/logo.png --install   # override the icon and copy to /Applications
 ```
 
-`--vault` only sets the default; **File > Choose Vault** changes it later. Drag the app to the Dock to keep it there. The build is signed ad hoc for this machine, so build it on each Mac instead of copying the bundle.
+Every normal build includes the Agent Dock aperture-and-dock icon. Pass `--icon` with a square PNG to replace it. `--vault` only sets the default; **File > Choose Vault** changes it later. Drag the app to the Dock to keep it there. The build is signed ad hoc for this machine, so build it on each Mac instead of copying the bundle.
 
 ## Use the CLI
 

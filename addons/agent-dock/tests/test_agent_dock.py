@@ -11,12 +11,27 @@ from pathlib import Path
 import pytest
 
 CLI = Path(__file__).resolve().parents[1] / "bin" / "agent-dock"
+BUILD = Path(__file__).resolve().parents[1] / "app" / "build.sh"
+ICON_SVG = Path(__file__).resolve().parents[1] / "app" / "Resources" / "AgentDockIcon.svg"
+ICON_PNG = Path(__file__).resolve().parents[1] / "app" / "Resources" / "AgentDockIcon.png"
 loader = importlib.machinery.SourceFileLoader("agent_dock", str(CLI))
 spec = importlib.util.spec_from_loader("agent_dock", loader)
 dock = importlib.util.module_from_spec(spec)
 loader.exec_module(dock)
 
 PERSONA = "---\nname: ada\nmodel: some-model\n---\n\n# ada, Head of Research\n\nYou are **ada**. Read your memory file.\n"
+
+
+def test_app_build_packages_a_default_icon_and_keeps_the_override():
+    script = BUILD.read_text()
+    assert ICON_SVG.read_text().startswith("<svg")
+    assert ICON_PNG.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert 'icon="$here/Resources/AgentDockIcon.png"' in script
+    assert '--icon) icon="$2"; shift 2 ;;' in script
+    assert '<key>CFBundleIconFile</key><string>AppIcon</string>' in script
+    assert 'for size in 16 32 128 256 512' in script
+    assert 'icon_${size}x${size}.png' in script
+    assert 'icon_${size}x${size}@2x.png' in script
 
 
 @pytest.fixture

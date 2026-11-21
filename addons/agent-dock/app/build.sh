@@ -9,7 +9,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 vault=""
-icon=""
+icon="$here/Resources/AgentDockIcon.png"
 install=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -31,17 +31,13 @@ cp "$bin" "$app/Contents/MacOS/AgentDock"
 cp "$here/../bin/agent-dock" "$app/Contents/Resources/agent-dock"
 chmod +x "$app/Contents/Resources/agent-dock"
 
-icon_key=""
-if [ -n "$icon" ]; then
-  set_dir="$(mktemp -d)/AppIcon.iconset"
-  mkdir -p "$set_dir"
-  for size in 16 32 128 256 512; do
-    sips -z "$size" "$size" "$icon" --out "$set_dir/icon_${size}x${size}.png" >/dev/null
-    sips -z "$((size * 2))" "$((size * 2))" "$icon" --out "$set_dir/icon_${size}x${size}@2x.png" >/dev/null
-  done
-  iconutil -c icns "$set_dir" -o "$app/Contents/Resources/AppIcon.icns"
-  icon_key="<key>CFBundleIconFile</key><string>AppIcon</string>"
-fi
+set_dir="$(mktemp -d)/AppIcon.iconset"
+mkdir -p "$set_dir"
+for size in 16 32 128 256 512; do
+  sips -z "$size" "$size" "$icon" --out "$set_dir/icon_${size}x${size}.png" >/dev/null
+  sips -z "$((size * 2))" "$((size * 2))" "$icon" --out "$set_dir/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "$set_dir" -o "$app/Contents/Resources/AppIcon.icns"
 
 vault_key=""
 if [ -n "$vault" ]; then
@@ -63,7 +59,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSAppleEventsUsageDescription</key><string>Agent Dock opens a terminal tab for the agent you click.</string>
-$icon_key
+<key>CFBundleIconFile</key><string>AppIcon</string>
 $vault_key
 </dict></plist>
 PLIST
