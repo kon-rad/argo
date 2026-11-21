@@ -8,6 +8,8 @@ it.each(['codex', 'hermes'])('%s shares text and outcome between import and deta
     [{ output: 'permission refused', exit_code: 255 }, true],
     [{ stdout: 'error exit_code: 255\n{"exit_code":255}', exit_code: 0 }, false],
     [[{ type: 'text', text: 'ok' }, { type: 'text', text: '{"exit_code":0}' }], false],
+    [[{ type: 'text', text: '{"exit_code":0}' }, { type: 'text', text: 'ok' }], false],
+    [[{ type: 'text', text: 'ok' }, { structuredContent: { exit_code: 0 } }], false],
     [[{ type: 'text', text: '{"exit_code":0}' }, { type: 'text', text: '{"exit_code":255}' }], true],
     [[{ type: 'text', text: 'ok' }, { type: 'text', text: 'done' }], null],
     [{ output: 'failed timeout cancelled' }, null],

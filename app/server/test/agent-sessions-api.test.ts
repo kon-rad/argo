@@ -287,6 +287,31 @@ it.each(['codex', 'hermes'] as const)('%s replay agrees with list, filter and de
   expect(scoped.scanned).toBe(1);
 });
 
+it.each(['codex', 'hermes'] as const)('%s mixed-block success is persisted and excluded from the error filter', async runtime => {
+  const blocks = [{ type: 'text', text: 'ok' }, { type: 'text', text: '{"exit_code":0}' }];
+  const raw = runtime === 'codex'
+    ? { harness: 'codex', payload: { type: 'function_call_output', call_id: 'mixed-call', output: blocks } }
+    : { role: 'tool', session_id: 'mixed-success', tool_call_id: 'mixed-call', content: JSON.stringify(blocks) };
+  const id = await withTransaction(async tx => {
+    const s = await archive.upsertSession(tx, sess({ source: runtime, externalId: 'mixed-success',
+      startedAt: new Date('2026-10-18T10:00:00Z') }));
+    await archive.upsertMessages(tx, s.id, [m('mixed-result', '2026-10-18T10:00:01Z', raw)]);
+    return s.id;
+  });
+  expect((await query('SELECT is_error FROM archive_messages WHERE session_id=$1', [id])).rows).toEqual([{ is_error: false }]);
+  const all = await list({ harness: runtime });
+  expect(all.status).toBe(200);
+  expect(all.body.sessions.find((s: { id: number }) => s.id === id)).toMatchObject({ errors: 0, unknown_outcomes: 0 });
+  const detail = await request(app).get('/api/usage/agent-sessions/mac/mixed-success').query({ source: runtime });
+  expect(detail.status).toBe(200);
+  expect(detail.body.session).toMatchObject({ errors: 0, unknown_outcomes: 0 });
+  expect(detail.body.steps).toHaveLength(1);
+  expect(detail.body.steps[0]).toMatchObject({ isError: false, text: 'ok\n{\n  "exit_code": 0\n}' });
+  const errors = await list({ harness: runtime, errors: '1' });
+  expect(errors.status).toBe(200);
+  expect(errors.body.sessions.some((s: { id: number }) => s.id === id)).toBe(false);
+});
+
 it('shows recorded run failures when no tool ran without adding tool errors', async () => {
   await query(`DELETE FROM archive_messages WHERE session_id=(SELECT id FROM archive_sessions WHERE external_id='s1')`);
   await query(`INSERT INTO usage_runs (host, run_id, session_id, log_path, runtime, is_error) VALUES

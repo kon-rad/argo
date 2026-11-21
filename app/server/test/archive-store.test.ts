@@ -151,3 +151,25 @@ it('rederives a recorded result after a parser version change with the same SHA'
   expect((await query('SELECT raw_sha, content_text, is_error FROM archive_messages WHERE session_id=$1', [id])).rows[0])
     .toMatchObject({ raw_sha: message.rawSha, content_text: 'denied', is_error: true });
 });
+
+it.each(['codex', 'hermes'] as const)('%s reimports version 1 mixed-block success without changing source identity', async runtime => {
+  await truncateAll();
+  const blocks = [{ type: 'text', text: 'ok' }, { type: 'text', text: '{"exit_code":0}' }];
+  const raw = runtime === 'codex'
+    ? { harness: 'codex', payload: { type: 'function_call_output', call_id: 'mixed-call', output: blocks } }
+    : { role: 'tool', session_id: 'mixed-session', tool_call_id: 'mixed-call', content: JSON.stringify(blocks) };
+  const message = { ...msg(1, 'old text'), raw, rawSha: sha256(JSON.stringify(raw)) };
+  const id = await withTransaction(async tx => {
+    const s = await store.upsertSession(tx, session({ source: runtime }));
+    await store.upsertMessages(tx, s.id, [message]);
+    return s.id;
+  });
+  await query(`UPDATE archive_messages SET result_parser_version=1, is_error=NULL WHERE session_id=$1`, [id]);
+  const identity = () => query('SELECT id, session_id, external_id, seq, ts, raw, raw_sha FROM archive_messages WHERE session_id=$1', [id]);
+  const before = (await identity()).rows;
+  expect(await withTransaction(tx => store.upsertMessages(tx, id, [message]))).toBe(1);
+  expect(await withTransaction(tx => store.upsertMessages(tx, id, [message]))).toBe(0);
+  expect((await identity()).rows).toEqual(before);
+  expect((await query('SELECT content_text, is_error, result_parser_version FROM archive_messages WHERE session_id=$1', [id])).rows[0])
+    .toMatchObject({ content_text: 'ok\n{\n  "exit_code": 0\n}', is_error: false, result_parser_version: 2 });
+});
