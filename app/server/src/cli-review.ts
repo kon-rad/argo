@@ -3,7 +3,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import pg from 'pg';
 import { HostConfig } from './review/adapters.js';
-import { tick } from './review/worker.js';
+import { mergeMode, tick } from './review/worker.js';
 import { join } from 'node:path';
 import { setPrivateLog } from './review/process.js';
 import { stage } from './review/stage.js';
@@ -20,7 +20,7 @@ async function main(): Promise<void> {
   const [action,path] = process.argv.slice(2);
   if (action === 'scope') { process.exitCode = await scopeMain(process.argv.slice(3)); return; }
   if (action === 'fixture') { console.log(JSON.stringify(await runFixture(),null,2)); return; }
-  if (!['tick','stage','retries','register','claim','prepare','ack','retry','cancel','finish','status','reconcile-owner-merge'].includes(action ?? '') || !path) throw new Error('Usage: cli-review fixture | scope ... | tick|stage|retries|register|claim|prepare|ack|retry|cancel|finish|status /absolute/owner-policy.json [argument] | reconcile-owner-merge /absolute/owner-policy.json <card> --pr <n> --merge <sha> --reason "<why>"');
+  if (!['tick','mode','stage','retries','register','claim','prepare','ack','retry','cancel','finish','status','reconcile-owner-merge'].includes(action ?? '') || !path) throw new Error('Usage: cli-review fixture | scope ... | tick|mode|stage|retries|register|claim|prepare|ack|retry|cancel|finish|status /absolute/owner-policy.json [argument] | reconcile-owner-merge /absolute/owner-policy.json <card> --pr <n> --merge <sha> --reason "<why>"');
   // Parse before any connection so a malformed request never touches the database or GitHub.
   const ownerMerge = action === 'reconcile-owner-merge' ? parseOwnerMergeArgs(process.argv.slice(4)) : null;
   const info = await stat(path);
@@ -34,6 +34,7 @@ async function main(): Promise<void> {
   client.on('error',() => process.exit(1));
   try {
     if(ownerMerge){console.log(JSON.stringify(await reconcileOwnerMerge(client,host,ownerMerge)));return;}
+    if(action==='mode'){const card=process.argv[4];if(!card)throw new Error('mode requires a card id');console.log(JSON.stringify(await mergeMode(client,card)));return;}
     if(action==='retries'){console.log(JSON.stringify((await client.query('SELECT review_builder_retries() AS cards')).rows[0].cards));return;}
     if(action==='stage'){console.log(JSON.stringify(await stage(client,host.evidenceRoot,await stdin())));return;}
     if(action==='register'){await registerLaunch(client,await stdin() as never);console.log(JSON.stringify({registered:true}));return;}
@@ -77,6 +78,8 @@ async function main(): Promise<void> {
       console.log(JSON.stringify({submitted:true,head:completionHead}));return;
     }
     if(action==='status'){console.log(JSON.stringify((await client.query('SELECT q.*,f.code,f.reason,f.required_fix,f.verification FROM review_corrections q JOIN review_feedback f ON f.id=q.feedback_id ORDER BY q.id DESC LIMIT 100')).rows));return;}
-    const result=await tick(client,host); const job=result.job; console.log(JSON.stringify({claimed:result.claimed,id:job?.id,state:job?.state,merged:job?.merged,deployed:job?.deployed,error:job?.error})); } finally { await client.end(); }
+    const card=process.argv[4];
+    if(card!==undefined && !/^t_[a-f0-9]{6,32}$/.test(card))throw new Error('tick card must be a card id');
+    const result=await tick(client,host,card); const job=result.job; console.log(JSON.stringify({claimed:result.claimed,id:job?.id,card:job?.card,state:job?.state,mode:job?.mode,merged:job?.merged,deployed:job?.deployed,error:job?.error})); } finally { await client.end(); }
 }
 main().catch(error => { console.error(error instanceof Error ? error.message : 'Review worker failed'); process.exitCode=1; });

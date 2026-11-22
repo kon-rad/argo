@@ -93,6 +93,73 @@ describe('automatic contextual shipping gate', () => {
   });
 });
 
+describe('review mode: builder merge without independent review', () => {
+  // A builder-mode submission whose owner policy currently allows it (io.mode), unless a test changes that.
+  function builder(allowed: () => 'builder' | 'independent' = () => 'builder') {
+    const f = fixture(); f.job.mode = 'builder'; f.job.merge_authorization = null; f.io.mode = async () => allowed(); return f;
+  }
+  it('merges the exact head after required CI with no reviewer call and records an authorization, never a verdict', async () => {
+    const f = builder(); await runReview(f.job, ['test'], f.io); await runReview(f.job, ['test'], f.io);
+    expect(f.counts()).toEqual({ reviews: 0, merges: 1, deploys: 1, completions: 1 });
+    expect(f.job.state).toBe('done'); expect(f.job.verdict).toBeNull();
+    expect(f.job.merge_authorization).toMatchObject({ mode: 'builder', builder: 'builder', head: sha, base, pr: 7, evidence: evidence(snapshot()), checks: ['test'] });
+    expect(f.events).toEqual(['approved', 'merging', 'merged', 'deploying', 'deployed', 'save', 'done']);
+  });
+  it.each([['pending', 'reviewing'], ['fail', 'rejected']] as const)('%s required CI never merges in builder mode (%s)', async (state, expected) => {
+    const f = builder(), s = snapshot(); s.checks[0]!.state = state; f.setCurrent(s);
+    await runReview(f.job, ['test'], f.io);
+    expect(f.job.state).toBe(expected); expect(f.job.merge_authorization ?? null).toBeNull(); expect(f.counts()).toMatchObject({ reviews: 0, merges: 0 });
+  });
+  it.each(['draft', 'behind', 'changesRequested'] as const)('keeps the %s readiness check in builder mode', async flag => {
+    const f = builder(), s = snapshot(); s[flag] = true; f.setCurrent(s);
+    await runReview(f.job, ['test'], f.io); expect(f.job.state).toBe('rejected'); expect(f.counts().merges).toBe(0);
+  });
+  it('an unauthorized builder (policy says independent) goes to the independent reviewer and is persistently tightened', async () => {
+    const f = builder(() => 'independent'); await runReview(f.job, ['test'], f.io);
+    expect(f.job.mode).toBe('independent'); expect(f.counts()).toMatchObject({ reviews: 1, merges: 1 }); expect(f.job.verdict?.decision).toBe('accept');
+  });
+  it('relaxing policy never downgrades an independent submission', async () => {
+    const f = fixture(); f.io.mode = async () => 'builder'; await runReview(f.job, ['test'], f.io);
+    expect(f.counts().reviews).toBe(1); expect(f.job.merge_authorization ?? null).toBeNull(); expect(f.job.verdict?.decision).toBe('accept');
+  });
+  it('a head change after authorization drops it and never merges the stale head', async () => {
+    const f = builder(); const merge = f.io.merge;
+    f.io.beforeShip = async () => { const changed = snapshot(); changed.head = 'd'.repeat(40); f.setCurrent(changed); };
+    await runReview(f.job, ['test'], f.io);
+    expect(f.job.state).toBe('blocked'); expect(f.job.merge_authorization).toBeNull(); expect(f.counts().merges).toBe(0);
+    f.io.beforeShip = undefined; f.io.merge = merge; await runReview(f.job, ['test'], f.io);
+    expect(f.job.state).toBe('done'); expect(f.job.merge_authorization?.head).toBe('d'.repeat(40)); expect(f.counts()).toMatchObject({ reviews: 0, merges: 1 });
+  });
+  it('tightening between authorization and merge withdraws the authorization before any merge write', async () => {
+    let allowed: 'builder' | 'independent' = 'builder';
+    const f = builder(() => allowed); f.io.beforeShip = async () => { allowed = 'independent'; };
+    await runReview(f.job, ['test'], f.io);
+    expect(f.job).toMatchObject({ state: 'reviewing', mode: 'independent', merge_authorization: null, merged: null }); expect(f.counts().merges).toBe(0);
+    await runReview(f.job, ['test'], f.io);
+    expect(f.job.state).toBe('done'); expect(f.job.verdict?.decision).toBe('accept'); expect(f.counts()).toMatchObject({ reviews: 1, merges: 1 });
+  });
+  it('a historical builder merge completes after tightening and keeps its no-review receipt', async () => {
+    let allowed: 'builder' | 'independent' = 'builder';
+    const f = builder(() => allowed); f.io.deploy = async () => { throw new Error('deploy unavailable'); };
+    await runReview(f.job, ['test'], f.io); expect(f.job).toMatchObject({ state: 'blocked', merged });
+    allowed = 'independent'; f.io.deploy = async revision => revision;
+    await runReview(f.job, ['test'], f.io);
+    expect(f.job).toMatchObject({ state: 'done', mode: 'builder', verdict: null }); expect(f.counts()).toMatchObject({ reviews: 0, merges: 1 });
+  });
+  it.each([
+    ['a forged head', { head: 'd'.repeat(40) }], ['another builder', { builder: 'intruder' }], ['other evidence', { evidence: 'e'.repeat(64) }],
+  ] as const)('refuses to deploy a merge whose authorization has %s', async (_, change) => {
+    const f = builder(); f.job.snapshot = snapshot(); f.job.merged = merged; f.job.state = 'merged';
+    f.job.merge_authorization = { mode: 'builder', builder: 'builder', repo: 'example/engine', pr: 7, head: sha, base, evidence: evidence(snapshot()), checks: ['test'], ...change };
+    await runReview(f.job, ['test'], f.io);
+    expect(f.job.state).toBe('blocked'); expect(f.job.error).toContain('no accepted review'); expect(f.counts().deploys).toBe(0);
+  });
+  it('a PR merged outside the worker in builder mode still needs owner reconciliation', async () => {
+    const f = builder(), s = snapshot(); s.merged = merged; f.setCurrent(s);
+    await runReview(f.job, ['test'], f.io); expect(f.job.error).toBe('Unknown prior merge, owner reconciliation required'); expect(f.counts().deploys).toBe(0);
+  });
+});
+
 import { mkdtemp, writeFile, readFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
