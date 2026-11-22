@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { assertLiveDeskHost, bootDesk, reserveReleasedReceipt, type DeskHostRuntime } from './boot.js';
 import { ArcJsonRpcReader } from './settlement/rpc.js';
 import { digest } from '@secondbrain/desk-contracts/desk';
+import { CybazaarIntegration } from '../marketplace/cybazaar-integration.js';
 
 vi.mock('@secondbrain/desk-arkiv/server', () => ({ ServerArkivDeskClient: class {} }));
 
@@ -18,6 +19,16 @@ function rpc(values: Record<string, unknown>) {
 const receipt = { transactionHash: txHash, status: '0x1', blockHash, blockNumber: '0xa', logs: [{ address: token, topics: [`0x${'c'.repeat(64)}`], data: '0x', logIndex: '0x2' }] };
 
 describe('desk production boot boundary', () => {
+  it('starts marketplace polling when NODE_ENV is unset on a deployed server', async () => {
+    vi.stubEnv('NODE_ENV', undefined);
+    const start = vi.spyOn(CybazaarIntegration.prototype, 'startPolling').mockImplementation(() => {});
+    try {
+      const database = { query: vi.fn(), transact: vi.fn(), marketBoard: {} };
+      const desk = await bootDesk(new Set(['desk']), { cybazaarApiOrigin: 'https://market.example.com', cybazaarIntegrationSecret: 'x'.repeat(32) }, undefined, database as never);
+      expect(desk?.marketplace).toBeDefined();
+      expect(start).toHaveBeenCalledOnce();
+    } finally { start.mockRestore(); vi.unstubAllEnvs(); }
+  });
   it('disabled module needs no config, services, navigation or timers', async () => {
     const load = vi.fn();
     expect(await bootDesk(new Set(), { rpcUrl: 'invalid', paymentInterface: 'invalid' }, load)).toBeUndefined();

@@ -1,7 +1,6 @@
-import { lazy, Suspense, type ComponentType } from 'react';
+import { lazy, Suspense } from 'react';
 
-const packageName = '@secondbrain/hiring-desk/web';
-const ExternalDesk = lazy(async () => import(/* @vite-ignore */ packageName) as Promise<{ default: ComponentType }>);
+const ExternalDesk = lazy(() => import('virtual:hiring-desk'));
 
 /** Browser half of the optional package. The module is fetched only when /desk is opened. */
 export default function Desk() {
