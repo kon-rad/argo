@@ -48,7 +48,7 @@ export const warehouseApi = {
   table: (schema: string, name: string) => request<DataTableDetail>(`/warehouse/tables/${encodeURIComponent(schema)}/${encodeURIComponent(name)}`),
   connectors: () => request<{ connectors: DataConnector[]; errors: { name: string; error: string }[] }>('/warehouse/connectors'),
   jobs: () => request<{ jobs: DataJob[] }>('/warehouse/jobs'),
-  dashboards: () => request<{ dashboards: { name: string; title: string; error?: string }[] }>('/warehouse/dashboards'),
+  dashboards: () => request<{ dashboards: { name: string; title: string; area?: string; error?: string }[] }>('/warehouse/dashboards'),
   dashboard: (name: string) => request<{ title: string; description?: string; panels: DataPanel[] }>(`/warehouse/dashboards/${encodeURIComponent(name)}`),
 };
 
