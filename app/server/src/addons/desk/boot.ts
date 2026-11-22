@@ -11,7 +11,7 @@ export interface DeskBootSettings {
   timeoutMs?: string; maxResponseBytes?: string; maxArtifactBytes?: string; publicationDestination?: string;
   marketEnabled?: string; marketEnvelopeSecret?: string; marketArtifactRoot?: string;
   marketBaseRpcUrl?: string; marketProfiles?: string; marketExecutionAgent?: string;
-  cybazaarApiOrigin?: string; cybazaarIntegrationSecret?: string;
+  cybazaarApiOrigin?: string; cybazaarIntegrationSecret?: string; cybazaarAgentMap?: string;
 }
 export interface DeskBoot { public?: unknown; operator?: unknown; market?: unknown; marketplace?: unknown }
 type ExternalRoutes = (context: unknown) => unknown[];
@@ -42,7 +42,7 @@ export async function bootDesk(modules: ReadonlySet<string>, settings: DeskBootS
         try { return (await getCard(id)).card; }
         catch (error) { if (error instanceof BoardError && error.status === 404) return null; throw error; }
       },
-      create: async (input: { id: string; title: string; body: string; contract: { cybazaarJobId: string } | { cybazaarRequestId: string }; assignee: null }) => {
+      create: async (input: { id: string; title: string; body: string; contract: { cybazaarJobId: string } | { cybazaarRequestId: string; cybazaarListingId?: string; cybazaarAgentId?: string | null; localAgent?: string }; assignee: null }) => {
         try { return await createCard(config.orgOwner, { ...input, board: 'exo', kind: 'work' }); }
         catch (error) {
           const db = error as { code?: string; constraint?: string };

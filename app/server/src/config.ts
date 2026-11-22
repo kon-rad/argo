@@ -187,6 +187,7 @@ const Schema = z.object({
   CYBA_EXECUTION_AGENT: z.string().optional(),
   CYBAZAAR_API_ORIGIN: z.string().optional(),
   CYBAZAAR_INTEGRATION_SECRET: z.string().optional(),
+  CYBAZAAR_AGENT_MAP: z.string().optional(),
   // Deprecated (one release): `SUMMARIES=on` used to install the summaries timer; `summaries` is a module now.
   SUMMARIES: z.string().optional(),
   // Shown in the TOTP app and as the comment author on the Agents board.
@@ -448,6 +449,7 @@ export const config = {
     marketExecutionAgent: parsed.data.CYBA_EXECUTION_AGENT,
     cybazaarApiOrigin: parsed.data.CYBAZAAR_API_ORIGIN,
     cybazaarIntegrationSecret: parsed.data.CYBAZAAR_INTEGRATION_SECRET,
+    cybazaarAgentMap: parsed.data.CYBAZAAR_AGENT_MAP,
   },
   ownerName: parsed.data.OWNER_NAME,
   orgOwner: parsed.data.ORG_OWNER,
