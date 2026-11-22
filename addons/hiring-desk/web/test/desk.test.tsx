@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { CONTRACT_VERSION, type Approval, type DeskOperatorApi, type OperatorJob, type Provider, type ReleaseRequest, type WorkerResult } from '@secondbrain/desk-contracts/desk';
 import Desk from '../src/Desk.js';
+import type { CybazaarApi } from '../src/cybazaarApi.js';
+
+// These tests cover the Desk job flow; Cybazaar is not connected (its routes answer 404).
+const notConnected = new Proxy({}, { get: () => async () => ({ ok: false, status: 404, code: 'not_found', message: 'Not found' }) }) as CybazaarApi;
 
 afterEach(() => cleanup());
 
@@ -35,10 +39,10 @@ function fakeApi(initial = makeJob()) {
   return { api, get current() { return current; }, set current(job: OperatorJob) { current = job; } };
 }
 
-async function openJob(api: DeskOperatorApi) {
-  render(<Desk operatorApi={api} />);
+async function openJob(api: DeskOperatorApi, view = 'Inbox') {
+  render(<Desk operatorApi={api} cybazaarApi={notConnected} />);
   await screen.findByText('Hiring Desk');
-  fireEvent.click(screen.getByRole('button', { name: 'Inbox' }));
+  fireEvent.click(screen.getByRole('button', { name: view }));
   const card = await screen.findByRole('button', { name: /research.*(Awaiting operator|Ready for review)/s });
   fireEvent.click(card);
   await screen.findByText('Summarize a public corpus.');
@@ -55,10 +59,10 @@ describe('private hiring Desk', () => {
     window.history.replaceState({}, '', '/desk?job=job-42');
     try {
       const fake = fakeApi();
-      render(<Desk operatorApi={fake.api} />);
+      render(<Desk operatorApi={fake.api} cybazaarApi={notConnected} />);
       await waitFor(() => expect(fake.api.job).toHaveBeenCalledWith('job-42'));
       await screen.findByText('Client-accepted terms');
-      expect(screen.getByRole('button', { name: 'Jobs' }).getAttribute('aria-current')).toBe('page');
+      expect(screen.getByRole('button', { name: 'Inbox' }).getAttribute('aria-current')).toBe('page');
     } finally {
       window.history.replaceState({}, '', '/');
     }
@@ -67,7 +71,7 @@ describe('private hiring Desk', () => {
   it('separates active and review jobs using the current execution status', async () => {
     const fake = fakeApi();
     vi.mocked(fake.api.jobs).mockResolvedValue({ kind: 'ok', value: [makeJob({ id: 'active-job', execution: 'running' }), makeJob({ id: 'review-job', execution: 'review' })] });
-    render(<Desk operatorApi={fake.api} />);
+    render(<Desk operatorApi={fake.api} cybazaarApi={notConnected} />);
     await screen.findByText('Hiring Desk');
     fireEvent.click(screen.getByRole('button', { name: 'Active' }));
     expect(await screen.findByRole('button', { name: /Running/ })).toBeTruthy();
@@ -75,9 +79,8 @@ describe('private hiring Desk', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Review' }));
     expect(await screen.findByRole('button', { name: /Ready for review/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Running/ })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Jobs' }));
-    expect(await screen.findByRole('button', { name: /Running/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Ready for review/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Jobs' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Marketplace' })).toBeNull();
   });
   it('keeps client acceptance separate from operator approval and sends current revision plus idempotency key', async () => {
     const fake = fakeApi();
@@ -117,7 +120,7 @@ describe('private hiring Desk', () => {
     const fake = fakeApi(makeJob({ revision: 6, execution: 'review', result: { artifactHash: 'sha256:old', mediaType: 'text/markdown', artifactRef: 'private://artifact', boundedTrace: 'trace' } }));
     vi.mocked(fake.api.preview).mockResolvedValue({ kind: 'ok', value: { artifactHash: `sha256:${'b'.repeat(64)}`, mediaType: 'text/markdown', artifactRef: '# Result\n\n<script>window.pwned=true</script>', boundedTrace: 'trace' } });
     vi.mocked(fake.api.release).mockImplementation(async (_id, request) => ({ kind: 'ok', value: makeJob({ revision: 7, execution: 'released', result: { ...request, artifactRef: 'private://artifact', boundedTrace: 'trace' } }) }));
-    await openJob(fake.api);
+    await openJob(fake.api, 'Review');
     fireEvent.click(screen.getByRole('button', { name: 'Load private result' }));
     await screen.findByText('Result');
     expect(document.querySelector('script')).toBeNull();
