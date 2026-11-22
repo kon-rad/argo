@@ -16,10 +16,11 @@ import type { DeskPublicControls } from './routes.js';
 import type { DeskPrivateControls } from './operator/routes.js';
 import { createCybazaarBackend, cybazaarConfigSchema, type CybazaarOperationalDependencies } from './runtime.js';
 import { CybazaarIntegration } from '../marketplace/cybazaar-integration.js';
+import { parseAgentMap } from '../marketplace/agent-map.js';
 
 export interface DeskBootSettings {
   marketEnabled?: string; marketEnvelopeSecret?: string; marketArtifactRoot?: string; marketBaseRpcUrl?: string; marketProfiles?: string; marketExecutionAgent?: string;
-  cybazaarApiOrigin?: string; cybazaarIntegrationSecret?: string;
+  cybazaarApiOrigin?: string; cybazaarIntegrationSecret?: string; cybazaarAgentMap?: string;
   domain?: string; chainId?: string; paymentInterface?: string; usdcAddress?: string;
   rpcUrl?: string; publicOrigin?: string; runtimeModule?: string;
   arkivRpcUrl?: string; arkivChainId?: string; arkivPrivateKey?: string; arkivLifetimeBlocks?: string;
@@ -95,7 +96,7 @@ export async function bootDesk(
   const marketplaceConfigured = Boolean(raw.cybazaarApiOrigin || raw.cybazaarIntegrationSecret);
   if (marketplaceConfigured) {
     if (!raw.cybazaarApiOrigin || !raw.cybazaarIntegrationSecret || !database?.marketBoard) throw new Error('Cybazaar marketplace integration requires its HTTPS API origin, integration secret, database, and board adapter.');
-    marketplace = new CybazaarIntegration({ origin: raw.cybazaarApiOrigin, secret: raw.cybazaarIntegrationSecret, database, board: database.marketBoard });
+    marketplace = new CybazaarIntegration({ origin: raw.cybazaarApiOrigin, secret: raw.cybazaarIntegrationSecret, database, board: database.marketBoard, agentMap: parseAgentMap(raw.cybazaarAgentMap) });
     if (process.env.NODE_ENV !== 'test') marketplace.startPolling();
   }
   if (raw.marketEnabled && !['true','false'].includes(raw.marketEnabled)) throw new Error('Invalid CYBA_MARKET_ENABLED');

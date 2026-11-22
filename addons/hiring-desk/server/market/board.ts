@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import { CybaError, type CybaJob } from './types.js';
 
-export interface MarketCard { id: string; status: string; assignee: string | null; contract: { cybazaarJobId?: string; cybazaarRequestId?: string } }
+export interface MarketCard { id: string; status: string; assignee: string | null; contract: { cybazaarJobId?: string; cybazaarRequestId?: string; [key: string]: unknown } }
+/** A marketplace request card records the immutable request, listing and agent identity it was accepted for. */
+export type MarketCardContract = { cybazaarJobId: string } | { cybazaarRequestId: string; cybazaarListingId?: string; cybazaarAgentId?: string | null; localAgent?: string };
 export interface MarketBoardAdapter {
   get(id: string): Promise<MarketCard | null>;
   /** Must create the exact id atomically, returning the existing card on an id collision. */
-  create(input: { id: string; title: string; body: string; contract: { cybazaarJobId: string } | { cybazaarRequestId: string }; assignee: null }): Promise<MarketCard>;
+  create(input: { id: string; title: string; body: string; contract: MarketCardContract; assignee: null }): Promise<MarketCard>;
   assign(id: string, agent: string): Promise<MarketCard>;
   move(id: string, status: string): Promise<MarketCard>;
 }
