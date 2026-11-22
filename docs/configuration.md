@@ -393,6 +393,8 @@ Doctor checks saved local discovery, not remote connectivity. After upload, open
 
 Automatic review is off until the owner enables `review_policy` in PostgreSQL. The standalone worker receives `REVIEW_DB_URL` only in its dedicated service environment and takes an explicit owner-owned host JSON policy path. Repository mappings, required checks, the sole reviewer, note exclusions, subscription transport, registered deployment targets and the optional `notify` program (one line to the owner when a review is rejected or blocked) have no personal defaults. This service does not load the app's vault environment. See [automatic review setup](automatic-review.md).
 
+Whether a gated card needs an independent review before merge is also owner policy in PostgreSQL, not an environment variable: `review_policy.independent_review` (default `true`) and `review_policy.builder_merge_agents` (default empty, so nobody merges without review). See [review mode](automatic-review.md#review-mode).
+
 
 
 ### Codex quotas in a hardened server service
