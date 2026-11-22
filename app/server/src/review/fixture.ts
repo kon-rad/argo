@@ -16,7 +16,7 @@ export async function runFixture(): Promise<unknown> {
       ...(builder ? {mode:async () => 'builder' as const} : {}),
       review:async (_,evidence): Promise<Verdict> => { if (builder) throw new Error('builder mode must not call the reviewer'); return {decision:reject?'reject':'accept',reviewer:'auditor',repo:snapshot.repo,pr:1,head,base,evidence,
         categories:{security:checked(),compatibility:checked(),migrations:checked(),regressions:checked(),scope:checked(),placeholders:checked(),tests:checked()},
-        findings:reject?[{severity:'high',location:'example.ts:1',evidence:'Missing authorization',impact:'Unauthorized write',fix:'Check caller',verification:'Add denial test'}]:[]}; },
+        findings:reject?[{severity:'critical',location:'example.ts:1',evidence:'Missing authorization',impact:'Unauthorized write',fix:'Check caller',verification:'Add denial test'}]:[]}; },
       save:async patch => { Object.assign(job,patch); if(patch.state) events.push(patch.state); },
       reject:async text => { events.push(`builder-send-back: ${text}`); },
       merge:async () => { events.push(`merge-exact:${head}`);return revision; },
