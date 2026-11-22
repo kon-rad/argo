@@ -3,10 +3,17 @@ import XCTest
 @testable import AgentDock
 
 final class VoiceTests: XCTestCase {
+    @MainActor func testInputStatusSeparatesQuietSamplesFromMissingCapture() {
+        XCTAssertTrue(VoiceController.inputStatus(route: "USB", now: 12, lastFrameTime: 0, lastLoudTime: 0).hasPrefix("No microphone frames"))
+        XCTAssertTrue(VoiceController.inputStatus(route: "USB", now: 12, lastFrameTime: 5, lastLoudTime: 5).hasPrefix("No microphone frames"))
+        XCTAssertTrue(VoiceController.inputStatus(route: "USB", now: 12, lastFrameTime: 12, lastLoudTime: 7).hasPrefix("Microphone quiet"))
+        XCTAssertEqual(VoiceController.inputStatus(route: "USB", now: 12, lastFrameTime: 12, lastLoudTime: 11), "Listening · USB")
+    }
+
     func testScopedCommands() {
         XCTAssertEqual(VoiceCommand.allCases.compactMap(\.key), ["v", "m", "s"])
         XCTAssertEqual(VoiceCommand.modifiers, [.control, .option, .command])
-        XCTAssertEqual(VoiceCommand.toggle.title(.idle), "Start Voice")
+        XCTAssertEqual(VoiceCommand.toggle.title(.idle), "Pause / Resume Voice")
         XCTAssertEqual(VoiceCommand.toggle.title(.live), "Pause Voice")
         XCTAssertEqual(VoiceCommand.toggle.title(.paused), "Resume Voice")
         XCTAssertFalse(VoiceCommand.mute.enabled(.paused))

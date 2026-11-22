@@ -29,7 +29,7 @@ All four harnesses get the same agent: the persona file the roster names (`promp
 | Hermes | `hermes chat -m <model> --provider <provider> --base-url <url> -q "<persona>"` | The opening message. See "Hermes: provider and model" below |
 | zen-agent | `zen-agent chat --persona <name> --model <provider/model>` | By name: zen-agent builds the prompt itself from the roster, the definition file and the memory file |
 
-The model is, in order: `--model` on the command line, the roster's model when the roster runs that agent on the same harness, then the setting. A roster model for another harness is never passed on (a Codex model name would stop Claude Code from starting).
+For Codex, both text and voice use the model you explicitly select, then the Agent Dock Codex setting, then the Codex CLI default. Your selected persona supplies its instructions. Other harnesses use an explicit choice, then the matching roster model, then the harness setting.
 
 The agent runs in the vault folder, through your login shell, so it sees the same `PATH`, keys, hooks and permission rules as one you type by hand. Agent Dock adds no permissions and removes none.
 
@@ -176,14 +176,14 @@ build/AgentDock.app/Contents/MacOS/AgentDock --snapshot /tmp/dock   # draws each
 
 Build the native app with `app/build.sh --install` from this directory. Voice needs Ghostty with AppleScript enabled, a signed-in Codex CLI with the v2 app-server protocol, an installed system speech voice and a cached recognizer. The bundle includes the Python worker and replay fixtures. Voice is off until started. No speech weights are downloaded.
 
-1. Choose the vault in Agent Dock. Click **Start Voice** on a registered Codex persona and select the root of a linked Git worktree. From the CLI, `bin/agent-dock voice guide --workspace "$PWD"` opens the same setup using the app's selected vault.
-2. Select a recognition model and speech voice. Grant Agent Dock microphone access. The worker must transcribe the bundled violet sample and open a Ghostty session before the mic goes live. macOS may ask for permission to automate Ghostty.
+1. On the desired persona card, check **Voice Mode**. Click its gear to select recognition and playback. Click the harness button (Codex, Claude, Hermes or Zen) on that same card. Its model menu overrides the harness default. Unchecked launches keep the normal terminal flow.
+2. Grant microphone access to Dock. Its top strip shows recent input levels while the harness prepares. Begin speaking once the harness is ready. The single upper-right info menu lists voice shortcuts. Codex streams tool events and approval prompts. The CLI adapters for Claude, Hermes and Zen run individual turns and use each harness's returned session ID for continuation; these adapters show the reply when its turn finishes.
 3. Speak, then leave a short pause. Ghostty updates one draft line, submits one final and streams the original reply, commands, output and diffs. Agent Dock speaks sentences from the opening paragraph. For a pending approval, inspect its details in Ghostty and type `allow ID` or `deny ID`.
 4. Speak over a reply to silence playback. During a task, “what is the current status?” reads the last runtime event locally. Other speech steers the active turn. **Stop Task** explicitly requests a Codex interruption. **End Voice** closes the session. Closing Ghostty or losing the worker ends capture. Starting again creates a fresh ephemeral thread.
 
 | Agent Dock Voice command | App-scoped shortcut | Effect |
 |---|---|---|
-| Start / Pause / Resume Voice | Control + Option + Command + V | Pause capture and playback together. Resume restores the earlier mute state. |
+| Pause / Resume Voice | Control + Option + Command + V | Pause capture and playback together. Resume restores the earlier mute state. |
 | Mute / Unmute Mic | Control + Option + Command + M | Toggle capture while the task and reply continue. |
 | Silence Reply | Control + Option + Command + S | Stop speech and discard remaining audio for that reply. |
 | Stop Task / End Voice | Menu only | Interrupt the active turn / release the session. |
@@ -200,11 +200,11 @@ The shortcuts work while Agent Dock has focus. Use its microphone menu-bar item 
 | Local Kokoro synthesis | Choose Kokoro · Bella with the MLX Audio Python runtime and cached mlx-community/Kokoro-82M-bf16 snapshot including voices/af_bella.safetensors. The renderer loads once per session and runs with Hugging Face offline mode. Use an existing uv tool installation of mlx-audio, or install mlx-audio in a virtual environment at `~/Library/Application Support/AgentDockVoice/kokoro`. |
 | System synthesis | Pick an installed macOS voice. Synthesis speed and intelligibility are independently unmeasured. |
 
-Recognition uses rolling batch decodes and a final decode after about 700 ms of quiet, with a 25-second utterance limit. The mic uses macOS voice processing and an energy threshold. Cached files are opened read-only. The app remembers the model path, extra search folder, workspace and output voice in its local preferences. Model availability is checked on each start.
+Recognition uses rolling batch decodes and a final decode after about 700 ms of quiet, with a 25-second utterance limit. The mic uses macOS voice processing and an energy threshold. Cached files are opened read-only. The app remembers the model path, extra search folder and output voice in its local preferences. Model availability is checked on each start.
 
 Only a SHA-256 match to the pinned Q8_0 file with Handy 0.10.1 receives the Handy ratings. English FLEURS test error is 3.99%. Reference throughput is 13.955 audio seconds per wall second on CPU and 25.28 on Vulkan, both on a Ryzen 4750U. The speed bar compares these two reference backends. Accuracy shows the complement of test error. Other variants, versions and adapters display Unrated. The source snapshot, engine revision and units are in [handy-reference.json](voice/handy-reference.json).
 
-A fresh Codex process reads the registered persona and model from the chosen vault's compiled roster. A private terminal socket lives in an owner-only temporary directory. The worker requests read-only access unless the roster allows both Edit and Write with acceptEdits. A general shell requires an unrestricted Bash entry. Command-specific Bash grants stay disabled in this adapter. The worker checks the effective workspace, model, sandbox and approval policy before capture. The worktree scopes edits. Codex's platform sandbox governs filesystem reads. Only finalized transcripts go to Codex. Hosted text inference and tool use can incur the configured provider's charges.
+A fresh Codex process reads the registered persona and model from the chosen vault's compiled roster. A private terminal socket lives in an owner-only temporary directory. The worker requests read-only access unless the roster allows both Edit and Write with acceptEdits. A general shell requires an unrestricted Bash entry. Command-specific Bash grants stay disabled in this adapter. The worker checks the effective workspace, model, sandbox and approval policy before capture. The selected working folder scopes edits. Codex's platform sandbox governs filesystem reads. Only finalized transcripts go to Codex. Hosted text inference and tool use can incur the configured provider's charges.
 
 ### Enable cached Parakeet on Apple silicon
 
@@ -218,6 +218,8 @@ git -C "$src" submodule update --init --recursive
 cmake -S "$src" -B "$src/build" -DCMAKE_BUILD_TYPE=Release -DTRANSCRIBE_BUILD_SHARED=ON
 cmake --build "$src/build" --target transcribe -j 4
 ```
+
+During a live session the main Agent Dock window displays recent microphone levels and the selected macOS input name. Use **Sound input…** to select a different default input. Dock checks for input-device changes while listening and reopens capture on the new input. Muting or pausing clears the meter. The info icon lists the commands and their shortcuts.
 
 ### Doctor, replay and physical qualification
 
@@ -242,3 +244,12 @@ Repeat on a signed-in M4 and M1 separately. Record macOS, app revision, model re
 2. Ask for status during a longer test, then correct a request during speech. Focus another app, talk over the speaker, and check that no old sentence resumes. Use the menu to mute, pause, resume and explicitly stop. Inspect the actual task completion or interruption in Ghostty.
 3. End voice, start the read-only `writer` on its own worktree, and ask for the marker. Expect silver and a fresh thread. Close Ghostty during capture. Confirm the mic closes and reconnect performs zero edits. Quit and reopen Dock, verify the saved selections, then remove the test app to check uninstall.
 4. Capture the mic and physical speaker on a common-clock recording. Time speech end to first useful audible clause and interruption onset to silence. Ghostty prints native monotonic timestamps for endpoint receipt, final, clause, synthesizer start and stop request. Compare these with the recording. Score source/fact correctness and isolation separately from ASR word error. Report sample count, failures, median, p95 and any timeouts per host, keeping cold starts separate. The plan targets warm p95 below two seconds to useful audio and 300 ms to silence.
+
+### Voice capture smoke check
+
+1. Build the signed bundle with `cd app && ./build.sh` and verify it with `codesign --verify --deep --strict build/AgentDock.app`. Quit Agent Dock only when the existing voice session is finished, then install the bundle using `./build.sh --install`.
+2. Select a vault and persona, check Voice Mode, and click Codex without choosing an alternate folder. Check Ghostty reports the selected vault and the expected sandbox.
+3. Speak a short sentence. Check the input route and level in the menu bar, confirm a transcript appears in Ghostty, and confirm the agent responds. Mute the input or lower its level and check the quiet guidance; disconnect the input and check the no-frames guidance.
+4. Mute, pause, resume, and unmute. Confirm no capture warnings occur while muted or paused and that the task continues until explicitly stopped. Check the shortcut reference beside Voice controls.
+
+The route displayed is the system default audio input. A fixture replay or signed build does not establish physical microphone operation.

@@ -22,6 +22,7 @@ struct AgentDockApp: App {
                 .frame(minWidth: 760, minHeight: 520)
                 .onAppear {
                     store.start()
+                    if voice.models.isEmpty { voice.loadModels() }
                     SelfCheck.runIfAsked(store)
                 }
         }
@@ -35,6 +36,7 @@ struct AgentDockApp: App {
         }
         MenuBarExtra(isInserted: Binding(get: { voice.phase != .idle || !voice.problem.isEmpty }, set: { _ in })) {
             Text(voice.micLabel + " · " + voice.taskLabel)
+            if voice.phase == .live { Text(voice.captureStatus); Text("Input level: \(Int(voice.inputLevel * 100))%") }
             Text(voice.playing.isEmpty ? "Playback quiet" : "Speaking: " + voice.playing)
             if !voice.draft.isEmpty { Text(voice.draft) }
             if !voice.problem.isEmpty {
@@ -63,6 +65,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if voice.phase != .idle { VoiceInputMonitor(voice: voice) }
             if !voice.problem.isEmpty { Banner(text: voice.problem, tint: .orange) { Button("Dismiss") { voice.problem = "" } } }
             if let problem = store.problem {
                 Banner(text: problem, tint: .orange) {
@@ -79,6 +82,7 @@ struct ContentView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) { VoiceShortcutInfo() }
             ToolbarItem(placement: .principal) {
                 Picker("View", selection: $store.pane) {
                     ForEach(Pane.allCases) { p in

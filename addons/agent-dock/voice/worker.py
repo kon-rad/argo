@@ -6,6 +6,8 @@ import base64
 import contextlib
 import json
 import platform
+import os
+from cli_voice import CLIHarness
 from pathlib import Path
 import runpy
 import socket
@@ -28,9 +30,8 @@ dock = runpy.run_path(str(cli if cli.is_file() else HERE.parent / "bin/agent-doc
 
 def workspace_root(workspace):
     path = Path(workspace).resolve(strict=True)
-    root = subprocess.check_output(["git", "-C", str(path), "rev-parse", "--show-toplevel"], text=True).strip()
-    if Path(root).resolve() != path or not (path / ".git").is_file():
-        raise ValueError("Choose the root of a linked Git worktree")
+    if not path.is_dir():
+        raise ValueError("Choose an existing folder")
     return path
 
 
@@ -94,7 +95,7 @@ class Session:
     async def recognize(self, data):
         try:
             return await decode_pcm(self.model, data)
-        except (ValueError, OSError, KeyError, asyncio.TimeoutError) as error:
+        except Exception as error:
             self.emit("disconnect", f"Recognition stopped: {error}")
             raise
 
@@ -115,6 +116,8 @@ class Session:
                         self.preview.cancel()
                     self.job(self.decode(event, self.uid, data, self.utterance_generation)).set_name("decode-final")
                     self.uid = None
+        elif kind == "captureStatus":
+            self.emit("capture", msg["text"])
         elif kind == "captureOff":
             self.reset_capture()
         elif kind == "silence":
@@ -146,7 +149,7 @@ class Session:
             self.emit("disconnect", "Ghostty closed")
 
     async def inputs(self):
-        reader = asyncio.StreamReader()
+        reader = asyncio.StreamReader(limit=8 * 1024 * 1024)
         transport, _ = await asyncio.get_running_loop().connect_read_pipe(
             lambda: asyncio.StreamReaderProtocol(reader), sys.stdin.buffer)
         try:
@@ -172,8 +175,12 @@ class Session:
                         if await launch.wait():
                             raise ValueError("Ghostty did not open")
                         await asyncio.wait_for(self.attached.wait(), 20)
-                        await self.harness.start(exe, params)
-                        self.emit("ready", "Listening")
+                        try:
+                            await self.harness.start(exe, params)
+                        except Exception as error:
+                            self.emit("error", f"Codex startup failed: {error}")
+                            raise
+                        self.emit("ready", "Recognizer ready; waiting for microphone")
                     setup_task = asyncio.create_task(setup())
                     stop_task = asyncio.create_task(self.stopped.wait())
                     try:
@@ -223,6 +230,9 @@ async def main():
     for name in ("models", "doctor", "session"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--folder")
+        cmd.add_argument("--runtime", choices=("codex","claude","hermes","zen"), default="codex")
+        for flag in ("--agent-model", "--provider", "--base-url"):
+            cmd.add_argument(flag, default="")
         if name != "models":
             cmd.add_argument("--model", required=True)
             cmd.add_argument("--workspace", required=True)
@@ -243,10 +253,25 @@ async def main():
     vault = dock["find_vault"](args.vault)
     settings = dock["load_settings"](vault)
     info = dock["agent_info"](vault, settings, args.agent)
-    params = parameters(info, dock["persona_text"](vault, info), workspace)
-    exe = dock["resolve_command"](settings["runtimes"]["codex"]["command"])
+    runtime = args.runtime
+    argv, meta = dock["build_runtime_command"](args.agent, info, runtime, settings, vault,
+        model=args.agent_model or None, provider=args.provider or None, base_url=args.base_url or None)
+    exe = dock["resolve_command"](argv[0])
     if not exe:
-        raise ValueError("Codex is missing")
+        raise ValueError(f"{runtime} is missing")
+    argv[0] = exe
+    params = None
+    session = Session(model)
+    if runtime == "codex":
+        chosen = meta["model"]
+        params = parameters(dict(info, runtime="codex", model=chosen), dock["persona_text"](vault, info), workspace)
+        if not chosen:
+            params.pop("model", None)
+    else:
+        env = dock["child_env"](os.environ, args.agent, runtime)
+        env.update(meta.get("env", {}))
+        session.harness = CLIHarness(session.emit, runtime, argv, env, workspace,
+            f"{args.agent} · {runtime} · {meta.get('model') or 'harness default'} · {workspace}")
     if args.action == "doctor":
         errors = []
         print("Host:", platform.machine(), platform.mac_ver()[0], flush=True)
@@ -268,19 +293,22 @@ async def main():
                 print("System voice:", frames, "frames", flush=True)
             except (OSError, EOFError, wave.Error, ValueError, subprocess.TimeoutExpired) as error:
                 errors.append(f"System voice: {error}")
-        status = await asyncio.create_subprocess_exec(exe, "login", "status")
-        if await status.wait():
-            errors.append("Codex login unavailable")
+        if runtime == "codex":
+            status = await asyncio.create_subprocess_exec(exe, "login", "status")
+            if await status.wait():
+                errors.append("Codex login unavailable")
+            else:
+                harness = Codex(lambda kind, text: print(kind, text))
+                try:
+                    await harness.start(exe, params)
+                finally:
+                    await harness.close()
         else:
-            harness = Codex(lambda kind, text: print(kind, text))
-            try:
-                await harness.start(exe, params)
-            finally:
-                await harness.close()
+            print(f"{runtime}: found {exe}; login and inference require a real turn")
         if errors:
             raise ValueError("; ".join(errors))
         return
-    await Session(model).run(exe, params)
+    await session.run(exe, params)
 
 
 if __name__ == "__main__":
