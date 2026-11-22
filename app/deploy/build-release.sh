@@ -25,7 +25,20 @@ mkdir -p "$STAGE" "$OLD"
 rsync -a --delete --exclude node_modules --exclude dist --exclude /data --exclude .git "$APP_DIR/" "$STAGE/"
 
 echo "→ installing and building in $STAGE"
-(cd "$STAGE" && bash -c "$INSTALL" && bash -c "$BUILD")
+(cd "$STAGE" && bash -c "$INSTALL")
+# Preserve an explicitly installed optional addon across npm ci. The staged web
+# build must see it, and the staged server must retain it after the swap.
+DESK_REAL="$(cd "$APP_DIR" && node --input-type=module -e 'try { const { fileURLToPath } = await import("node:url"); const { dirname } = await import("node:path"); console.log(dirname(dirname(dirname(fileURLToPath(import.meta.resolve("@secondbrain/hiring-desk/server")))))); } catch (error) { if (error.code !== "ERR_MODULE_NOT_FOUND") throw error; }')"
+if [ -n "$DESK_REAL" ]; then
+  DESK_REAL="$(cd "$DESK_REAL" && pwd -P)"
+  if [[ "$DESK_REAL" == "$APP_DIR/node_modules/"* ]]; then
+    echo "✗ Hiring Desk must be installed outside the app node_modules before release" >&2
+    exit 1
+  fi
+  mkdir -p "$STAGE/node_modules/@secondbrain"
+  ln -s "$DESK_REAL" "$STAGE/node_modules/@secondbrain/hiring-desk"
+fi
+(cd "$STAGE" && bash -c "$BUILD")
 
 # The workspace links in node_modules are relative (node_modules/@secondbrain/contracts -> ../../shared), so the
 # stage resolves exactly as the live tree will after the swap. `help` loads each CLI's whole import graph and needs

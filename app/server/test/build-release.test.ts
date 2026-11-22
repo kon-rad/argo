@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -44,6 +44,19 @@ const cli = (app: string, name: string, ...args: string[]) =>
   spawnSync('node', [join(app, 'server/dist', name), ...args], { encoding: 'utf8', cwd: app });
 
 describe('deploy/build-release.sh', () => {
+  it('preserves the separately installed Desk addon during the build and after the swap', () => {
+    const app = liveApp();
+    const addon = mkdtempSync(join(tmpdir(), 'sb-desk-addon-'));
+    write(join(addon, 'package.json'), '{"name":"@secondbrain/hiring-desk","type":"module","exports":{"./server":"./dist/server/index.js"}}');
+    write(join(addon, 'dist/server/index.js'), 'export {};');
+    mkdirSync(join(app, 'node_modules/@secondbrain'), { recursive: true });
+    symlinkSync(addon, join(app, 'node_modules/@secondbrain/hiring-desk'));
+    const build = `test -f node_modules/@secondbrain/hiring-desk/package.json && mkdir -p server/dist && for c in cli-org.js cli-memory.js; do printf "import { version } from 'dep';\\nconsole.log(version);\\n" > server/dist/$c; done`;
+    const r = run(app, `mkdir -p node_modules/dep && cp '${join(app, 'node_modules/dep/package.json')}' node_modules/dep/ && cp '${join(app, 'node_modules/dep/index.js')}' node_modules/dep/`, build);
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(existsSync(join(app, 'node_modules/@secondbrain/hiring-desk/package.json'))).toBe(true);
+  });
   it('installs and builds in a stage while the live tree keeps working, then swaps the new build in', () => {
     const app = liveApp();
     // The install runs in data/release, and fails the release unless the live CLI still loads v1 at that moment.
