@@ -13,6 +13,8 @@ secondbrain doctor
 
 Add `desk` to the enabled modules. Configure the ordinary Desk runtime separately if its private work queue is needed. Cybazaar marketplace polling uses only the settings below and does not require Cybazaar tables in the Second Brain database.
 
+The web application bundles the installed addon when the app is built. Install the addon outside the app's `node_modules` and link it into `app/node_modules/@secondbrain/hiring-desk` before a staged release; the release builder preserves that link. Rebuild and restart after updating the addon. When the addon is absent, the Desk page reports that it is not installed.
+
 ## Cybazaar marketplace connection
 
 Set these server-only values in the Second Brain environment:
