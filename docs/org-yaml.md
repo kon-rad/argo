@@ -22,6 +22,8 @@ org.yaml  --(compile)-->  org-agents.json   (per-bot limits, tools, prompts)   r
 
 A vault that ships the `org-runtime` skill does steps 2 and 3 on the server with its `refresh` command.
 
+When the full import document has an unrelated invalid runtime/model pair, the owner can sync one agent's capabilities from the compiled file with `cli-org capabilities sync <agent> <import document>`. This command validates that agent's capability names and updates only its `org_agents.capabilities` field. It leaves all other roster fields and agents untouched, and refuses bot-run calls. It is a narrow repair path; fix the invalid runtime/model entries before the next full import.
+
 ## Top-level keys
 
 | Key | What it holds |
@@ -33,7 +35,7 @@ A vault that ships the `org-runtime` skill does steps 2 and 3 on the server with
 | `channels` | Shared channels: `members` (`"*"`, team names, or agent names), `purpose`, optional `classification` and `compartments` |
 | `wake_rules` | When a message wakes a bot (next section) |
 
-An agent needs `role`, `team` and `reports_to` (its team lead or the CEO). Optional: `runtime` (`claude-code`, `hermes`, `codex`, `zen-agent`, `human`), `model`, `capabilities` (`code`, `review`, `merge`, `deploy`, `m1`, `web`, `dispatch`), `expertise`, `work`, `channels`, `avatar` and `avatar_prompt` (below), and the per-agent overrides of `wakes_per_day`, `cooldown_minutes` and `max_runtime`. A `codex` agent must name an exact CLI model id and have a ChatGPT subscription CLI login on the dispatcher host; the dispatcher checks both before claiming work (see [addons](addons.md)).
+An agent needs `role`, `team` and `reports_to` (its team lead or the CEO). Optional: `runtime` (`claude-code`, `hermes`, `codex`, `zen-agent`, `human`), `model`, `capabilities` (`code`, `review`, `merge`, `deploy`, `m1`, `web`, `dispatch`, `scoped-release`), `expertise`, `work`, `channels`, `avatar` and `avatar_prompt` (below), and the per-agent overrides of `wakes_per_day`, `cooldown_minutes` and `max_runtime`. `scoped-release` requires a separate owner-installed repository or deployment target allowlist that names the agent; this engine does not itself grant a target. A `codex` agent must name an exact CLI model id and have a ChatGPT subscription CLI login on the dispatcher host; the dispatcher checks both before claiming work (see [addons](addons.md)).
 
 ## Avatars
 

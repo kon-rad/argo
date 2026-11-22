@@ -651,12 +651,12 @@ export interface AgentSessionRun {
 export interface AgentSessionFilters {
   harness?: string[]; host?: string[]; profile?: string[]; provider?: string[]; channel?: string[]; tool?: string[];
   type?: string[]; persona?: string[];
-  q?: string; errors?: boolean; subagents?: boolean;
+  q?: string; errors?: boolean; subagents?: boolean; cron?: boolean;
 }
 export type AgentSessionFacets = Record<'harness' | 'host' | 'profile' | 'provider' | 'channel' | 'tool', Array<{ value: string; n: number }>> & Partial<Record<'type' | 'persona', Array<{ value: string; n: number }>>>;
 const agentParams = (f: AgentSessionFilters): Params => ({
   harness: f.harness?.join(','), host: f.host?.join(','), profile: f.profile?.join(','), provider: f.provider?.join(','),
-  channel: f.channel?.join(','), type: f.type?.join(','), persona: f.persona?.join(','), tool: f.tool?.join(','), q: f.q, errors: f.errors ? '1' : undefined, subagents: f.subagents ? '1' : undefined,
+  channel: f.channel?.join(','), type: f.type?.join(','), persona: f.persona?.join(','), tool: f.tool?.join(','), q: f.q, cron: f.cron ? '1' : undefined, errors: f.errors ? '1' : undefined, subagents: f.subagents ? '1' : undefined,
 });
 
 export interface UsageMessage {
