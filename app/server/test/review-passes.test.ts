@@ -23,7 +23,7 @@ function large(count: number, chars: number): Snapshot {
       ...paths.map(p => src(`github:source:${head}:${p}`, p.padEnd(chars, 'x'))), src(`github:source:${head}:src/imported.ts`, 'export const shared = 1;')] };
 }
 const checked = (ref = 'ticket') => ({ status: 'checked' as const, evidence: [ref], rationale: 'Verified against the ticket and tests' });
-const verdict = (e: string, findings: Verdict['findings'] = []): Verdict => ({ decision: findings.length ? 'reject' : 'accept', reviewer: 'auditor', repo: 'example/engine', pr: 7, head, base, evidence: e,
+const verdict = (e: string, findings: Verdict['findings'] = []): Verdict => ({ decision: findings.some(f => f.severity === 'critical') ? 'reject' : 'accept', reviewer: 'auditor', repo: 'example/engine', pr: 7, head, base, evidence: e,
   categories: { security: checked(), compatibility: checked(), migrations: checked(), regressions: checked(), scope: checked(), placeholders: checked(), tests: checked() }, findings });
 const finding = (severity: 'critical' | 'high' | 'medium' | 'low', location: string) => ({ severity, location, evidence: 'Observed defect', impact: 'Breaks callers', fix: 'Fix it', verification: 'Rerun the test' });
 
@@ -329,6 +329,11 @@ describe('PR size never rejects a review', () => {
     expect(rejected.findings.map(f => f.location)).toEqual(['a.ts:9', 'b.ts:1']);
   });
 
+  it('accepts advisories across passes and retains them', async () => {
+    const s = large(96, 10000), e = evidence(s);
+    const result = await reviewInPasses(s, e, async (_part, bound, pass) => verdict(bound, [finding(pass.index === 1 ? 'high' : 'low', `file:${pass.index}`)]));
+    expect(result.decision).toBe('accept'); expect(result.findings.length).toBeGreaterThan(1);
+  });
   it('fails the whole review when one pass fails or answers for another revision, so nothing is accepted half-read', async () => {
     const s = large(96, 20_000), e = evidence(s);
     await expect(reviewInPasses(s, e, async (_p, bound, pass) => { if (pass.index === 2) throw new Error('Reviewer did not finish'); return verdict(bound); })).rejects.toThrow('Reviewer did not finish');
@@ -336,12 +341,9 @@ describe('PR size never rejects a review', () => {
     await expect(reviewInPasses(s, e, async (_p, bound, pass) => ({ ...verdict(bound), decision: pass.index === 1 ? 'reject' : 'accept' }))).rejects.toThrow(/contradicts/);
   });
 
-  it('keeps the 30 most severe findings and says how many were left for the next round', () => {
+  it('fails closed rather than dropping findings over durable capacity', () => {
     const many = [verdict('e'.repeat(64), Array.from({ length: 20 }, (_, i) => finding('low', `low:${i}`))), verdict('e'.repeat(64), Array.from({ length: 20 }, (_, i) => finding('high', `high:${i}`)))];
-    const merged = mergeVerdicts(many);
-    expect(merged.findings).toHaveLength(30);
-    expect(merged.findings.slice(0, 20).every(f => f.severity === 'high')).toBe(true);
-    expect(merged.findings[29]!.evidence).toContain('10 further lower-ranked findings');
+    expect(() => mergeVerdicts(many)).toThrow(/capacity/);
   });
 
   it('runs the gate end to end on a 96-file PR: reviewed in passes, accepted, merged and deployed', async () => {

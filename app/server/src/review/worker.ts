@@ -133,7 +133,7 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
         verifyMerge:(s,revision)=>github.confirmMerge(job.card,s,revision),
         mayShip:async()=>{const p=(await client.query('SELECT * FROM review_policy')).rows[0];return p?.enabled===true && p.shipping_enabled===true;},
         review:(s,e) => reviewInPasses(s,e,(part,evidenceHash,pass)=>codexReview(host,job.reviewer,part,evidenceHash,pass)),save,
-        reject:async text => { await github.reject(job.snapshot!.pr,job.id,text); },
+        reject:async (text, advisory, evidenceHash) => { await github.reject(job.snapshot!.pr,job.id,text,advisory,evidenceHash); },
         merge:s => github.merge(job.card,s),
         deploy:async revision => {
           if (!(await deploy(host,job.target,'deploy',revision,String(job.id)))) throw new Error('Deployment health failed');
