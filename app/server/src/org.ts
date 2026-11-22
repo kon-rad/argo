@@ -352,7 +352,7 @@ export async function syncAgentCapabilities(input: unknown, name: string, by: st
   const source = z.object({ agents: z.record(Name, z.unknown()) }).parse(input);
   const raw = source.agents[name];
   if (!raw) throw new OrgError(`agent ${name} is missing from the org file`);
-  const { capabilities } = z.object({ capabilities: z.array(OrgCapability) }).parse(raw);
+  const { capabilities } = z.object({ capabilities: z.array(OrgCapability).default([]) }).parse(raw);
   const after = [...new Set(capabilities)];
   return withTransaction(async (tx) => {
     const { rows } = await tx.query<{ capabilities: string[] }>(

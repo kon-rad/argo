@@ -158,6 +158,8 @@ describe('import', () => {
     expect(await syncAgentCapabilities(source, 'rune', 'owner')).toEqual({ before: [], after: ['code', 'scoped-release'] });
     expect((await getAgent('rune')).capabilities).toEqual(['code', 'scoped-release']);
     expect(await getAgent('lena')).toEqual(beforeLena);
+    expect(await syncAgentCapabilities(ORG, 'rune', 'owner')).toEqual({ before: ['code', 'scoped-release'], after: [] });
+    expect((await getAgent('rune')).capabilities).toEqual([]);
     await expect(syncAgentCapabilities({ ...source, agents: { ...source.agents, rune: { ...ORG.agents.rune, capabilities: ['unknown'] } } }, 'rune', 'owner'))
       .rejects.toThrow();
   });
