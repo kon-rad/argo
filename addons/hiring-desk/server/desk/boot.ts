@@ -96,7 +96,7 @@ export async function bootDesk(
   if (marketplaceConfigured) {
     if (!raw.cybazaarApiOrigin || !raw.cybazaarIntegrationSecret || !database?.marketBoard) throw new Error('Cybazaar marketplace integration requires its HTTPS API origin, integration secret, database, and board adapter.');
     marketplace = new CybazaarIntegration({ origin: raw.cybazaarApiOrigin, secret: raw.cybazaarIntegrationSecret, database, board: database.marketBoard });
-    if (process.env.NODE_ENV === 'production') marketplace.startPolling();
+    if (process.env.NODE_ENV !== 'test') marketplace.startPolling();
   }
   if (raw.marketEnabled && !['true','false'].includes(raw.marketEnabled)) throw new Error('Invalid CYBA_MARKET_ENABLED');
   let market: MarketControls | undefined;
