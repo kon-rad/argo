@@ -287,3 +287,7 @@ These are enforced by tests and hold across the codebase.
 ### Themed roadmap
 
 `secondbrain projects roadmap [path]` renders configured `roadmap.themes` from the master board and tracker into a markdown file. Themes select whole `areas`, individual `projects` as `area/project`, card IDs, or title keywords. Configure `roadmap.boards` with existing board slugs and `roadmap.file` with the output path. Unknown boards or a failed read stop without writing. Existing handwritten files are never replaced. The projects manifest installs the hourly roadmap timer.
+
+### Usage session filters
+
+On Usage → Sessions, search by full or partial session ID, title, or transcript text. Select **cron jobs** to show sessions with a recorded cron launch trigger or Hermes cron source. Filters apply within the selected time range and can be combined. Sessions without recorded cron attribution are not included.

@@ -122,9 +122,17 @@ describe('agent sessions api', () => {
     expect(await ids({ tool: 'terminal' })).toEqual(['h1']);
     expect(await ids({ errors: '1' })).toEqual(['s1']);
     expect(await ids({ q: 'stand-up' })).toEqual(['h1']);
+    expect(await ids({ q: 'S1' })).toEqual(['s1']);
+    expect(await ids({ q: 'not-an-id' })).toEqual([]);
     expect(await ids({ q: 'sub found' })).toEqual(['s1']); // matched inside the subagent
     expect(await ids({ host: 'droplet' })).toEqual([]);
     expect(await ids({ provider: 'openrouter' })).toEqual(['h1']);
+  });
+
+  it('filters cron sessions using recorded launch or Hermes source', async () => {
+    await query(`UPDATE archive_sessions SET meta = meta || '{"source":"cron"}'::jsonb WHERE external_id = 'h1'`);
+    const r = await list({ cron: '1' });
+    expect(r.body.sessions.map((s: { external_id: string }) => s.external_id)).toEqual(['h1']);
   });
 
   it('serves facets for the filter bar', async () => {
