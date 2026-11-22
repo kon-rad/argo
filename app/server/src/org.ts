@@ -84,6 +84,8 @@ export const WakeRules = z.object({
 }).strict();
 export type WakeRulesT = z.infer<typeof WakeRules>;
 
+const OrgCapability = z.enum(['code', 'review', 'merge', 'deploy', 'm1', 'web', 'dispatch', 'scoped-release']);
+
 export const OrgDoc = z.object({
   version: z.string().min(1),
   company: z.string().min(1),
@@ -103,7 +105,7 @@ export const OrgDoc = z.object({
       avatar: z.string().min(1).optional(),
       avatar_prompt: z.string().min(1).optional(),
       work: z.enum(['research', 'coding', 'design', 'media', 'writing', 'sales', 'education', 'ops']).optional(),
-      capabilities: z.array(z.enum(['code', 'review', 'merge', 'deploy', 'm1', 'web', 'dispatch'])).optional(),
+      capabilities: z.array(OrgCapability).optional(),
       channels: z.array(z.string()).optional(),
       /** Scheduled wakes the engine's dispatcher adds as `routine` wakeups, once per local day (ORG_TZ). */
       routines: z.array(Routine).optional(),
@@ -340,6 +342,27 @@ export async function importOrg(input: unknown): Promise<{ agents: number; teams
   return withTransaction(async (tx) => {
     const r = await writeOrg(tx, doc, { retireMissing: true });
     return { agents: Object.keys(doc.agents).length, teams: Object.keys(doc.teams).length, channels: r.channels, retired: r.retired };
+  });
+}
+
+/** Sync only one agent's capabilities from a compiled org file. The remaining roster is left untouched. */
+export async function syncAgentCapabilities(input: unknown, name: string, by: string): Promise<{ before: string[]; after: string[] }> {
+  if (by !== config.orgOwner || config.env.ORG_RUN) throw new OrgError('only the owner outside a bot run may sync capabilities');
+  Name.parse(name);
+  const source = z.object({ agents: z.record(Name, z.unknown()) }).parse(input);
+  const raw = source.agents[name];
+  if (!raw) throw new OrgError(`agent ${name} is missing from the org file`);
+  const { capabilities } = z.object({ capabilities: z.array(OrgCapability).default([]) }).parse(raw);
+  const after = [...new Set(capabilities)];
+  return withTransaction(async (tx) => {
+    const { rows } = await tx.query<{ capabilities: string[] }>(
+      `SELECT capabilities FROM org_agents WHERE name = $1 AND retired_at IS NULL FOR UPDATE`, [name]);
+    if (!rows[0]) throw new OrgError(`agent ${name} is not an active roster member`);
+    const before = rows[0].capabilities ?? [];
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      await tx.query(`UPDATE org_agents SET capabilities = $2, updated_at = now() WHERE name = $1`, [name, after]);
+    }
+    return { before, after };
   });
 }
 
