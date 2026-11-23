@@ -16,8 +16,11 @@ import {
   disconnectMissingBufferAccounts,
   listAccounts,
   listPosts,
+  enqueuePost,
+  IDEMPOTENCY_KEY,
+  IdempotencyConflictError,
   movePost,
-  queuePost,
+  reconcilePost,
   saveConnectedAccount,
 } from './social/store.js';
 import { hermesTelegram } from './livestream-x.js';
@@ -44,14 +47,20 @@ const USAGE = `cli-social: the social posting queue (Postgres; the server's time
   connect-buffer              add (or refresh) one account per Instagram, YouTube and X channel
                               connected in the Buffer account of BUFFER_API_KEY; a Buffer account
                               whose channel is gone from Buffer (swapped there) is disconnected here
-  posts [--status S]          draft|queued|publishing|posted|failed|canceled, with their media
+  posts [--status S]          draft|queued|publishing|posted|failed|canceled|uncertain, with their media
+  reconcile <post id> --posted --remote-id ID [--url U] | --not-posted [--requeue]  --note "..." [--actor NAME]
+                              resolve an uncertain post (the provider call may have gone out) after
+                              checking the network by hand; recorded in social_post_reconciliations.
+                              --requeue allows exactly one new send
   queue --body-file F | --body T  [--image PATH --alt "text"]... | [--video PATH]
         [--account ID|linkedin|x|instagram|youtube] [--at ISO] [--draft]
         [--card t_xxxxxxxx] [--source <vault path of the draft file>]
-        [--option key=value]... [--options-file F.json]
+        [--option key=value]... [--options-file F.json] [--idempotency-key K]
                               queue a post; each --image needs an --alt, in the same order.
                               --account defaults to the only connected account; --at to now.
                               --draft: wait for \`approve\` instead of posting at --at.
+                              --idempotency-key (needs a fixed --at): rerunning the same request
+                              prints the original post; the same key with a different request fails.
                               Options: instagramType=post|reel|story, shareToFeed, firstComment,
                               coverAt (Instagram reel: second of the video to use as the cover),
                               title (YouTube, required), categoryId, privacy, madeForKids,
@@ -191,9 +200,15 @@ async function queue(argv: string[]): Promise<number> {
       'options-file': { type: 'string' },
       card: { type: 'string' },
       source: { type: 'string' },
+      'idempotency-key': { type: 'string' },
     },
     strict: true,
   });
+  if (values['idempotency-key'] !== undefined) {
+    if (!IDEMPOTENCY_KEY.test(values['idempotency-key'])) throw new HttpError(400, 'bad --idempotency-key; use 1 to 200 characters of letters, digits and . _ : / -');
+    // A retry must be the same request; "now" differs on every run, so a keyed request names its time.
+    if (!values.at || values.at === 'now') throw new HttpError(400, '--idempotency-key needs a fixed --at ISO time (a retry must repeat the same request)');
+  }
   if (values.card !== undefined && !CARD_ID.test(values.card)) throw new HttpError(400, `bad --card ${values.card}; use a card id like t_0944bc6c`);
   if (values.source !== undefined && !SourcePath.safeParse(values.source).success) {
     throw new HttpError(400, `bad --source ${values.source}; use a vault-relative path of the draft file`);
@@ -225,11 +240,24 @@ async function queue(argv: string[]): Promise<number> {
 
   const at = values.at && values.at !== 'now' ? new Date(values.at) : new Date();
   if (Number.isNaN(at.getTime())) throw new HttpError(400, `bad --at ${values.at}; use an ISO time like 2026-10-20T09:00:00+09:00`);
+  const key = values['idempotency-key'];
 
-  const post = await queuePost(accountId, body, media, at, options, values.draft ? 'draft' : 'queued', {
-    cardId: values.card,
-    sourcePath: values.source,
-  });
+  let result: Awaited<ReturnType<typeof enqueuePost>>;
+  try {
+    result = await enqueuePost(accountId, body, media, at, options, values.draft ? 'draft' : 'queued', {
+      cardId: values.card,
+      sourcePath: values.source,
+      idempotencyKey: key,
+    });
+  } catch (err) {
+    if (err instanceof IdempotencyConflictError) throw new HttpError(409, err.message);
+    throw err;
+  }
+  const { post, created } = result;
+  if (!created) {
+    console.log(`already queued post ${post.id} (idempotency key ${key}): status ${post.status}, nothing new stored`);
+    return 0;
+  }
   const verb = values.draft ? 'drafted' : 'queued';
   console.log(`${verb} post ${post.id} for ${account.provider} account ${accountId} at ${new Date(post.scheduled_for).toISOString()} (${body.length} characters)`);
   for (const m of post.media) console.log(`  media ${m.position + 1}: ${m.filename}, ${m.contentType}, ${kb(m.size)}${m.altText ? `, alt "${m.altText}"` : ''}`);
@@ -278,6 +306,42 @@ async function main(argv: string[]): Promise<number> {
       if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, 'cancel <post id>');
       if (!(await cancelPost(id))) throw new HttpError(409, `post ${id} is not queued or a draft (already publishing, posted or canceled)`);
       console.log(`canceled post ${id}`);
+      return 0;
+    }
+    case 'reconcile': {
+      const { values, positionals } = parseArgs({
+        args: rest,
+        options: {
+          posted: { type: 'boolean' },
+          'not-posted': { type: 'boolean' },
+          'remote-id': { type: 'string' },
+          url: { type: 'string' },
+          requeue: { type: 'boolean' },
+          note: { type: 'string' },
+          actor: { type: 'string' },
+        },
+        allowPositionals: true,
+        strict: true,
+      });
+      const id = Number(positionals[0]);
+      const usage = 'reconcile <post id> --posted --remote-id ID [--url U] | --not-posted [--requeue]  --note "what you checked" [--actor NAME]';
+      if (!Number.isInteger(id) || id <= 0 || Boolean(values.posted) === Boolean(values['not-posted'])) throw new HttpError(400, usage);
+      if (!values.note) throw new HttpError(400, `${usage}\n--note is required: it is the audit record`);
+      if (values.posted && values.requeue) throw new HttpError(400, '--requeue goes with --not-posted');
+      const post = await reconcilePost(
+        id,
+        {
+          outcome: values.posted ? 'posted' : 'not_posted',
+          remoteId: values['remote-id'],
+          url: values.url,
+          requeue: values.requeue,
+          note: values.note,
+          actor: values.actor ?? process.env.ORG_AGENT ?? 'owner',
+          via: 'cli',
+        },
+        new Date(),
+      );
+      console.log(`reconciled post ${id}: ${post.status}${post.remote_id ? ` (${post.remote_id})` : ''}`);
       return 0;
     }
     case 'move': {

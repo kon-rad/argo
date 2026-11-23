@@ -82,7 +82,7 @@ describe('social store: posts', () => {
   it('cannot cancel a post that is no longer queued', async () => {
     const accountId = await store.saveConnectedAccount('linkedin', account(), KEY);
     const post = await store.queuePost(accountId, 'Hello world', [], T0);
-    await store.markPublishing(post.id, T0);
+    expect((await store.claimNextDue(T0))?.id).toBe(post.id);
     expect(await store.cancelPost(post.id)).toBe(false);
   });
 
@@ -94,17 +94,21 @@ describe('social store: posts', () => {
     expect(rows.map((r) => r.id)).toEqual([due.id]);
   });
 
-  it('marks a post posted, and failed/retried after 3 attempts', async () => {
+  it('marks a post posted, and failed/retried after 3 pre-send attempts', async () => {
     const accountId = await store.saveConnectedAccount('linkedin', account(), KEY);
     const posted = await store.queuePost(accountId, 'ok', [], T0);
     await store.markPosted(posted.id, T0, 'urn:li:share:1', 'https://linkedin.com/x');
     expect((await store.listPosts('posted'))[0]).toMatchObject({ remote_id: 'urn:li:share:1' });
 
     const failing = await store.queuePost(accountId, 'fails', [], T0);
-    await store.markFailedOrRetry(failing.id, 0, 'first error');
-    expect((await store.listPosts('queued')).find((p) => p.id === failing.id)?.attempt_count).toBe(1);
-    await store.markFailedOrRetry(failing.id, 1, 'second error');
-    await store.markFailedOrRetry(failing.id, 2, 'third error');
+    for (const [i, message] of ['first error', 'second error', 'third error'].entries()) {
+      const claim = await store.claimNextDue(T0);
+      expect(claim?.id).toBe(failing.id);
+      expect(await store.releaseClaimForRetry(failing.id, claim!.claimToken, message)).toBe(true);
+      // A second release with the same (now spent) claim changes nothing.
+      expect(await store.releaseClaimForRetry(failing.id, claim!.claimToken, message)).toBe(false);
+      if (i === 0) expect((await store.listPosts('queued')).find((p) => p.id === failing.id)?.attempt_count).toBe(1);
+    }
     const final = (await store.listPosts('failed')).find((p) => p.id === failing.id);
     expect(final).toMatchObject({ attempt_count: 3, last_error: 'third error' });
   });

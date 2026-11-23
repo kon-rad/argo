@@ -1,5 +1,6 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { query, withTransaction } from '../db.js';
+import { HttpError } from '../routes/http.js';
 import { decryptToken, encryptToken } from './crypto.js';
 import type { ConnectedAccount, PostMedia, PostOptions, ProviderName, QueuedPost, StoredAccount, TokenPair, Transport } from './providers/types.js';
 
@@ -174,6 +175,7 @@ export interface PostRow {
   /** The kanban card behind the post, and the vault draft it came from (both optional). */
   card_id: string | null;
   source_path: string | null;
+  idempotency_key: string | null;
 }
 
 const POST_COLUMNS = `p.*, (
@@ -182,26 +184,100 @@ const POST_COLUMNS = `p.*, (
     'size', coalesce(octet_length(m.bytes), 0), 'altText', m.alt_text) ORDER BY m.position), '[]'::json)
   FROM social_post_media m WHERE m.post_id = p.id) AS media`;
 
+export interface PostLink {
+  cardId?: string | null;
+  sourcePath?: string | null;
+  /** A caller-chosen stable key; the same key with the same request returns the original post. */
+  idempotencyKey?: string | null;
+}
+
+export const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:/-]{1,200}$/;
+
+/** The same key was used for a different request; `postId` is the post the key already names. */
+export class IdempotencyConflictError extends Error {
+  constructor(readonly key: string, readonly postId: number) {
+    super(`idempotency key ${key} already names post ${postId}, queued with a different account, time, body, options, media, draft flag or link`);
+  }
+}
+
+/** JSON with object keys sorted, so option order never changes a fingerprint. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
+  if (v && typeof v === 'object') {
+    return `{${Object.keys(v as Record<string, unknown>)
+      .filter((k) => (v as Record<string, unknown>)[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(v);
+}
+
+/** SHA-256 of everything that makes a queue request what it is; media by the hash of their bytes. */
+export function requestFingerprint(
+  accountId: number,
+  body: string,
+  media: PostMedia[],
+  scheduledFor: Date,
+  options: PostOptions,
+  status: 'queued' | 'draft',
+  link: PostLink,
+): string {
+  return createHash('sha256')
+    .update(
+      canonical({
+        v: 1,
+        accountId: Number(accountId),
+        body,
+        scheduledFor: scheduledFor.toISOString(),
+        options,
+        status,
+        cardId: link.cardId ?? null,
+        sourcePath: link.sourcePath ?? null,
+        media: media.map((m) => ({ filename: m.filename, contentType: m.contentType, altText: m.altText, sha256: createHash('sha256').update(m.bytes).digest('hex') })),
+      }),
+    )
+    .digest('hex');
+}
+
+async function readPost(id: number): Promise<PostRow> {
+  const { rows } = await query<PostRow>(`SELECT ${POST_COLUMNS} FROM social_posts p WHERE p.id = $1`, [id]);
+  return rows[0]!;
+}
+
 /**
  * The post and its media in one transaction: a post is never queued without the
  * media it was meant to carry. A 'draft' waits for `approvePost`; the timer skips it.
+ *
+ * With `link.idempotencyKey`, the insert is `ON CONFLICT DO NOTHING` on the key's
+ * unique index, so concurrent requests with one key store one row: the same
+ * request returns the original post (`created: false`), a different one throws
+ * IdempotencyConflictError. Without a key, every call queues a new post.
  */
-export async function queuePost(
+export async function enqueuePost(
   accountId: number,
   body: string,
   media: PostMedia[],
   scheduledFor: Date,
   options: PostOptions = {},
   status: 'queued' | 'draft' = 'queued',
-  link: { cardId?: string | null; sourcePath?: string | null } = {},
-): Promise<PostRow> {
+  link: PostLink = {},
+): Promise<{ post: PostRow; created: boolean }> {
+  const key = link.idempotencyKey ?? null;
+  if (key !== null && !IDEMPOTENCY_KEY.test(key)) {
+    throw new HttpError(400, 'an idempotency key is 1 to 200 characters of letters, digits and . _ : / -');
+  }
+  const fingerprint = key === null ? null : requestFingerprint(accountId, body, media, scheduledFor, options, status, link);
   const id = await withTransaction(async (c) => {
     const { rows } = await c.query<{ id: number }>(
-      `INSERT INTO social_posts (account_id, body, scheduled_for, options, status, card_id, source_path)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [accountId, body, scheduledFor, JSON.stringify(options), status, link.cardId ?? null, link.sourcePath ?? null],
+      `INSERT INTO social_posts (account_id, body, scheduled_for, options, status, card_id, source_path, idempotency_key, request_fingerprint)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+       RETURNING id`,
+      [accountId, body, scheduledFor, JSON.stringify(options), status, link.cardId ?? null, link.sourcePath ?? null, key, fingerprint],
     );
-    const postId = rows[0]!.id;
+    if (!rows[0]) return null; // the key is taken (a concurrent insert has committed by now)
+    const postId = rows[0].id;
     for (const [position, m] of media.entries()) {
       await c.query(
         `INSERT INTO social_post_media (post_id, position, filename, content_type, bytes, alt_text) VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -210,8 +286,29 @@ export async function queuePost(
     }
     return postId;
   });
-  const { rows } = await query<PostRow>(`SELECT ${POST_COLUMNS} FROM social_posts p WHERE p.id = $1`, [id]);
-  return rows[0]!;
+  if (id !== null) return { post: await readPost(id), created: true };
+
+  const { rows } = await query<{ id: number; request_fingerprint: string }>(
+    `SELECT id, request_fingerprint FROM social_posts WHERE idempotency_key = $1`,
+    [key],
+  );
+  const existing = rows[0];
+  if (!existing) throw new Error(`idempotency key ${key}: conflicting insert vanished; retry the request`);
+  if (existing.request_fingerprint !== fingerprint) throw new IdempotencyConflictError(key!, Number(existing.id));
+  return { post: await readPost(existing.id), created: false };
+}
+
+/** `enqueuePost` for callers that only want the row. */
+export async function queuePost(
+  accountId: number,
+  body: string,
+  media: PostMedia[],
+  scheduledFor: Date,
+  options: PostOptions = {},
+  status: 'queued' | 'draft' = 'queued',
+  link: PostLink = {},
+): Promise<PostRow> {
+  return (await enqueuePost(accountId, body, media, scheduledFor, options, status, link)).post;
 }
 
 export interface PostFilter {
@@ -312,51 +409,337 @@ export async function assignPublicTokens(postId: number): Promise<Map<number, st
   return out;
 }
 
-/** A file for the public media route: only while its post is publishing, and only before its bytes are dropped. */
+/**
+ * A file for the public media route: only while its post is publishing (or uncertain: a relay that
+ * did accept it may still be fetching), and only before its bytes are dropped.
+ */
 export async function mediaByToken(token: string): Promise<{ contentType: string; bytes: Buffer } | null> {
   const { rows } = await query<{ content_type: string; bytes: Buffer }>(
     `SELECT m.content_type, m.bytes FROM social_post_media m JOIN social_posts p ON p.id = m.post_id
-     WHERE m.public_token = $1 AND m.bytes IS NOT NULL AND p.status = 'publishing'`,
+     WHERE m.public_token = $1 AND m.bytes IS NOT NULL AND p.status IN ('publishing', 'uncertain')`,
     [token],
   );
   return rows[0] ? { contentType: rows[0].content_type, bytes: rows[0].bytes } : null;
 }
 
-export async function markPublishing(id: number, now: Date): Promise<void> {
-  await query(`UPDATE social_posts SET status = 'publishing', publishing_started_at = $2 WHERE id = $1`, [id, now]);
+/** How long a claim may sit without a write-ahead attempt before the sweeper takes it back. */
+export const LEASE_MS = 15 * 60_000;
+/** Pre-send failures (proven: no provider call went out) are retried this many times in all. */
+export const MAX_PRE_SEND_ATTEMPTS = 3;
+
+export type ClaimedPost = Omit<QueuedPost, 'media'> & { claimToken: string };
+
+/**
+ * Takes the next due post for one worker: a single UPDATE over a
+ * `FOR UPDATE SKIP LOCKED` pick, so overlapping workers never take the same
+ * post. Every later write by the worker is conditional on `claimToken`.
+ * `skip`: posts this pass already tried (a requeued pre-send failure waits for the next pass).
+ */
+export async function claimNextDue(now: Date, skip: number[] = []): Promise<ClaimedPost | null> {
+  const token = randomUUID();
+  const { rows } = await query<{ id: number; account_id: number; body: string; options: PostOptions; attempt_count: number }>(
+    `UPDATE social_posts SET status = 'publishing', publishing_started_at = $1, claim_token = $2
+     WHERE id = (SELECT id FROM social_posts WHERE status = 'queued' AND scheduled_for <= $1 AND NOT (id = ANY($3::bigint[]))
+                 ORDER BY scheduled_for, id LIMIT 1 FOR UPDATE SKIP LOCKED)
+       AND status = 'queued'
+     RETURNING id, account_id, body, options, attempt_count`,
+    [now, token, skip],
+  );
+  const r = rows[0];
+  return r ? { id: Number(r.id), accountId: Number(r.account_id), body: r.body, options: r.options, attemptCount: r.attempt_count, claimToken: token } : null;
 }
 
 /**
- * A run killed mid-publish leaves its post in 'publishing'. After 15 minutes it
- * is marked failed, not requeued: LinkedIn may already have it, and a second
- * copy is worse than a post the owner has to check and requeue by hand.
+ * The write-ahead record, committed before the provider call starts: under the
+ * post's row lock, and only while this worker still holds its claim (a sweeper
+ * that took the claim back, or a newer worker, makes this return null and the
+ * caller must not send). Returns the attempt id. From this commit on, the post
+ * may be out, whatever happens to the process.
  */
-export async function failStalePublishing(now: Date): Promise<number> {
-  const res = await query(
-    `UPDATE social_posts SET status = 'failed', last_error = 'interrupted while publishing; check LinkedIn before queueing it again'
-     WHERE status = 'publishing' AND handed_off_at IS NULL AND (publishing_started_at IS NULL OR publishing_started_at < $1::timestamptz - interval '15 minutes')`,
-    [now],
+export async function beginAttempt(postId: number, claimToken: string, now: Date): Promise<number | null> {
+  return withTransaction(async (c) => {
+    const held = await c.query(
+      `SELECT 1 FROM social_posts WHERE id = $1 AND status = 'publishing' AND claim_token = $2 AND handed_off_at IS NULL FOR UPDATE`,
+      [postId, claimToken],
+    );
+    if (!held.rows[0]) return null;
+    const inFlight = await c.query(`SELECT 1 FROM social_post_attempts WHERE post_id = $1 AND state = 'sending'`, [postId]);
+    if (inFlight.rows[0]) return null;
+    const { rows } = await c.query<{ id: number }>(
+      `INSERT INTO social_post_attempts (post_id, attempt_no, claim_token, state, started_at)
+       VALUES ($1, (SELECT coalesce(max(attempt_no), 0) + 1 FROM social_post_attempts WHERE post_id = $1), $2, 'sending', $3)
+       RETURNING id`,
+      [postId, claimToken, now],
+    );
+    return Number(rows[0]!.id);
+  });
+}
+
+/** Drops a post's public media URLs and, once it is out, its video bytes (the network has the file now). */
+async function releaseMedia(c: { query: typeof query }, postId: number, now: Date, posted: boolean): Promise<void> {
+  if (!posted) {
+    await c.query(`UPDATE social_post_media SET public_token = NULL WHERE post_id = $1`, [postId]);
+    return;
+  }
+  await c.query(
+    `UPDATE social_post_media SET public_token = NULL,
+       bytes = CASE WHEN content_type LIKE 'video/%' THEN NULL ELSE bytes END,
+       purged_at = CASE WHEN content_type LIKE 'video/%' THEN $2::timestamptz ELSE purged_at END
+     WHERE post_id = $1`,
+    [postId, now],
   );
-  return res.rowCount ?? 0;
+}
+
+export type AttemptOutcome =
+  | { kind: 'sent'; remoteId: string; url?: string }
+  | { kind: 'handed_off'; remoteId: string }
+  | { kind: 'not_sent'; message: string }
+  | { kind: 'rejected'; message: string }
+  | { kind: 'uncertain'; message: string };
+
+/**
+ * Records how a write-ahead attempt ended, once: a second finish of the same
+ * attempt changes nothing. The post moves only if this attempt is its latest
+ * and the post is still in flight ('publishing') or was marked 'uncertain' by
+ * the sweeper while the call was out; a post a human already reconciled keeps
+ * its state and the attempt row keeps the late answer for the record.
+ */
+export async function finishAttempt(attemptId: number, outcome: AttemptOutcome, now: Date): Promise<void> {
+  await withTransaction(async (c) => {
+    const { rows } = await c.query<{ post_id: number; claim_token: string; state: string }>(
+      `SELECT post_id, claim_token, state FROM social_post_attempts WHERE id = $1 FOR UPDATE`,
+      [attemptId],
+    );
+    const a = rows[0];
+    // 'uncertain' may still learn the truth (a stale call that answers late); every other state is final.
+    if (!a || !(a.state === 'sending' || (a.state === 'uncertain' && (outcome.kind === 'sent' || outcome.kind === 'handed_off')))) return;
+    const remoteId = 'remoteId' in outcome ? outcome.remoteId : null;
+    const error = 'message' in outcome ? outcome.message : null;
+    await c.query(`UPDATE social_post_attempts SET state = $2, finished_at = $3, remote_id = $4, error = coalesce($5, error) WHERE id = $1`, [
+      attemptId,
+      outcome.kind,
+      now,
+      remoteId,
+      error,
+    ]);
+    const post = await c.query<{ status: string }>(
+      `SELECT p.status FROM social_posts p
+       WHERE p.id = $1 AND p.status IN ('publishing', 'uncertain') AND p.handed_off_at IS NULL
+         AND $2::bigint = (SELECT max(id) FROM social_post_attempts WHERE post_id = p.id)
+       FOR UPDATE`,
+      [a.post_id, attemptId],
+    );
+    if (!post.rows[0]) return;
+    const id = a.post_id;
+    switch (outcome.kind) {
+      case 'sent':
+        await c.query(
+          `UPDATE social_posts SET status = 'posted', posted_at = $2, remote_id = $3, remote_url = $4, claim_token = NULL, last_error = NULL WHERE id = $1`,
+          [id, now, outcome.remoteId, outcome.url ?? null],
+        );
+        await releaseMedia(c, id, now, true);
+        return;
+      case 'handed_off':
+        // The relay has it; pollHandedOff resolves it from here. Media stay public for the relay to fetch.
+        await c.query(`UPDATE social_posts SET status = 'publishing', handed_off_at = $2, remote_id = $3, claim_token = NULL WHERE id = $1`, [
+          id,
+          now,
+          outcome.remoteId,
+        ]);
+        return;
+      case 'uncertain':
+        // Media stay public: a relay that did accept the post may still need to fetch them.
+        await c.query(`UPDATE social_posts SET status = 'uncertain', last_error = $2, claim_token = NULL WHERE id = $1`, [id, outcome.message]);
+        return;
+      case 'rejected':
+        await c.query(`UPDATE social_posts SET status = 'failed', last_error = $2, claim_token = NULL WHERE id = $1`, [id, outcome.message]);
+        await releaseMedia(c, id, now, false);
+        return;
+      case 'not_sent':
+        if (post.rows[0].status !== 'publishing') return;
+        await retryOrFail(c, id, outcome.message);
+        await releaseMedia(c, id, now, false);
+        return;
+    }
+  });
+}
+
+async function retryOrFail(c: { query: typeof query }, postId: number, message: string): Promise<void> {
+  await c.query(
+    `UPDATE social_posts SET status = CASE WHEN attempt_count + 1 >= $3 THEN 'failed' ELSE 'queued' END,
+       last_error = $2, attempt_count = attempt_count + 1, claim_token = NULL
+     WHERE id = $1`,
+    [postId, message, MAX_PRE_SEND_ATTEMPTS],
+  );
+}
+
+/**
+ * A failure before the write-ahead (account lookup, token refresh, media): no
+ * provider call can have gone out, so the post is retried, up to
+ * MAX_PRE_SEND_ATTEMPTS in all. Only the claim holder may do this.
+ */
+export async function releaseClaimForRetry(postId: number, claimToken: string, message: string): Promise<boolean> {
+  return withTransaction(async (c) => {
+    const held = await c.query(`SELECT 1 FROM social_posts WHERE id = $1 AND status = 'publishing' AND claim_token = $2 FOR UPDATE`, [postId, claimToken]);
+    if (!held.rows[0]) return false;
+    await retryOrFail(c, postId, message);
+    return true;
+  });
+}
+
+/**
+ * Claims whose lease ran out. A claim with an attempt still 'sending' may have
+ * reached the provider (an expired lease does not prove the worker is dead; it
+ * may be paused mid-call), so the post and attempt become 'uncertain' and are
+ * never retried automatically. A claim with no write-ahead never sent anything:
+ * it is requeued (or failed after MAX_PRE_SEND_ATTEMPTS), and the stale worker,
+ * if it wakes, can no longer write ahead. A 'publishing' row with no claim
+ * token (left by the code before this change) is uncertain too.
+ */
+export async function recoverStaleClaims(now: Date): Promise<{ requeued: number; uncertain: number }> {
+  return withTransaction(async (c) => {
+    const { rows } = await c.query<{ id: number; claim_token: string | null; sending: number | null }>(
+      `SELECT p.id, p.claim_token,
+              (SELECT a.id FROM social_post_attempts a WHERE a.post_id = p.id AND a.state = 'sending') AS sending
+       FROM social_posts p
+       WHERE p.status = 'publishing' AND p.handed_off_at IS NULL
+         AND (p.publishing_started_at IS NULL OR p.publishing_started_at < $1::timestamptz - make_interval(secs => $2))
+       ORDER BY p.id
+       FOR UPDATE OF p SKIP LOCKED`,
+      [now, LEASE_MS / 1000],
+    );
+    let requeued = 0;
+    let uncertain = 0;
+    for (const r of rows) {
+      if (r.sending !== null || r.claim_token === null) {
+        const message = r.claim_token === null
+          ? 'interrupted while publishing (before this version recorded attempts); the provider may have the post: check it, then reconcile'
+          : 'the worker stopped answering after the provider call began; the provider may have the post: check it, then reconcile';
+        if (r.sending !== null) {
+          await c.query(`UPDATE social_post_attempts SET state = 'uncertain', error = $2 WHERE id = $1`, [r.sending, 'lease expired while sending']);
+        }
+        await c.query(`UPDATE social_posts SET status = 'uncertain', last_error = $2, claim_token = NULL WHERE id = $1`, [r.id, message]);
+        uncertain++;
+      } else {
+        await retryOrFail(c, r.id, 'the worker stopped before calling the provider; requeued');
+        requeued++;
+      }
+    }
+    return { requeued, uncertain };
+  });
 }
 
 /** A post is out: its public URLs stop working and its video bytes go (the network has the file now). */
 export async function markPosted(id: number, now: Date, remoteId: string, url: string | undefined): Promise<void> {
   await withTransaction(async (c) => {
-    await c.query(`UPDATE social_posts SET status = 'posted', posted_at = $2, remote_id = $3, remote_url = $4 WHERE id = $1`, [id, now, remoteId, url ?? null]);
-    await c.query(
-      `UPDATE social_post_media SET public_token = NULL,
-         bytes = CASE WHEN content_type LIKE 'video/%' THEN NULL ELSE bytes END,
-         purged_at = CASE WHEN content_type LIKE 'video/%' THEN $2::timestamptz ELSE purged_at END
-       WHERE post_id = $1`,
-      [id, now],
-    );
+    await c.query(`UPDATE social_posts SET status = 'posted', posted_at = $2, remote_id = $3, remote_url = $4, claim_token = NULL WHERE id = $1`, [id, now, remoteId, url ?? null]);
+    await releaseMedia(c, id, now, true);
   });
 }
 
-/** A relay accepted the post; it stays 'publishing' until the relay reports it sent. */
-export async function markHandedOff(id: number, now: Date, remoteId: string): Promise<void> {
-  await query(`UPDATE social_posts SET handed_off_at = $2, remote_id = $3 WHERE id = $1`, [id, now, remoteId]);
+export interface AttemptRow {
+  id: number;
+  post_id: number;
+  attempt_no: number;
+  state: string;
+  started_at: Date;
+  finished_at: Date | null;
+  remote_id: string | null;
+  error: string | null;
+}
+
+export async function listAttempts(postId: number): Promise<AttemptRow[]> {
+  const { rows } = await query<AttemptRow>(
+    `SELECT id::int AS id, post_id::int AS post_id, attempt_no, state, started_at, finished_at, remote_id, error
+     FROM social_post_attempts WHERE post_id = $1 ORDER BY attempt_no`,
+    [postId],
+  );
+  return rows;
+}
+
+export interface ReconcileInput {
+  outcome: 'posted' | 'not_posted';
+  /** Required for 'posted': the network's id for the post someone found there. */
+  remoteId?: string;
+  url?: string;
+  /** For 'not_posted': queue it again (one new send) instead of failing it. */
+  requeue?: boolean;
+  /** Why: what was checked, where. Required. */
+  note: string;
+  actor: string;
+  via: 'cli' | 'api';
+}
+
+export interface ReconciliationRow {
+  id: number;
+  post_id: number;
+  attempt_id: number | null;
+  prior_status: string;
+  outcome: string;
+  new_status: string;
+  remote_id: string | null;
+  remote_url: string | null;
+  note: string;
+  actor: string;
+  via: string;
+  created_at: Date;
+}
+
+/**
+ * A human's answer for an 'uncertain' post, with an audit row in the same
+ * transaction. 'posted' needs the remote id; 'not_posted' fails the post or,
+ * with `requeue`, queues it for exactly one new send. Only an uncertain post
+ * can be reconciled, and concurrent calls resolve it once.
+ */
+export async function reconcilePost(id: number, input: ReconcileInput, now: Date): Promise<PostRow> {
+  const note = input.note.trim();
+  if (!note) throw new HttpError(400, 'a reconciliation needs a note: what you checked and where');
+  if (note.length > 2000) throw new HttpError(400, 'the note is over 2000 characters');
+  const actor = input.actor.trim();
+  if (!actor || actor.length > 200) throw new HttpError(400, 'a reconciliation needs an actor of 1 to 200 characters');
+  const remoteId = input.remoteId?.trim() || null;
+  if (input.outcome === 'posted' && !remoteId) throw new HttpError(400, 'a posted outcome needs the remote id of the post you found');
+  if (input.outcome === 'not_posted' && remoteId) throw new HttpError(400, 'a not-posted outcome takes no remote id');
+  await withTransaction(async (c) => {
+    const { rows } = await c.query<{ status: string }>(`SELECT status FROM social_posts WHERE id = $1 FOR UPDATE`, [id]);
+    if (!rows[0]) throw new HttpError(404, `no post ${id}`);
+    if (rows[0].status !== 'uncertain') throw new HttpError(409, `post ${id} is ${rows[0].status}, not uncertain; only an uncertain post is reconciled`);
+    const attempt = await c.query<{ id: number }>(`SELECT max(id) AS id FROM social_post_attempts WHERE post_id = $1`, [id]);
+    const newStatus = input.outcome === 'posted' ? 'posted' : input.requeue ? 'queued' : 'failed';
+    if (newStatus === 'posted') {
+      await c.query(
+        `UPDATE social_posts SET status = 'posted', posted_at = $2, remote_id = $3, remote_url = $4, last_error = NULL, claim_token = NULL WHERE id = $1`,
+        [id, now, remoteId, input.url ?? null],
+      );
+      await releaseMedia(c, id, now, true);
+    } else if (newStatus === 'queued') {
+      // A fresh start for the pre-send retry budget: this is a new, human-approved send.
+      await c.query(
+        `UPDATE social_posts SET status = 'queued', attempt_count = 0, handed_off_at = NULL, remote_id = NULL, claim_token = NULL,
+           scheduled_for = least(scheduled_for, $2::timestamptz), last_error = $3 WHERE id = $1`,
+        [id, now, `reconciled as not posted: ${note}`],
+      );
+      await releaseMedia(c, id, now, false);
+    } else {
+      await c.query(`UPDATE social_posts SET status = 'failed', last_error = $2, claim_token = NULL WHERE id = $1`, [id, `reconciled as not posted: ${note}`]);
+      await releaseMedia(c, id, now, false);
+    }
+    await c.query(
+      `INSERT INTO social_post_reconciliations (post_id, attempt_id, prior_status, outcome, new_status, remote_id, remote_url, note, actor, via, created_at)
+       VALUES ($1, $2, 'uncertain', $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [id, attempt.rows[0]?.id ?? null, input.outcome, newStatus, remoteId, input.url ?? null, note, actor, input.via, now],
+    );
+  });
+  return readPost(id);
+}
+
+export async function listReconciliations(postId: number): Promise<ReconciliationRow[]> {
+  const { rows } = await query<ReconciliationRow>(
+    `SELECT id::int AS id, post_id::int AS post_id, attempt_id::int AS attempt_id, prior_status, outcome, new_status, remote_id, remote_url, note, actor, via, created_at
+     FROM social_post_reconciliations WHERE post_id = $1 ORDER BY id`,
+    [postId],
+  );
+  return rows;
 }
 
 export interface HandedOffPost {
@@ -375,18 +758,15 @@ export async function handedOffPosts(limit = 20): Promise<HandedOffPost[]> {
   return rows;
 }
 
-/** Final: no retry. The relay already has the post, so queueing it again could post it twice. */
-export async function markFailed(id: number, message: string): Promise<void> {
+/**
+ * Final: no retry. The relay already has the post, so queueing it again could post it twice.
+ * Only a post still in flight moves, so an overlapping poll can't turn a posted post failed.
+ */
+export async function markFailed(id: number, message: string, now = new Date()): Promise<void> {
   await withTransaction(async (c) => {
-    await c.query(`UPDATE social_posts SET status = 'failed', last_error = $2 WHERE id = $1`, [id, message]);
-    await c.query(`UPDATE social_post_media SET public_token = NULL WHERE post_id = $1`, [id]);
+    const res = await c.query(`UPDATE social_posts SET status = 'failed', last_error = $2, claim_token = NULL WHERE id = $1 AND status = 'publishing'`, [id, message]);
+    if (res.rowCount) await releaseMedia(c, id, now, false);
   });
-}
-
-/** Gives up after 3 attempts (this one included), leaving the post 'failed' rather than retrying forever. */
-export async function markFailedOrRetry(id: number, attemptCount: number, message: string): Promise<void> {
-  const nextStatus = attemptCount + 1 >= 3 ? 'failed' : 'queued';
-  await query(`UPDATE social_posts SET status = $2, last_error = $3, attempt_count = attempt_count + 1 WHERE id = $1`, [id, nextStatus, message]);
 }
 
 export interface ReauthCandidate {

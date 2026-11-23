@@ -5,7 +5,7 @@ import { checkBodyLength, checkImageCount, MAX_IMAGE_BYTES, sniffImageType, toPo
 import { linkedinProvider, toLittleText } from '../src/social/providers/linkedin.js';
 import type { PostMedia, QueuedPost, SocialProvider } from '../src/social/providers/types.js';
 import { runDuePosts } from '../src/social/scheduler.js';
-import { dueQueuedPosts, listPosts, markPublishing, postMedia, queuePost, saveConnectedAccount } from '../src/social/store.js';
+import { beginAttempt, claimNextDue, dueQueuedPosts, listPosts, postMedia, queuePost, saveConnectedAccount } from '../src/social/store.js';
 import { truncateAll } from './helpers.js';
 
 const KEY = '0'.repeat(63) + '1';
@@ -170,15 +170,16 @@ describe('social images: store and scheduler', () => {
     expect(await listPosts()).toEqual([]);
   });
 
-  it('a post left publishing by a killed run is failed after 15 minutes, never requeued', async () => {
+  it('a post left publishing by a run killed mid-send is uncertain after 15 minutes, never requeued', async () => {
     const accountId = await connect();
     const p = await queuePost(accountId, 'interrupted', [], T0);
-    await markPublishing(p.id, T0);
+    const claim = await claimNextDue(T0);
+    await beginAttempt(p.id, claim!.claimToken, T0); // the provider call began, then the run died
     const provider = { publish: async () => ({ remoteId: 'x' }) } as unknown as SocialProvider;
     await runDuePosts({ linkedin: provider }, KEY, new Date(T0.getTime() + 10 * 60_000));
     expect((await listPosts('publishing')).map((r) => r.id)).toEqual([p.id]); // 10 minutes: still in flight
     await runDuePosts({ linkedin: provider }, KEY, new Date(T0.getTime() + 16 * 60_000));
-    expect((await listPosts('failed'))[0]).toMatchObject({ id: p.id, last_error: expect.stringMatching(/check LinkedIn/) });
+    expect((await listPosts('uncertain'))[0]).toMatchObject({ id: p.id, last_error: expect.stringMatching(/check it, then reconcile/) });
   });
 
   it('starts no new post once the pass is over its time budget', async () => {
