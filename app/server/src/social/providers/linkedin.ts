@@ -1,6 +1,6 @@
 import { HttpError } from '../../routes/http.js';
 import type { ConnectedAccount, PostMedia, PublishResult, QueuedPost, SocialProvider, StoredAccount, TokenPair } from './types.js';
-import { NoRefreshTokenError } from './types.js';
+import { NoRefreshTokenError, NotSentError } from './types.js';
 
 const AUTH_URL = 'https://www.linkedin.com/oauth/v2/authorization';
 const TOKEN_URL = 'https://www.linkedin.com/oauth/v2/accessToken';
@@ -162,8 +162,14 @@ export function linkedinProvider(opts: LinkedInOptions, now: () => Date = () => 
 
     async publish(account: StoredAccount, post: QueuedPost): Promise<PublishResult> {
       // Upload in order; one image is `media`, two or more are `multiImage`.
+      // Uploads create no post: a failure here is proven pre-send, so the scheduler may retry it.
       const images: { id: string; altText: string }[] = [];
-      for (const m of post.media) images.push({ id: await uploadImage(account, m), altText: m.altText });
+      try {
+        for (const m of post.media) images.push({ id: await uploadImage(account, m), altText: m.altText });
+      } catch (err) {
+        throw new NotSentError(err instanceof Error ? err.message : String(err));
+      }
+      // From here on the create request may reach LinkedIn: any failure is ambiguous.
       const content =
         images.length === 1 ? { media: images[0] } : images.length > 1 ? { multiImage: { images } } : undefined;
 

@@ -1,6 +1,6 @@
 import { HttpError } from '../../routes/http.js';
 import type { PostMedia, PostOptions, ProviderName, PublishResult, QueuedPost, RelayStatus, SocialProvider, StoredAccount } from './types.js';
-import { isVideo } from './types.js';
+import { isVideo, NotSentError, RejectedError } from './types.js';
 
 // Buffer as a relay: one personal API key (env) reaches every channel the
 // owner connected in Buffer, so there is no OAuth here. Each Buffer channel is
@@ -155,18 +155,26 @@ export function bufferProvider(opts: BufferOptions): SocialProvider & { listChan
     },
 
     async publish(account: StoredAccount, post: QueuedPost): Promise<PublishResult> {
-      const metadata = bufferMetadata(account.provider, post);
-      const input = {
-        channelId: account.providerAccountId,
-        text: post.body,
-        schedulingType: 'automatic',
-        // Our queue keeps the schedule; Buffer gets the post at the due minute.
-        mode: 'shareNow',
-        needsApproval: false,
-        source: 'secondbrain',
-        assets: post.media.map((m) => asset(m, account.provider, post.options)),
-        ...(metadata ? { metadata } : {}),
-      };
+      // Building the request is proven pre-send: nothing has left the process yet.
+      let input: Record<string, unknown>;
+      try {
+        const metadata = bufferMetadata(account.provider, post);
+        input = {
+          channelId: account.providerAccountId,
+          text: post.body,
+          schedulingType: 'automatic',
+          // Our queue keeps the schedule; Buffer gets the post at the due minute.
+          mode: 'shareNow',
+          needsApproval: false,
+          source: 'secondbrain',
+          assets: post.media.map((m) => asset(m, account.provider, post.options)),
+          ...(metadata ? { metadata } : {}),
+        };
+      } catch (err) {
+        throw new NotSentError(err instanceof Error ? err.message : String(err));
+      }
+      // From here on Buffer may have the post: a timeout, reset, 429 or 5xx is ambiguous, so it
+      // propagates as a plain error and the scheduler marks the post uncertain.
       const data = await gql<CreatePostData>(
         `mutation CreatePost($input: CreatePostInput!) {
           createPost(input: $input) {
@@ -178,9 +186,13 @@ export function bufferProvider(opts: BufferOptions): SocialProvider & { listChan
         { input },
       );
       const r = data.createPost;
-      if (!r.post) throw new HttpError(400, `buffer refused the post: ${r.message ?? r.__typename}`);
+      // A typed MutationError answer creates no post.
+      if (!r.post) throw new RejectedError(`buffer refused the post: ${r.message ?? r.__typename}`);
+      // Accepted, but no id to track it by: we cannot prove what Buffer has.
+      if (!r.post.id) throw new HttpError(502, 'buffer accepted the post but returned no post id');
       const status = toStatus(r.post);
-      if (status.state === 'error') throw new HttpError(502, status.message);
+      // Buffer has the post and says it errored: final, never resent.
+      if (status.state === 'error') throw new RejectedError(status.message);
       return { remoteId: r.post.id, url: status.state === 'sent' ? status.url : undefined, pending: status.state !== 'sent' };
     },
 
