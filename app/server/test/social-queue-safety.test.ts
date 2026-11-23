@@ -395,6 +395,51 @@ describe('relay polling still works', () => {
 describe('audited reconciliation', () => {
   beforeEach(truncateAll);
 
+  it('cannot requeue while an expired sender may resume after write-ahead', async () => {
+    const a = await connect();
+    const p = await queuePost(a, 'paused before provider', [], T0);
+    let release!: () => void;
+    let entered!: () => void;
+    const paused = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let sends = 0;
+    const provider = fake(async () => {
+      entered();
+      await paused; // The write-ahead has committed; the external side effect has not occurred.
+      sends++;
+      return { remoteId: 'urn:li:share:late' };
+    });
+    const original = runDuePosts({ linkedin: provider.provider }, KEY, T0);
+    await started;
+    expect(await recoverStaleClaims(AFTER_LEASE)).toEqual({ requeued: 0, uncertain: 1 });
+    await expect(reconcilePost(p.id, { outcome: 'not_posted', requeue: true, note: 'not visible yet', actor: 'owner', via: 'cli' }, AFTER_LEASE)).rejects.toThrow(/sender.*may.*resume/i);
+    const next = ok();
+    await runDuePosts({ linkedin: next.provider }, KEY, AFTER_LEASE);
+    expect(next.calls).toHaveLength(0);
+    release();
+    await original;
+    expect(sends).toBe(1);
+    expect(await postRow(p.id)).toMatchObject({ status: 'posted', remote_id: 'urn:li:share:late' });
+  });
+
+  it('permits audited requeue after an expired attempt actually returns uncertain', async () => {
+    const a = await connect();
+    const p = await queuePost(a, 'late timeout', [], T0);
+    const old = await claimNextDue(T0);
+    const attempt = await beginAttempt(p.id, old!.claimToken, T0);
+    await recoverStaleClaims(AFTER_LEASE);
+    await finishAttempt(attempt!, { kind: 'uncertain', message: 'late timeout' }, AFTER_LEASE);
+    await reconcilePost(p.id, { outcome: 'not_posted', requeue: true, note: 'checked after call returned', actor: 'owner', via: 'cli' }, AFTER_LEASE);
+    expect(await postRow(p.id)).toMatchObject({ status: 'queued' });
+  });
+
+  it('does not requeue a legacy uncertain post with no recorded attempt', async () => {
+    const a = await connect();
+    const p = await queuePost(a, 'legacy uncertain', [], T0);
+    await query(`UPDATE social_posts SET status = 'uncertain' WHERE id = $1`, [p.id]);
+    await expect(reconcilePost(p.id, { outcome: 'not_posted', requeue: true, note: 'not visible', actor: 'owner', via: 'cli' }, AFTER_LEASE)).rejects.toThrow(/sender.*may.*resume/i);
+  });
+
   async function uncertainPost(): Promise<number> {
     const a = await connect();
     const p = await queuePost(a, 'maybe', [image()], T0);

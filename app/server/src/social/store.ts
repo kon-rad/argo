@@ -510,13 +510,14 @@ export async function finishAttempt(attemptId: number, outcome: AttemptOutcome, 
     const owner = await c.query<{ post_id: number }>(`SELECT post_id FROM social_post_attempts WHERE id = $1`, [attemptId]);
     if (!owner.rows[0]) return;
     await c.query(`SELECT 1 FROM social_posts WHERE id = $1 FOR UPDATE`, [owner.rows[0].post_id]);
-    const { rows } = await c.query<{ post_id: number; claim_token: string; state: string }>(
-      `SELECT post_id, claim_token, state FROM social_post_attempts WHERE id = $1 FOR UPDATE`,
+    const { rows } = await c.query<{ post_id: number; claim_token: string; state: string; finished_at: Date | null }>(
+      `SELECT post_id, claim_token, state, finished_at FROM social_post_attempts WHERE id = $1 FOR UPDATE`,
       [attemptId],
     );
     const a = rows[0];
-    // 'uncertain' may still learn the truth (a stale call that answers late); every other state is final.
-    if (!a || !(a.state === 'sending' || (a.state === 'uncertain' && (outcome.kind === 'sent' || outcome.kind === 'handed_off')))) return;
+    // A swept attempt can still return; recording that it returned also proves
+    // this worker cannot initiate its provider call later.
+    if (!a || !(a.state === 'sending' || (a.state === 'uncertain' && a.finished_at === null && ['sent', 'handed_off', 'uncertain'].includes(outcome.kind)))) return;
     const remoteId = 'remoteId' in outcome ? outcome.remoteId : null;
     const error = 'message' in outcome ? outcome.message : null;
     await c.query(`UPDATE social_post_attempts SET state = $2, finished_at = $3, remote_id = $4, error = coalesce($5, error) WHERE id = $1`, [
@@ -708,7 +709,15 @@ export async function reconcilePost(id: number, input: ReconcileInput, now: Date
     const { rows } = await c.query<{ status: string }>(`SELECT status FROM social_posts WHERE id = $1 FOR UPDATE`, [id]);
     if (!rows[0]) throw new HttpError(404, `no post ${id}`);
     if (rows[0].status !== 'uncertain') throw new HttpError(409, `post ${id} is ${rows[0].status}, not uncertain; only an uncertain post is reconciled`);
-    const attempt = await c.query<{ id: number }>(`SELECT max(id) AS id FROM social_post_attempts WHERE post_id = $1`, [id]);
+    const attempt = await c.query<{ id: number; state: string; finished_at: Date | null }>(
+      `SELECT id, state, finished_at FROM social_post_attempts WHERE post_id = $1 ORDER BY id DESC LIMIT 1 FOR UPDATE`, [id],
+    );
+    // A lease expiry does not stop a process paused between the write-ahead
+    // and the provider call. Only an attempt whose call returned can be retried.
+    if (input.outcome === 'not_posted' && input.requeue &&
+        (!attempt.rows[0] || attempt.rows[0].state !== 'uncertain' || attempt.rows[0].finished_at === null)) {
+      throw new HttpError(409, 'the original sender may still resume; requeue is blocked until its attempt has returned');
+    }
     const newStatus = input.outcome === 'posted' ? 'posted' : input.requeue ? 'queued' : 'failed';
     if (newStatus === 'posted') {
       await c.query(
