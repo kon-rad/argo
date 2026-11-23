@@ -81,7 +81,19 @@ describe('/api/warehouse', () => {
     await request(app).get('/api/warehouse/dashboards/missing').expect(404);
   });
 
+  it('lists optional area ownership and keeps dashboard queries read-only', async () => {
+    writeFileSync(join(vault, 'warehouse', 'dashboards', 'owned.json'), JSON.stringify({
+      title: 'Owned', area: 'journal', panels: [{ title: 'Write', chart: 'number', sql: 'delete from data.things' }],
+    }));
+    const list = (await request(app).get('/api/warehouse/dashboards').expect(200)).body.dashboards;
+    expect(list).toEqual([{ name: 'main', title: 'Main' }, { name: 'owned', title: 'Owned', area: 'journal' }]);
+    const { body } = await request(app).get('/api/warehouse/dashboards/owned').expect(200);
+    expect(body.panels[0].error).toBeTruthy();
+    expect((await query('select count(*)::int as n from data.things')).rows[0].n).toBe(2);
+  });
+
   it('is not mounted when the addon is off', async () => {
     await request(createApp({ modules: new Set(['projects']) })).get('/api/warehouse/overview').expect(404);
+    await request(createApp({ modules: new Set(['projects']) })).get('/api/warehouse/dashboards').expect(404);
   });
 });

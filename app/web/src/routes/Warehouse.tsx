@@ -255,7 +255,7 @@ function Dashboards() {
   );
 }
 
-function Dashboard({ name }: { name: string }) {
+export function Dashboard({ name }: { name: string }) {
   const q = useQuery({ queryKey: ['data-dashboard', name], queryFn: () => warehouseApi.dashboard(name) });
   if (!q.data) return <div className="mt-4"><Status q={q} /></div>;
   return (

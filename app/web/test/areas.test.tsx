@@ -159,6 +159,41 @@ describe('/areas', () => {
 });
 
 describe('/areas/<slug>', () => {
+  it('renders only dashboards owned by this area through the warehouse endpoint', async () => {
+    const calls = mount('/areas/journal', ({ url }) => {
+      if (url.pathname === '/api/meta') return Response.json({ modules: ['projects', 'warehouse'] });
+      if (url.pathname === '/api/warehouse/dashboards') return Response.json({ dashboards: [
+        { name: 'owned', title: 'Journal metrics', area: 'journal' },
+        { name: 'other', title: 'Studio metrics', area: 'studio' },
+        { name: 'unowned', title: 'General' },
+      ] });
+      if (url.pathname === '/api/warehouse/dashboards/owned') return Response.json({ title: 'Journal metrics', panels: [{ title: 'Entries', chart: 'number', result: { columns: ['count'], rows: [[42]] } }] });
+      return undefined;
+    });
+    expect(await screen.findByText('Entries')).toBeTruthy();
+    expect(screen.getByText('42')).toBeTruthy();
+    expect(screen.getByText('Journal metrics')).toBeTruthy();
+    expect(screen.queryByText('Studio metrics')).toBeNull();
+    expect(calls.some((c) => c.url.pathname === '/api/warehouse/dashboards/other')).toBe(false);
+  });
+
+  it('preserves the area page when warehouse is off or has no match', async () => {
+    const calls = mount('/areas/studio', ({ url }) => url.pathname === '/api/meta' ? Response.json({ modules: ['projects'] }) : undefined);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Studio' })).toBeTruthy();
+    await waitFor(() => expect(calls.some((c) => c.url.pathname === '/api/meta')).toBe(true));
+    expect(calls.some((c) => c.url.pathname.startsWith('/api/warehouse'))).toBe(false);
+    expect(screen.queryByRole('region', { name: 'Dashboards' })).toBeNull();
+    cleanup();
+    const enabled = mount('/areas/studio', ({ url }) => {
+      if (url.pathname === '/api/meta') return Response.json({ modules: ['projects', 'warehouse'] });
+      if (url.pathname === '/api/warehouse/dashboards') return Response.json({ dashboards: [{ name: 'owned', title: 'Journal metrics', area: 'journal' }] });
+      return undefined;
+    });
+    await waitFor(() => expect(enabled.some((c) => c.url.pathname === '/api/warehouse/dashboards')).toBe(true));
+    expect(screen.getByRole('heading', { level: 1, name: 'Studio' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Dashboards' })).toBeNull();
+  });
+
   it('an area with KPIs and assets shows the header, links, style guide, images, goals, KPI trend, roadmap and history', async () => {
     mount('/areas/journal');
     expect(await screen.findByRole('heading', { level: 1, name: 'Journal' })).toBeTruthy();

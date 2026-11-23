@@ -205,10 +205,10 @@ const Panel = z.object({
   x: z.string().optional(),
   y: z.array(z.string()).optional(),
 });
-const Dashboard = z.object({ title: z.string(), description: z.string().optional(), panels: z.array(Panel) });
+const Dashboard = z.object({ title: z.string(), description: z.string().optional(), area: z.string().min(1).optional(), panels: z.array(Panel) });
 export type DashboardPanel = z.infer<typeof Panel> & { result?: QueryResult; error?: string };
 
-export function listDashboards(dir: string): { name: string; title: string; error?: string }[] {
+export function listDashboards(dir: string): { name: string; title: string; area?: string; error?: string }[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((f) => f.endsWith('.json'))
@@ -216,7 +216,8 @@ export function listDashboards(dir: string): { name: string; title: string; erro
     .map((f) => {
       const name = f.slice(0, -5);
       try {
-        return { name, title: Dashboard.parse(JSON.parse(readFileSync(join(dir, f), 'utf8'))).title };
+        const spec = Dashboard.parse(JSON.parse(readFileSync(join(dir, f), 'utf8')));
+        return { name, title: spec.title, ...(spec.area ? { area: spec.area } : {}) };
       } catch (err) {
         return { name, title: name, error: (err as Error).message.slice(0, 300) };
       }
