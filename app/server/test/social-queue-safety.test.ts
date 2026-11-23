@@ -665,4 +665,30 @@ describe('migration 1756000020900 up and down', () => {
     const again = await enqueuePost(a, 'keyed', [], T0, {}, 'queued', { idempotencyKey: 'mig-1' });
     expect(again.created).toBe(true);
   });
+
+  it('node-pg-migrate itself runs this migration down one step and up again', async () => {
+    const { runner } = await import('node-pg-migrate');
+    const opts = {
+      databaseUrl: config.databaseUrl,
+      dir: resolve(import.meta.dirname, '..', '..', 'db', 'migrations'),
+      migrationsTable: 'pgmigrations',
+      useGlob: false,
+      checkOrder: false,
+      log: () => undefined,
+      count: 1,
+    } as const;
+    const latest = await query<{ name: string }>(`SELECT name FROM pgmigrations ORDER BY id DESC LIMIT 1`);
+    // One step down only reaches this migration while it is the newest; the SQL-level test above
+    // keeps covering its up and down sections after later migrations land.
+    if (latest.rows[0]!.name !== '1756000020900_social-queue-idempotency') return;
+    try {
+      const down = await runner({ ...opts, direction: 'down' } as Parameters<typeof runner>[0]);
+      expect(down.map((m) => m.name)).toEqual(['1756000020900_social-queue-idempotency']);
+      expect((await query<{ t: string | null }>(`SELECT to_regclass('public.social_post_attempts') AS t`)).rows[0]!.t).toBeNull();
+    } finally {
+      const up = await runner({ ...opts, direction: 'up' } as Parameters<typeof runner>[0]);
+      expect(up.map((m) => m.name)).toEqual(['1756000020900_social-queue-idempotency']);
+    }
+    expect((await query<{ t: string | null }>(`SELECT to_regclass('public.social_post_attempts') AS t`)).rows[0]!.t).toBe('social_post_attempts');
+  });
 });

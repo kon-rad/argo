@@ -506,6 +506,10 @@ export type AttemptOutcome =
  */
 export async function finishAttempt(attemptId: number, outcome: AttemptOutcome, now: Date): Promise<void> {
   await withTransaction(async (c) => {
+    // Lock order is post, then attempt, the same as recoverStaleClaims, so the two never deadlock.
+    const owner = await c.query<{ post_id: number }>(`SELECT post_id FROM social_post_attempts WHERE id = $1`, [attemptId]);
+    if (!owner.rows[0]) return;
+    await c.query(`SELECT 1 FROM social_posts WHERE id = $1 FOR UPDATE`, [owner.rows[0].post_id]);
     const { rows } = await c.query<{ post_id: number; claim_token: string; state: string }>(
       `SELECT post_id, claim_token, state FROM social_post_attempts WHERE id = $1 FOR UPDATE`,
       [attemptId],

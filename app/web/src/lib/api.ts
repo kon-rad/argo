@@ -49,7 +49,7 @@ export interface MediaPost {
   network: string;
   body: string;
   options: Record<string, unknown>;
-  status: 'draft' | 'queued' | 'publishing' | 'posted' | 'failed' | 'canceled';
+  status: 'draft' | 'queued' | 'publishing' | 'posted' | 'failed' | 'canceled' | 'uncertain';
   scheduled_for: string;
   posted_at: string | null;
   remote_url: string | null;
