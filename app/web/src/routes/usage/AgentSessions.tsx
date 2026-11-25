@@ -135,13 +135,13 @@ export default function AgentSessions({ from, to, tz }: { from: string; to: stri
           <input aria-label="Search sessions" className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-0.5" placeholder="search text or session ID"
             value={q} onChange={(e) => setQ(e.target.value)} />
         </form>
-        {DIMS.map((d) => (facets.data?.facets[d]?.length ?? 0) > (d === 'persona' ? 0 : 1) || filters[d]?.length ? (
+        {DIMS.map((d) => (
           <label key={d} className="flex items-center gap-1">{DIM_LABELS[d]}
             <select aria-label={`Filter by ${DIM_LABELS[d]}`} className="max-w-48 rounded border border-[var(--rule)] bg-[var(--paper)] px-1 py-0.5" value={filters[d]?.[0] ?? ''} onChange={(e) => choose(d, e.target.value)}>
               <option value="">All</option>{optionsFor(d).map((f) => <option key={f.value} value={f.value}>{f.value} ({f.n})</option>)}
             </select>
           </label>
-        ) : null)}
+        ))}
         <label className="flex items-center gap-1"><input type="checkbox" checked={!!filters.cron} onChange={(e) => flag('s_cron', e.target.checked)} />cron jobs</label>
         <label className="flex items-center gap-1"><input type="checkbox" checked={!!filters.errors} onChange={(e) => flag('s_errors', e.target.checked)} />with errors</label>
         <label className="flex items-center gap-1"><input type="checkbox" checked={!!filters.subagents} onChange={(e) => flag('s_sub', e.target.checked)} />subagents as rows</label>

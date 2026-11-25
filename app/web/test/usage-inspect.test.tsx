@@ -160,7 +160,9 @@ describe('Sessions list', () => {
     const rendered = page('/usage?view=sessions');
     const last = personas.at(-1)!.value;
     const select = await screen.findByRole('combobox', { name: 'Filter by bot persona' }) as HTMLSelectElement;
-    for (const persona of personas) expect([...select.options].some(option => option.value === persona.value)).toBe(true);
+    await waitFor(() => {
+      for (const persona of personas) expect([...select.options].some(option => option.value === persona.value)).toBe(true);
+    });
     fireEvent.change(select, { target: { value: last } });
     await waitFor(() => expect(locationParams().get('s_persona')).toBe(last));
     await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.get('persona')).toBe(last));
@@ -190,7 +192,7 @@ describe('Sessions list', () => {
     await waitFor(() => expect(locationParams().has('s_persona')).toBe(false));
     await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.has('persona')).toBe(false));
     expect(locationParams().get('s_host')).toBe('absent-host');
-    expect(screen.queryByRole('combobox', { name: 'Filter by bot persona' })).toBeNull();
+    expect((screen.getByRole('combobox', { name: 'Filter by bot persona' }) as HTMLSelectElement).value).toBe('');
     fireEvent.change(host, { target: { value: '' } });
     await waitFor(() => expect(locationParams().has('s_host')).toBe(false));
     await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.has('host')).toBe(false));
