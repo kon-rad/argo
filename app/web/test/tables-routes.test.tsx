@@ -121,10 +121,10 @@ describe('table views on a phone, from the app data shapes', () => {
     expect(within(wakes).getAllByRole('button', { name: 'filter' })).toHaveLength(fx.usageOrgWakes.agents.length);
   });
 
-  it('Usage, Sessions: fifteen fields per session, all of them on its card', async () => {
+  it('Usage, Sessions: sixteen fields per session, all of them on its card', async () => {
     open('/usage?view=sessions');
     const t = await table('Sessions', 'cards', ['Started', 'Duration', 'Machine', 'Type', 'Bot persona', 'Agent', 'Session', 'Ticket', 'Model', 'Steps',
-      'Tool calls', 'Tokens in / out', 'Context', 'USD (Hermes)', 'Subagents']);
+      'Tool calls', 'Tokens in / out', 'Total', 'Context', 'USD (Hermes)', 'Subagents']);
     expect(within(t).getAllByRole('link').length).toBeGreaterThanOrEqual(fx.agentSessions.sessions.length);
   });
 

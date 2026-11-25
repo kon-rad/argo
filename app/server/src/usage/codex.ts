@@ -7,6 +7,7 @@ type Obj = Record<string, any>;
 const obj = (x: unknown): Obj => x && typeof x === 'object' && !Array.isArray(x) ? x as Obj : {};
 const str = (x: unknown): string | null => typeof x === 'string' && x.length > 0 ? x : null;
 const count = (x: unknown): number => typeof x === 'number' && Number.isSafeInteger(x) && x >= 0 ? x : 0;
+const recordedCount = (x: unknown): number | null => typeof x === 'number' && Number.isSafeInteger(x) && x >= 0 ? x : null;
 const date = (x: unknown): Date | null => typeof x === 'string' && Number.isFinite(Date.parse(x)) ? new Date(x) : null;
 const textOf = (p: Obj): string => {
   if (typeof p.content === 'string') return p.content;
@@ -28,6 +29,9 @@ export function parseCodex(records: unknown[], host: Host): { session: SessionIn
   let model = str(m.model), cwd = str(m.cwd), title = str(m.title);
   let started = date(m.timestamp ?? meta?.timestamp), ended = started;
   let high = [0, 0, 0, 0];
+  let latestPromptTokens: number | null = null;
+  let latestContextAt: string | null = null;
+  let contextWindow: number | null = null;
   let latestMessage: string | null = null;
   const messages = new Map<string, ParsedMessage>();
   const calls = new Map<string, UsageCall>();
@@ -56,6 +60,11 @@ export function parseCodex(records: unknown[], host: Host): { session: SessionIn
     }
     if (r.type !== 'event_msg' || p.type !== 'token_count' || !ts) continue;
     const info = obj(p.info);
+    // Codex records the latest call's input separately from cumulative totals.
+    // Only that per-call field can describe context; deltas and session totals cannot.
+    const lastInput = recordedCount(obj(info.last_token_usage).input_tokens);
+    if (lastInput !== null) { latestPromptTokens = lastInput; latestContextAt = ts.toISOString(); }
+    contextWindow = recordedCount(info.model_context_window) ?? contextWindow;
     const total = obj(info.total_token_usage);
     const last = obj(info.last_token_usage);
     const cumulative = Object.keys(total).length > 0;
@@ -88,6 +97,7 @@ export function parseCodex(records: unknown[], host: Host): { session: SessionIn
     inputTokens: calls.size ? high[0]! - Math.min(high[0]!, high[1]!) : null,
     outputTokens: calls.size ? high[2]! : null, costUsd: null, b2Path: null,
     meta: { billing_provider: 'openai', native_source: m.source ?? null, agent: m.agent_nickname ?? spawn.agent_nickname ?? null,
-      api_call_count: calls.size, cache_read_tokens: high[1], reasoning_tokens: high[3], counters: 'available-only' },
+      api_call_count: calls.size, cache_read_tokens: high[1], reasoning_tokens: high[3], counters: 'available-only',
+      context_tokens: latestPromptTokens, context_window: contextWindow, context_at: latestContextAt },
   } };
 }

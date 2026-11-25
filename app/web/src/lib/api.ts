@@ -623,7 +623,7 @@ export interface AgentSessionRow {
   persona?: string | null;
   /** One line under 100 characters, and where it came from; null when nothing usable was found. */
   display_title?: string | null; title_source?: 'task' | 'skill' | 'title' | 'prompt' | null;
-  /** The prompt size of the session's latest main call (what the context held then), and when; null: no call recorded. */
+  /** Latest main-call prompt input recorded by Claude or Codex, and when; null: no trustworthy observation. */
   context_tokens?: number | null; context_at?: string | null;
   /** The context window recorded with the session; null: unknown (never guessed from the model name). */
   context_window?: number | null;

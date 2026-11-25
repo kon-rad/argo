@@ -140,15 +140,16 @@ describe('Sessions list', () => {
     expect(locationParams().get('s_cron')).toBe('1');
   });
 
-  it('type and persona filters come from the URL, go to the API and toggle from the chips', async () => {
+  it('type and persona dropdown filters come from the URL and go to the API', async () => {
     const calls = mockFetch({});
     page('/usage?view=sessions&s_type=telegram&s_persona=claude&s_host=droplet');
     await screen.findByRole('link', { name: 'what is on the board?' });
     await waitFor(() => expect(calls().some((u) => u.includes('/usage/agent-sessions?') && u.includes('type=telegram')
       && u.includes('persona=claude') && u.includes('host=droplet'))).toBe(true));
-    expect(screen.getByRole('button', { name: 'telegram' }).getAttribute('aria-pressed')).toBe('true');
-    fireEvent.click(screen.getByRole('button', { name: 'headless' }));
-    await waitFor(() => expect(calls().some((u) => u.includes('type=telegram%2Cheadless') || u.includes('type=telegram,headless'))).toBe(true));
+    const type = screen.getByRole('combobox', { name: 'Filter by type' }) as HTMLSelectElement;
+    expect(type.value).toBe('telegram');
+    fireEvent.change(type, { target: { value: 'headless' } });
+    await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.get('type')).toBe('headless'));
     expect(screen.getByText('bot persona')).toBeTruthy();
   });
 
@@ -158,9 +159,9 @@ describe('Sessions list', () => {
     const calls = mockFetch({}, facets);
     const rendered = page('/usage?view=sessions');
     const last = personas.at(-1)!.value;
-    const chip = await screen.findByRole('button', { name: last });
-    for (const persona of personas) expect(screen.getByRole('button', { name: persona.value })).toBeTruthy();
-    fireEvent.click(chip);
+    const select = await screen.findByRole('combobox', { name: 'Filter by bot persona' }) as HTMLSelectElement;
+    for (const persona of personas) expect([...select.options].some(option => option.value === persona.value)).toBe(true);
+    fireEvent.change(select, { target: { value: last } });
     await waitFor(() => expect(locationParams().get('s_persona')).toBe(last));
     await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.get('persona')).toBe(last));
     const bookmark = '/usage' + screen.getByTestId('session-location').textContent;
@@ -168,10 +169,10 @@ describe('Sessions list', () => {
 
     const reloadedCalls = mockFetch({}, facets);
     page(bookmark);
-    const selected = await screen.findByRole('button', { name: last });
-    expect(selected.getAttribute('aria-pressed')).toBe('true');
+    const selected = await screen.findByRole('combobox', { name: 'Filter by bot persona' }) as HTMLSelectElement;
+    expect(selected.value).toBe(last);
     await waitFor(() => expect(sessionRequests(reloadedCalls).at(-1)?.searchParams.get('persona')).toBe(last));
-    fireEvent.click(selected);
+    fireEvent.change(selected, { target: { value: '' } });
     await waitFor(() => expect(locationParams().has('s_persona')).toBe(false));
     await waitFor(() => expect(sessionRequests(reloadedCalls).at(-1)?.searchParams.has('persona')).toBe(false));
     expect(locationParams().get('view')).toBe('sessions');
@@ -180,33 +181,33 @@ describe('Sessions list', () => {
   it('keeps bookmarked selections absent from current facets visible and clears their URL and API filters', async () => {
     const calls = mockFetch({}, { facets: { ...FACETS.facets, persona: [] } });
     page('/usage?view=sessions&s_persona=absent-persona&s_host=absent-host');
-    const persona = await screen.findByRole('button', { name: 'absent-persona' });
-    const host = screen.getByRole('button', { name: 'absent-host' });
-    expect(persona.getAttribute('aria-pressed')).toBe('true');
-    expect(host.getAttribute('aria-pressed')).toBe('true');
+    const persona = await screen.findByRole('combobox', { name: 'Filter by bot persona' }) as HTMLSelectElement;
+    const host = screen.getByRole('combobox', { name: 'Filter by machine' }) as HTMLSelectElement;
+    expect(persona.value).toBe('absent-persona');
+    expect(host.value).toBe('absent-host');
     await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.get('persona')).toBe('absent-persona'));
-    fireEvent.click(persona);
+    fireEvent.change(persona, { target: { value: '' } });
     await waitFor(() => expect(locationParams().has('s_persona')).toBe(false));
     await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.has('persona')).toBe(false));
     expect(locationParams().get('s_host')).toBe('absent-host');
-    expect(screen.queryByRole('button', { name: 'absent-persona' })).toBeNull();
-    fireEvent.click(host);
+    expect(screen.queryByRole('combobox', { name: 'Filter by bot persona' })).toBeNull();
+    fireEvent.change(host, { target: { value: '' } });
     await waitFor(() => expect(locationParams().has('s_host')).toBe(false));
     await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.has('host')).toBe(false));
-    expect(screen.queryByRole('button', { name: 'absent-host' })).toBeNull();
+    expect([...host.options].some(option => option.value === 'absent-host')).toBe(false);
   });
 
   it('keeps a selected host below the discovery limit visible and removable without losing the type filter', async () => {
     const hosts = Array.from({ length: 12 }, (_, i) => ({ value: 'host-' + i, n: 12 - i }));
     const calls = mockFetch({}, { facets: { ...FACETS.facets, host: hosts } });
     page('/usage?view=sessions&s_host=host-11&s_type=telegram');
-    const selected = await screen.findByRole('button', { name: 'host-11' });
-    expect(selected.getAttribute('aria-pressed')).toBe('true');
-    fireEvent.click(selected);
+    const selected = await screen.findByRole('combobox', { name: 'Filter by machine' }) as HTMLSelectElement;
+    expect(selected.value).toBe('host-11');
+    fireEvent.change(selected, { target: { value: '' } });
     await waitFor(() => expect(locationParams().has('s_host')).toBe(false));
     await waitFor(() => expect(sessionRequests(calls).at(-1)?.searchParams.has('host')).toBe(false));
     expect(locationParams().get('s_type')).toBe('telegram');
-    expect(screen.queryByRole('button', { name: 'host-11' })).toBeNull();
+    expect([...selected.options].some(option => option.value === 'host-11')).toBe(true);
   });
 
   it('buckets the ledger in the vault zone and says where the zone came from', async () => {

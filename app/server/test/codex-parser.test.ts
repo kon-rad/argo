@@ -32,6 +32,18 @@ it('supports last-only events and repeated event snapshots', () => {
   const event = row('event_msg', { type: 'token_count', info: { last_token_usage: { input_tokens: 8, output_tokens: 2 } } });
   expect(parseCodex([meta, event, event], 'laptop-a').calls).toHaveLength(1);
 });
+it('records only explicit latest-call context and window observations', () => {
+  const observed = row('event_msg', { type: 'token_count', info: {
+    total_token_usage: { input_tokens: 900, output_tokens: 40 },
+    last_token_usage: { input_tokens: 120, output_tokens: 5 }, model_context_window: 200000,
+  } }, '2026-11-01T01:02:00Z');
+  const p = parseCodex([meta, observed], 'laptop-a');
+  expect(p.session?.meta).toMatchObject({ context_tokens: 120, context_window: 200000, context_at: '2026-11-01T01:02:00.000Z' });
+  const cumulativeOnly = parseCodex([meta, row('event_msg', { type: 'token_count', info: {
+    total_token_usage: { input_tokens: 900, output_tokens: 40 }, model_context_window: 200000,
+  } })], 'laptop-a');
+  expect(cumulativeOnly.session?.meta).toMatchObject({ context_tokens: null, context_window: 200000, context_at: null });
+});
 it('classifies native tool calls, results, reasoning and message steps', () => {
   for (const [type, step] of [['function_call','tool_call'], ['function_call_output','tool_result'], ['reasoning','thinking']]) {
     const raw = { harness: 'codex', type: 'response_item', payload: { type, name: 'example', call_id: 'tool-a' } };

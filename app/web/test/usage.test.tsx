@@ -123,6 +123,9 @@ describe('Usage page', () => {
     expect(called.searchParams.get('limit')).toBe('50');
     expect(called.searchParams.get('host')).toBe('mac');
     expect((screen.getByLabelText('Sessions from') as HTMLInputElement).value).toBe(localDateTime('2026-11-01T06:00:00.000Z', 'Asia/Tokyo'));
+    fireEvent.change(screen.getByLabelText('Sessions from'), { target: { value: '2026-11-01T18:00' } });
+    expect(screen.getByRole('alert').textContent).toContain('From must be earlier than To.');
+    expect(new URLSearchParams(screen.getByTestId('location').textContent!).get('sessionFrom')).toBe('2026-11-01T06:00:00.000Z');
     fireEvent.change(screen.getByLabelText('Sessions from'), { target: { value: '2026-11-01T15:30' } });
     await waitFor(() => expect(new URLSearchParams(screen.getByTestId('location').textContent!).get('sessionFrom')).toBe('2026-11-01T06:30:00.000Z'));
     await screen.findByText('1 to 50 of 101');

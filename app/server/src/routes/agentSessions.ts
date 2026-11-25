@@ -178,7 +178,10 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
             (SELECT array_agg(t ORDER BY seq) FROM (SELECT left(m.content_text, 2000) AS t, m.seq FROM archive_messages m
                WHERE m.session_id = p.id AND m.role = 'user' AND m.step IN ('prompt', 'meta') AND m.content_text <> ''
                ORDER BY m.seq LIMIT 8) f) AS opening,
-            lc.tokens AS context_tokens, lc.ts AS context_at, ${CAPACITY('p')} AS context_window,
+            CASE WHEN p.harness = 'codex' AND p.meta ->> 'context_tokens' ~ '^[0-9]{1,9}$'
+              THEN (p.meta ->> 'context_tokens')::bigint ELSE lc.tokens END AS context_tokens,
+            CASE WHEN p.harness = 'codex' THEN p.meta ->> 'context_at' ELSE lc.ts::text END AS context_at,
+            ${CAPACITY('p')} AS context_window,
             p.started_at, p.ended_at, p.total,
             st.steps, st.tool_calls, st.errors, st.unknown_outcomes, st.subagents,
             (SELECT count(*)::int ${RUNS_OF('p')} AND r.is_error) AS run_failures,
@@ -200,6 +203,8 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
     for (const k of ['calls', 'input', 'cache_write', 'cache_read', 'output', 'reasoning']) r[k] = Number(r[k] ?? 0);
     // Context: null when nothing recorded it. A number only from the latest call or a recorded window, never from totals.
     for (const k of ['context_tokens', 'context_window']) r[k] = r[k] == null ? null : Number(r[k]);
+    const contextAt = r.context_at == null ? NaN : Date.parse(String(r.context_at));
+    r.context_at = Number.isNaN(contextAt) ? null : new Date(contextAt).toISOString();
     const named = sessionTitle({ taskTitle: r.task_title as string | null, title: r.title as string | null, prompts: r.opening as string[] | null });
     r.display_title = named?.text ?? null;
     r.title_source = named?.source ?? null;

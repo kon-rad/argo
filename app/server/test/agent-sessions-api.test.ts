@@ -65,6 +65,23 @@ const list = (q: Record<string, string> = {}) => request(app).get('/api/usage/ag
   .query({ from: '2026-10-18T00:00:00Z', to: '2026-10-19T00:00:00Z', ...q });
 
 describe('agent sessions api', () => {
+  it('shows recorded Codex latest-call context without inferring it from session totals', async () => {
+    await withTransaction(async (tx) => {
+      await archive.upsertSession(tx, sess({ source: 'codex', externalId: 'codex-context',
+        startedAt: new Date('2026-10-18T12:00:00Z'), meta: {
+          context_tokens: 123, context_window: 200000, context_at: '2026-10-18T12:01:00.000Z',
+        } }));
+      await archive.upsertSession(tx, sess({ source: 'codex', externalId: 'codex-no-context',
+        startedAt: new Date('2026-10-18T12:00:00Z'), inputTokens: 9000, meta: {} }));
+    });
+    const rows = (await list()).body.sessions;
+    expect(rows.find((s: { external_id: string }) => s.external_id === 'codex-context')).toMatchObject({
+      context_tokens: 123, context_window: 200000, context_at: '2026-10-18T12:01:00.000Z',
+    });
+    expect(rows.find((s: { external_id: string }) => s.external_id === 'codex-no-context')).toMatchObject({
+      context_tokens: null, context_window: null,
+    });
+  });
   it('defaults the session list to 50 rows while retaining the full result total', async () => {
     await withTransaction(async (tx) => {
       for (let i = 0; i < 51; i++) await archive.upsertSession(tx, sess({ externalId: `page-${i}`, startedAt: new Date(`2026-10-18T10:${String(i % 60).padStart(2, '0')}:00Z`) }));

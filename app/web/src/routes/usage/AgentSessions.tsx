@@ -69,7 +69,7 @@ function Row({ s, tz }: { s: AgentSessionRow; tz: string }) {
       <td className="text-right">{s.tool_calls}{s.errors ? <span className="text-red-600" title="tool calls that failed"> ✗{s.errors}</span> : null}</td>
       <td className="text-right" title={`cache write ${formatTokens(s.cache_write)} · cache read ${formatTokens(s.cache_read)} · reasoning ${formatTokens(s.reasoning)}`}>
         {formatTokens(s.input)} / {formatTokens(s.output)}</td>
-      <td className="whitespace-nowrap text-right" title="input + cache write + cache read + output">{formatTokens(s.input + s.cache_write + s.cache_read + s.output)}</td>
+      <td className="whitespace-nowrap text-right" title={`${(s.input + s.cache_write + s.cache_read + s.output).toLocaleString()} tokens: input + cache write + cache read + output`}>{formatTokens(s.input + s.cache_write + s.cache_read + s.output)}</td>
       <td className="whitespace-nowrap text-right"><details className="group relative inline-block text-left">
         <summary className="cursor-pointer list-none underline decoration-dotted underline-offset-2" aria-label={`Context info for ${name ?? s.external_id}`}>{ctx ?? <span className={dim}>not recorded</span>} <span aria-hidden="true">ⓘ</span></summary>
         <span className="absolute z-10 mt-1 max-w-64 rounded border border-[var(--rule)] bg-[var(--paper)] p-2 text-left text-xs shadow">Latest recorded main call prompt size over recorded context window. This is not the session token total. {ctx ? (s.context_at ? `Recorded at ${startedStamp(s.context_at, tz)} (${tz}).` : 'Recorded; timestamp unavailable.') : 'Context values were not recorded.'}</span>
@@ -85,6 +85,7 @@ export default function AgentSessions({ from, to, tz }: { from: string; to: stri
   const filters = readFilters(sp);
   const [offset, setOffset] = useState(0);
   const [q, setQ] = useState(filters.q ?? '');
+  const [rangeError, setRangeError] = useState('');
   const key = JSON.stringify(filters);
   const list = useQuery({ queryKey: ['agent-sessions', from, to, key, offset], queryFn: () => api.agentSessions(from, to, filters, offset) });
   const facets = useQuery({ queryKey: ['agent-session-facets', from, to], queryFn: () => api.agentSessionFacets(from, to) });
@@ -100,6 +101,13 @@ export default function AgentSessions({ from, to, tz }: { from: string; to: stri
   const dateTime = (key: 'sessionFrom' | 'sessionTo', value: string) => {
     const instant = value ? zonedDateTime(value, tz) : null;
     if (value && !instant) return;
+    const nextFrom = key === 'sessionFrom' ? instant ?? from : sp.get('sessionFrom') ?? from;
+    const nextTo = key === 'sessionTo' ? instant ?? to : sp.get('sessionTo') ?? to;
+    if (Date.parse(nextFrom) >= Date.parse(nextTo)) {
+      setRangeError('From must be earlier than To.');
+      return;
+    }
+    setRangeError('');
     update((n) => { if (instant) n.set(key, instant); else n.delete(key); });
   };
   const reset = () => update((n) => {
@@ -122,6 +130,7 @@ export default function AgentSessions({ from, to, tz }: { from: string; to: stri
       <div className="my-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
         <label className="flex items-center gap-1">From <input aria-label="Sessions from" type="datetime-local" className="rounded border border-[var(--rule)] bg-[var(--paper)] px-1 py-0.5" value={localDateTime(sp.get('sessionFrom') ?? from, tz)} onChange={(e) => dateTime('sessionFrom', e.target.value)} /></label>
         <label className="flex items-center gap-1">To <input aria-label="Sessions to" type="datetime-local" className="rounded border border-[var(--rule)] bg-[var(--paper)] px-1 py-0.5" value={localDateTime(sp.get('sessionTo') ?? to, tz)} onChange={(e) => dateTime('sessionTo', e.target.value)} /></label>
+        {rangeError && <span role="alert" className="text-red-600">{rangeError}</span>}
         <form onSubmit={(e) => { e.preventDefault(); update((n) => { if (q.trim()) n.set('s_q', q.trim()); else n.delete('s_q'); }); }}>
           <input aria-label="Search sessions" className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-0.5" placeholder="search text or session ID"
             value={q} onChange={(e) => setQ(e.target.value)} />
