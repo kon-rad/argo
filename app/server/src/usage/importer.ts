@@ -17,6 +17,7 @@ export interface ImportCounts { lines: number; calls: number; sessions: number; 
 export async function importLines(input: AsyncIterable<string> | Iterable<string>, host: Host, opts: { quarantine?: boolean } = {}): Promise<ImportCounts> {
   if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(host)) throw new Error('invalid usage host');
   const c: ImportCounts = { lines: 0, calls: 0, sessions: 0, messages: 0, plan: 0, errors: [], accepted: [], rejected: [], quarantined: [] };
+  let sawCodex = false;
   const failedPaths = new Set<string>();
   const acceptedEvents = new Map<string, string | null>();
   const redact = buildRedactor({ env: process.env });
@@ -74,6 +75,7 @@ export async function importLines(input: AsyncIterable<string> | Iterable<string
           const r = await ingestCodex(tx, host, Buffer.from(w.text));
           c.calls += r.calls; c.sessions += r.sessions; c.messages += r.messages;
         });
+        sawCodex = true;
       } else if (w?.t === 'zen' && typeof w.path === 'string' && typeof w.text === 'string') {
         await withTransaction(async (tx) => {
           await tx.query('INSERT INTO usage_hosts (slug, display, kind) VALUES ($1,$1,\'laptop\') ON CONFLICT DO NOTHING', [host]);
@@ -109,5 +111,8 @@ export async function importLines(input: AsyncIterable<string> | Iterable<string
       } else throw err; // interrupted imports and operational failures always retain the cursor
     }
   }
+  // Laptop pushes and dispatcher logs arrive independently. Reconcile once per
+  // batch, before acknowledgement, so an operational failure keeps the cursor.
+  if (sawCodex) await withTransaction((tx) => store.attachCallsToRuns(tx, host));
   return c;
 }

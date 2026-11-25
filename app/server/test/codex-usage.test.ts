@@ -26,7 +26,7 @@ const fixture = (source: unknown = 'cli') => [
 ];
 const jsonl = (records: unknown[]) => records.map(x => JSON.stringify(x)).join('\n') + '\n';
 beforeEach(truncateAll);
-afterAll(async () => { await truncateAll(); await query("DELETE FROM usage_hosts WHERE slug IN ('laptop-a','laptop-b')"); });
+afterAll(async () => { await truncateAll(); await query("DELETE FROM usage_hosts WHERE slug IN ('laptop-a','laptop-b','dispatcher-a')"); });
 it('parses Desktop, CLI and nested headless identities and cumulative snapshots', () => {
   for (const source of ['cli', 'vscode', 'exec', { subagent: { thread_spawn: { parent_thread_id: 'synthetic-parent', agent_nickname: 'helper' } } }]) {
     const p = parseCodex(fixture(source), 'laptop-a');
@@ -83,6 +83,25 @@ it('exposes native sessions, source filters, facets and drilldown through usage 
   expect(native.body.sessions).toHaveLength(1);
   const facets = await request(app).get('/api/usage/facets').query(range).expect(200);
   expect(facets.body.facets.source.some((f: { value: string }) => f.value === 'codex')).toBe(true);
+});
+
+it('links a remote Codex card run when its native transcript arrives through laptop import', async () => {
+  await query(`INSERT INTO usage_hosts (slug,display,kind) VALUES ('dispatcher-a','Dispatcher','server') ON CONFLICT DO NOTHING`);
+  await query(`INSERT INTO org_agents (name,runtime,role,org_version) VALUES ('builder','codex','Engineer','v')`);
+  await query(`INSERT INTO boards (slug,name) VALUES ('example','Example')`);
+  await query(`INSERT INTO cards (id,board_slug,title,created_by) VALUES ('t_a1b2c3d4','example','Example task','builder')`);
+  await query(`INSERT INTO usage_runs (host,run_id,session_id,task_id,log_path,runtime,started_at,ended_at)
+    VALUES ('dispatcher-a','remote-run','synthetic-session','t_a1b2c3d4','dispatch:remote-run','codex',
+      '2026-11-01T00:59:00Z','2026-11-01T01:01:00Z')`);
+  await query(`INSERT INTO usage_launches (host,source,runtime,run_id,session_id,envelope,verified_task_ids,persona_status)
+    VALUES ('dispatcher-a','codex','codex','remote-run','synthetic-session','{}',ARRAY['t_a1b2c3d4'],'absent')`);
+  await query(`INSERT INTO usage_calls (source,host,call_id,session_external_id,ts,model,entrypoint,output_tokens,run_id)
+    VALUES ('codex','dispatcher-a','remote-run','synthetic-session',$1,'example-model','sdk-cli',40,'remote-run')`, [at]);
+  await importLines([JSON.stringify({ t: 'codex', text: jsonl(fixture()) })], 'laptop-a');
+  expect((await query(`SELECT host FROM usage_runs WHERE run_id='remote-run'`)).rows).toEqual([{ host: 'laptop-a' }]);
+  expect((await query(`SELECT host FROM usage_launches WHERE run_id='remote-run'`)).rows).toEqual([{ host: 'laptop-a' }]);
+  expect((await query(`SELECT task_id FROM usage_session_tasks WHERE task_id='t_a1b2c3d4'`)).rows).toHaveLength(2);
+  expect((await query(`SELECT sum(output_tokens)::int n FROM usage_calls WHERE session_external_id='synthetic-session'`)).rows[0].n).toBe(40);
 });
 
 it('keeps usage routes absent when the caller disables the feature', async () => {

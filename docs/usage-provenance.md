@@ -1,6 +1,6 @@
 # Usage launch provenance
 
-Apply migrations through `1756000019300_preserve-recorded-usage-attribution.sql` before updating producers.
+Apply migrations through `1756000021000_codex-run-host-replay.sql` before updating producers.
 Old transcripts and clients remain readable. The additions preserve raw evidence and
 have no destructive down migration. Rollback the producer/reader code while retaining
 the schema and original metadata.
@@ -85,3 +85,10 @@ snapshot. Missing or unknown launch metadata never invents a wake.
 Codex host validation happens before card or wake claims. An invalid
 `ORG_CODEX_HOST` leaves work ready for a corrected launch, with no child spawned.
 After execution, accounting failures leave completed and archived cards terminal.
+When the dispatcher runs Codex on another machine, set `ORG_CODEX_HOST` to that
+machine's registered Usage host. Laptop imports reconcile an exact native Codex
+session ID with a previously recorded run and its trusted launch, then discard
+the dispatcher's duplicate token summary when native calls exist. The replay
+migration repairs rows recorded before that import path ran. It leaves unbound
+launches and ambiguous sessions unlinked rather than assigning a ticket by time
+or title.
