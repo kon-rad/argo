@@ -125,6 +125,15 @@ export async function attachCallsToRuns(tx: TxClient, host: Host): Promise<numbe
      SELECT old_host, run_id FROM target`, [host]);
   for (const m of moved.rows) {
     await tx.query(
+      `UPDATE usage_launches l SET host = $1
+       FROM usage_runs r
+       WHERE r.host = $1 AND r.run_id = $3 AND r.runtime = 'codex'
+         AND l.host = $2 AND l.source = 'codex' AND l.runtime = 'codex'
+         AND l.run_id = r.run_id AND l.session_id = r.session_id
+         AND NOT EXISTS (SELECT 1 FROM usage_launches other
+           WHERE other.host = $1 AND other.source = l.source AND other.runtime = l.runtime AND other.run_id = l.run_id)`,
+      [host, m.old_host, m.run_id]);
+    await tx.query(
       `DELETE FROM usage_calls WHERE source = 'codex' AND host = $1 AND call_id = $2 AND run_id = $2`, [m.old_host, m.run_id]);
   }
   const attached = await tx.query(

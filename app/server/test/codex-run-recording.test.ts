@@ -86,11 +86,18 @@ describe('Codex run recorded on the dispatcher, executed elsewhere', () => {
   it('moves the run to the host whose native calls arrive, drops the summary there, and leaves a run with no native calls alone', async () => {
     await addHost('dispatcher-a', 'server');
     await addHost('executor-b');
+    await query(`INSERT INTO org_agents (name,runtime,role,org_version) VALUES ('builder','codex','Engineer','v')`);
+    await query(`INSERT INTO boards (slug,name) VALUES ('example','Example')`);
+    await query(`INSERT INTO cards (id,board_slug,title,created_by) VALUES ('t_a1b2c3d4','example','Example task','builder')`);
+    await query(`INSERT INTO archive_sessions (source,host,external_id,started_at,ended_at)
+      VALUES ('codex','executor-b','remote-session',$1::timestamptz - interval '1 minute',$1)`, [now]);
     const base = {
       codexHost: null, agent: 'builder', model: 'example-model', card: null,
       startedAt: new Date(now.getTime() - 60_000), endedAt: now, state: 'done', text: 'ok', inputTokens: 20, wakeupIds: [],
     };
-    await dispatchStore.recordCodexRun({ ...base, runId: 'remote-run', sessionId: 'remote-session', outputTokens: 100 });
+    await dispatchStore.recordCodexRun({ ...base, runId: 'remote-run', sessionId: 'remote-session', card: 't_a1b2c3d4', outputTokens: 100 });
+    await query(`INSERT INTO usage_launches (host,source,runtime,run_id,session_id,envelope,verified_task_ids,persona_status)
+      VALUES ('dispatcher-a','codex','codex','remote-run','remote-session','{}',ARRAY['t_a1b2c3d4'],'absent')`);
     await dispatchStore.recordCodexRun({ ...base, runId: 'local-run', sessionId: 'local-session', outputTokens: 25 });
     await query(`INSERT INTO usage_calls
       (source, host, call_id, session_external_id, ts, model, entrypoint, input_tokens, output_tokens)
@@ -111,6 +118,9 @@ describe('Codex run recorded on the dispatcher, executed elsewhere', () => {
         { host: 'executor-b', call_id: 'remote-2', run_id: 'remote-run', output: 60 },
       ]);
     expect(await dispatchStore.tokensToday('UTC')).toBe(165);
+    expect((await query(`SELECT host FROM usage_launches WHERE run_id='remote-run'`)).rows).toEqual([{ host: 'executor-b' }]);
+    expect((await query(`SELECT task_id FROM usage_session_tasks WHERE task_id='t_a1b2c3d4' ORDER BY evidence_id`)).rows)
+      .toEqual([{ task_id: 't_a1b2c3d4' }, { task_id: 't_a1b2c3d4' }]);
   });
 });
 
@@ -147,5 +157,34 @@ describe('Codex host repair migration', () => {
     expect((await query(`SELECT host, run_id FROM usage_calls WHERE call_id = 'fallback-migration'`)).rows).toEqual([
       { host: 'migration-b', run_id: 'fallback-migration' },
     ]);
+  });
+});
+
+describe('Codex ticket replay migration', () => {
+  it('repairs later remote runs and trusted launches once, without duplicating native tokens', async () => {
+    await addHost('migration-a');
+    await addHost('migration-b');
+    await query(`INSERT INTO org_agents (name,runtime,role,org_version) VALUES ('builder','codex','Engineer','v')`);
+    await query(`INSERT INTO boards (slug,name) VALUES ('example','Example')`);
+    await query(`INSERT INTO cards (id,board_slug,title,created_by) VALUES ('t_a1b2c3d4','example','Example task','builder')`);
+    await query(`INSERT INTO archive_sessions (source,host,external_id,started_at,ended_at)
+      VALUES ('codex','migration-b','replay-session',$1::timestamptz - interval '1 minute',$1::timestamptz + interval '1 minute')`, [now]);
+    await query(`INSERT INTO usage_runs (host,run_id,session_id,task_id,log_path,runtime,started_at,ended_at)
+      VALUES ('migration-a','replay-run','replay-session','t_a1b2c3d4','dispatch:replay-run','codex',$1::timestamptz - interval '1 minute',$1::timestamptz + interval '1 minute')`, [now]);
+    await query(`INSERT INTO usage_launches (host,source,runtime,run_id,session_id,envelope,verified_task_ids,persona_status)
+      VALUES ('migration-a','codex','codex','replay-run','replay-session','{}',ARRAY['t_a1b2c3d4'],'absent')`);
+    await query(`INSERT INTO usage_calls (source,host,call_id,session_external_id,ts,model,entrypoint,output_tokens,run_id)
+      VALUES ('codex','migration-a','replay-run','replay-session',$1,'example-model','sdk-cli',70,'replay-run'),
+             ('codex','migration-b','native-replay','replay-session',$1,'example-model','exec',70,NULL)`, [now]);
+    expect((await query(`SELECT count(*)::int n FROM usage_session_tasks WHERE task_id='t_a1b2c3d4'`)).rows[0].n).toBe(0);
+    const sql = readFileSync(join(import.meta.dirname, '..', '..', 'db', 'migrations', '1756000021000_codex-run-host-replay.sql'), 'utf8');
+    const up = sql.split('-- Down Migration')[0]!;
+    await query(up);
+    await query(up);
+    expect((await query(`SELECT host FROM usage_runs WHERE run_id='replay-run'`)).rows).toEqual([{ host: 'migration-b' }]);
+    expect((await query(`SELECT host FROM usage_launches WHERE run_id='replay-run'`)).rows).toEqual([{ host: 'migration-b' }]);
+    expect((await query(`SELECT task_id FROM usage_session_tasks WHERE task_id='t_a1b2c3d4'`)).rows).toHaveLength(2);
+    expect((await query(`SELECT call_id,run_id,output_tokens::int AS output FROM usage_calls WHERE session_external_id='replay-session'`)).rows)
+      .toEqual([{ call_id: 'native-replay', run_id: 'replay-run', output: 70 }]);
   });
 });
