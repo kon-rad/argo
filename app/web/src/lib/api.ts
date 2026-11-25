@@ -623,7 +623,7 @@ export interface AgentSessionRow {
   persona?: string | null;
   /** One line under 100 characters, and where it came from; null when nothing usable was found. */
   display_title?: string | null; title_source?: 'task' | 'skill' | 'title' | 'prompt' | null;
-  /** The prompt size of the session's latest main call (what the context held then), and when; null: no call recorded. */
+  /** Latest main-call prompt input recorded by Claude or Codex, and when; null: no trustworthy observation. */
   context_tokens?: number | null; context_at?: string | null;
   /** The context window recorded with the session; null: unknown (never guessed from the model name). */
   context_window?: number | null;
@@ -1175,8 +1175,8 @@ export const api = {
       `/usage/sessions/${encodeURIComponent(host)}/${encodeURIComponent(externalId)}`, { source }),
   usageMessage: (id: number, full = false, part?: string) =>
     request<{ id: number; raw: unknown; text?: string }>(`/usage/messages/${id}`, { full: full ? '1' : undefined, part }),
-  agentSessions: (from: string, to: string, f: AgentSessionFilters = {}, offset = 0) =>
-    request<{ sessions: AgentSessionRow[]; total: number }>('/usage/agent-sessions', { from, to, offset, ...agentParams(f) }),
+  agentSessions: (from: string, to: string, f: AgentSessionFilters = {}, offset = 0, limit = 50) =>
+    request<{ sessions: AgentSessionRow[]; total: number }>('/usage/agent-sessions', { from, to, offset, limit, ...agentParams(f) }),
   agentSessionFacets: (from: string, to: string) => request<{ facets: AgentSessionFacets }>('/usage/agent-sessions/facets', { from, to }),
   agentSession: (host: string, externalId: string, source: string | null, offset = 0) =>
     request<{ session: AgentSessionRow; runs: AgentSessionRun[]; steps: AgentStep[]; next: number | null }>(

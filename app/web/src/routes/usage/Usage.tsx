@@ -411,7 +411,8 @@ export default function Usage() {
   }, [meta.isPending, sp, tz, setSp]);
   if (config.isPending) return <div className="p-4 text-sm text-[var(--ink-dim)]">Loading Usage configuration…</div>;
   if (config.isError) return <div className="p-4 text-sm text-red-600" role="alert">Usage configuration did not load. Account limits and sections are unavailable.</div>;
-  const sections = config.data.sections.filter((section) => section !== 'summaries' || (meta.data?.modules ?? []).includes('summaries'));
+  const configuredSections = config.data.sections.filter((section) => section !== 'summaries' || (meta.data?.modules ?? []).includes('summaries'));
+  const sections = [...configuredSections.filter((section) => section === 'sessions'), ...configuredSections.filter((section) => section !== 'sessions')];
   const requested = sp.get('view') === 'usage' ? 'ledger' : sp.get('view');
   const view = requested === 'account' ? 'account' : sections.find((section) => section === requested) ?? sections[0] ?? 'account';
   const pick = (v: UsageSection | 'account') => {

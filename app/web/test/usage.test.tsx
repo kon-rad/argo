@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import Usage from '../src/routes/usage/Usage.js';
-import { bucketEnd, formatTokens, money } from '../src/routes/usage/format.js';
+import { bucketEnd, contextLabel, formatTokens, money, localDateTime, zonedDateTime } from '../src/routes/usage/format.js';
 
 const PLAN = { current: {
   five_hour: { used_pct: null, left_pct: null, resets_at: '2026-10-14T01:00:00Z', observed_at: '2026-10-13T22:00:00Z', host: 'mac', origin: 'statusline', reset_since_reading: true, last_pct: 92 },
@@ -19,13 +19,13 @@ const row = (o: Record<string, unknown>) => ({ id: 1, source: 'claude-code', har
   external_id: 'x', parent_external_id: null, project: null, title: null, first_prompt: null, started_at: null, ended_at: null,
   steps: 0, tool_calls: 0, errors: 0, subagents: 0, models: [], calls: 0, input: 0, cache_write: 0, cache_read: 0, output: 0, reasoning: 0, ...o });
 const SESSIONS = { total: 3, sessions: [
-  row({ id: 1, external_id: 'cc1', runtime_entrypoint: 'exec', outer_trigger: 'cron', task_ids: ['t_1234abcd'], title: 'Fix dispatcher', display_title: 'Fix dispatcher', title_source: 'title', started_at: '2026-10-14T01:00:00Z', ended_at: '2026-10-14T01:05:00Z',
+  row({ id: 1, external_id: 'cc1', runtime_entrypoint: 'exec', outer_trigger: 'cron', task_ids: ['t_1234abcd'], title: 'Fix dispatcher', display_title: 'Fix dispatcher', title_source: 'title', started_at: '2026-10-14T01:00:00Z', ended_at: '2026-10-14T01:05:00Z', context_tokens: 500, context_window: 100000, context_at: '2026-10-14T01:04:00Z',
     calls: 9, input: 10, cache_write: 100, cache_read: 1000, output: 50, steps: 12, tool_calls: 4, errors: 1, models: ['claude-opus-5-5'] }),
   row({ id: 2, host: 'mac', external_id: 'arch-only-session', display_title: 'Discuss t_abcdef12', task_ids: [] }),
   row({ id: 3, source: 'hermes', harness: 'hermes', profile: 'main', provider: 'openrouter', external_id: 'h1', title: 'Hermes chat', display_title: 'Hermes chat', title_source: 'title',
     started_at: '2026-10-14T01:00:00Z', calls: 2, input: 5, output: 5, cost_usd: 0.42, models: ['deepseek-v4-flash'] })] };
 const AFACETS = { facets: { harness: [{ value: 'claude-code', n: 2 }, { value: 'hermes', n: 1 }], host: [{ value: 'droplet', n: 2 }, { value: 'mac', n: 1 }],
-  profile: [], provider: [], tool: [{ value: 'Bash', n: 4 }] } };
+  profile: Array.from({ length: 10 }, (_, i) => ({ value: `profile-${i}`, n: 1 })), provider: [], tool: [{ value: 'Bash', n: 4 }] } };
 const RUNS = { runs: [{ host: 'droplet', session_id: 'cc1', task_id: 't_9', lane: 'cc-coder', board: 'exo', model: 'claude-opus-5-5',
   started_at: '2026-10-14T01:00:00Z', ended_at: '2026-10-14T01:05:00Z', duration_ms: 300000, num_turns: 9, subtype: 'success',
   is_error: false, verify_name: 'argo-exo-tests', verify_passed: false, verify_exit: 1, verify_metric: 901, verify_output: '4 failed' }] };
@@ -37,18 +37,19 @@ const FACETS = { from: '', to: '', total: { calls: 10, tokens: 1160 }, facets: {
 const RUNS2 = { runs: [{ ...RUNS.runs[0], run_id: 'org-atlas-20261014-010000', agent_name: 'atlas', team_slug: 'platform', reason: 'mention', work_type: 'coding',
   area_slug: 'secondbrain-app', project_slug: null, card_title: 'Fix it', resumed: true, surface: 'bot', calls: 2, input: 10, cache_write: 0, cache_read: 1000, output: 60, lane: null, verify_name: null }] };
 let seriesBody: unknown = SERIES;
+let sessionsBody: { total: number; sessions: ReturnType<typeof row>[] } = SESSIONS;
 function mockFetch(metadata: () => unknown | Promise<unknown> = () => ({})) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const u = String(input);
     const body = u.includes('/meta') ? await metadata() : u.includes('/usage/config') ? CONFIG : u.includes('/usage/subscriptions') ? SUBSCRIPTIONS : u.includes('/usage/plan') ? PLAN : u.includes('/usage/series') ? seriesBody
-      : u.includes('/usage/agent-sessions/facets') ? AFACETS : u.includes('/usage/agent-sessions') ? SESSIONS : u.includes('/usage/runs') ? RUNS
+      : u.includes('/usage/agent-sessions/facets') ? AFACETS : u.includes('/usage/agent-sessions') ? sessionsBody : u.includes('/usage/runs') ? RUNS
       : u.includes('/usage/org-wakes') ? { agents: [{ agent_name: 'atlas', team_slug: 'platform', role: 'Head', wakes: 3, done: 2, open: 1, routine: 1, dm: 1, mention: 1, task: 1, tokens: 5000, avg_minutes: 1.2, last_wake: '2026-10-14T01:00:00Z' }] }
       : u.includes('/usage/facets') ? FACETS : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }));
 }
 
-afterEach(() => { seriesBody = SERIES; cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { seriesBody = SERIES; sessionsBody = SESSIONS; cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 function LocationProbe() { return <output data-testid="location">{useLocation().search}</output>; }
 
@@ -72,7 +73,73 @@ describe('bucketEnd', () => {
   });
 });
 
+describe('session date-time conversion', () => {
+  it('round trips wall time in the configured zone and rejects nonexistent DST times', () => {
+    const iso = '2026-11-01T06:30:00.000Z';
+    expect(localDateTime(iso, 'America/Chicago')).toBe('2026-11-01T01:30');
+    expect(zonedDateTime('2026-03-08T02:30', 'America/Chicago')).toBeNull();
+    expect(zonedDateTime('2026-11-01T01:30', 'America/Chicago')).not.toBeNull();
+  });
+  it('leaves context unknown when neither value was recorded', () => {
+    expect(contextLabel({ context_tokens: null, context_window: null })).toBeNull();
+  });
+});
+
 describe('Usage page', () => {
+  it('defaults to Sessions while preserving an explicit view bookmark', async () => {
+    mockFetch();
+    const renderUsage = (path: string) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={[path]}><Usage /></MemoryRouter></QueryClientProvider>);
+    const first = renderUsage('/usage');
+    expect((await screen.findByRole('tab', { name: 'Sessions' })).getAttribute('aria-selected')).toBe('true');
+    first.unmount();
+    renderUsage('/usage?view=ledger');
+    expect((await screen.findByRole('tab', { name: 'Ledger' })).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('shows full dropdown choices, total arithmetic, context provenance and an explicit missing ticket link', async () => {
+    sessionsBody = SESSIONS;
+    mockFetch();
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/usage?view=sessions&s_harness=hermes']}><Usage /></MemoryRouter></QueryClientProvider>);
+    expect(await screen.findByRole('link', { name: 'Fix dispatcher' })).toBeTruthy();
+    const harness = screen.getByRole('combobox', { name: 'Filter by harness' }) as HTMLSelectElement;
+    expect([...harness.options].map((option) => option.value)).toEqual(['', 'claude-code', 'hermes']);
+    expect(harness.value).toBe('hermes');
+    expect((screen.getByRole('combobox', { name: 'Filter by profile' }) as HTMLSelectElement).options).toHaveLength(11);
+    expect(screen.getByRole('columnheader', { name: 'Total' })).toBeTruthy();
+    expect(screen.getByText('1160')).toBeTruthy();
+    expect(screen.getAllByText('No verified link').length).toBeGreaterThan(0);
+    fireEvent.click(document.querySelector('td details summary[aria-label^="Context info for Fix dispatcher"]')!);
+    expect(screen.getAllByText(/Latest recorded main call prompt size/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/not the session token total/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('not recorded').length).toBeGreaterThan(0);
+  });
+
+  it('paginates 50 rows, carries timezone range bookmarks, and resets session filters', async () => {
+    sessionsBody = { total: 101, sessions: Array.from({ length: 50 }, (_, i) => row({ id: i + 1, external_id: `row-${i + 1}` })) };
+    mockFetch(() => ({ timezone: 'Asia/Tokyo', modules: [] }));
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/usage?view=sessions&sessionFrom=2026-11-01T06%3A00%3A00.000Z&sessionTo=2026-11-01T08%3A00%3A00.000Z&s_host=mac']}><Usage /><LocationProbe /></MemoryRouter></QueryClientProvider>);
+    await screen.findByText('1 to 50 of 101');
+    const called = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => new URL(String(c[0]), 'https://example.invalid')).find((u) => u.pathname.endsWith('/usage/agent-sessions') && !u.pathname.endsWith('/facets'))!;
+    expect(called.searchParams.get('limit')).toBe('50');
+    expect(called.searchParams.get('host')).toBe('mac');
+    expect((screen.getByLabelText('Sessions from') as HTMLInputElement).value).toBe(localDateTime('2026-11-01T06:00:00.000Z', 'Asia/Tokyo'));
+    fireEvent.change(screen.getByLabelText('Sessions from'), { target: { value: '2026-11-01T18:00' } });
+    expect(screen.getByRole('alert').textContent).toContain('From must be earlier than To.');
+    expect(new URLSearchParams(screen.getByTestId('location').textContent!).get('sessionFrom')).toBe('2026-11-01T06:00:00.000Z');
+    fireEvent.change(screen.getByLabelText('Sessions from'), { target: { value: '2026-11-01T15:30' } });
+    await waitFor(() => expect(new URLSearchParams(screen.getByTestId('location').textContent!).get('sessionFrom')).toBe('2026-11-01T06:30:00.000Z'));
+    await screen.findByText('1 to 50 of 101');
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('51 to 100 of 101');
+    const latest = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => new URL(String(c[0]), 'https://example.invalid')).filter((u) => u.pathname.endsWith('/usage/agent-sessions') && !u.pathname.endsWith('/facets')).at(-1)!;
+    expect(latest.searchParams.get('offset')).toBe('50');
+    fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }));
+    await waitFor(() => expect(new URLSearchParams(screen.getByTestId('location').textContent!).has('s_host')).toBe(false));
+    expect(new URLSearchParams(screen.getByTestId('location').textContent!).get('sessionFrom')).toBeNull();
+    await screen.findByText('1 to 50 of 101');
+    expect(screen.getByRole('button', { name: 'Previous' }).hasAttribute('disabled')).toBe(true);
+  });
+
   it('clears a selected day interval on zone changes and cleared-setting fallback without stale session queries', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-11T12:00:00Z'));
     const browser = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -83,7 +150,7 @@ describe('Usage page', () => {
     seriesBody = daySeries('2026-11-10T00:00:00.000Z');
     mockFetch(() => ({ timezone: zone, modules: [] }));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const { container } = render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/usage?days=7&bucket=day']}><Usage /><LocationProbe /></MemoryRouter></QueryClientProvider>);
+    const { container } = render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/usage?view=ledger&days=7&bucket=day']}><Usage /><LocationProbe /></MemoryRouter></QueryClientProvider>);
     const params = () => new URLSearchParams(screen.getByTestId('location').textContent!);
     const calls = () => (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => new URL(String(c[0]), 'https://example.invalid'));
     const sessions = () => calls().filter((u) => u.pathname.endsWith('/usage/agent-sessions'));
@@ -190,7 +257,7 @@ describe('Usage page', () => {
 
   it('requests sessions for the clicked bucket', async () => {
     mockFetch();
-    const { container } = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Usage /></MemoryRouter></QueryClientProvider>);
+    const { container } = render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/usage?view=ledger']}><Usage /></MemoryRouter></QueryClientProvider>);
     await waitFor(() => expect(container.querySelector('g[style*="cursor"]')).toBeTruthy());
     fireEvent.click(container.querySelector('g[style*="cursor"]')!);
     fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }));
@@ -213,7 +280,7 @@ describe('Usage page', () => {
       { bucket: '2026-10-14T01:00:00.000Z', key: 'post', input: 10, cache_write: 0, cache_read: 600, output: 50, calls: 5 },
       { bucket: '2026-10-14T01:00:00.000Z', key: 'reply', input: 10, cache_write: 0, cache_read: 400, output: 30, calls: 5 }] };
     mockFetch();
-    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/usage?days=7&agent=atlas&group=action']}><Usage /></MemoryRouter></QueryClientProvider>);
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/usage?view=ledger&days=7&agent=atlas&group=action']}><Usage /></MemoryRouter></QueryClientProvider>);
     const calls = () => (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => String(c[0]));
     await waitFor(() => expect(calls().some((u) => u.includes('/usage/series') && u.includes('agent=atlas') && u.includes('group=action') && u.includes('days') === false)).toBe(true));
     expect(calls().some((u) => u.includes('/usage/runs') && u.includes('agent=atlas'))).toBe(true);
@@ -238,7 +305,7 @@ describe('Usage page', () => {
         : u.includes('/usage/runs') ? RUNS2 : u.includes('/usage/facets') ? FACETS : u.includes('/usage/org-wakes') ? { agents: [] } : {};
       return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }));
-    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Usage /></MemoryRouter></QueryClientProvider>);
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/usage?view=ledger']}><Usage /></MemoryRouter></QueryClientProvider>);
     expect(await screen.findByRole('link', { name: 'atlas' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'atlas' }).getAttribute('href')).toBe('/org/agents/atlas');
     expect(screen.getByRole('link', { name: 't_9' }).getAttribute('href')).toBe('/board/t_9');
@@ -270,7 +337,7 @@ describe('Usage page', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }));
     expect(screen.getAllByText('0.42 USD')).toHaveLength(1);
     // The list's own filters: a harness chip adds s_harness to the request.
-    fireEvent.click(screen.getByRole('button', { name: 'hermes' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Filter by harness' }), { target: { value: 'hermes' } });
     await waitFor(() => expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.some((c) => String(c[0]).includes('/usage/agent-sessions?') && String(c[0]).includes('harness=hermes'))).toBe(true));
     fireEvent.click(screen.getByRole('tab', { name: 'Ledger' }));
     fireEvent.click(screen.getByRole('button', { name: '90 d' }));     // over 31 days: hourly buckets switch off
