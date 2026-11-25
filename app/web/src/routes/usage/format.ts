@@ -41,6 +41,25 @@ export function bucketEnd(startIso: string, bucket: 'hour' | 'day', tz: string):
   return new Date(t).toISOString();
 }
 
+/** Convert an instant to the wall-clock value used by datetime-local controls. */
+export function localDateTime(iso: string, tz: string): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+/** Interpret a datetime-local wall time in the configured zone and return its instant. */
+export function zonedDateTime(value: string, tz: string): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [, y, mo, d, h, mi] = match;
+  const wall = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi));
+  let instant = wall;
+  for (let i = 0; i < 3; i++) instant = wall - tzOffsetMs(instant, tz);
+  return localDateTime(new Date(instant).toISOString(), tz) === value ? new Date(instant).toISOString() : null;
+}
+
 /** Strictly under 100 characters, one line: the Session column never wraps into a paragraph. */
 export function clampLine(s: string, max = 99): string {
   const t = s.replace(/\s+/g, ' ').trim();

@@ -65,6 +65,16 @@ const list = (q: Record<string, string> = {}) => request(app).get('/api/usage/ag
   .query({ from: '2026-10-18T00:00:00Z', to: '2026-10-19T00:00:00Z', ...q });
 
 describe('agent sessions api', () => {
+  it('defaults the session list to 50 rows while retaining the full result total', async () => {
+    await withTransaction(async (tx) => {
+      for (let i = 0; i < 51; i++) await archive.upsertSession(tx, sess({ externalId: `page-${i}`, startedAt: new Date(`2026-10-18T10:${String(i % 60).padStart(2, '0')}:00Z`) }));
+    });
+    const defaultPage = await list();
+    expect(defaultPage.body.sessions).toHaveLength(50);
+    expect(defaultPage.body.total).toBe(53);
+    expect((await list({ limit: '51' })).body.sessions).toHaveLength(51);
+  });
+
   it('exports a harness-neutral restart transcript without old system or thinking text', async () => {
     const claude = await request(app).get('/api/usage/agent-sessions/mac/s1/portable').query({ source: 'claude-code' });
     expect(claude.status).toBe(200);

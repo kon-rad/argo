@@ -24,7 +24,7 @@ const listQuery = z.object({
   from: iso.optional(), to: iso.optional(),
   harness: csv, host: csv, profile: csv, provider: csv, tool: csv, channel: csv, type: csv, persona: csv,
   q: z.string().trim().max(200).optional(), errors: flag, subagents: flag, cron: flag,
-  offset: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(200).default(100),
+  offset: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 export type ListQuery = z.infer<typeof listQuery>;
 
