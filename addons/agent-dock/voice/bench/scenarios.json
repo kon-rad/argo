@@ -1,0 +1,14 @@
+[
+  {"id":"greeting","persona":"guide","text":"The sample color is violet.","fact":"violet"},
+  {"id":"names","persona":"guide","text":"Compare Reed with Reid.","fact":"Reid"},
+  {"id":"lookup-one","persona":"guide","text":"Which color is in the first note?","source":"first.txt","fact":"violet"},
+  {"id":"lookup-two","persona":"guide","text":"Read the second note.","source":"second.txt","fact":"silver"},
+  {"id":"hesitation","persona":"guide","text":"Tell me, after a pause, the sample color.","fact":"violet"},
+  {"id":"overlap","persona":"guide","text":"What is the current status?","fact":"status"},
+  {"id":"interrupt","persona":"guide","text":"Hold on. Read the second note.","source":"second.txt","fact":"silver"},
+  {"id":"correct-date","persona":"guide","text":"Change Monday to Tuesday.","fact":"Tuesday"},
+  {"id":"isolation-one","persona":"guide","text":"Read my marker.","source":"marker.txt","fact":"violet"},
+  {"id":"isolation-two","persona":"writer","text":"Read my marker.","source":"marker.txt","fact":"silver"},
+  {"id":"reconnect","persona":"guide","text":"Show the current change.","fact":"diff"},
+  {"id":"edit","persona":"guide","text":"Fix the color and run the test.","fact":"violet"}
+]

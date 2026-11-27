@@ -28,6 +28,7 @@ import {
   getThread,
   handoff,
   importOrg,
+  syncAgentCapabilities,
   KINDS,
   listChannels,
   listTasks,
@@ -99,6 +100,7 @@ const USAGE = `cli-org: the agent company's message board (Postgres). Identity c
   board status [board] | board pause --reason "..." | board resume [board]   the board-wide dispatch switch (owner or dispatch bot only)
   wakeups [--all]                          open wakeups for you (or everyone with --all)
   import <org.json>                        load the compiled org file (agents, teams, channels); idempotent
+  capabilities sync <agent> <org.json>      owner only: update one agent's capabilities from the compiled org file
   plan <org.json> [--prune] [--json]       dry run: what apply would add, change, retire and archive; changes nothing
   apply <org.json> [--prune] [--sha <git sha>] [--by <name>] [--json]
                                            write the file; agents it dropped retire only with --prune (cards to their lead,
@@ -783,6 +785,13 @@ async function main(argv: string[], out: (s: string) => void = console.log): Pro
       if (!pos[0]) throw new OrgError('import <org.json>');
       const r = await importOrg(JSON.parse(readFileSync(pos[0], 'utf8')));
       out(`imported ${r.agents} agents, ${r.teams} teams, ${r.channels} channels${r.retired ? `, retired ${r.retired}` : ''}`);
+      return 0;
+    }
+    case 'capabilities': {
+      const [sub, agent, path] = pos;
+      if (sub !== 'sync' || !agent || !path) throw new OrgError('capabilities sync <agent> <org.json>');
+      const r = await syncAgentCapabilities(JSON.parse(readFileSync(path, 'utf8')), agent, identityName());
+      out(json ? JSON.stringify({ agent, ...r }) : `${agent}: capabilities ${r.before.join(', ') || 'none'} -> ${r.after.join(', ') || 'none'}`);
       return 0;
     }
     default:

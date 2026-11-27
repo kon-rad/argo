@@ -54,12 +54,12 @@ export function groupPosts(posts: MediaPost[]): Entry[] {
 }
 
 const STATUS_LABEL: Record<MediaPost['status'], string> = {
-  draft: 'draft', queued: 'queued', publishing: 'publishing', posted: 'posted', failed: 'failed', canceled: 'canceled',
+  draft: 'draft', queued: 'queued', publishing: 'publishing', posted: 'posted', failed: 'failed', canceled: 'canceled', uncertain: 'uncertain',
 };
 /** A shape per status as well as colour: hollow = not out yet, filled = posted, red = failed. */
 function Marker({ status }: { status: MediaPost['status'] }) {
   const filled = status === 'posted';
-  const color = status === 'failed' ? 'var(--warn)' : 'currentColor';
+  const color = status === 'failed' || status === 'uncertain' ? 'var(--warn)' : 'currentColor';
   return (
     <span aria-hidden className="inline-block h-2 w-2 shrink-0 rounded-full border" style={{ borderColor: color, background: filled ? color : status === 'queued' || status === 'publishing' ? `color-mix(in srgb, ${color} 40%, transparent)` : 'transparent' }} />
   );
@@ -347,7 +347,7 @@ function Detail({ post, channel, onClose }: { post: MediaPost; channel: MediaCha
       <pre className="mt-2 whitespace-pre-wrap break-words font-sans">{post.body}</pre>
       {post.mediaCount > 0 && <div className="mt-1 text-xs text-[var(--ink-dim)]">{post.mediaCount} media attached</div>}
       {Object.keys(post.options ?? {}).length > 0 && <pre className="mt-2 whitespace-pre-wrap text-xs text-[var(--ink-dim)]">{JSON.stringify(post.options, null, 2)}</pre>}
-      {post.status === 'failed' && post.last_error && <div className="mt-2 text-xs text-[var(--warn)]">{post.last_error}</div>}
+      {(post.status === 'failed' || post.status === 'uncertain') && post.last_error && <div className="mt-2 text-xs text-[var(--warn)]">{post.last_error}</div>}
       <dl className="mt-2 space-y-1 text-xs">
         {post.remote_url && <div><dt className="inline text-[var(--ink-dim)]">Live: </dt><dd className="inline"><a className="underline" href={post.remote_url} target="_blank" rel="noreferrer">{post.remote_url}</a></dd></div>}
         {post.source_path && <div><dt className="inline text-[var(--ink-dim)]">Draft file: </dt><dd className="inline"><Link className="underline" to={`/file/${post.source_path}`}>{post.source_path}</Link></dd></div>}

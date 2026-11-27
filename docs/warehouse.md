@@ -124,6 +124,7 @@ API, behind the login: `GET /api/warehouse/overview`, `/tables`, `/tables/:schem
 ```json
 {
   "title": "Instagram",
+  "area": "studio",
   "panels": [
     { "title": "Posts", "chart": "number", "sql": "select count(*) from data.instagram_media" },
     { "title": "Followers", "chart": "line", "sql": "select day, followers_count from data.instagram_account_daily order by day", "x": "day", "y": ["followers_count"] },
@@ -133,6 +134,7 @@ API, behind the login: `GET /api/warehouse/overview`, `/tables`, `/tables/:schem
 ```
 
 - `chart` is `number`, `line`, `bar` or `table`.
+- Optional `area` is the exact area slug. With Warehouse enabled, matching dashboards also appear on `/areas/<slug>`; dashboards without it stay on the Warehouse page.
 - Each panel's SQL runs read-only, capped at 500 rows and 10 s, through the same runner as the Database page.
 - A panel with bad SQL shows its error; the others still render.
 

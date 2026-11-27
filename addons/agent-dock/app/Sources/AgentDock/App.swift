@@ -2,24 +2,51 @@ import SwiftUI
 
 @main
 struct AgentDockApp: App {
+    @StateObject private var voice = VoiceController()
     @StateObject private var store = Store()
 
     var body: some Scene {
         WindowGroup("Agent Dock") {
             ContentView()
                 .environmentObject(store)
+                .environmentObject(voice)
+                .sheet(isPresented: $voice.settingsShown) { VoiceSetup(voice: voice).environmentObject(store) }
+                .onOpenURL { url in
+                    guard url.scheme == "agent-dock", url.host == "voice", voice.phase == .idle,
+                          let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { return }
+                    if let path = items.first(where: { $0.name == "workspace" })?.value { voice.workspace = path }
+                    voice.configure(items.first(where: { $0.name == "agent" })?.value ?? "")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in voice.end() }
                 .frame(minWidth: 760, minHeight: 520)
                 .onAppear {
                     store.start()
+                    if voice.models.isEmpty { voice.loadModels() }
                     SelfCheck.runIfAsked(store)
                 }
         }
         .defaultSize(width: 1040, height: 760)
         .commands {
+            CommandMenu("Voice") { VoiceActions(voice: voice, vault: store.vault) }
             CommandGroup(after: .newItem) {
                 Button("Choose Vault...") { store.chooseVault() }.keyboardShortcut("o")
                 Button("Reload") { store.loadRoster(); store.refresh() }.keyboardShortcut("r")
             }
+        }
+        MenuBarExtra(isInserted: Binding(get: { voice.phase != .idle || !voice.problem.isEmpty }, set: { _ in })) {
+            Text(voice.micLabel + " · " + voice.taskLabel)
+            if voice.phase == .live { Text(voice.captureStatus); Text("Input level: \(Int(voice.inputLevel * 100))%") }
+            Text(voice.playing.isEmpty ? "Playback quiet" : "Speaking: " + voice.playing)
+            if !voice.draft.isEmpty { Text(voice.draft) }
+            if !voice.problem.isEmpty {
+                Text(voice.problem)
+                Button("Dismiss Error") { voice.problem = "" }
+            }
+            Divider()
+            VoiceActions(voice: voice, vault: store.vault, shortcuts: false)
+        } label: {
+            Label(voice.micLabel, systemImage: voice.phase == .live ? "mic.fill" : "mic.slash")
         }
     }
 }
@@ -33,10 +60,13 @@ enum Pane: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var voice: VoiceController
     @State private var search = ""
 
     var body: some View {
         VStack(spacing: 0) {
+            if voice.phase != .idle { VoiceInputMonitor(voice: voice) }
+            if !voice.problem.isEmpty { Banner(text: voice.problem, tint: .orange) { Button("Dismiss") { voice.problem = "" } } }
             if let problem = store.problem {
                 Banner(text: problem, tint: .orange) {
                     Button("Choose Vault...") { store.chooseVault() }
@@ -52,6 +82,7 @@ struct ContentView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) { VoiceShortcutInfo() }
             ToolbarItem(placement: .principal) {
                 Picker("View", selection: $store.pane) {
                     ForEach(Pane.allCases) { p in

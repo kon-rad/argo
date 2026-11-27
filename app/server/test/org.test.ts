@@ -20,6 +20,7 @@ import {
   getThread,
   handoff,
   importOrg,
+  syncAgentCapabilities,
   listChannels,
   openWakeups,
   orgChart,
@@ -140,6 +141,27 @@ describe('import', () => {
     const lenaUnderRune = { ...ORG.agents, lena: { role: 'Writer', team: 'media', reports_to: 'rune' } };
     await expect(importOrg({ ...ORG, agents: lenaUnderRune, teams: { ...ORG.teams, media: { name: 'Media', lead: 'rune' } } })).rejects.toThrow(/lead rune is not on the team/);
     await expect(importOrg({ ...ORG, channels: { ...ORG.channels, x: { members: ['nobody'] } } })).rejects.toThrow(/unknown member nobody/);
+  });
+
+  it('syncs one agent capability without validating or changing another agent model', async () => {
+    await importOrg(ORG);
+    const source = {
+      ...ORG,
+      agents: {
+        ...ORG.agents,
+        rune: { ...ORG.agents.rune, capabilities: ['code', 'scoped-release'] },
+        lena: { ...ORG.agents.lena, runtime: 'codex', model: 'ollama/example' },
+      },
+    };
+    const beforeLena = await getAgent('lena');
+    await expect(syncAgentCapabilities(source, 'rune', 'rune')).rejects.toThrow(/owner/);
+    expect(await syncAgentCapabilities(source, 'rune', 'owner')).toEqual({ before: [], after: ['code', 'scoped-release'] });
+    expect((await getAgent('rune')).capabilities).toEqual(['code', 'scoped-release']);
+    expect(await getAgent('lena')).toEqual(beforeLena);
+    expect(await syncAgentCapabilities(ORG, 'rune', 'owner')).toEqual({ before: ['code', 'scoped-release'], after: [] });
+    expect((await getAgent('rune')).capabilities).toEqual([]);
+    await expect(syncAgentCapabilities({ ...source, agents: { ...source.agents, rune: { ...ORG.agents.rune, capabilities: ['unknown'] } } }, 'rune', 'owner'))
+      .rejects.toThrow();
   });
 });
 

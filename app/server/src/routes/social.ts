@@ -10,10 +10,13 @@ import {
   approvePost,
   cancelPost,
   disconnectAccount,
+  enqueuePost,
+  IDEMPOTENCY_KEY,
+  IdempotencyConflictError,
   listAccounts,
   listPosts,
   mediaByToken,
-  queuePost,
+  reconcilePost,
   saveConnectedAccount,
 } from '../social/store.js';
 
@@ -67,7 +70,25 @@ const QueuePostBody =z.object({
   /** The kanban card and the vault draft file behind the post (shown on the media schedule page). */
   cardId: z.string().regex(CARD_ID, 'a card id like t_0944bc6c').optional(),
   sourcePath: SourcePath.optional(),
+  /**
+   * A stable key for this request (or the Idempotency-Key header). The same key with the same
+   * request returns the original post (200); with a different request it is a 409.
+   */
+  idempotencyKey: z.string().optional(),
 });
+
+/** A human's answer for an 'uncertain' post; see reconcilePost. */
+const ReconcileBody = z
+  .object({
+    outcome: z.enum(['posted', 'not_posted']),
+    remoteId: z.string().max(500).optional(),
+    url: z.string().url().max(2000).optional(),
+    requeue: z.boolean().default(false),
+    note: z.string().max(2000),
+    /** Who checked; the app has one owner, so the default is that owner. */
+    actor: z.string().max(200).default('owner'),
+  })
+  .strict();
 
 const ListQuery = z.object({
   status: z.string().optional(),
@@ -212,17 +233,45 @@ export function socialRouter(opts: SocialOptions): Router {
     '/posts',
     wrap(async (req, res) => {
       const body = parseOr400(QueuePostBody, req.body);
+      const header = req.get('idempotency-key');
+      if (header !== undefined && body.idempotencyKey !== undefined && header !== body.idempotencyKey) {
+        throw new HttpError(400, 'the Idempotency-Key header and the idempotencyKey field disagree');
+      }
+      const idempotencyKey = body.idempotencyKey ?? header;
+      if (idempotencyKey !== undefined && !IDEMPOTENCY_KEY.test(idempotencyKey)) {
+        throw new HttpError(400, 'an idempotency key is 1 to 200 characters of letters, digits and . _ : / -');
+      }
       const account = await accountProvider(body.accountId);
       if (!account) throw new HttpError(404, 'no such connected account');
       checkImageCount(body.media.length);
       const media = body.media.map((m) => toPostMedia(m.filename, Buffer.from(m.dataBase64, 'base64'), m.altText));
       const options = body.options as PostOptions;
       checkPost(account.provider, body.body, media, options, { xMaxChars: opts.xMaxChars });
-      const post = await queuePost(body.accountId, body.body, media, body.scheduledFor, options, body.draft ? 'draft' : 'queued', {
-        cardId: body.cardId,
-        sourcePath: body.sourcePath,
-      });
-      res.status(201).json({ post });
+      try {
+        const { post, created } = await enqueuePost(body.accountId, body.body, media, body.scheduledFor, options, body.draft ? 'draft' : 'queued', {
+          cardId: body.cardId,
+          sourcePath: body.sourcePath,
+          idempotencyKey,
+        });
+        // 201 for a new post; 200 for a replay of a request this key already made.
+        res.status(created ? 201 : 200).json({ post, created });
+      } catch (err) {
+        if (err instanceof IdempotencyConflictError) {
+          res.status(409).json({ error: err.message, postId: err.postId });
+          return;
+        }
+        throw err;
+      }
+    }),
+  );
+
+  router.post(
+    '/posts/:id/reconcile',
+    wrap(async (req, res) => {
+      const id = intParam(req.params.id, 'post id');
+      const b = parseOr400(ReconcileBody, req.body ?? {});
+      const post = await reconcilePost(id, { ...b, via: 'api' }, new Date());
+      res.json({ post });
     }),
   );
 

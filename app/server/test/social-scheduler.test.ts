@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { checkReauthNeeded, runDuePosts } from '../src/social/scheduler.js';
 import type { SocialProvider } from '../src/social/providers/types.js';
-import { NoRefreshTokenError } from '../src/social/providers/types.js';
+import { NoRefreshTokenError, NotSentError } from '../src/social/providers/types.js';
 import { getAccount, listPosts, queuePost, saveConnectedAccount } from '../src/social/store.js';
 import { truncateAll } from './helpers.js';
 
@@ -63,17 +63,32 @@ describe('runDuePosts', () => {
     expect(rows.find((r) => r.id === post.id)).toMatchObject({ attempt_count: 1, last_error: expect.stringMatching(/reauthorized manually/) });
   });
 
-  it('gives up after 3 failed attempts', async () => {
+  it('gives up after 3 failed pre-send attempts', async () => {
     const accountId = await connectAccount();
     const post = await queuePost(accountId, 'always fails', [], T0);
     const provider = fakeProvider({
       publish: async () => {
-        throw new Error('linkedin publish failed: HTTP 500');
+        throw new NotSentError('linkedin image upload failed: HTTP 500');
       },
     });
     for (let i = 0; i < 3; i++) await runDuePosts({ linkedin: provider }, KEY, T0);
     const failed = await listPosts('failed');
     expect(failed.find((p) => p.id === post.id)).toMatchObject({ attempt_count: 3 });
+  });
+
+  it('an ambiguous provider error is not retried: the post is uncertain after one call', async () => {
+    const accountId = await connectAccount();
+    const post = await queuePost(accountId, 'maybe out', [], T0);
+    let calls = 0;
+    const provider = fakeProvider({
+      publish: async () => {
+        calls++;
+        throw new Error('linkedin publish failed: HTTP 500');
+      },
+    });
+    for (let i = 0; i < 3; i++) await runDuePosts({ linkedin: provider }, KEY, T0);
+    expect(calls).toBe(1);
+    expect((await listPosts('uncertain')).map((p) => p.id)).toEqual([post.id]);
   });
 
   it('only processes due posts, leaving future ones queued', async () => {

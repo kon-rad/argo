@@ -1,21 +1,23 @@
 import { log } from '../logger.js';
 import type { QueuedPost, SocialProvider, StoredAccount } from './providers/types.js';
-import { NoRefreshTokenError } from './providers/types.js';
+import { NoRefreshTokenError, NotSentError, RejectedError } from './providers/types.js';
 import {
   accountsNeedingReauth,
   assignPublicTokens,
+  beginAttempt,
+  claimNextDue,
+  finishAttempt,
   handedOffPosts,
   markFailed,
-  markHandedOff,
-  dueQueuedPosts,
   getAccount,
-  markFailedOrRetry,
   markPosted,
-  failStalePublishing,
-  markPublishing,
   markReauthNotified,
   postMedia,
+  recoverStaleClaims,
+  releaseClaimForRetry,
   updateAccountTokens,
+  type AttemptOutcome,
+  type ClaimedPost,
 } from './store.js';
 
 export type Notify = (text: string) => Promise<void>;
@@ -68,44 +70,115 @@ export async function runDuePosts(
   clock: () => number = Date.now,
   pass: PassOptions = {},
 ): Promise<{ posted: number; failed: number; handedOff: number }> {
-  const stale = await failStalePublishing(now);
-  if (stale) log.error(`social: ${stale} post(s) were interrupted while publishing; marked failed`);
+  const stale = await recoverStaleClaims(now);
+  if (stale.uncertain) log.error(`social: ${stale.uncertain} post(s) lost their worker after the provider call began; marked uncertain (reconcile them)`);
+  if (stale.requeued) log.error(`social: ${stale.requeued} post(s) lost their worker before the provider call; requeued`);
   const started = clock();
-  const due = await dueQueuedPosts(now);
   let posted = 0;
   let failed = 0;
   let handedOff = 0;
-  for (const queued of due) {
+  // One post at a time, claimed atomically: an overlapping pass takes other posts, never this one.
+  // A post that failed before sending is requeued; it waits for the next pass, not this one.
+  const tried: number[] = [];
+  for (let n = 0; n < MAX_PER_PASS; n++) {
     if (clock() - started > budgetMs) break; // the rest stay queued for the next run
-    await markPublishing(queued.id, now);
-    const post: QueuedPost = { ...queued, media: [] };
-    try {
-      const account = await getAccount(post.accountId, encKey);
-      if (!account) throw new Error(`account ${post.accountId} not found or disconnected`);
-      const provider = providerFor(providers, account);
-      const fresh = await freshAccount(post.accountId, provider, encKey, now);
-      post.media = await postMedia(post.id);
-      if (account.transport === 'buffer' && post.media.length) {
-        if (!pass.mediaBaseUrl) throw new Error('relayed media need a public base URL (SOCIAL_MEDIA_BASE_URL)');
-        const tokens = await assignPublicTokens(post.id);
-        post.media = post.media.map((m, i) => ({ ...m, publicUrl: publicMediaUrl(pass.mediaBaseUrl!, tokens.get(i)!, m.filename) }));
-      }
-      const result = await provider.publish(fresh, post);
-      if (result.pending) {
-        await markHandedOff(post.id, now, result.remoteId);
-        handedOff++;
-      } else {
-        await markPosted(post.id, now, result.remoteId, result.url);
-        posted++;
-      }
-    } catch (err) {
-      const message = err instanceof NoRefreshTokenError ? err.message : err instanceof Error ? err.message : String(err);
-      log.error(`social: post ${post.id} failed: ${message}`);
-      await markFailedOrRetry(post.id, post.attemptCount, message);
-      failed++;
-    }
+    const claim = await claimNextDue(now, tried);
+    if (!claim) break;
+    tried.push(claim.id);
+    const outcome = await publishClaimed(providers, encKey, now, pass, claim);
+    if (outcome === 'posted') posted++;
+    else if (outcome === 'handed_off') handedOff++;
+    else if (outcome !== 'lost') failed++;
   }
   return { posted, failed, handedOff };
+}
+
+/** At most this many posts per pass, as before (the time budget usually ends a pass first). */
+const MAX_PER_PASS = 10;
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? (err.message || err.name) : String(err);
+}
+
+/**
+ * Publishes one claimed post in three phases. (1) Pre-send: account, token,
+ * media. A failure here is proven pre-send and is retried. (2) The write-ahead
+ * attempt row, committed only while the claim is held. (3) The provider call:
+ * an id is posted (or handed off), NotSentError is retried, RejectedError
+ * fails, and everything else (timeout, reset, 5xx, an answer without an id,
+ * a failure to record the answer) is 'uncertain' and never resent automatically.
+ */
+async function publishClaimed(
+  providers: Record<string, SocialProvider>,
+  encKey: string | undefined,
+  now: Date,
+  pass: PassOptions,
+  claim: ClaimedPost,
+): Promise<'posted' | 'handed_off' | 'retry' | 'failed' | 'uncertain' | 'lost'> {
+  const { claimToken, ...queued } = claim;
+  const post: QueuedPost = { ...queued, media: [] };
+  let provider: SocialProvider;
+  let fresh: StoredAccount;
+  try {
+    const account = await getAccount(post.accountId, encKey);
+    if (!account) throw new Error(`account ${post.accountId} not found or disconnected`);
+    provider = providerFor(providers, account);
+    fresh = await freshAccount(post.accountId, provider, encKey, now);
+    post.media = await postMedia(post.id);
+    if (account.transport === 'buffer' && post.media.length) {
+      if (!pass.mediaBaseUrl) throw new Error('relayed media need a public base URL (SOCIAL_MEDIA_BASE_URL)');
+      const tokens = await assignPublicTokens(post.id);
+      post.media = post.media.map((m, i) => ({ ...m, publicUrl: publicMediaUrl(pass.mediaBaseUrl!, tokens.get(i)!, m.filename) }));
+    }
+  } catch (err) {
+    const message = err instanceof NoRefreshTokenError ? err.message : errorText(err);
+    log.error(`social: post ${post.id} failed before sending: ${message}`);
+    return (await releaseClaimForRetry(post.id, claimToken, message)) ? 'retry' : 'lost';
+  }
+
+  const attemptId = await beginAttempt(post.id, claimToken, now);
+  if (attemptId === null) {
+    log.error(`social: post ${post.id}: claim lost before sending (lease expired); not sent`);
+    return 'lost';
+  }
+
+  let outcome: AttemptOutcome;
+  try {
+    const result = await provider.publish(fresh, post);
+    if (!result || typeof result.remoteId !== 'string' || !result.remoteId.trim()) {
+      outcome = { kind: 'uncertain', message: 'the provider answered without a post id; it may have the post: check it, then reconcile' };
+    } else if (result.pending) {
+      outcome = { kind: 'handed_off', remoteId: result.remoteId };
+    } else {
+      outcome = { kind: 'sent', remoteId: result.remoteId, url: result.url };
+    }
+  } catch (err) {
+    if (err instanceof NotSentError) outcome = { kind: 'not_sent', message: err.message };
+    else if (err instanceof RejectedError) outcome = { kind: 'rejected', message: err.message };
+    else outcome = { kind: 'uncertain', message: `the provider call did not finish cleanly (${errorText(err)}); it may have the post: check it, then reconcile` };
+  }
+  try {
+    await finishAttempt(attemptId, outcome, now);
+  } catch (err) {
+    // The attempt stays 'sending'; after the lease the sweeper marks it uncertain. Never resent.
+    log.error(`social: post ${post.id}: could not record the provider's answer (${errorText(err)}); it will become uncertain`);
+    return 'uncertain';
+  }
+  switch (outcome.kind) {
+    case 'sent':
+      return 'posted';
+    case 'handed_off':
+      return 'handed_off';
+    case 'not_sent':
+      log.error(`social: post ${post.id} failed before sending: ${outcome.message}`);
+      return 'retry';
+    case 'rejected':
+      log.error(`social: post ${post.id} refused: ${outcome.message}`);
+      return 'failed';
+    case 'uncertain':
+      log.error(`social: post ${post.id} uncertain: ${outcome.message}`);
+      return 'uncertain';
+  }
 }
 
 /**
@@ -136,7 +209,7 @@ export async function pollHandedOff(
       const timedOut = now.getTime() - h.handed_off_at.getTime() > RELAY_CONFIRM_TIMEOUT_MS;
       if (s.state === 'pending' && !timedOut) continue;
       const message = s.state === 'error' ? s.message : 'the relay never confirmed this post within 24 h; check it there before queueing again';
-      await markFailed(h.id, message);
+      await markFailed(h.id, message, now);
       failed++;
       await notify(`[social] ${account.provider} post ${h.id} failed: ${message}`).catch(() => undefined);
     } catch (err) {

@@ -115,6 +115,24 @@ export class NoRefreshTokenError extends Error {
   }
 }
 
+/**
+ * Thrown by `publish()` only when the provider can prove the create request never left this process
+ * (it failed while uploading media, validating, building the request). The scheduler may retry it.
+ * Any other error from `publish()` is treated as "the post may be out": the post becomes 'uncertain'
+ * and is never sent again without a human reconciliation. When in doubt, do not throw this.
+ */
+export class NotSentError extends Error {
+  override name = 'NotSentError';
+}
+
+/**
+ * Thrown by `publish()` when the network answered with a definitive refusal that created nothing
+ * (e.g. a typed validation error). The post fails without a retry.
+ */
+export class RejectedError extends Error {
+  override name = 'RejectedError';
+}
+
 export interface SocialProvider {
   readonly id: ProviderName;
   /** Build the OAuth consent URL the user is redirected to. */
@@ -123,7 +141,11 @@ export interface SocialProvider {
   exchangeCode(code: string, redirectUri: string): Promise<ConnectedAccount>;
   /** Refresh if the provider supports it for this account; throws NoRefreshTokenError if not. */
   refresh(account: StoredAccount): Promise<TokenPair>;
-  /** Publish one post; returns the provider's post id (and URL, if it has one). */
+  /**
+   * Publish one post; returns the provider's post id (and URL, if it has one). Throws NotSentError
+   * for a failure proven to precede the create request, RejectedError for a definitive refusal;
+   * anything else (timeouts, resets, 5xx, a success without an id) leaves the post 'uncertain'.
+   */
   publish(account: StoredAccount, post: QueuedPost): Promise<PublishResult>;
   /** Relays only: where a post they accepted (`pending`) stands now. */
   status?(account: StoredAccount, remoteId: string): Promise<RelayStatus>;
