@@ -84,6 +84,53 @@ Use a dedicated, trusted bare repository (`git init --bare /srv/review/engine.gi
 
 Run the review model outside the trusted worker account. A fixed transport may forward only bounded prompt text and the verdict schema to a subscription-authenticated model on another host. It must provide an empty working directory, disable shell, unified execution, subagents and web search, ignore user configuration, and expose no MCP or shipping tools. It must support `login status` and the schema-bound `exec` protocol. Never send the worker HOME, environment, credentials or configurable commands to that endpoint. The adapter strips ambient environment variables, requests read-only sandboxing, disables the shell tool, ignores user configuration, selects the exact configured model, uses the JSON output schema and parses the **full** final message. The 600-character dispatcher display text is never a verdict. A read-only filesystem sandbox alone does not establish credential isolation. Verify the fixed endpoint and a real no-tool review before enabling shipping. The engine does not provision accounts or subscription authentication.
 
+## Review mode
+
+The owner chooses one explicit mode in PostgreSQL. The safe default is `review`:
+
+| `mode` | Meaning |
+|---|---|
+| `review` | Run the isolated reviewer. Only critical findings block; lower severities are advisory. Then run the mechanical shipping gate. |
+| `checks-only` | Never call the model. Run the same exact-head CI, verification, readiness, branch-protection, trusted-worker merge, optional deploy and exact-revision health checks. |
+| `off` | Do not enqueue, review or merge new submissions automatically. Existing unmerged jobs pause; already merged jobs retain their receipt and may reconcile deployment and health. |
+
+```sql
+UPDATE review_policy SET mode='checks-only';
+UPDATE review_policy SET mode='off';
+UPDATE review_policy SET mode='review'; -- rollback to the safe default
+```
+
+Run these statements only as the database owner. They replace the earlier boolean and builder allowlist semantics; callers and builders cannot select their own mode. Builders still receive neither GitHub nor deploy credentials.
+
+In `checks-only`, the trusted worker still performs every mechanical check, including immutable staged evidence, configured required CI, draft/behind/conflict/unresolved-thread/changes-requested checks, trusted verification, branch protection, `--match-head-commit`, merge-parent confirmation, optional registered deployment and exact-revision health. Its authorization is bound to repository, PR, base, head and evidence hash; drift clears or rejects it.
+
+**Honest receipts.** A checks-only job has no verdict and records a checks-only authorization. Review jobs retain their model verdict. Historical receipts and the submission mode are immutable after merge.
+
+**Toggling and active jobs.** The mode is frozen per submission when its job is created:
+
+| Change | Active, unmerged submission | Already merged submission | Next submission |
+|---|---|---|---|
+| `checks-only` to `review` | Tightens before merge, clears authorization and invokes review | Preserves original receipt | Review |
+| Any mode to `off` | Pauses without merging | Preserves receipt; reconciliation may finish | No job is enqueued |
+| `review` to `checks-only` | Keeps review for the active submission | Preserves receipt | Checks-only |
+
+A rejected round (failed CI or readiness, typed verification failure, or a critical finding in review mode) returns the card to the same builder as before; the resubmitted round takes the mode current policy gives it. A PR merged outside the worker is still `Unknown prior merge, owner reconciliation required`; see [operator recovery](#operator-recovery-a-pr-merged-outside-the-gate).
+
+### Runner integration contract
+
+A private runner (for example a coordinator that launches coding agents in worktrees and opens their PRs) consumes this without any new authority:
+
+1. **Submit as today.** Open the single same-repository PR from a branch that names the card, stage evidence with `cli-review stage`, then `move review`. The runner never needs GitHub merge rights; give them only to the review worker.
+2. **Ask which path applies (optional, read-only).** `cli-review policy-status /absolute/owner-policy.json` prints policy mode and active counts. `SELECT review_merge_mode('<card>')` and `cli-review mode /absolute/owner-policy.json <card>` show a card without granting authority:
+
+   ```json
+   {"card":"t_123abc","gated":true,"enabled":true,"policy_mode":"checks-only","job":42,"round":0,
+    "state":"queued","submission_mode":"checks-only","mode":"checks-only","merged":null,"authorized":false}
+   ```
+
+   `mode` is what applies now: for an active submission, its frozen mode after any tightening; otherwise what the next submission would get. Use it to tell the builder whether to expect a review. It grants nothing.
+3. **Process the card after CI.** A trusted runner on the review host that holds the worker's `REVIEW_DB_URL` may run `cli-review tick /absolute/owner-policy.json <card>`. Checks-only merges without a model call after every mechanical check passes; review mode invokes the isolated reviewer first; off pauses active unmerged work. Builders running under `sb_org` cannot call authorization, withdrawal or completion functions.
+
 ## Runner handoff and evidence
 
 Before submitting, the runner must create or retain a single same-repository PR whose branch includes the full card id as a complete identifier, such as `card/t_123abc-fix` or the historical `bot/builder/t_123abc-fix` form. Prefixes and suffixes remain supported, but body-only mentions and card-id prefix or suffix collisions do not bind a PR. The worker verifies every broad GitHub search hit and fails closed on unknown, truncated or multiple valid bindings. Fork PRs are unsupported and blocked. The existing runner's `move review` is the handoff; it needs no shipping power.

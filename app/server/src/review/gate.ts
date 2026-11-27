@@ -20,6 +20,13 @@ export const Verdict = z.object({
   findings: z.array(Finding).max(30),
 }).strict();
 export type Verdict = z.infer<typeof Verdict>;
+/** A builder merge authorization: owner policy let this builder's submission merge without independent review.
+ *  It is bound to the exact recorded head, base and evidence and is never a review verdict. */
+export const MergeAuthorization = z.object({ mode: z.literal('checks-only'), builder: z.string().min(1), repo: z.string(), pr: z.number().int().positive(),
+  head: Sha, base: Sha, evidence: z.string().regex(/^[a-f0-9]{64}$/), checks: z.array(z.string()),
+  authorized_by: z.string().optional(), authorized_at: z.string().optional() }).strict();
+export type MergeAuthorization = z.infer<typeof MergeAuthorization>;
+export type ReviewMode = 'review' | 'checks-only' | 'off';
 /** The shape the reviewer model is asked for. `code` is set by the gate, never by the model, and the model's strict
  *  output schema must list every property as required: an optional `code` made the provider refuse every review. */
 export const ReviewerVerdict = Verdict.extend({ findings: z.array(Finding.omit({ code: true })).max(30) });
@@ -27,6 +34,8 @@ export interface Job {
   id: number; card: string; builder: string; reviewer: string; target: string; round: number;
   state: 'queued' | 'reviewing' | 'approved' | 'merging' | 'merged' | 'deploying' | 'deployed' | 'blocked' | 'rejected' | 'done';
   snapshot: Snapshot | null; verdict: Verdict | null; merged: string | null; deployed: string | null; error?: string | null; health?: string | null;
+  /** Frozen when the submission was created (docs/automatic-review.md, "Review mode"). Absent means independent. */
+  mode?: ReviewMode; merge_authorization?: MergeAuthorization | null;
 }
 export interface GateIO {
   gather(): Promise<Snapshot>;
@@ -44,6 +53,8 @@ export interface GateIO {
   beforeShip?():Promise<void>;
   /** Owner-controlled switch, checked again immediately before each external write. */
   mayShip?(): Promise<boolean>;
+  /** The mode owner policy allows for this job right now. Absent means independent review. */
+  mode?(): Promise<ReviewMode>;
   /** Trusted exact-head verification (docs/verification.md). `checks` are the CI check names it classifies. */
   verify?(s: Snapshot): Promise<{ failures: Failure[]; checks: string[] }>;
   /** Before merging or deploying merge-disabled code: blockers until the target attests each flag is off. */
@@ -99,18 +110,30 @@ function preflightFindings(s: Snapshot, checks: string[]): Verdict['findings'] {
 export function findingsText(v: Verdict): string {
   return v.findings.map(f => `[${f.severity}] ${f.location}\nEvidence: ${f.evidence}\nImpact: ${f.impact}\nRequired fix: ${f.fix}\nVerification: ${f.verification}`).join('\n\n');
 }
+function authorized(job: Job, s: Snapshot | null): boolean {
+  const a = job.merge_authorization;
+  return !!a && !!s && job.mode === 'checks-only' && !job.verdict && a.mode === 'checks-only' && a.builder === job.builder && a.repo === s.repo && a.pr === s.pr
+    && a.head === s.head && a.base === s.base && a.evidence === evidence(s);
+}
+const TIGHTENED = 'Owner policy now requires review; checks-only authorization withdrawn';
 /** Trusted coordinator. A model's only capability is returning this strict data document. */
 export async function runReview(job: Job, checks: string[], io: GateIO): Promise<void> {
   if (job.state === 'done' || job.state === 'rejected') return;
+  job.mode ??= 'review';
   const save = async (patch: Partial<Job>) => { await io.save(patch); Object.assign(job, patch); };
   let observedMerge:string|null=null;
   try {
     if (job.builder === job.reviewer || !job.target) throw new Error('Independent reviewer and registered target required');
+    // Tightening applies at once to an unmerged builder submission; relaxing never downgrades one (the mode is frozen).
+    const mode = async (): Promise<ReviewMode> => io.mode ? await io.mode() : (job.mode ?? 'review');
+    const effective = await mode();
+    if (!job.merged && effective === 'off') { await save({ state:'blocked', error:'Automatic review policy is off; active unmerged submission paused' }); return; }
+    if (job.mode === 'checks-only' && !job.merged && effective === 'review') await save({ mode:'review', merge_authorization:null, error:TIGHTENED });
     let s = Snapshot.parse(await io.gather());
     observedMerge=s.merged;
-    if(!job.merged && job.snapshot && evidence(s)!==evidence(job.snapshot)){await save({snapshot:null,verdict:null});}
+    if(!job.merged && job.snapshot && evidence(s)!==evidence(job.snapshot)){await save({snapshot:null,verdict:null,merge_authorization:null});}
     if (job.merged) {
-      if(!job.snapshot || !job.verdict || job.verdict.decision!=='accept')throw new Error('Merged revision has no accepted review; reconciliation required');
+      if(!job.snapshot || !(job.verdict?.decision==='accept' || authorized(job,job.snapshot)))throw new Error('Merged revision has no accepted review; reconciliation required');
       await io.beforeShip?.();
       s=Snapshot.parse(await io.gather());
       if(evidence(s)!==evidence(job.snapshot))throw new Error('Approval evidence changed after merge; deployment blocked');
@@ -140,8 +163,15 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
       const waiting=checks.filter(name=>!s.checks.some(c=>c.name===name && c.state==='pass') && !s.checks.some(c=>c.name===name && c.state==='fail'));
       if(!s.merged && waiting.length && !problems.length && !job.verdict){await save({state:'reviewing',error:`Waiting for required CI: ${waiting.join(', ')}`});return;}
       if (!s.merged && job.verdict?.decision!=='reject') ready(s, checks);
+      // Builder mode: owner policy waives the independent reviewer only. Every mechanical check above still ran, and
+      // the authorization binds this exact head, base and evidence; it is never recorded as a verdict.
+      if (job.mode === 'checks-only' && !job.verdict && !authorized(job, job.snapshot)) {
+        if (s.merged) throw new Error('Unknown prior merge, owner reconciliation required');
+        ready(s, checks);
+        await save({ snapshot: s, merge_authorization: { mode:'checks-only', builder:job.builder, repo:s.repo, pr:s.pr, head:s.head, base:s.base, evidence:evidence(s), checks:[...checks] }, state:'approved', error:null });
+      }
       // An interrupted merge must use its recorded approved snapshot, never a fresh verdict on a merged PR.
-      if (!job.verdict || !job.snapshot) {
+      if (job.mode === 'review' && (!job.verdict || !job.snapshot)) {
         if (s.merged) throw new Error('Unknown prior merge, owner reconciliation required');
         await save({ state: 'reviewing', error: null });
         const v = Verdict.parse(await io.review(s, evidence(s)));
@@ -150,23 +180,28 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
         if ((v.decision === 'accept') !== (!v.findings.some(f => f.severity === 'critical'))) throw new Error('Verdict contradicts blocking findings');
         await save({ snapshot: s, verdict: v, state: v.decision === 'accept' ? 'approved' : 'reviewing' });
       }
-      if (job.verdict!.decision === 'reject') {
-        await io.reject(findingsText(job.verdict!));
+      if (job.verdict?.decision === 'reject') {
+        await io.reject(findingsText(job.verdict));
         await save({ state: 'rejected' }); return;
       }
-      if (job.verdict!.findings.length) await io.reject(findingsText(job.verdict!), true, job.verdict!.evidence);
+      if (!(job.verdict?.decision === 'accept' || authorized(job, job.snapshot))) throw new Error('Review approval missing; nothing merged');
+      if (job.verdict?.findings.length) await io.reject(findingsText(job.verdict), true, job.verdict.evidence);
       if (io.mayShip && !(await io.mayShip())) { await save({state:'approved',error:'Review accepted; owner has shipping disabled'}); return; }
       await io.beforeShip?.();
       const current = Snapshot.parse(await io.gather());
       if (!current.merged) {
         ready(current, checks);
         if (evidence(current) !== evidence(job.snapshot!)) {
-          await save({ verdict: null, snapshot: null }); throw new Error('Revision or evidence changed; approval invalidated');
+          await save({ verdict: null, snapshot: null, merge_authorization: null }); throw new Error('Revision or evidence changed; approval invalidated');
         }
         const v = await io.verify?.(current);
-        if (v?.failures.length) { await save({ verdict: null, snapshot: null }); throw new Error(verificationError(v.failures)); }
+        if (v?.failures.length) { await save({ verdict: null, snapshot: null, merge_authorization: null }); throw new Error(verificationError(v.failures)); }
         const off = await io.offState?.(current.head) ?? [];
         if (off.length) throw new Error(off.join('; ').slice(0,1000));
+      }
+      // The owner may have tightened policy while this tick held the authorization: re-read it before the merge write.
+      if (!job.verdict && (await mode()) !== 'checks-only') {
+        await save({ mode:'review', merge_authorization:null, snapshot:null, state:'reviewing', error:TIGHTENED }); return;
       }
       await save({ state: 'merging' });
       const revision = Sha.parse(await io.merge(job.snapshot!));

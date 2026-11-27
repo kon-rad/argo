@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { evidence, runReview, type Job, type Snapshot, type Source } from './gate.js';
+import { evidence, runReview, type Job, type ReviewMode, type Snapshot, type Source } from './gate.js';
 import { GitHub, codexReview, deploy, notifyOwner, type HostConfig } from './adapters.js';
 import { note, source, boardSources, linkedNote, hasAcceptance, repositoryKey, builderIsReviewer } from './context.js';
 import { reviewInPasses } from './passes.js';
@@ -32,8 +32,15 @@ export function ownerNotice(job: Job, before: { state: Job['state']; error: stri
   return `${job.reviewer}: changes requested on ${name}, round ${job.round}, ${findings.length} finding${findings.length === 1 ? '' : 's'}.${pr}\n${lines.join('\n')}${findings.length > 5 ? `\n(${findings.length - 5} more on the card)` : ''}\nThe card is back with ${job.builder}.`;
 }
 
-export async function tick(client: pg.Client, host: HostConfig): Promise<{ claimed: boolean; job?: Job }> {
-  const candidates = await client.query(`SELECT * FROM review_jobs WHERE state NOT IN ('done','rejected') AND (state<>'blocked' OR updated_at<now()-interval '5 minutes') ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END, updated_at, id LIMIT 100`);
+/** What a card's submission needs right now. Read-only; it grants no authority (docs/automatic-review.md, "Review mode"). */
+export async function mergeMode(client: pg.Client, card: string): Promise<Record<string, unknown>> {
+  return (await client.query('SELECT review_merge_mode($1) AS mode',[card])).rows[0]!.mode;
+}
+
+/** One job per tick. With `card`, only that card's active submission is considered: a trusted runner uses it to ask the
+ *  worker to merge its own card right after CI instead of waiting for the timer. Every gate check still applies. */
+export async function tick(client: pg.Client, host: HostConfig, card?: string): Promise<{ claimed: boolean; job?: Job }> {
+  const candidates = await client.query(`SELECT * FROM review_jobs WHERE state NOT IN ('done','rejected') AND (state<>'blocked' OR updated_at<now()-interval '5 minutes') AND ($1::text IS NULL OR card=$1) ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END, updated_at, id LIMIT 100`,[card ?? null]);
   for (const row of candidates.rows) {
     const job: Job = { ...row, target: host.repositories[row.repo as string]?.target ?? '' } as Job;
     const lock = `review-job:${job.id}`;
@@ -60,7 +67,11 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
       const before = { state: fresh.state as Job['state'], error: (fresh.error ?? null) as string | null };
       let told = false;
       const save = async (patch: Partial<Job>) => {
-        await client.query('SELECT review_save($1,$2::jsonb)',[job.id,JSON.stringify(patch)]);
+        // Mode and builder merge authorization have their own worker-only functions; review_save never writes them.
+        const { mode, merge_authorization, ...rest } = patch;
+        if (mode === 'review') await client.query('SELECT review_builder_withdraw($1,$2)',[job.id,patch.error ?? 'Owner policy requires review']);
+        if (Object.keys(rest).length) await client.query('SELECT review_save($1,$2::jsonb)',[job.id,JSON.stringify(rest)]);
+        if (merge_authorization) patch.merge_authorization = (await client.query('SELECT review_builder_authorize($1,$2::jsonb) AS a',[job.id,JSON.stringify(merge_authorization)])).rows[0]!.a;
         const text = told ? null : ownerNotice({ ...job, ...patch }, before, String(initialContext.ticket?.title ?? ''));
         if (text) { told = true; await notifyOwner(host,text); }
       };
@@ -132,6 +143,10 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
         beforeShip:async()=>{if(!contentHeld){contentHeld=await acquire(`review-content:${job.card}`);if(!contentHeld)throw new Error('Ticket evidence is changing; retry shipping');}},
         verifyMerge:(s,revision)=>github.confirmMerge(job.card,s,revision),
         mayShip:async()=>{const p=(await client.query('SELECT * FROM review_policy')).rows[0];return p?.enabled===true && p.shipping_enabled===true;},
+        mode:async()=>{
+          const value=(await mergeMode(client,job.card)).mode;
+          return (value==='checks-only'||value==='off' ? value : 'review') as ReviewMode;
+        },
         review:(s,e) => reviewInPasses(s,e,(part,evidenceHash,pass)=>codexReview(host,job.reviewer,part,evidenceHash,pass)),save,
         reject:async (text, advisory, evidenceHash) => { await github.reject(job.snapshot!.pr,job.id,text,advisory,evidenceHash); },
         merge:s => github.merge(job.card,s),
