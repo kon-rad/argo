@@ -33,6 +33,17 @@ it('takes an authenticated owner request through an enrolled HTTP worker to a ve
     const owner = request.agent(app);
     await owner.post('/api/auth/login').set('Origin', origin)
       .send({ password, code: codeAt(totpSecret, currentStep(Date.now())) }).expect(200);
+    const preview = await owner.post(api + 'registry/preview').set('Origin', origin).expect(200);
+    const apply = { baseRevision: preview.body.baseRevision, revision: preview.body.revision };
+    await request(app).post(api + 'registry/apply').set('Origin', origin).send(apply).expect(401);
+    const configFile = join(config, 'commands/count.yaml');
+    await writeFile(configFile, 'id: count\nhandler: unknown\n');
+    await owner.post(api + 'registry/apply').set('Origin', origin).send(apply).expect(400);
+    await writeFile(configFile, 'id: count\nhandler: word-count\n');
+    await owner.post(api + 'registry/apply').set('Origin', origin).send(apply).expect(200);
+    // An unapplied edit cannot change live scheduling, even across app restarts.
+    await writeFile(configFile, 'id: count\nhandler: unknown\n');
+    await owner.post(api + 'registry/preview').set('Origin', origin).expect(400);
     const issued = await owner.post(api + 'enrollment-codes').set('Origin', origin).send({ machine }).expect(200);
     const enrolled = await request(app).post(api + 'enroll').send(issued.body).expect(200);
     await request(app).post(api + 'enroll').send(issued.body).expect(401);
@@ -40,7 +51,9 @@ it('takes an authenticated owner request through an enrolled HTTP worker to a ve
     await request(app).post(api + 'requests').set('Origin', origin)
       .set('Authorization', 'Bearer ' + enrolled.body.token).send(input).expect(401);
     const queued = await owner.post(api + 'requests').set('Origin', origin).send(input).expect(200);
-    const server = app.listen(0, '127.0.0.1');
+    const restarted = createApp({ vaultRoot, modules: new Set(['host-pilot']), deployment: 'server',
+      auth: { passwordHash: await hashPassword(password), totpSecret, publicOrigin: origin, secureCookie: false } });
+    const server = restarted.listen(0, '127.0.0.1');
     try {
       await once(server, 'listening');
       const address = server.address();
@@ -54,6 +67,22 @@ it('takes an authenticated owner request through an enrolled HTTP worker to a ve
       await child;
       const result = await owner.get(api + 'requests/' + queued.body.id).expect(200);
       expect(result.body).toMatchObject({ machine, state: 'succeeded', pid: child.child.pid, result: { count: 3 } });
+      // A policy edit after the claim must take effect on another app instance before launch.
+      const pending = await owner.post(api + 'requests').set('Origin', origin)
+        .send({ ...input, requestKey: randomUUID() }).expect(200);
+      const bearer = 'Bearer ' + enrolled.body.token;
+      const reserved = await request(restarted).post(api + 'poll').set('Authorization', bearer).send({}).expect(200);
+      expect(reserved.body.lease.attempt).toBe(pending.body.id);
+      await writeFile(configFile, 'id: count\nhandler: word-count\n');
+      await writeFile(join(config, 'machines', machine + '.yaml'),
+        JSON.stringify({ id: machine, enabled: true, slots: 1, commands: [] }));
+      const edited = await owner.post(api + 'registry/preview').set('Origin', origin).expect(200);
+      await owner.post(api + 'registry/apply').set('Origin', origin)
+        .send({ baseRevision: edited.body.baseRevision, revision: edited.body.revision }).expect(200);
+      const receipt = { attempt: pending.body.id, generation: reserved.body.lease.generation, pid: 123 };
+      await request(restarted).post(api + 'start').set('Authorization', bearer).send(receipt).expect(412);
+      const denied = await owner.get(api + 'requests/' + pending.body.id).expect(200);
+      expect(denied.body).toMatchObject({ state: 'failed', pid: null, result: { outcome: 'failed' } });
       await owner.post(api + 'revoke').set('Origin', origin).send({ machine }).expect(204);
       await expect(runHostCommandOnce(url, enrolled.body.token)).rejects.toThrow('401');
     } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
@@ -65,6 +94,6 @@ it('keeps the app available when the private registry is missing', async () => {
   try {
     const app = createApp({ vaultRoot, modules: new Set(['host-pilot']), deployment: 'local' });
     await request(app).get('/api/auth/me').expect(200);
-    await request(app).post('/api/host-pilot/poll').send({}).expect(503);
+    await request(app).post('/api/host-pilot/poll').send({}).expect(401);
   } finally { await rm(vaultRoot, { recursive: true, force: true }); }
 });

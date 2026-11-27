@@ -208,4 +208,4 @@ The optional macOS companion captures echo-processed microphone audio and owns p
 
 ## Host command pilot
 
-An optional worker polls the application for a registered text command. The application reads private machine and command YAML at startup and persists requests, reservations, launch receipts and results in PostgreSQL. The worker runs separately with its own revocable credential. See [Host command pilot](host-command-pilot.md) for enrollment and the HTTP contract.
+An optional worker polls the application for a registered text command. The application validates private machine and command YAML on owner preview and apply, serializes changes to the active registry revision with worker actions, and persists requests, reservations, launch receipts and results in PostgreSQL. The worker runs separately with its own revocable credential. See [Host command pilot](host-command-pilot.md) for enrollment and the HTTP contract.

@@ -4,10 +4,14 @@ const id = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/);
 const unique = (values: string[]) => new Set(values).size === values.length;
 
 // Pilot command handlers are built into the worker. Requests contain data only.
-export const commandDefinition = z.strictObject({ id, handler: z.literal('word-count') });
+export const commandDefinition = z.strictObject({
+  id, handler: z.literal('word-count'), minRamGiB: z.number().positive().optional(),
+});
 export const machineDefinition = z.strictObject({
   id, enabled: z.boolean(), slots: z.number().int().min(1).max(128),
   commands: z.array(id).refine(unique, 'duplicate command'),
+  ramGiB: z.number().positive().optional(),
+  allowAgentSessions: z.boolean().optional(),
 });
 export const hostRegistry = z.strictObject({
   commands: z.array(commandDefinition), machines: z.array(machineDefinition),
