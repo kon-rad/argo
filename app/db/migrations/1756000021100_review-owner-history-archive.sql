@@ -249,8 +249,12 @@ REVOKE ALL ON FUNCTION review_submission_gate() FROM PUBLIC;
 CREATE FUNCTION board_dependency_satisfied(p_id text,p_status text) RETURNS boolean
 LANGUAGE sql STABLE SET search_path=pg_catalog,public,pg_temp AS $$
   SELECT p_status='done' OR (p_status='archived' AND NOT EXISTS (
-    SELECT 1 FROM review_owner_history_archives r WHERE r.card=p_id AND r.job=(
-      SELECT j.id FROM review_jobs j WHERE j.card=p_id ORDER BY round DESC LIMIT 1)
+    SELECT 1
+    FROM review_owner_history_archives r
+    JOIN review_jobs archived ON archived.id=r.job
+    WHERE r.card=p_id AND NOT EXISTS (
+      SELECT 1 FROM review_jobs later
+      WHERE later.card=r.card AND later.round>archived.round AND later.state='done')
   ))
 $$;
 REVOKE ALL ON FUNCTION board_dependency_satisfied(text,text) FROM PUBLIC;

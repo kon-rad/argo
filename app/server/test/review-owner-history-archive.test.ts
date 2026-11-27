@@ -296,6 +296,11 @@ it('allows metadata edits on an archived card without resubmitting it', async ()
 it('keeps newly created and newly linked dependants waiting after archival', async () => {
   const s = await fixture();
   await archive(s);
+  // A later round which has not completed cannot erase the historical archive's
+  // non-completion semantics. This also makes recovery robust to an interrupted
+  // reopen which created the round before changing the card out of archived.
+  await query(`INSERT INTO review_jobs(card,builder,reviewer,repo,round,state)
+    VALUES($1,'builder','auditor','retired-alias',1,'queued')`, [s.card]);
   const created = await createCard('owner', { title: 'Wait on creation', assignee: 'builder', deps: [s.card] });
   expect(created.status).toBe('todo');
   const linked = await createCard('owner', { title: 'Wait after linking', assignee: 'builder' });
