@@ -128,6 +128,18 @@ describe('Sessions list', () => {
     expect(within(daily).getAllByText('-').length).toBeGreaterThan(0);
   });
 
+  it('sends session ID search and cron filter and preserves them in the URL', async () => {
+    const calls = mockFetch({});
+    page('/usage?view=sessions');
+    await screen.findByRole('link', { name: 'what is on the board?' });
+    const search = screen.getByRole('textbox', { name: 'Search sessions' });
+    fireEvent.change(search, { target: { value: '01234567-89ab-cdef-0123-456789abcdef' } });
+    fireEvent.submit(search.closest('form')!);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'cron jobs' }));
+    await waitFor(() => expect(sessionRequests(calls).some((u) => u.searchParams.get('q') === '01234567-89ab-cdef-0123-456789abcdef' && u.searchParams.get('cron') === '1')).toBe(true));
+    expect(locationParams().get('s_cron')).toBe('1');
+  });
+
   it('type and persona filters come from the URL, go to the API and toggle from the chips', async () => {
     const calls = mockFetch({});
     page('/usage?view=sessions&s_type=telegram&s_persona=claude&s_host=droplet');

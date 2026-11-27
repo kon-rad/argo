@@ -21,6 +21,7 @@ function readFilters(sp: URLSearchParams): AgentSessionFilters {
   }
   const q = sp.get('s_q');
   if (q) f.q = q;
+  if (sp.get('s_cron') === '1') f.cron = true;
   if (sp.get('s_errors') === '1') f.errors = true;
   if (sp.get('s_sub') === '1') f.subagents = true;
   return f;
@@ -114,7 +115,7 @@ export default function AgentSessions({ from, to, tz }: { from: string; to: stri
       <p className="text-xs text-[var(--ink-dim)]">Every Claude Code, Codex, Hermes and zen-agent session on every machine, Telegram chats included (filter by type or bot persona). Times are {tz}. Open one to read its prompts, thinking, tool calls and responses.</p>
       <div className="my-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
         <form onSubmit={(e) => { e.preventDefault(); update((n) => { if (q.trim()) n.set('s_q', q.trim()); else n.delete('s_q'); }); }}>
-          <input aria-label="Search sessions" className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-0.5" placeholder="search text"
+          <input aria-label="Search sessions" className="rounded border border-[var(--rule)] bg-[var(--paper)] px-2 py-0.5" placeholder="search text or session ID"
             value={q} onChange={(e) => setQ(e.target.value)} />
         </form>
         {DIMS.map((d) => (facets.data?.facets[d]?.length ?? 0) > (d === 'persona' ? 0 : 1) || filters[d]?.length ? (
@@ -129,6 +130,7 @@ export default function AgentSessions({ from, to, tz }: { from: string; to: stri
             })}
           </span>
         ) : null)}
+        <label className="flex items-center gap-1"><input type="checkbox" checked={!!filters.cron} onChange={(e) => flag('s_cron', e.target.checked)} />cron jobs</label>
         <label className="flex items-center gap-1"><input type="checkbox" checked={!!filters.errors} onChange={(e) => flag('s_errors', e.target.checked)} />with errors</label>
         <label className="flex items-center gap-1"><input type="checkbox" checked={!!filters.subagents} onChange={(e) => flag('s_sub', e.target.checked)} />subagents as rows</label>
       </div>

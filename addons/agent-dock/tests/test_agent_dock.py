@@ -49,6 +49,7 @@ def test_app_build_stops_before_success_or_install_when_codesign_fails(tmp_path)
     swift_bin.mkdir()
 
     build = app_dir / "build.sh"
+    shutil.copytree(BUILD.parent.parent / "voice", addon / "voice", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copy2(BUILD, build)
     shutil.copy2(ICON_PNG, resources / ICON_PNG.name)
     (cli_dir / "agent-dock").write_text("#!/bin/sh\n")
@@ -177,10 +178,13 @@ def test_claude_keeps_a_roster_model_for_the_same_harness(vault, fake_bin):
     assert meta["model"] == "opus"
 
 
-def test_codex_gets_the_persona_without_frontmatter_and_its_roster_model(vault, fake_bin):
+def test_codex_gets_the_persona_and_uses_its_own_default(vault, fake_bin):
     s = dock.load_settings(vault)
     argv, meta = dock.build_runtime_command("ada", dock.agent_info(vault, s, "ada"), "codex", s, vault)
-    assert argv[1:5] == ["--cd", str(vault), "--model", "codex-model-1"]
+    assert argv[1:3] == ["--cd", str(vault)] and "--model" not in argv
+    s["runtimes"]["codex"]["model"] = "configured"
+    info = {"runtime": "codex", "model": "ollama/local-model"}
+    assert dock.pick_model("codex", info, s, None) == "configured"
     assert argv[-1].startswith("# ada, Head of Research") and "name: ada" not in argv[-1]
     assert meta["provider"] == "openai"
 

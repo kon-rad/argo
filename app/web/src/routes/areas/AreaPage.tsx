@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { VaultMarkdown } from '../../components/VaultMarkdown.js';
-import { fileHref, rawUrl } from '../../lib/api.js';
+import { api, fileHref, rawUrl } from '../../lib/api.js';
+import { warehouseApi } from '../../lib/warehouseApi.js';
 import { ApiError } from '../../lib/http.js';
 import { ago } from '../../lib/time.js';
 import { projectsApi, type AreaKpi, type AreaPage as AreaPageData, type ProjectRow } from '../Projects.api.js';
+import { Dashboard } from '../Warehouse.js';
 import { ArchiveButton, MD, ArchivedChip, eventText, LinkGroups, Section, StageChip, StatusChip } from './parts.js';
 
 /**
@@ -176,6 +178,8 @@ function Body({ d }: { d: AreaPageData }) {
           </Section>
         )}
 
+        <AreaDashboards slug={a.slug} />
+
         <Section title="Roadmap" aside="open projects, by due date">
           {d.roadmap.length > 0 ? (
             <ul>{d.roadmap.map((p) => <RoadmapRow key={p.slug} p={p} today={today} />)}</ul>
@@ -203,6 +207,19 @@ function Body({ d }: { d: AreaPageData }) {
         </Section>
       </div>
     </>
+  );
+}
+
+function AreaDashboards({ slug }: { slug: string }) {
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
+  const enabled = meta.data?.modules?.includes('warehouse') ?? false;
+  const dashboards = useQuery({ queryKey: ['data-dashboards'], queryFn: warehouseApi.dashboards, enabled });
+  const matching = enabled ? dashboards.data?.dashboards.filter((d) => d.area === slug) ?? [] : [];
+  if (!matching.length) return null;
+  return (
+    <Section title="Dashboards">
+      {matching.map((d) => <div key={d.name}><h3 className="font-medium">{d.title}</h3><Dashboard name={d.name} /></div>)}
+    </Section>
   );
 }
 

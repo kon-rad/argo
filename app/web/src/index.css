@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../../node_modules/@secondbrain/hiring-desk/dist/web/Desk.js";
 
 /* Dense and quiet: this is a reading tool for a 16 GB vault of plain text,
    so the chrome stays out of the way and the prose gets the contrast. */

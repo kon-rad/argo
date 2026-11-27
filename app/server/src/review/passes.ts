@@ -186,22 +186,20 @@ const RANK = { critical: 0, high: 1, medium: 2, low: 3 } as const;
 export function mergeVerdicts(verdicts: Verdict[]): Verdict {
   const first = verdicts[0];
   if (!first) throw new Error('Review produced no verdict');
-  if (verdicts.length === 1) return first;
   for (const v of verdicts) {
     if ((['reviewer', 'repo', 'pr', 'head', 'base', 'evidence'] as const).some(k => v[k] !== first[k])) throw new Error('Review passes are bound to different revisions or evidence');
-    if ((v.decision === 'accept') !== (v.findings.length === 0)) throw new Error('Verdict contradicts blocking findings');
+    if ((v.decision === 'accept') !== (!v.findings.some(f => f.severity === 'critical'))) throw new Error('Verdict contradicts blocking findings');
   }
   const findings = verdicts.flatMap((v, i) => v.findings.map(f => ({ f, i }))).sort((a, b) => RANK[a.f.severity] - RANK[b.f.severity] || a.i - b.i).map(x => x.f);
-  const dropped = findings.length - 30;
-  const kept = dropped > 0 ? findings.slice(0, 30) : findings;
-  if (dropped > 0) kept[29] = { ...kept[29]!, evidence: `${kept[29]!.evidence} (${dropped} further lower-ranked findings from the other passes are not listed; they return on the next review.)` };
+  if (findings.length > 30) throw new Error('Review findings exceed durable verdict capacity; review cannot be accepted');
+  const kept = findings;
   const merged = (key: keyof Verdict['categories']) => {
     const parts = verdicts.map(v => v.categories[key]);
     return { status: parts.some(c => c.status === 'checked') ? 'checked' as const : 'not-applicable' as const,
       evidence: [...new Set(parts.flatMap(c => c.evidence))].slice(0, 60),
       rationale: parts.map((c, i) => `Pass ${i + 1}/${parts.length}: ${c.rationale.slice(0, 1200)}`).join('\n') };
   };
-  return Verdict.parse({ ...first, decision: kept.length ? 'reject' : 'accept', findings: kept,
+  return Verdict.parse({ ...first, decision: kept.some(f => f.severity === 'critical') ? 'reject' : 'accept', findings: kept,
     categories: { security: merged('security'), compatibility: merged('compatibility'), migrations: merged('migrations'), regressions: merged('regressions'),
       scope: merged('scope'), placeholders: merged('placeholders'), tests: { ...merged('tests'), status: 'checked' } } });
 }

@@ -33,7 +33,7 @@ export interface GateIO {
   review(snapshot: Snapshot, evidence: string): Promise<unknown>;
   save(patch: Partial<Job>): Promise<void>;
   /** Idempotent delivery to PR and ticket, keyed by job id. */
-  reject(findings: string): Promise<void>;
+  reject(findings: string, advisory?: boolean, evidenceHash?: string): Promise<void>;
   /** Must reconcile a previously completed operation, then compare-and-swap the reviewed base and head. */
   merge(snapshot: Snapshot): Promise<string>;
   /** Owner-registered adapter, idempotency key job.id and exact revision only. */
@@ -147,13 +147,14 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
         const v = Verdict.parse(await io.review(s, evidence(s)));
         if (v.reviewer !== job.reviewer || v.reviewer === job.builder || v.repo !== s.repo || v.pr !== s.pr || v.head !== s.head || v.base !== s.base || v.evidence !== evidence(s)) throw new Error('Unauthorized or stale review verdict');
         if (v.decision === 'accept' && Object.values(v.categories).some(c => c.evidence.some(ref => !s.sources.some(source => source.ref===ref && !source.missing && !source.truncated)))) throw new Error('Review category cites unavailable evidence');
-        if ((v.decision === 'accept') !== (v.findings.length === 0)) throw new Error('Verdict contradicts blocking findings');
+        if ((v.decision === 'accept') !== (!v.findings.some(f => f.severity === 'critical'))) throw new Error('Verdict contradicts blocking findings');
         await save({ snapshot: s, verdict: v, state: v.decision === 'accept' ? 'approved' : 'reviewing' });
       }
       if (job.verdict!.decision === 'reject') {
         await io.reject(findingsText(job.verdict!));
         await save({ state: 'rejected' }); return;
       }
+      if (job.verdict!.findings.length) await io.reject(findingsText(job.verdict!), true, job.verdict!.evidence);
       if (io.mayShip && !(await io.mayShip())) { await save({state:'approved',error:'Review accepted; owner has shipping disabled'}); return; }
       await io.beforeShip?.();
       const current = Snapshot.parse(await io.gather());

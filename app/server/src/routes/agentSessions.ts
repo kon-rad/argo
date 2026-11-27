@@ -23,7 +23,7 @@ const flag = z.enum(['0', '1']).optional().transform((v) => v === '1');
 const listQuery = z.object({
   from: iso.optional(), to: iso.optional(),
   harness: csv, host: csv, profile: csv, provider: csv, tool: csv, channel: csv, type: csv, persona: csv,
-  q: z.string().trim().max(200).optional(), errors: flag, subagents: flag,
+  q: z.string().trim().max(200).optional(), errors: flag, subagents: flag, cron: flag,
   offset: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(200).default(100),
 });
 export type ListQuery = z.infer<typeof listQuery>;
@@ -121,11 +121,14 @@ async function listSessions(q: ListQuery, only: Only | null = null): Promise<{ r
   if (q.channel) add(`coalesce(a.channel, 'none') = ANY ($?::text[])`, q.channel);
   if (q.type) add(`(${TYPE_SQL('a')}) = ANY ($?::text[])`, q.type);
   if (q.persona) add(`${PERSONA_FACET('a')} = ANY ($?::text[])`, q.persona);
+  if (q.cron) where.push(`(a.harness = 'hermes' AND a.meta ->> 'source' = 'cron' OR
+    (SELECT l.envelope->>'trigger' FROM usage_launches l WHERE l.host=a.host AND l.source=a.source
+      AND l.runtime=a.harness AND l.session_id=a.external_id ORDER BY l.created_at DESC,l.run_id DESC LIMIT 1) = 'cron')`);
   // Content filters look at the session and, when folded, its subagents.
   const famOf = `SELECT c.id FROM archive_sessions c WHERE c.id = a.id OR (NOT $3 AND ${CHILD_OF('c', 'a')})`;
   if (q.tool) add(`EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id IN (${famOf}) AND m.tool_names && $?::text[])`, q.tool);
   if (q.errors) where.push(`(EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id IN (${famOf}) AND m.is_error AND ${CANONICAL_RESULT('m')}) OR EXISTS (SELECT 1 ${RUNS_OF('a')} AND r.is_error))`);
-  if (q.q) add(`(a.title ILIKE '%' || $? || '%' OR EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id IN (${famOf})
+  if (q.q) add(`(a.external_id ILIKE '%' || $? || '%' OR a.title ILIKE '%' || $? || '%' OR EXISTS (SELECT 1 FROM archive_messages m WHERE m.session_id IN (${famOf})
     AND m.tsv @@ plainto_tsquery('simple', $?)))`, q.q);
 
   const { rows } = await query<Record<string, unknown> & { total?: string }>(

@@ -48,11 +48,25 @@ describe('automatic contextual shipping gate', () => {
   });
   it('returns actionable findings to the same builder and allows a new round', async () => {
     const f = fixture(); f.io.review = async (_, evidence) => ({ ...verdict(), decision: 'reject', evidence,
-      findings: [{ severity: 'high', location: 'server.ts:12', evidence: 'query uses string interpolation', impact: 'SQL injection', fix: 'Bind parameters', verification: 'Test an injection payload' }] });
+      findings: [{ severity: 'critical', location: 'server.ts:12', evidence: 'query uses string interpolation', impact: 'SQL injection', fix: 'Bind parameters', verification: 'Test an injection payload' }] });
     await runReview(f.job, ['test'], f.io); expect(f.job.state).toBe('rejected'); expect(f.events.join('\n')).toContain('Bind parameters'); expect(f.counts().completions).toBe(0);
     f.job.round++; f.job.state = 'queued'; f.job.verdict = null; f.job.snapshot = null;
     f.io.review = async (_, evidence) => ({ ...verdict(), evidence }); await runReview(f.job, ['test'], f.io);
     expect(f.job.state).toBe('done'); expect(f.job.builder).toBe('builder');
+  });
+  it.each(['high', 'medium', 'low'] as const)('accepts and reports %s advisory findings', async severity => {
+    const f = fixture(); f.io.review = async (_, evidence) => ({ ...verdict(), evidence, findings: [{ severity, location:'file:1', evidence:'Observed', impact:'Impact', fix:'Fix', verification:'Verify' }] });
+    await runReview(f.job, ['test'], f.io);
+    expect(f.job.state).toBe('done'); expect(f.job.verdict?.findings[0]?.severity).toBe(severity); expect(f.events.join(' ')).toContain('Observed');
+  });
+  it('blocks shipping when advisory reporting fails', async () => {
+    const f = fixture(); f.io.review = async (_, evidence) => ({ ...verdict(), evidence, findings: [{ severity:'high', location:'file:1', evidence:'Observed', impact:'Impact', fix:'Fix', verification:'Verify' }] });
+    f.io.reject = async () => { throw new Error('report unavailable'); };
+    await runReview(f.job, ['test'], f.io); expect(f.job.state).toBe('blocked'); expect(f.counts().merges).toBe(0);
+  });
+  it('blocks inconsistent model verdicts', async () => {
+    const f = fixture(); f.io.review = async (_, evidence) => ({ ...verdict(), evidence, findings: [{ severity:'critical', location:'file:1', evidence:'Observed', impact:'Impact', fix:'Fix', verification:'Verify' }] });
+    await runReview(f.job, ['test'], f.io); expect(f.job.state).toBe('blocked'); expect(f.counts().merges).toBe(0);
   });
   it('invalidates changed head, base, ticket or evidence before merge', async () => {
     for (const field of ['head', 'base', 'sources'] as const) {
