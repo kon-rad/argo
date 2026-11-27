@@ -25,6 +25,14 @@ function fixture() {
   return { job, io, events, setCurrent(s: Snapshot) { current = s; }, counts: () => ({ reviews, merges, deploys, completions }) };
 }
 describe('automatic contextual shipping gate', () => {
+  it('leaves a historically archived job and its shipping evidence untouched', async () => {
+    const f = fixture();
+    f.job.state = 'historical-archived';
+    await runReview(f.job, ['test'], f.io);
+    expect(f.job.state).toBe('historical-archived');
+    expect(f.events).toEqual([]);
+    expect(f.counts()).toEqual({ reviews: 0, merges: 0, deploys: 0, completions: 0 });
+  });
   it('accepts only exact evidence and completes after merge, deployment and health; retries do not merge twice', async () => {
     const f = fixture(); await runReview(f.job, ['test'], f.io); await runReview(f.job, ['test'], f.io);
     expect(f.counts()).toEqual({ reviews: 1, merges: 1, deploys: 1, completions: 1 });

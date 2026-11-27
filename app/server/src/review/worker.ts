@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { evidence, runReview, type Job, type Snapshot, type Source } from './gate.js';
+import { evidence, runReview, terminalReviewStates, type Job, type Snapshot, type Source } from './gate.js';
 import { GitHub, codexReview, deploy, notifyOwner, type HostConfig } from './adapters.js';
 import { note, source, boardSources, linkedNote, hasAcceptance, repositoryKey, builderIsReviewer } from './context.js';
 import { reviewInPasses } from './passes.js';
@@ -33,7 +33,7 @@ export function ownerNotice(job: Job, before: { state: Job['state']; error: stri
 }
 
 export async function tick(client: pg.Client, host: HostConfig): Promise<{ claimed: boolean; job?: Job }> {
-  const candidates = await client.query(`SELECT * FROM review_jobs WHERE state NOT IN ('done','rejected','superseded') AND (state<>'blocked' OR updated_at<now()-interval '5 minutes') ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END, updated_at, id LIMIT 100`);
+  const candidates = await client.query(`SELECT * FROM review_jobs WHERE state <> ALL($1::text[]) AND (state<>'blocked' OR updated_at<now()-interval '5 minutes') ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END, updated_at, id LIMIT 100`, [terminalReviewStates]);
   for (const row of candidates.rows) {
     const job: Job = { ...row, target: host.repositories[row.repo as string]?.target ?? '' } as Job;
     const lock = `review-job:${job.id}`;
@@ -46,7 +46,7 @@ export async function tick(client: pg.Client, host: HostConfig): Promise<{ claim
       // Read after claim: a preceding worker may have finished since the candidate query.
       const fresh = (await client.query('SELECT * FROM review_jobs WHERE id=$1',[job.id])).rows[0];
       Object.assign(job,fresh);
-      if (job.state === 'done' || job.state === 'rejected' || job.state === 'superseded') continue;
+      if (terminalReviewStates.includes(job.state)) continue;
       const initialContext=(await client.query('SELECT review_context($1) AS context',[job.id])).rows[0]!.context;
       const repoKey=repositoryKey(initialContext.ticket,host.repositories);
       const configuredTarget = host.repositories[repoKey]?.target ?? '';
