@@ -69,7 +69,7 @@ export async function tick(client: pg.Client, host: HostConfig, card?: string): 
       const save = async (patch: Partial<Job>) => {
         // Mode and builder merge authorization have their own worker-only functions; review_save never writes them.
         const { mode, merge_authorization, ...rest } = patch;
-        if (mode === 'independent') await client.query('SELECT review_builder_withdraw($1,$2)',[job.id,patch.error ?? 'Owner policy requires independent review']);
+        if (mode === 'review') await client.query('SELECT review_builder_withdraw($1,$2)',[job.id,patch.error ?? 'Owner policy requires review']);
         if (Object.keys(rest).length) await client.query('SELECT review_save($1,$2::jsonb)',[job.id,JSON.stringify(rest)]);
         if (merge_authorization) patch.merge_authorization = (await client.query('SELECT review_builder_authorize($1,$2::jsonb) AS a',[job.id,JSON.stringify(merge_authorization)])).rows[0]!.a;
         const text = told ? null : ownerNotice({ ...job, ...patch }, before, String(initialContext.ticket?.title ?? ''));
@@ -143,7 +143,10 @@ export async function tick(client: pg.Client, host: HostConfig, card?: string): 
         beforeShip:async()=>{if(!contentHeld){contentHeld=await acquire(`review-content:${job.card}`);if(!contentHeld)throw new Error('Ticket evidence is changing; retry shipping');}},
         verifyMerge:(s,revision)=>github.confirmMerge(job.card,s,revision),
         mayShip:async()=>{const p=(await client.query('SELECT * FROM review_policy')).rows[0];return p?.enabled===true && p.shipping_enabled===true;},
-        mode:async()=>((await mergeMode(client,job.card)).mode==='builder' ? 'builder' : 'independent') as ReviewMode,
+        mode:async()=>{
+          const value=(await mergeMode(client,job.card)).mode;
+          return (value==='checks-only'||value==='off' ? value : 'review') as ReviewMode;
+        },
         review:(s,e) => reviewInPasses(s,e,(part,evidenceHash,pass)=>codexReview(host,job.reviewer,part,evidenceHash,pass)),save,
         reject:async (text, advisory, evidenceHash) => { await github.reject(job.snapshot!.pr,job.id,text,advisory,evidenceHash); },
         merge:s => github.merge(job.card,s),

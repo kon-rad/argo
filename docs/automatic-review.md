@@ -86,49 +86,50 @@ Run the review model outside the trusted worker account. A fixed transport may f
 
 ## Review mode
 
-The owner chooses, in PostgreSQL, whether gated submissions need an independent review before merge. The default, and the only behaviour for a stranger who never touches these columns, is independent review:
+The owner chooses one explicit mode in PostgreSQL. The safe default is `review`:
 
-| `review_policy` column | Default | Meaning |
-|---|---|---|
-| `independent_review` | `true` | `true`: every gated submission needs an accepted critical-only verdict from the registered reviewer, bound to the exact PR head, base and evidence, before the worker merges. High, medium and low findings stay advisory. `false`: listed builders may merge without a reviewer call. |
-| `builder_merge_agents` | `{}` | Roster names whose own card PRs may merge without independent review while `independent_review` is false. Empty means nobody, so turning review off alone changes nothing. |
+| `mode` | Meaning |
+|---|---|
+| `review` | Run the isolated reviewer. Only critical findings block; lower severities are advisory. Then run the mechanical shipping gate. |
+| `checks-only` | Never call the model. Run the same exact-head CI, verification, readiness, branch-protection, trusted-worker merge, optional deploy and exact-revision health checks. |
+| `off` | Do not enqueue, review or merge new submissions automatically. Existing unmerged jobs pause; already merged jobs retain their receipt and may reconcile deployment and health. |
 
 ```sql
--- Owner only. Let these builders merge their own card PRs after required CI:
-UPDATE review_policy SET independent_review=false, builder_merge_agents=ARRAY['builder-one','runner-m1'];
--- Require independent review again (takes effect at once for unmerged builder submissions):
-UPDATE review_policy SET independent_review=true;
+UPDATE review_policy SET mode='checks-only';
+UPDATE review_policy SET mode='off';
+UPDATE review_policy SET mode='review'; -- rollback to the safe default
 ```
 
-**Who may merge without review.** A submission is in builder mode only when, at the moment the database creates its review job, review is enabled, `independent_review` is false, the card's original builder (its assignee, which the gate already freezes) is listed in `builder_merge_agents` and that roster agent is not retired. The database decides this in a trigger; no caller, PR, ticket or model output can choose it. An unlisted or retired builder gets independent review even with review off.
+Run these statements only as the database owner. They replace the earlier boolean and builder allowlist semantics; callers and builders cannot select their own mode. Builders still receive neither GitHub nor deploy credentials.
 
-**What builder mode waives, and what it keeps.** Only the reviewer call. The trusted worker still performs the merge with its own identity and runs every mechanical check it runs in independent mode: essential context and staged builder evidence stamped with the exact head, all configured required CI passing on that head, draft, behind, conflicting, unresolved-thread and changes-requested readiness rejections back to the builder, trusted verification when configured, owner shipping switch, the per-card evidence lock, merge with `--match-head-commit` under branch protection, merge-parent confirmation, off-state, deployment and exact-revision health. Instead of a verdict, the worker records a **builder merge authorization** through the worker-only `review_builder_authorize` function: `{mode:"builder", builder, repo, pr, head, base, evidence, checks, authorized_by, authorized_at}`. The database refuses it unless the job is currently in builder mode, no verdict exists, and head, base, PR and repository equal the job's recorded snapshot. Any new snapshot head or base drops it automatically. After merge it is immutable, as is the job's mode.
+In `checks-only`, the trusted worker still performs every mechanical check, including immutable staged evidence, configured required CI, draft/behind/conflict/unresolved-thread/changes-requested checks, trusted verification, branch protection, `--match-head-commit`, merge-parent confirmation, optional registered deployment and exact-revision health. Its authorization is bound to repository, PR, base, head and evidence hash; drift clears or rejects it.
 
-**Honest receipts.** A builder-mode job never has a reviewer verdict. Its completion writes a `builder-shipped` card event with `independent_review: false`, the authorized head and the authorizing login, after a `review-builder-authorized` event; independent completions keep `review-shipped` with `independent_review: true`. Nothing in a builder-mode record claims that a reviewer accepted the work.
+**Honest receipts.** A checks-only job has no verdict and records a checks-only authorization. Review jobs retain their model verdict. Historical receipts and the submission mode are immutable after merge.
 
 **Toggling and active jobs.** The mode is frozen per submission when its job is created:
 
 | Change | Active, unmerged submission | Already merged submission | Next submission |
 |---|---|---|---|
-| Relax (review off, builder listed) | Keeps independent review; its verdict, if any, still governs | Unchanged | Builder mode |
-| Tighten (review on, builder unlisted or retired) | The worker calls `review_builder_withdraw` before any merge write, including a recheck under the evidence lock immediately before merging; the job becomes independent, its authorization is cleared and a `review-mode-tightened` event is recorded. Relaxing again later does not restore builder mode to that submission | Keeps its builder authorization and completes deployment and health; its receipt still says it was not independently reviewed | Independent review |
+| `checks-only` to `review` | Tightens before merge, clears authorization and invokes review | Preserves original receipt | Review |
+| Any mode to `off` | Pauses without merging | Preserves receipt; reconciliation may finish | No job is enqueued |
+| `review` to `checks-only` | Keeps review for the active submission | Preserves receipt | Checks-only |
 
-A rejected round (failed CI or readiness, typed verification failure, or a critical finding in independent mode) returns the card to the same builder as before; the resubmitted round takes the mode current policy gives it. A PR merged outside the worker is still `Unknown prior merge, owner reconciliation required` in either mode; see [operator recovery](#operator-recovery-a-pr-merged-outside-the-gate).
+A rejected round (failed CI or readiness, typed verification failure, or a critical finding in review mode) returns the card to the same builder as before; the resubmitted round takes the mode current policy gives it. A PR merged outside the worker is still `Unknown prior merge, owner reconciliation required`; see [operator recovery](#operator-recovery-a-pr-merged-outside-the-gate).
 
 ### Runner integration contract
 
 A private runner (for example a coordinator that launches coding agents in worktrees and opens their PRs) consumes this without any new authority:
 
 1. **Submit as today.** Open the single same-repository PR from a branch that names the card, stage evidence with `cli-review stage`, then `move review`. The runner never needs GitHub merge rights; give them only to the review worker.
-2. **Ask which path applies (optional, read-only).** `SELECT review_merge_mode('<card>')` is granted to `sb_org` and the worker login; `cli-review mode /absolute/owner-policy.json <card>` prints the same JSON:
+2. **Ask which path applies (optional, read-only).** `cli-review policy-status /absolute/owner-policy.json` prints policy mode and active counts. `SELECT review_merge_mode('<card>')` and `cli-review mode /absolute/owner-policy.json <card>` show a card without granting authority:
 
    ```json
-   {"card":"t_123abc","gated":true,"review_enabled":true,"independent_review":false,"builder":"builder-one","builder_authorized":true,
-    "job":42,"round":0,"state":"queued","submission_mode":"builder","mode":"builder","merged":null,"merge_authorized":false}
+   {"card":"t_123abc","gated":true,"enabled":true,"policy_mode":"checks-only","job":42,"round":0,
+    "state":"queued","submission_mode":"checks-only","mode":"checks-only","merged":null,"authorized":false}
    ```
 
    `mode` is what applies now: for an active submission, its frozen mode after any tightening; otherwise what the next submission would get. Use it to tell the builder whether to expect a review. It grants nothing.
-3. **Merge its own card PR after CI.** A trusted runner on the review host that holds the worker's `REVIEW_DB_URL` may run `cli-review tick /absolute/owner-policy.json <card>` to process only that card's submission now instead of waiting for the timer. In builder mode this merges, deploys and completes the card once required CI passes on the exact head; while CI is pending it prints `state: reviewing` with `Waiting for required CI` and can be rerun. In independent mode it runs the reviewer first. The output is `{"claimed":true,"id":42,"card":"t_123abc","state":"done","mode":"builder","merged":"<sha>",...}`. Builders running under `sb_org` cannot call the authorization, withdrawal or completion functions; only the registered worker login can.
+3. **Process the card after CI.** A trusted runner on the review host that holds the worker's `REVIEW_DB_URL` may run `cli-review tick /absolute/owner-policy.json <card>`. Checks-only merges without a model call after every mechanical check passes; review mode invokes the isolated reviewer first; off pauses active unmerged work. Builders running under `sb_org` cannot call authorization, withdrawal or completion functions.
 
 ## Runner handoff and evidence
 

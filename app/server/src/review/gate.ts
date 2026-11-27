@@ -22,11 +22,11 @@ export const Verdict = z.object({
 export type Verdict = z.infer<typeof Verdict>;
 /** A builder merge authorization: owner policy let this builder's submission merge without independent review.
  *  It is bound to the exact recorded head, base and evidence and is never a review verdict. */
-export const MergeAuthorization = z.object({ mode: z.literal('builder'), builder: z.string().min(1), repo: z.string(), pr: z.number().int().positive(),
+export const MergeAuthorization = z.object({ mode: z.literal('checks-only'), builder: z.string().min(1), repo: z.string(), pr: z.number().int().positive(),
   head: Sha, base: Sha, evidence: z.string().regex(/^[a-f0-9]{64}$/), checks: z.array(z.string()),
   authorized_by: z.string().optional(), authorized_at: z.string().optional() }).strict();
 export type MergeAuthorization = z.infer<typeof MergeAuthorization>;
-export type ReviewMode = 'independent' | 'builder';
+export type ReviewMode = 'review' | 'checks-only' | 'off';
 /** The shape the reviewer model is asked for. `code` is set by the gate, never by the model, and the model's strict
  *  output schema must list every property as required: an optional `code` made the provider refuse every review. */
 export const ReviewerVerdict = Verdict.extend({ findings: z.array(Finding.omit({ code: true })).max(30) });
@@ -112,20 +112,23 @@ export function findingsText(v: Verdict): string {
 }
 function authorized(job: Job, s: Snapshot | null): boolean {
   const a = job.merge_authorization;
-  return !!a && !!s && job.mode === 'builder' && !job.verdict && a.mode === 'builder' && a.builder === job.builder && a.repo === s.repo && a.pr === s.pr
+  return !!a && !!s && job.mode === 'checks-only' && !job.verdict && a.mode === 'checks-only' && a.builder === job.builder && a.repo === s.repo && a.pr === s.pr
     && a.head === s.head && a.base === s.base && a.evidence === evidence(s);
 }
-const TIGHTENED = 'Owner policy now requires independent review; builder merge authorization withdrawn';
+const TIGHTENED = 'Owner policy now requires review; checks-only authorization withdrawn';
 /** Trusted coordinator. A model's only capability is returning this strict data document. */
 export async function runReview(job: Job, checks: string[], io: GateIO): Promise<void> {
   if (job.state === 'done' || job.state === 'rejected') return;
+  job.mode ??= 'review';
   const save = async (patch: Partial<Job>) => { await io.save(patch); Object.assign(job, patch); };
   let observedMerge:string|null=null;
   try {
     if (job.builder === job.reviewer || !job.target) throw new Error('Independent reviewer and registered target required');
     // Tightening applies at once to an unmerged builder submission; relaxing never downgrades one (the mode is frozen).
-    const mode = async (): Promise<ReviewMode> => job.mode === 'builder' && io.mode ? await io.mode() : 'independent';
-    if (job.mode === 'builder' && !job.merged && (await mode()) !== 'builder') await save({ mode:'independent', merge_authorization:null, error:TIGHTENED });
+    const mode = async (): Promise<ReviewMode> => io.mode ? await io.mode() : (job.mode ?? 'review');
+    const effective = await mode();
+    if (!job.merged && effective === 'off') { await save({ state:'blocked', error:'Automatic review policy is off; active unmerged submission paused' }); return; }
+    if (job.mode === 'checks-only' && !job.merged && effective === 'review') await save({ mode:'review', merge_authorization:null, error:TIGHTENED });
     let s = Snapshot.parse(await io.gather());
     observedMerge=s.merged;
     if(!job.merged && job.snapshot && evidence(s)!==evidence(job.snapshot)){await save({snapshot:null,verdict:null,merge_authorization:null});}
@@ -162,13 +165,13 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
       if (!s.merged && job.verdict?.decision!=='reject') ready(s, checks);
       // Builder mode: owner policy waives the independent reviewer only. Every mechanical check above still ran, and
       // the authorization binds this exact head, base and evidence; it is never recorded as a verdict.
-      if (job.mode === 'builder' && !job.verdict && !authorized(job, job.snapshot)) {
+      if (job.mode === 'checks-only' && !job.verdict && !authorized(job, job.snapshot)) {
         if (s.merged) throw new Error('Unknown prior merge, owner reconciliation required');
         ready(s, checks);
-        await save({ snapshot: s, merge_authorization: { mode:'builder', builder:job.builder, repo:s.repo, pr:s.pr, head:s.head, base:s.base, evidence:evidence(s), checks:[...checks] }, state:'approved', error:null });
+        await save({ snapshot: s, merge_authorization: { mode:'checks-only', builder:job.builder, repo:s.repo, pr:s.pr, head:s.head, base:s.base, evidence:evidence(s), checks:[...checks] }, state:'approved', error:null });
       }
       // An interrupted merge must use its recorded approved snapshot, never a fresh verdict on a merged PR.
-      if (job.mode !== 'builder' && (!job.verdict || !job.snapshot)) {
+      if (job.mode === 'review' && (!job.verdict || !job.snapshot)) {
         if (s.merged) throw new Error('Unknown prior merge, owner reconciliation required');
         await save({ state: 'reviewing', error: null });
         const v = Verdict.parse(await io.review(s, evidence(s)));
@@ -197,8 +200,8 @@ export async function runReview(job: Job, checks: string[], io: GateIO): Promise
         if (off.length) throw new Error(off.join('; ').slice(0,1000));
       }
       // The owner may have tightened policy while this tick held the authorization: re-read it before the merge write.
-      if (!job.verdict && (await mode()) !== 'builder') {
-        await save({ mode:'independent', merge_authorization:null, snapshot:null, state:'reviewing', error:TIGHTENED }); return;
+      if (!job.verdict && (await mode()) !== 'checks-only') {
+        await save({ mode:'review', merge_authorization:null, snapshot:null, state:'reviewing', error:TIGHTENED }); return;
       }
       await save({ state: 'merging' });
       const revision = Sha.parse(await io.merge(job.snapshot!));

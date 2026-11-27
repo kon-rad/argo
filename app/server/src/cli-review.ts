@@ -20,7 +20,7 @@ async function main(): Promise<void> {
   const [action,path] = process.argv.slice(2);
   if (action === 'scope') { process.exitCode = await scopeMain(process.argv.slice(3)); return; }
   if (action === 'fixture') { console.log(JSON.stringify(await runFixture(),null,2)); return; }
-  if (!['tick','mode','stage','retries','register','claim','prepare','ack','retry','cancel','finish','status','reconcile-owner-merge'].includes(action ?? '') || !path) throw new Error('Usage: cli-review fixture | scope ... | tick|mode|stage|retries|register|claim|prepare|ack|retry|cancel|finish|status /absolute/owner-policy.json [argument] | reconcile-owner-merge /absolute/owner-policy.json <card> --pr <n> --merge <sha> --reason "<why>"');
+  if (!['tick','mode','policy-status','stage','retries','register','claim','prepare','ack','retry','cancel','finish','status','reconcile-owner-merge'].includes(action ?? '') || !path) throw new Error('Usage: cli-review fixture | scope ... | tick|mode|policy-status|stage|retries|register|claim|prepare|ack|retry|cancel|finish|status /absolute/owner-policy.json [argument] | reconcile-owner-merge /absolute/owner-policy.json <card> --pr <n> --merge <sha> --reason "<why>"');
   // Parse before any connection so a malformed request never touches the database or GitHub.
   const ownerMerge = action === 'reconcile-owner-merge' ? parseOwnerMergeArgs(process.argv.slice(4)) : null;
   const info = await stat(path);
@@ -35,6 +35,7 @@ async function main(): Promise<void> {
   try {
     if(ownerMerge){console.log(JSON.stringify(await reconcileOwnerMerge(client,host,ownerMerge)));return;}
     if(action==='mode'){const card=process.argv[4];if(!card)throw new Error('mode requires a card id');console.log(JSON.stringify(await mergeMode(client,card)));return;}
+    if(action==='policy-status'){console.log(JSON.stringify((await client.query('SELECT review_policy_status() AS status')).rows[0].status));return;}
     if(action==='retries'){console.log(JSON.stringify((await client.query('SELECT review_builder_retries() AS cards')).rows[0].cards));return;}
     if(action==='stage'){console.log(JSON.stringify(await stage(client,host.evidenceRoot,await stdin())));return;}
     if(action==='register'){await registerLaunch(client,await stdin() as never);console.log(JSON.stringify({registered:true}));return;}
