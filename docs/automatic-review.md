@@ -209,6 +209,19 @@ node /srv/engine/app/server/dist/cli-review.js reconcile-owner-merge /etc/second
 
 Deployment of a hand-merged revision is the owner's responsibility; the receipt records the merge, not a deployment.
 
+## Operator recovery: a card cancelled before any builder launch
+
+The owner can archive a gated card that was superseded before implementation, without claiming a review, merge or deployment. Run the standalone CLI as the database owner, with an owner-readable policy file and `REVIEW_DB_URL` pointing to the owner login:
+
+```sh
+node /srv/engine/app/server/dist/cli-review.js supersede /etc/secondbrain/review-host.json \
+  t_0123abcd --by t_4567abcd --reason "Owner cancelled the first card before work began"
+```
+
+The successor must be a different existing card. The source card must be blocked with a review job but have no PR snapshot, verdict, merge, deployment or health receipt. A human cancellation comment must already be on the card, and its comments must not reference a GitHub PR. Any builder run or trusted launch, or an active correction process, refuses the operation. These constraints are checked again under the card and review-job locks in the same database transaction that writes the immutable `review_owner_supersedes` receipt, marks the job `superseded`, and archives the card. Queued correction attempts are cancelled; no running builder is stopped or presumed safe. The receipt records the successor, owner login, reason and time. Its board event is `owner-superseded`, never `review-shipped`.
+
+The command is idempotent for the same card, successor and reason. A reopened card can be worked again, but its next submission creates a new review round; the prior cancellation cannot authorize completion. This command never applies to a card with a PR. Use the separate owner merge reconciliation for eligible merged PRs.
+
 ## Telling the owner about a rejection or a block
 
 When the host policy has a `notify` program, the worker calls it once with one argument, a short plain-text line, when a review ends in `rejected` (changes requested, with the PR, the round, up to five findings and who holds the card) or enters `blocked` (with the error and whether the PR was already merged). A blocked job that is retried and blocks again on the same error sends nothing further; a different error sends a new line. Waiting for CI and a paused shipping switch are not blocks and send nothing.

@@ -13,6 +13,7 @@ import { acknowledgeCorrectionAfterLookup, attestCorrectionCompletion, cancelCor
 import { SafeProcessError } from './review/process.js';
 import { GitHub } from './review/adapters.js';
 import { parseOwnerMergeArgs, reconcileOwnerMerge } from './review/reconcile.js';
+import { parseOwnerSupersedeArgs, supersedeOwner } from './review/supersede.js';
 
 async function stdin():Promise<unknown>{let raw='';for await(const part of process.stdin){raw+=String(part);if(Buffer.byteLength(raw)>600000)throw new Error('Input too large');}return JSON.parse(raw);}
 
@@ -20,9 +21,10 @@ async function main(): Promise<void> {
   const [action,path] = process.argv.slice(2);
   if (action === 'scope') { process.exitCode = await scopeMain(process.argv.slice(3)); return; }
   if (action === 'fixture') { console.log(JSON.stringify(await runFixture(),null,2)); return; }
-  if (!['tick','stage','retries','register','claim','prepare','ack','retry','cancel','finish','status','reconcile-owner-merge'].includes(action ?? '') || !path) throw new Error('Usage: cli-review fixture | scope ... | tick|stage|retries|register|claim|prepare|ack|retry|cancel|finish|status /absolute/owner-policy.json [argument] | reconcile-owner-merge /absolute/owner-policy.json <card> --pr <n> --merge <sha> --reason "<why>"');
+  if (!['tick','stage','retries','register','claim','prepare','ack','retry','cancel','finish','status','reconcile-owner-merge','supersede'].includes(action ?? '') || !path) throw new Error('Usage: cli-review fixture | scope ... | tick|stage|retries|register|claim|prepare|ack|retry|cancel|finish|status /absolute/owner-policy.json [argument] | reconcile-owner-merge /absolute/owner-policy.json <card> --pr <n> --merge <sha> --reason "<why>" | supersede /absolute/owner-policy.json <card> --by <successor-card> --reason "<why>"');
   // Parse before any connection so a malformed request never touches the database or GitHub.
   const ownerMerge = action === 'reconcile-owner-merge' ? parseOwnerMergeArgs(process.argv.slice(4)) : null;
+  const ownerSupersede = action === 'supersede' ? parseOwnerSupersedeArgs(process.argv.slice(4)) : null;
   const info = await stat(path);
   if (!path.startsWith('/') || (info.mode & 0o022) || (info.uid !== process.getuid?.() && info.uid !== 0)) throw new Error('Host policy must be owner-owned and not group/world writable');
   const host = HostConfig.parse(JSON.parse(await readFile(path,'utf8')));
@@ -34,6 +36,7 @@ async function main(): Promise<void> {
   client.on('error',() => process.exit(1));
   try {
     if(ownerMerge){console.log(JSON.stringify(await reconcileOwnerMerge(client,host,ownerMerge)));return;}
+    if(ownerSupersede){console.log(JSON.stringify(await supersedeOwner(client,ownerSupersede)));return;}
     if(action==='retries'){console.log(JSON.stringify((await client.query('SELECT review_builder_retries() AS cards')).rows[0].cards));return;}
     if(action==='stage'){console.log(JSON.stringify(await stage(client,host.evidenceRoot,await stdin())));return;}
     if(action==='register'){await registerLaunch(client,await stdin() as never);console.log(JSON.stringify({registered:true}));return;}

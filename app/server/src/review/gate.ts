@@ -25,7 +25,7 @@ export type Verdict = z.infer<typeof Verdict>;
 export const ReviewerVerdict = Verdict.extend({ findings: z.array(Finding.omit({ code: true })).max(30) });
 export interface Job {
   id: number; card: string; builder: string; reviewer: string; target: string; round: number;
-  state: 'queued' | 'reviewing' | 'approved' | 'merging' | 'merged' | 'deploying' | 'deployed' | 'blocked' | 'rejected' | 'done';
+  state: 'queued' | 'reviewing' | 'approved' | 'merging' | 'merged' | 'deploying' | 'deployed' | 'blocked' | 'rejected' | 'done' | 'superseded';
   snapshot: Snapshot | null; verdict: Verdict | null; merged: string | null; deployed: string | null; error?: string | null; health?: string | null;
 }
 export interface GateIO {
