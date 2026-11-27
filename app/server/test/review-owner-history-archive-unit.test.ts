@@ -4,7 +4,15 @@ import type { HostConfig, Repository } from '../src/review/adapters.js';
 import { archiveOwnerHistory, parseOwnerHistoryArchiveArgs, verifyOwnerHistoryPr } from '../src/review/history-archive.js';
 
 const repo: Repository = { github: 'example/engine', gitDir: '/srv/engine.git', base: 'main', target: 'fixture', checks: ['tests'], notes: ['README.md'] };
-const host = { repositories: { engine: repo } } as HostConfig;
+const host: HostConfig = {
+  repositories: { engine: repo }, targets: {}, notesRoot: '/srv/notes', exclude: [], evidenceRoot: '/srv/evidence',
+  home: '/srv/review', gh: '/usr/bin/gh', git: '/usr/bin/git',
+  reviewer: { argv: ['fixture'], model: 'fixture', home: '/srv/review', cwd: '/srv/review' },
+};
+function databaseFixture() {
+  const query = vi.fn<(sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }>>();
+  return { query, client: { query } as unknown as pg.Client };
+}
 const sha = 'a'.repeat(40), tip = 'b'.repeat(40);
 const req = { card: 't_aabbcc', repoKey: 'engine', pr: 12, outcome: 'merged' as const, merge: sha,
   staleBefore: '2000-01-02T00:00:00+01:00', reason: 'Historical shared work' };
@@ -90,8 +98,7 @@ it('checks database authority before contacting GitHub', async () => {
 });
 
 it('passes the selected job, parsed request and live attestation to the locked transition', async () => {
-  const client = new pg.Client();
-  const query = vi.spyOn(client, 'query');
+  const { client, query } = databaseFixture();
   const receipt = { id: '11' };
   query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] })
     .mockResolvedValueOnce({ rows: [{ id: '8' }] }).mockResolvedValueOnce({ rows: [receipt] });
@@ -100,13 +107,12 @@ it('passes the selected job, parsed request and live attestation to the locked t
   expect(connect).toHaveBeenCalledWith(repo);
   const [sql, args] = query.mock.calls.at(-1)!;
   expect(sql).toContain('FROM review_owner_history_archive(');
-  expect(args.slice(0, 8)).toEqual([req.card, '8', req.repoKey, req.pr, req.outcome, sha, req.staleBefore, req.reason]);
-  expect(JSON.parse(args[8])).toMatchObject({ url, state: 'MERGED', head: tip, merged: sha });
+  expect(args?.slice(0, 8)).toEqual([req.card, '8', req.repoKey, req.pr, req.outcome, sha, req.staleBefore, req.reason]);
+  expect(JSON.parse(String(args?.[8]))).toMatchObject({ url, state: 'MERGED', head: tip, merged: sha });
 });
 
 it('replays through the locked transition using the original attestation when GitHub is unavailable', async () => {
-  const client = new pg.Client();
-  const query = vi.spyOn(client, 'query');
+  const { client, query } = databaseFixture();
   const attestation = await verifyOwnerHistoryPr(reader(), repo, req);
   const receipt = { id: '11', job: '8', attestation };
   query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [receipt] }).mockResolvedValueOnce({ rows: [receipt] });
@@ -117,8 +123,7 @@ it('replays through the locked transition using the original attestation when Gi
 });
 
 it.each([{ repo: 'example/replacement' }, { base: 'release' }])('refuses a replay after policy registration changed %o', async changed => {
-  const client = new pg.Client();
-  const query = vi.spyOn(client, 'query');
+  const { client, query } = databaseFixture();
   const attestation = { ...await verifyOwnerHistoryPr(reader(), repo, req), ...changed };
   query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ job: '8', attestation }] });
   const connect = vi.fn();
