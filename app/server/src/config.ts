@@ -23,6 +23,8 @@ const Schema = z.object({
   DATABASE_URL: z.string().default('postgres://localhost:5432/secondbrain'),
   // Standalone review worker only; never passed to its model subprocess.
   REVIEW_DB_URL: z.string().optional(),
+  // Supplied to the separately launched host worker.
+  SECONDBRAIN_HOST_TOKEN: z.string().optional(),
   GH_TOKEN: z.string().optional(),
   // Structured settings path, absolute or relative to VAULT_ROOT.
   SECONDBRAIN_SETTINGS: z.string().optional(),
