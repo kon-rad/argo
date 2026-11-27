@@ -1,3 +1,4 @@
+import hostPilot from './host-pilot/manifest.js';
 /**
  * The addon manifests: the non-core modules, each off until the vault lists it in
  * `secondbrain.json`'s `addons`. Same shape as a core feature manifest
@@ -54,4 +55,5 @@ export const ADDON_MANIFESTS: readonly FeatureManifest[] = [
   improve,
   desk,
   observatory,
+  hostPilot,
 ];

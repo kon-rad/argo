@@ -1,3 +1,5 @@
+import { routes as hostPilotRoutes } from './host-pilot/routes.js';
+import hostPilot from './host-pilot/manifest.js';
 /**
  * The addon routes, joined to their manifests. The mirror of features/index.ts for the non-core
  * modules: each addon that mounts anything has a `routes.ts`, and app.ts mounts the enabled ones
@@ -51,6 +53,7 @@ type AppConfig = typeof import('../config.js').config;
 
 /** Every addon that mounts routes, with its manifest, in config.ts's ADDON_MODULES order. */
 export const ADDON_FEATURES: readonly AddonFeature[] = [
+  { ...hostPilot, routes: hostPilotRoutes },
   { ...localaiManifest, routes: localaiRoutes },
   { ...ringManifest, routes: ringRoutes },
   { ...agentsManifest, routes: agentsRoutes },
