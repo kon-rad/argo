@@ -32,6 +32,7 @@ export const ADDON_MODULES = [
   'improve',
   'desk',
   'observatory',
+  'host-pilot',
 ] as const;
 
 export const MODULE_NAMES = [...CORE_MODULES, ...ADDON_MODULES] as const;

@@ -36,6 +36,7 @@ Computing is turning into an exocortex: memory, perception and judgment running 
 - **Find anything, and see the shape of it.** Keyword, semantic and hybrid search over the whole vault, a chat that answers from your notes with citations, a database page you can ask questions in plain language, and a 3D brain map of how your notes, projects and goals connect.
 - **Put agents to work without handing them the keys.** Claude Code, Hermes and other harnesses work in the vault under one rulebook (`AGENTS.md`), behind hooks that block reading your secrets, force pushes and other mistakes.
 - **Run a company of agents, if you want one.** Optional modules add a project tracker, a kanban board, a message board where named agents report to you, memory and session summaries, and a ledger of what they cost.
+- **Run a command on an enrolled machine.** The optional [host command pilot](docs/host-command-pilot.md) lets an owner queue a word count and a worker return the result over HTTPS.
 - **Give agents portable names.** The [ENSv2 agent names guide](docs/ensv2-agent-registration.md) explains how to create a controlled subname namespace and link each name to an ERC-8004 identity on another chain.
 - **Stay the author.** Agents take the overhead. The writing, the reflection and the decisions stay with you.
 

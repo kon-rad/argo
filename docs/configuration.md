@@ -429,3 +429,9 @@ and operator runbook.
 |---|---|---|
 | `LOCAL_AI_EXPORT_URL` | unset | Base URL of the local model gateway; no pull when unset |
 | `LOCAL_AI_HOST` | `local` | Registered `usage_hosts` slug for collected rows |
+
+## Host worker
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SECONDBRAIN_HOST_TOKEN` | Unset | Worker-only bearer credential obtained through enrollment in the optional host-pilot addon. |

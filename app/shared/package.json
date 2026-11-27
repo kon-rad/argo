@@ -5,6 +5,7 @@
   "type": "module",
   "files": ["dist"],
   "exports": {
+    "./hosts": { "types": "./dist/hosts.d.ts", "import": "./dist/hosts.js" },
     "./search": { "types": "./dist/search.d.ts", "import": "./dist/search.js" },
     "./board": { "types": "./dist/board.d.ts", "import": "./dist/board.js" },
     "./projects": { "types": "./dist/projects.d.ts", "import": "./dist/projects.js" },
