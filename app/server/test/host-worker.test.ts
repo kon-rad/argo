@@ -32,6 +32,13 @@ describe('host command worker', () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it('continues polling after the server records a prelaunch policy failure', async () => {
+    const send = vi.fn<typeof fetch>().mockResolvedValueOnce(offered())
+      .mockResolvedValueOnce(new Response(null, { status: 412 }));
+    expect(await runHostCommandOnce(origin, 'test-token', send)).toBe(true);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
   it('retries delivery of an identical result after a lost acknowledgement', async () => {
     const send = vi.fn<typeof fetch>().mockResolvedValueOnce(offered()).mockResolvedValueOnce(ok()).mockRejectedValueOnce(new TypeError('network')).mockResolvedValueOnce(ok());
     await runHostCommandOnce(origin, 'test-token', send);

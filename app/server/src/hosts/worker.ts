@@ -32,7 +32,8 @@ export async function runHostCommandOnce(origin: string, token: string, send: ty
         await delay(250 * i);
         continue;
       }
-      if (response.ok) return response;
+      // A 412 start response confirms prelaunch denial has already been recorded.
+      if (response.ok || (action === 'start' && response.status === 412)) return response;
       await response.body?.cancel();
       if (response.status < 500 || i === attempts) throw new Error('Host worker ' + action + ' returned HTTP ' + response.status);
       await delay(250 * i);
@@ -43,7 +44,9 @@ export async function runHostCommandOnce(origin: string, token: string, send: ty
   if (!lease) return false;
   const fence = { attempt: lease.attempt, generation: lease.generation };
   // This built-in handler executes in the worker process recorded by this receipt.
-  await (await post('start', { ...fence, pid: process.pid })).body?.cancel();
+  const start = await post('start', { ...fence, pid: process.pid });
+  await start.body?.cancel();
+  if (start.status === 412) return true;
   const result: CommandResult = {
     ...fence, outcome: 'succeeded', count: lease.text.match(/\S+/gu)?.length ?? 0,
   };
