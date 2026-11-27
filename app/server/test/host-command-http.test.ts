@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { once } from 'node:events';
 import request from 'supertest';
 import { expect, it } from 'vitest';
+import { pool } from '../src/db.js';
 import { createApp } from '../src/app.js';
 import { hashPassword } from '../src/auth/password.js';
 import { codeAt, currentStep, generateSecret } from '../src/auth/totp.js';
@@ -83,7 +84,13 @@ it('takes an authenticated owner request through an enrolled HTTP worker to a ve
       await request(restarted).post(api + 'start').set('Authorization', bearer).send(receipt).expect(412);
       const denied = await owner.get(api + 'requests/' + pending.body.id).expect(200);
       expect(denied.body).toMatchObject({ state: 'failed', pid: null, result: { outcome: 'failed' } });
+      // An upgrading pilot can already have live credentials and history before its first apply.
+      await pool.query('UPDATE hc_registry_head SET revision=NULL');
+      await owner.get(api + 'requests/' + queued.body.id).expect(200);
       await owner.post(api + 'revoke').set('Origin', origin).send({ machine }).expect(204);
+      const reapply = await owner.post(api + 'registry/preview').set('Origin', origin).expect(200);
+      await owner.post(api + 'registry/apply').set('Origin', origin)
+        .send({ baseRevision: null, revision: reapply.body.revision }).expect(200);
       await expect(runHostCommandOnce(url, enrolled.body.token)).rejects.toThrow('401');
     } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
   } finally { await rm(vaultRoot, { recursive: true, force: true }); }

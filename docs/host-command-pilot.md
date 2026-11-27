@@ -22,7 +22,7 @@ slots: 1
 commands: [count-words]
 ```
 
-Add `host-pilot` to the server's configured modules and apply the engine migrations using your usual deployment process. Before enrollment, an owner previews the private YAML and applies its revision. When upgrading an existing pilot, drain workers before the upgrade, apply the existing YAML once and resume polling. Stored machine tokens and command history survive the upgrade. Later edits take effect after the owner applies them. The server loads the last applied revision from PostgreSQL across restarts.
+Add `host-pilot` to the server's configured modules and apply the engine migrations using your usual deployment process. Before enrollment, an owner previews the private YAML and applies its revision. When upgrading an existing pilot, drain workers before the upgrade, apply the existing YAML once and resume polling. The owner can revoke existing credentials and read command history even before first apply. Later edits take effect after the owner applies them. The server loads the last applied revision from PostgreSQL across restarts.
 
 A machine may declare `ramGiB`; a command may declare `minRamGiB`. An omitted minimum allows any otherwise eligible machine. A positive minimum requires a declared capacity that meets it. The machine's optional `allowAgentSessions` flag declares a separate permission for future session hosting; it grants zero command IDs. The module is disabled by default.
 
@@ -48,7 +48,7 @@ Transfer the enrollment code privately to the target machine. Exchange it there 
 secondbrain host-worker https://board.example --once
 ```
 
-Read the request again as the owner. A successful sample returns a count of three. Reusing its request key with identical input returns the existing ID. Reusing it with different input returns HTTP 409. Omitting `--once` keeps the worker polling. Stop the worker process to stop polling. Revoke the machine to invalidate its worker access.
+Read the request again as the owner. A successful sample returns a count of three. Reusing its request key with identical input returns the existing ID, including after command removal. Reusing it with different input returns HTTP 409. Omitting `--once` keeps the worker polling. Stop the worker process to stop polling. Revoke the machine to invalidate its worker access.
 
 ## Worker lifecycle and limitations
 

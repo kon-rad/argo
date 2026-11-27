@@ -13,6 +13,34 @@ const digest = (secret: string) => createHash('sha256').update(secret).digest('h
 
 const policyDenial = 'Host no longer qualifies for the reserved command';
 
+async function transact<T>(pool: Pool, client: PoolClient | undefined, action: (db: PoolClient) => Promise<T>): Promise<T> {
+  if (client) return action(client);
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    const result = await action(db);
+    await db.query('COMMIT');
+    return result;
+  } catch (error) {
+    await db.query('ROLLBACK');
+    throw error;
+  } finally { db.release(); }
+}
+
+export async function revokeHost(pool: Pool, machine: string, client?: PoolClient): Promise<void> {
+  await transact(pool, client, async db => {
+    await db.query('LOCK TABLE hc_enroll IN SHARE ROW EXCLUSIVE MODE');
+    await db.query('DELETE FROM hc_enroll WHERE machine=$1', [machine]);
+    await db.query('DELETE FROM hc_tokens WHERE machine=$1', [machine]);
+  });
+}
+
+export async function hostCommandStatus(db: Pool | PoolClient, id: string) {
+  const { rows } = await db.query('SELECT id,command,machine,state,pid,generation,result FROM hc_requests WHERE id=$1', [id]);
+  if (!rows[0]) throw new HostServiceError(404, 'Command run not found');
+  return rows[0];
+}
+
 export class HostService {
   constructor(
     private readonly pool: Pool,
@@ -35,23 +63,9 @@ export class HostService {
     return record;
   }
 
-  private async transaction<T>(action: (db: PoolClient) => Promise<T>): Promise<T> {
-    if (this.client) return action(this.client);
-    const db = await this.pool.connect();
-    try {
-      await db.query('BEGIN');
-      const result = await action(db);
-      await db.query('COMMIT');
-      return result;
-    } catch (error) {
-      await db.query('ROLLBACK');
-      throw error;
-    } finally { db.release(); }
-  }
-
   async issueCode(machine: string): Promise<{code: string}> {
     this.enabled(machine);
-    return this.transaction(async db => {
+    return transact(this.pool, this.client, async db => {
       await db.query('LOCK TABLE hc_enroll IN SHARE ROW EXCLUSIVE MODE');
       const enrolled = await db.query('SELECT 1 FROM hc_tokens WHERE machine=$1', [machine]);
       if (enrolled.rowCount) throw new HostServiceError(409, 'Revoke the existing host token before enrolling again');
@@ -62,23 +76,16 @@ export class HostService {
     });
   }
 
-  async revoke(machine: string): Promise<void> {
-    // Removing a machine from the registry must not prevent revoking its stored credentials.
-    await this.transaction(async db => {
-      await db.query('LOCK TABLE hc_enroll IN SHARE ROW EXCLUSIVE MODE');
-      await db.query('DELETE FROM hc_enroll WHERE machine=$1', [machine]);
-      await db.query('DELETE FROM hc_tokens WHERE machine=$1', [machine]);
-    });
+  revoke(machine: string) {
+    return revokeHost(this.pool, machine, this.client);
   }
 
-  async status(id: string) {
-    const { rows } = await this.db.query(`SELECT id,command,machine,state,pid,generation,result FROM hc_requests WHERE id=$1`, [id]);
-    if (!rows[0]) throw new HostServiceError(404, 'Command run not found');
-    return rows[0];
+  status(id: string) {
+    return hostCommandStatus(this.db, id);
   }
 
   async enroll(code: string): Promise<{machine: string; token: string}> {
-    return this.transaction(async db => {
+    return transact(this.pool, this.client, async db => {
       const { rows } = await db.query<{machine: string}>(
         'DELETE FROM hc_enroll WHERE code_hash=$1 AND expires_at>now() RETURNING machine', [digest(code)]);
       if (!rows[0]) throw new HostServiceError(401, 'Invalid or expired enrollment code');
@@ -91,7 +98,7 @@ export class HostService {
 
   async authenticate(token: string): Promise<string> {
     const { rows } = await this.db.query<{machine: string}>(
-      'SELECT machine FROM hc_tokens WHERE token_hash=$1', [digest(token)]);
+      'SELECT machine FROM hc_tokens WHERE token_hash=$1 FOR SHARE', [digest(token)]);
     if (!rows[0]) throw new HostServiceError(401, 'Invalid host token');
     return rows[0].machine;
   }
@@ -101,21 +108,26 @@ export class HostService {
     if (!request.success) throw new HostServiceError(400, 'Invalid command request');
     const { command, requestKey, text } = request.data;
     const definition = this.registry.commands.find(entry => entry.id === command);
-    if (!definition) throw new HostServiceError(400, 'Command is not registered');
-    const { rows } = await this.db.query<{id: string}>(`
-      INSERT INTO hc_requests(id,request_key,command,handler,body_text,state) VALUES ($1,$2,$3,$4,$5,'queued')
-      ON CONFLICT(request_key) DO UPDATE SET request_key=EXCLUDED.request_key
-        WHERE hc_requests.command=EXCLUDED.command AND hc_requests.body_text=EXCLUDED.body_text
-      RETURNING id`, [randomUUID(), requestKey, command, definition.handler, text]);
-    if (!rows[0]) throw new HostServiceError(409, 'Request key has a different payload');
-    return rows[0];
+    if (definition) {
+      const { rows } = await this.db.query<{id: string}>(`
+        INSERT INTO hc_requests(id,request_key,command,handler,body_text,state) VALUES ($1,$2,$3,$4,$5,'queued')
+        ON CONFLICT(request_key) DO NOTHING RETURNING id`, [randomUUID(), requestKey, command, definition.handler, text]);
+      if (rows[0]) return rows[0];
+    }
+    // A replay reads the original request even when policy has since removed its command.
+    const { rows } = await this.db.query<{id: string; matches: boolean}>(`
+      SELECT id,(command=$2 AND body_text=$3) AS matches FROM hc_requests WHERE request_key=$1`,
+    [requestKey, command, text]);
+    if (!rows[0]) throw new HostServiceError(400, 'Command is not registered');
+    if (!rows[0].matches) throw new HostServiceError(409, 'Request key has a different payload');
+    return { id: rows[0].id };
   }
 
   async poll(machine: string): Promise<CommandLease | null> {
     const host = this.enabled(machine);
     const commands = this.eligibleCommands(host);
     if (!commands.length) return null;
-    return this.transaction(async db => {
+    return transact(this.pool, this.client, async db => {
       // Serialise capacity checks for the same machine. Different machines can claim concurrently.
       await db.query('SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))', ['hc_requests', machine]);
       const active = await db.query<{count: number}>(
@@ -135,7 +147,7 @@ export class HostService {
     const receipt = launchReceipt.safeParse(input);
     if (!receipt.success) throw new HostServiceError(400, 'Invalid launch receipt');
     const { attempt, generation, pid } = receipt.data;
-    return this.transaction(async db => {
+    return transact(this.pool, this.client, async db => {
       const { rows } = await db.query<{ state: string; pid: number | null; command: string; result: CommandResult | null }>(
         'SELECT state,pid,command,result FROM hc_requests WHERE id=$1 AND generation=$2 AND machine=$3 FOR UPDATE',
         [attempt, generation, machine]);

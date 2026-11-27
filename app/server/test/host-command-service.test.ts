@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
-import { HostService } from '../src/hosts/service.js';
+import { hostCommandStatus, HostService, revokeHost } from '../src/hosts/service.js';
 
 // The server suite's global setup creates and migrates DATABASE_URL before this file runs.
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
@@ -33,6 +33,32 @@ describe('host command service', () => {
     expect(rows[0].token_hash).toBe(createHash('sha256').update(enrolled.token).digest('hex'));
     await service.revoke(machine);
     await expect(service.authenticate(enrolled.token)).rejects.toMatchObject({ status: 401 });
+  });
+
+  it('recovers an accepted request after command removal, rejects changed input and denies new requests', async () => {
+    const { command, service } = fixture();
+    const request = { command, requestKey: randomUUID(), text: 'original' };
+    const [accepted, replay] = await Promise.all([service.submit(request), service.submit(request)]);
+    expect(replay).toEqual(accepted);
+    const removed = new HostService(pool, { machines: [], commands: [] });
+    expect(await removed.submit(request)).toEqual(accepted);
+    await expect(removed.submit({ ...request, text: 'different' })).rejects.toMatchObject({ status: 409 });
+    await expect(removed.submit({ ...request, command: randomUUID() })).rejects.toMatchObject({ status: 409 });
+    await expect(removed.submit({ ...request, requestKey: randomUUID() })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('reads a run and revokes issued or enrolled credentials independently of the registry', async () => {
+    const { service, command, machine, second } = fixture();
+    const { id } = await service.submit({ command, requestKey: randomUUID(), text: '' });
+    expect(await hostCommandStatus(pool, id)).toMatchObject({ id, command, state: 'queued' });
+    await expect(hostCommandStatus(pool, randomUUID())).rejects.toMatchObject({ status: 404 });
+    const { code } = await service.issueCode(machine);
+    const pending = await service.issueCode(second);
+    const { token } = await service.enroll(code);
+    await revokeHost(pool, machine);
+    await revokeHost(pool, second);
+    await expect(service.authenticate(token)).rejects.toMatchObject({ status: 401 });
+    await expect(service.enroll(pending.code)).rejects.toMatchObject({ status: 401 });
   });
 
   it('reserves once, preserves capacity until completion, rejects stale evidence and accepts exact replays', async () => {

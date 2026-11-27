@@ -4,7 +4,7 @@ import { pool } from '../../db.js';
 import type { FeatureRoutes } from '../../features/types.js';
 import { HostRegistryStore } from '../../hosts/registry.js';
 import { readHostRegistry } from '../../hosts/config.js';
-import { HostService, HostServiceError } from '../../hosts/service.js';
+import { hostCommandStatus, HostService, HostServiceError, revokeHost } from '../../hosts/service.js';
 import { HttpError, parseOr400 } from '../../routes/http.js';
 
 const machineInput = z.strictObject({ machine: z.string().min(1).max(128) });
@@ -66,11 +66,11 @@ export const routes: FeatureRoutes = ({ vaultRoot, sessionGate }) => {
   });
   owner.post('/revoke', async (req, res) => {
     const { machine } = parseOr400(machineInput, req.body);
-    await current(service => service.revoke(machine));
+    await revokeHost(pool, machine);
     res.sendStatus(204);
   });
   owner.post('/requests', async (req, res) => { res.json(await current(service => service.submit(req.body))); });
-  owner.get('/requests/:id', async (req, res) => { res.json(await current(service => service.status(req.params.id))); });
+  owner.get('/requests/:id', async (req, res) => { res.json(await hostCommandStatus(pool, req.params.id)); });
   owner.use(mapError);
   return [
     { path: '/api/host-pilot', router: host, mount: 'public' },
