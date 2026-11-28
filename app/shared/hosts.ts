@@ -23,16 +23,22 @@ export const hostRegistry = z.strictObject({
     for (const command of machine.commands)
       if (!commands.includes(command)) ctx.addIssue({ code: 'custom', message: 'unknown command: ' + command });
 });
-export const commandRequest = z.strictObject({ command: id, requestKey: id, text: z.string().max(65536) });
-export const commandLease = z.strictObject({
-  attempt: id, generation: z.number().int().positive(), command: id, handler: z.literal('word-count'),
-  text: z.string().max(65536),
+export const artifactMaxBytes = 4 * 1024 * 1024;
+export const artifactRef = z.strictObject({
+  id: z.uuid(), bytes: z.number().int().min(0).max(artifactMaxBytes), sha256: z.string().regex(/^[a-f0-9]{64}$/),
 });
+export type ArtifactRef = z.infer<typeof artifactRef>;
+const inputs = { text: z.string().max(65536).optional(), input: artifactRef.optional() };
+const oneInput = (data: { text?: string; input?: ArtifactRef }) => (data.text === undefined) !== (data.input === undefined);
+export const commandRequest = z.strictObject({ command: id, requestKey: id, ...inputs }).refine(oneInput, 'Expected one input');
+export const commandLease = z.strictObject({
+  attempt: id, generation: z.number().int().positive(), command: id, handler: z.literal('word-count'), ...inputs,
+}).refine(oneInput, 'Expected one input');
 export const launchReceipt = z.strictObject({
   attempt: id, generation: z.number().int().positive(), pid: z.number().int().positive(),
 });
 export const commandResult = z.discriminatedUnion('outcome', [
-  z.strictObject({ attempt: id, generation: z.number().int().positive(), outcome: z.literal('succeeded'), count: z.number().int().nonnegative() }),
+  z.strictObject({ attempt: id, generation: z.number().int().positive(), outcome: z.literal('succeeded'), count: z.number().int().nonnegative(), output: artifactRef.optional() }),
   z.strictObject({ attempt: id, generation: z.number().int().positive(), outcome: z.literal('failed'), reason: z.string().min(1).max(512) }),
 ]);
 export type HostRegistry = z.infer<typeof hostRegistry>;

@@ -57,3 +57,17 @@ Read the request again as the owner. A successful sample returns a count of thre
 The worker sends its bearer credential to `POST /poll`, `POST /start` and `POST /finish` under the same prefix. An enabled worker takes an eligible request when a slot is free. The server records a reservation, a start receipt and a terminal result. A lost or disconnected process can leave a reserved or running request that needs operator investigation.
 
 This pilot accepts owner-submitted inline text and returns a count. Ticket dispatch, arbitrary executable registration, file uploads, digest verification, agent permissions, OS service enrollment and a web history page belong to later milestones.
+
+## Count a private text file
+
+Use the same registered word-count command with either inline text or a file. All endpoints below use the `/api/host-pilot` prefix. The owner uses the usual session cookie and matching Origin for writes.
+
+1. Compute SHA-256 over the original file bytes. POST the bytes to `/artifacts` with Content-Type `application/octet-stream` and header `x-content-sha256` set to the lowercase hex digest. The response contains an opaque `id`, byte count `bytes` and `sha256`. The pilot accepts UTF-8 input up to 4 MiB.
+2. To stage from an existing private S3-compatible media bucket, place the object at `host-pilot/inputs/<uuid>` and POST its UUID, byte count and SHA-256 as JSON to `/artifacts/import`. Use the manifest returned by the import in the next step. The server uses its configured B2 connection and validates the imported bytes. Workers receive only the scoped download.
+3. POST `{"command":"count-words","requestKey":"file-example","input":<manifest>}` to `/requests`, substituting the returned object for `<manifest>`. Save the run ID. A replay of the same request key and payload returns that ID.
+4. Poll `/requests/<id>`. During the reserved attempt, the assigned worker stages the file in a private temporary directory, checks its length and SHA-256, and removes it after decoding. Once running, it uploads a JSON result file containing the count. The server checks the manifest, the reported count and the attempt before accepting success.
+5. Fetch `/requests/<id>/output` with the owner session. Verify its length and SHA-256 against `result.output` before reading the count. Download the result within 24 hours. The pilot stores bounded file copies in Postgres. Expired files become inaccessible immediately and are collected on the next input upload. The external source object's retention follows the bucket policy.
+
+The built-in handler takes data only. This pilot has no script-backed executor. A staging failure records a failed run before launch, and a delivery failure records a failed run after launch.
+
+Staged bytes are private to this pilot and expire after 24 hours. Later uploads reclaim expired rows. Run history retains the manifest beyond that window so the owner can match a previously saved output. The transfer endpoint rejects a request with a stale generation or a different machine credential.

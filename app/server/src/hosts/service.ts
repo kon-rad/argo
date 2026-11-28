@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { requireInput } from './artifacts.js';
 import type { Pool, PoolClient } from 'pg';
 import {
   commandLease, commandRequest, commandResult, launchReceipt,
@@ -63,6 +64,13 @@ export class HostService {
     return record;
   }
 
+  async checkTransferPermission(machine: string, attempt: string, generation: number) {
+    const commands = this.eligibleCommands(this.enabled(machine));
+    const result = await this.db.query(`SELECT 1 FROM hc_requests WHERE id=$1 AND generation=$2 AND machine=$3
+      AND command=ANY($4::text[]) AND state='reserved'`, [attempt, generation, machine, commands]);
+    if (!result.rowCount) throw new HostServiceError(404, 'Input unavailable for this lease');
+  }
+
   async issueCode(machine: string): Promise<{code: string}> {
     this.enabled(machine);
     return transact(this.pool, this.client, async db => {
@@ -106,21 +114,26 @@ export class HostService {
   async submit(input: unknown): Promise<{id: string}> {
     const request = commandRequest.safeParse(input);
     if (!request.success) throw new HostServiceError(400, 'Invalid command request');
-    const { command, requestKey, text } = request.data;
+    const { command, requestKey, text, input: file } = request.data;
+    const params = [requestKey, command, text ?? '', file ? JSON.stringify(file) : null];
+    const existing = async () => {
+      const { rows } = await this.db.query<{id: string; matches: boolean}>(`
+        SELECT id,(command=$2 AND body_text=$3 AND input_ref IS NOT DISTINCT FROM $4::jsonb) AS matches
+        FROM hc_requests WHERE request_key=$1`, params);
+      if (!rows[0]) return null;
+      if (!rows[0].matches) throw new HostServiceError(409, 'Request key has a different payload');
+      return { id: rows[0].id };
+    };
+    const replay = await existing();
+    if (replay) return replay;
     const definition = this.registry.commands.find(entry => entry.id === command);
-    if (definition) {
-      const { rows } = await this.db.query<{id: string}>(`
-        INSERT INTO hc_requests(id,request_key,command,handler,body_text,state) VALUES ($1,$2,$3,$4,$5,'queued')
-        ON CONFLICT(request_key) DO NOTHING RETURNING id`, [randomUUID(), requestKey, command, definition.handler, text]);
-      if (rows[0]) return rows[0];
-    }
-    // A replay reads the original request even when policy has since removed its command.
-    const { rows } = await this.db.query<{id: string; matches: boolean}>(`
-      SELECT id,(command=$2 AND body_text=$3) AS matches FROM hc_requests WHERE request_key=$1`,
-    [requestKey, command, text]);
-    if (!rows[0]) throw new HostServiceError(400, 'Command is not registered');
-    if (!rows[0].matches) throw new HostServiceError(409, 'Request key has a different payload');
-    return { id: rows[0].id };
+    if (!definition) throw new HostServiceError(400, 'Command is not registered');
+    if (file) await requireInput(this.db, file);
+    const { rows } = await this.db.query<{id: string}>(`
+      INSERT INTO hc_requests(request_key,command,body_text,input_ref,id,handler,state)
+      VALUES($1,$2,$3,$4::jsonb,$5,$6,'queued') ON CONFLICT(request_key) DO NOTHING RETURNING id`,
+    [...params, randomUUID(), definition.handler]);
+    return rows[0] ?? (await existing())!;
   }
 
   async poll(machine: string): Promise<CommandLease | null> {
@@ -138,8 +151,12 @@ export class HostService {
           SELECT id FROM hc_requests WHERE state='queued' AND command=ANY($2::text[])
           ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
         ) UPDATE hc_requests r SET state='reserved', machine=$1 FROM candidate WHERE r.id=candidate.id
-        RETURNING r.id AS attempt,r.generation,r.command,r.handler,r.body_text AS text`, [machine, commands]);
-      return rows[0] ? commandLease.parse(rows[0]) : null;
+        RETURNING r.id AS attempt,r.generation,r.command,r.handler,r.body_text AS text,r.input_ref AS input`, [machine, commands]);
+      const row = rows[0];
+      if (!row) return null;
+      if (row.input) delete row.text;
+      else delete row.input;
+      return commandLease.parse(row);
     });
   }
 
@@ -173,6 +190,12 @@ export class HostService {
     const { attempt, generation, outcome } = result.data;
     const update = await this.db.query(`UPDATE hc_requests SET state=$4,result=$5::jsonb
       WHERE id=$1 AND generation=$2 AND machine=$3 AND (
+        (state=$4 AND result=$5::jsonb) OR $4 <> 'succeeded' OR (input_ref IS NULL AND NOT ($5::jsonb ? 'output')) OR
+        (input_ref IS NOT NULL AND EXISTS (SELECT 1 FROM hc_artifacts a WHERE a.run_id=$1 AND a.generation=$2
+          AND a.id::text=$5::jsonb->'output'->>'id' AND a.sha256=$5::jsonb->'output'->>'sha256'
+          AND octet_length(a.content)=($5::jsonb->'output'->>'bytes')::integer
+          AND a.content=convert_to('{"count":' || ($5::jsonb->>'count') || '}' || chr(10),'UTF8') AND a.expires_at>now()))
+      ) AND (
         state='running' OR (state='reserved' AND $4='failed') OR (state=$4 AND result=$5::jsonb))`,
     [attempt, generation, machine, outcome, JSON.stringify(result.data)]);
     if (!update.rowCount) throw new HostServiceError(409, 'Result does not match the active lease');

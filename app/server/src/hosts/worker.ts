@@ -1,5 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { commandLease, type CommandResult } from '@secondbrain/contracts/hosts';
+import { stageHostInput, executeHostInput } from './artifact-worker.js';
 import { z } from 'zod';
 
 const pollResponse = z.strictObject({ lease: commandLease.nullable() });
@@ -43,13 +44,22 @@ export async function runHostCommandOnce(origin: string, token: string, send: ty
   const { lease } = pollResponse.parse(await (await post('poll', {})).json());
   if (!lease) return false;
   const fence = { attempt: lease.attempt, generation: lease.generation };
-  // This built-in handler executes in the worker process recorded by this receipt.
+  let text: string;
+  try {
+    text = await stageHostInput(server, token, lease, send);
+  } catch {
+    await (await post('finish', { ...fence, outcome: 'failed', reason: 'Input staging or verification failed' })).body?.cancel();
+    return true;
+  }
   const start = await post('start', { ...fence, pid: process.pid });
   await start.body?.cancel();
   if (start.status === 412) return true;
-  const result: CommandResult = {
-    ...fence, outcome: 'succeeded', count: lease.text.match(/\S+/gu)?.length ?? 0,
-  };
+  let result: CommandResult;
+  try {
+    result = await executeHostInput(server, token, lease, text, send);
+  } catch {
+    result = { ...fence, outcome: 'failed', reason: 'Output delivery or verification failed' };
+  }
   await (await post('finish', result)).body?.cancel();
   return true;
 }
