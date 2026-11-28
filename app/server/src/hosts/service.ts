@@ -79,7 +79,7 @@ export class HostService {
 
   async checkTransferPermission(machine: string, attempt: string, generation: number) {
     const commands = this.eligibleCommands(this.enabled(machine));
-    const result = await this.db.query(`SELECT 1 FROM hc_requests WHERE id=$1 AND generation=$2 AND machine=$3
+    const result = await this.db.query(`SELECT 1 FROM hc_requests WHERE attempt_id=$1 AND generation=$2 AND machine=$3
       AND command=ANY($4::text[]) AND state='reserved'`, [attempt, generation, machine, commands]);
     if (!result.rowCount) throw new HostServiceError(404, 'Input unavailable for this lease');
   }

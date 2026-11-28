@@ -12,6 +12,7 @@ import { pool } from '../src/db.js';
 import { createApp } from '../src/app.js';
 import { hashPassword } from '../src/auth/password.js';
 import { codeAt, currentStep, generateSecret } from '../src/auth/totp.js';
+import { ReceiptJournal } from '../src/hosts/receiptJournal.js';
 import { runHostCommandOnce } from '../src/hosts/worker.js';
 
 it('takes an authenticated owner request through an enrolled HTTP worker to a verified result', async () => {
@@ -86,7 +87,32 @@ it('takes an authenticated owner request through an enrolled HTTP worker to a ve
       const fileRun = await owner.post(api + 'requests').set('Origin', origin).send(fileRequest).expect(200);
       expect((await owner.post(api + 'requests').set('Origin', origin).send(fileRequest).expect(200)).body).toEqual(fileRun.body);
       await request(app).get(api + 'requests/' + fileRun.body.id + '/output').expect(401);
-      expect(await runHostCommandOnce(url, enrolled.body.token)).toBe(true);
+      // Drop completion acknowledgments after the real server has committed the
+      // output. Reopen the journal as a fresh worker and deliver the same manifest.
+      const receiptDir = join(vaultRoot, 'file-journal');
+      const first = new ReceiptJournal(receiptDir);
+      let uploads = 0;
+      const dropFinish: typeof fetch = async (target, init) => {
+        const response = await fetch(target, init);
+        if (init?.method === 'PUT') uploads++;
+        if (String(target).endsWith('/finish')) {
+          await response.body?.cancel();
+          throw new Error('lost acknowledgment');
+        }
+        return response;
+      };
+      try {
+        await expect(runHostCommandOnce(url, enrolled.body.token, dropFinish, { journal: first })).rejects.toThrow('confirm finish');
+        expect(uploads).toBe(1);
+      } finally { first.close(); }
+      const restored = new ReceiptJournal(receiptDir);
+      try {
+        const onlyFinish: typeof fetch = (target, init) => {
+          expect(String(target)).toMatch(/\/finish$/);
+          return fetch(target, init);
+        };
+        expect(await runHostCommandOnce(url, enrolled.body.token, onlyFinish, { journal: restored })).toBe(true);
+      } finally { restored.close(); }
       const status = await owner.get(api + 'requests/' + fileRun.body.id).expect(200);
       const downloaded = await owner.get(api + 'requests/' + fileRun.body.id + '/output').expect(200);
       expect(JSON.parse(downloaded.body.toString())).toEqual({ count: 3 });

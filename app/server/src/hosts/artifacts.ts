@@ -49,7 +49,7 @@ export async function storeOutput(db: DB, machine: string, attempt: string, gene
 export async function resultContent(db: DB, run: string) {
   const { rows } = await db.query(`SELECT a.content FROM hc_requests r JOIN hc_artifacts a
     ON a.id::text=r.result->'output'->>'id' AND a.run_id=r.id AND a.generation=r.generation
-    WHERE r.id=$1 AND r.state='succeeded' AND a.expires_at>now()`, [run]);
+    WHERE r.id=$1 AND r.caller_id='owner' AND r.state='succeeded' AND a.expires_at>now()`, [run]);
   if (!rows[0]) throw new HostServiceError(404, 'Result file unavailable');
   return rows[0].content as Buffer;
 }
