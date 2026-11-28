@@ -57,3 +57,17 @@ Read the request again as the owner. A successful sample returns a count of thre
 The worker sends its bearer credential to `POST /poll`, `POST /start` and `POST /finish` under the same prefix. An enabled worker takes an eligible request when a slot is free. The server records a reservation, a start receipt and a terminal result. A lost or disconnected process can leave a reserved or running request that needs operator investigation.
 
 This pilot accepts owner-submitted inline text and returns a count. Ticket dispatch, arbitrary executable registration, file uploads, digest verification, agent permissions, OS service enrollment and a web history page belong to later milestones.
+
+## Run a command from the owner CLI
+
+Set `SECONDBRAIN_OWNER_SESSION_FILE` to the path of a user-owned file readable only by its owner (mode 0600). Supply the signed-in owner's origin and session cookie as two JSON string fields, `origin` and `cookie`. The cookie field contains the single session cookie name/value pair. Store the file outside the vault. The CLI sends it only to that origin, requires HTTPS except on loopback, and refuses redirects.
+
+```sh
+secondbrain host-command list
+secondbrain host-command describe count-words
+printf 'one two three' | secondbrain host-command submit count-words example-1
+secondbrain host-command status <run-id>
+secondbrain host-command result <run-id>
+```
+
+List and describe read the applied registry revision. Submit reads text from stdin and returns a run ID. After a lost response, reuse the same request key and text. Result exits unsuccessfully until the run has succeeded.

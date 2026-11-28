@@ -42,6 +42,11 @@ it('takes an authenticated owner request through an enrolled HTTP worker to a ve
     await owner.post(api + 'registry/apply').set('Origin', origin).send(apply).expect(400);
     await writeFile(configFile, 'id: count\nhandler: word-count\n');
     await owner.post(api + 'registry/apply').set('Origin', origin).send(apply).expect(200);
+    await request(app).get(api + 'commands').expect(401);
+    const catalog = await owner.get(api + 'commands').expect(200);
+    expect(catalog.body).toMatchObject({ revision: apply.revision, commands: [{ id: 'count', handler: 'word-count' }] });
+    await owner.get(api + 'commands/count').expect(200, { revision: apply.revision, command: catalog.body.commands[0] });
+    await owner.get(api + 'commands/missing').expect(404);
     // An unapplied edit cannot change live scheduling, even across app restarts.
     await writeFile(configFile, 'id: count\nhandler: unknown\n');
     await owner.post(api + 'registry/preview').set('Origin', origin).expect(400);

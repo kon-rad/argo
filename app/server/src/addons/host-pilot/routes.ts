@@ -52,6 +52,20 @@ export const routes: FeatureRoutes = ({ vaultRoot, sessionGate }) => {
   const owner = Router();
   // An owner session is required even if the installation has local login disabled.
   owner.use(sessionGate ?? ((_req, _res, next) => next(new HttpError(403, 'Owner login required'))));
+  async function catalog() {
+    const snapshot = await store.active();
+    if (!snapshot) throw new HttpError(409, 'Apply the host registry first');
+    return { revision: snapshot.revision, commands: snapshot.registry.commands };
+  }
+  owner.get('/commands', async (_req, res) => {
+    res.set('Cache-Control', 'no-store').json(await catalog());
+  });
+  owner.get('/commands/:command', async (req, res) => {
+    const { revision, commands } = await catalog();
+    const command = commands.find(entry => entry.id === req.params.command);
+    if (!command) throw new HttpError(404, 'Unknown command');
+    res.set('Cache-Control', 'no-store').json({ revision, command });
+  });
   owner.post('/registry/preview', async (_req, res) => {
     res.set('Cache-Control', 'no-store').json(await store.preview(candidate()));
   });
