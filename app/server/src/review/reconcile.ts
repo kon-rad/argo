@@ -19,6 +19,17 @@ export interface OwnerMergeAttestation {
 
 type GitHubReader = Pick<GitHub, 'pr' | 'git'>;
 
+export async function verifyProtectedBaseMerge(github: Pick<GitHub, 'git'>, repo: Repository, merge: string): Promise<string> {
+  const remote = `https://github.com/${repo.github}.git`;
+  const line = (await github.git(['ls-remote', '--heads', remote, `refs/heads/${repo.base}`])).trim().split('\n').find(l => l.endsWith(`\trefs/heads/${repo.base}`));
+  const baseTip = line?.split('\t')[0] ?? '';
+  if (!/^[a-f0-9]{40}$/.test(baseTip)) throw new Error(`Cannot read the tip of ${repo.base} on ${repo.github}`);
+  await github.git(['fetch', '--no-tags', remote, merge, baseTip]);
+  try { await github.git(['merge-base', '--is-ancestor', merge, baseTip]); }
+  catch { throw new Error(`Merge ${merge} is not on the protected base ${repo.base}`); }
+  return baseTip;
+}
+
 /**
  * Confirm on GitHub that `pr` is merged into the registered protected base with exactly `merge`, and that its
  * branch names the card. `GitHub.pr` already refuses a cross-repository PR, another base and an unrelated branch.
@@ -29,13 +40,7 @@ export async function verifyOwnerMerge(github: GitHubReader, repo: Repository, c
   catch (error) { throw new Error(`PR #${pr} is not a ${repo.github} PR into ${repo.base} from a branch naming ${card}: ${error instanceof Error ? error.message : 'lookup failed'}`); }
   if (p.state !== 'MERGED' || !p.mergeCommit) throw new Error(`PR #${pr} is not merged (state ${p.state}); nothing to reconcile`);
   if (p.mergeCommit.oid !== merge) throw new Error(`PR #${pr} was merged as ${p.mergeCommit.oid}, not ${merge}`);
-  const remote = `https://github.com/${repo.github}.git`;
-  const line = (await github.git(['ls-remote', '--heads', remote, `refs/heads/${repo.base}`])).trim().split('\n').find(l => l.endsWith(`\trefs/heads/${repo.base}`));
-  const baseTip = line?.split('\t')[0] ?? '';
-  if (!/^[a-f0-9]{40}$/.test(baseTip)) throw new Error(`Cannot read the tip of ${repo.base} on ${repo.github}`);
-  await github.git(['fetch', '--no-tags', remote, merge, baseTip]);
-  try { await github.git(['merge-base', '--is-ancestor', merge, baseTip]); }
-  catch { throw new Error(`Merge ${merge} is not on the protected base ${repo.base}`); }
+  const baseTip = await verifyProtectedBaseMerge(github, repo, merge);
   if (p.isCrossRepository || p.baseRefName !== repo.base) throw new Error(`PR #${pr} is not a ${repo.github} PR into ${repo.base}`);
   return { repo: repo.github, pr, state: 'MERGED', merged: merge, head: p.headRefOid, base: p.baseRefName, baseTip, branch: p.headRefName, checkedAt: new Date().toISOString() };
 }

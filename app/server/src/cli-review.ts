@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Standalone host service: does not import app config or load a vault .env.
-import { readFile, stat } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import pg from 'pg';
 import { HostConfig } from './review/adapters.js';
 import { tick } from './review/worker.js';
@@ -15,19 +15,33 @@ import { GitHub } from './review/adapters.js';
 import { parseOwnerMergeArgs, reconcileOwnerMerge } from './review/reconcile.js';
 import { parseOwnerSupersedeArgs, supersedeOwner } from './review/supersede.js';
 
+import { archiveOwnerHistory, parseOwnerHistoryArchiveArgs } from './review/history-archive.js';
+
+async function readPolicy(path: string, requireRoot: boolean): Promise<HostConfig> {
+  if (!path.startsWith('/')) throw new Error('Host policy path must be absolute');
+  const file = await open(path, 'r');
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || (info.mode & 0o022) || (info.uid !== 0 && (requireRoot || info.uid !== process.getuid?.()))) {
+      throw new Error(requireRoot ? 'Historical archive requires a root-owned host policy, with no group/world write access'
+        : 'Host policy must be owner-owned and not group/world writable');
+    }
+    return HostConfig.parse(JSON.parse(await file.readFile('utf8')));
+  } finally { await file.close(); }
+}
+
 async function stdin():Promise<unknown>{let raw='';for await(const part of process.stdin){raw+=String(part);if(Buffer.byteLength(raw)>600000)throw new Error('Input too large');}return JSON.parse(raw);}
 
 async function main(): Promise<void> {
   const [action,path] = process.argv.slice(2);
   if (action === 'scope') { process.exitCode = await scopeMain(process.argv.slice(3)); return; }
   if (action === 'fixture') { console.log(JSON.stringify(await runFixture(),null,2)); return; }
-  if (!['tick','stage','retries','register','claim','prepare','ack','retry','cancel','finish','status','reconcile-owner-merge','supersede'].includes(action ?? '') || !path) throw new Error('Usage: cli-review fixture | scope ... | tick|stage|retries|register|claim|prepare|ack|retry|cancel|finish|status /absolute/owner-policy.json [argument] | reconcile-owner-merge /absolute/owner-policy.json <card> --pr <n> --merge <sha> --reason "<why>" | supersede /absolute/owner-policy.json <card> --by <successor-card> --reason "<why>"');
+  if (!['tick','stage','retries','register','claim','prepare','ack','retry','cancel','finish','status','reconcile-owner-merge','supersede','archive-owner-history'].includes(action ?? '') || !path) throw new Error('Usage: cli-review fixture | scope ... | tick|stage|retries|register|claim|prepare|ack|retry|cancel|finish|status /absolute/owner-policy.json [argument] | reconcile-owner-merge /absolute/owner-policy.json <card> --pr <n> --merge <sha> --reason "<why>" | supersede /absolute/owner-policy.json <card> --by <successor-card> --reason "<why>" | archive-owner-history /absolute/owner-policy.json <card> --repo-key <key> --pr <n> --outcome merged|closed-unmerged [--merge <sha>] --stale-before <ISO> --reason "<why>"');
   // Parse before any connection so a malformed request never touches the database or GitHub.
   const ownerMerge = action === 'reconcile-owner-merge' ? parseOwnerMergeArgs(process.argv.slice(4)) : null;
   const ownerSupersede = action === 'supersede' ? parseOwnerSupersedeArgs(process.argv.slice(4)) : null;
-  const info = await stat(path);
-  if (!path.startsWith('/') || (info.mode & 0o022) || (info.uid !== process.getuid?.() && info.uid !== 0)) throw new Error('Host policy must be owner-owned and not group/world writable');
-  const host = HostConfig.parse(JSON.parse(await readFile(path,'utf8')));
+  const ownerHistory = action === 'archive-owner-history' ? parseOwnerHistoryArchiveArgs(process.argv.slice(4)) : null;
+  const host = await readPolicy(path, ownerHistory !== null);
   setPrivateLog(join(host.home,'review-adapters.log'));
   if (!process.env.REVIEW_DB_URL) throw new Error('REVIEW_DB_URL: dedicated worker login required');
   const client = new pg.Client({connectionString:process.env.REVIEW_DB_URL,statement_timeout:15_000});
@@ -35,6 +49,7 @@ async function main(): Promise<void> {
   // Losing the lock connection stops this worker. Durable adapter receipts reconcile uncertain effects.
   client.on('error',() => process.exit(1));
   try {
+    if(ownerHistory){console.log(JSON.stringify(await archiveOwnerHistory(client,host,ownerHistory)));return;}
     if(ownerMerge){console.log(JSON.stringify(await reconcileOwnerMerge(client,host,ownerMerge)));return;}
     if(ownerSupersede){console.log(JSON.stringify(await supersedeOwner(client,ownerSupersede)));return;}
     if(action==='retries'){console.log(JSON.stringify((await client.query('SELECT review_builder_retries() AS cards')).rows[0].cards));return;}

@@ -25,9 +25,11 @@ export type Verdict = z.infer<typeof Verdict>;
 export const ReviewerVerdict = Verdict.extend({ findings: z.array(Finding.omit({ code: true })).max(30) });
 export interface Job {
   id: number; card: string; builder: string; reviewer: string; target: string; round: number;
-  state: 'queued' | 'reviewing' | 'approved' | 'merging' | 'merged' | 'deploying' | 'deployed' | 'blocked' | 'rejected' | 'done' | 'superseded';
+  state: 'queued' | 'reviewing' | 'approved' | 'merging' | 'merged' | 'deploying' | 'deployed' | 'blocked' | 'rejected' | 'done' | 'superseded' | 'historical-archived';
   snapshot: Snapshot | null; verdict: Verdict | null; merged: string | null; deployed: string | null; error?: string | null; health?: string | null;
 }
+export const terminalReviewStates: ReadonlyArray<Job['state']> = ['done', 'rejected', 'superseded', 'historical-archived'];
+
 export interface GateIO {
   gather(): Promise<Snapshot>;
   review(snapshot: Snapshot, evidence: string): Promise<unknown>;
@@ -101,7 +103,7 @@ export function findingsText(v: Verdict): string {
 }
 /** Trusted coordinator. A model's only capability is returning this strict data document. */
 export async function runReview(job: Job, checks: string[], io: GateIO): Promise<void> {
-  if (job.state === 'done' || job.state === 'rejected') return;
+  if (terminalReviewStates.includes(job.state)) return;
   const save = async (patch: Partial<Job>) => { await io.save(patch); Object.assign(job, patch); };
   let observedMerge:string|null=null;
   try {

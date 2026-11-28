@@ -75,8 +75,14 @@ const LATER_UP = LATER.slice(0, LATER.indexOf('-- Down Migration'));
 const LATER_DOWN = LATER.slice(LATER.indexOf('-- Down Migration'));
 const hasLog = async (): Promise<boolean> => (await query<{ t: string | null }>(`SELECT to_regclass('public.tracker_events')::text AS t`)).rows[0]!.t !== null;
 
+const currentCardCreate = async () => (await query<{ definition: string }>(
+  "SELECT pg_get_functiondef('public.board_card_create'::regproc) AS definition",
+)).rows[0]!.definition;
+
 describe('the PARA rename migration', () => {
+  let cardCreate: string;
   beforeAll(async () => {
+    cardCreate = await currentCardCreate();
     await seed();
     await migrate(LATER_DOWN);
   });
@@ -84,6 +90,12 @@ describe('the PARA rename migration', () => {
   afterAll(async () => {
     if (!(await renamed())) await migrate(UP);
     if (!(await hasLog())) await migrate(LATER_UP);
+    // Tracker-events recreates its own historical version of board_card_create.
+    // Restore the installed version so later tests keep the current dependency rules.
+    if (cardCreate) {
+      await migrate(cardCreate);
+      expect(await currentCardCreate()).toBe(cardCreate);
+    }
     await truncateAll();
   });
 

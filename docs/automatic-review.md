@@ -222,6 +222,28 @@ The successor must be a different existing card. The source card must be blocked
 
 The command is idempotent for the same card, successor and reason. A reopened card can be worked again, but its next submission creates a new review round; the prior cancellation cannot authorize completion. This command never applies to a card with a PR. Use the separate owner merge reconciliation for eligible merged PRs.
 
+## Archiving a historical PR
+
+Use `archive-owner-history` when the board should retain a stale card and its PR as history. For a card whose hand-merged work should count as completed and release dependants, use `reconcile-owner-merge` under the conditions above. For work cancelled before launch with a successor and no PR, use `supersede`.
+
+Run the standalone CLI with a root-owned host policy and set `REVIEW_DB_URL` to the database owner's login. The configured review worker and connections carrying an `org.agent` identity are refused. Supply the registered repository **key**, even if the card still uses an obsolete alias. The policy determines the GitHub repository and protected base.
+
+```sh
+node /srv/engine/app/server/dist/cli-review.js archive-owner-history /etc/secondbrain/review-host.json \
+  "$card" --repo-key engine --pr "$pr" --outcome merged --merge "$merge_sha" \
+  --stale-before "$cutoff" --reason "Historical work was recorded on the shared PR"
+
+node /srv/engine/app/server/dist/cli-review.js archive-owner-history /etc/secondbrain/review-host.json \
+  "$card" --repo-key engine --pr "$pr" --outcome closed-unmerged \
+  --stale-before "$cutoff" --reason "The owner closed the abandoned proposal"
+```
+
+Each card needs an existing human-authored comment containing the exact canonical `https://github.com/OWNER/REPO/pull/NUMBER` link. Several cards may cite one PR, including a shared branch whose name omits their IDs. For `merged`, supply the full 40-character merge SHA. The command verifies GitHub's merge commit and its ancestry on the registered base. For `closed-unmerged`, omit `--merge`. GitHub must report a closed PR with a null merge commit. An open PR, a fork PR or a different base fails the check.
+
+Set `cutoff` to an absolute ISO-8601 timestamp with a time zone. Meaningful activity must precede the cutoff. This includes card changes, comments, builder runs, trusted launches, corrections and board events. After migration, a review worker retry alone does not restart the clock. For existing cards, the database uses their last pre-migration update as a conservative starting point. An older retry may therefore require a later cutoff. Check the card history before selecting it. Only a blocked card with its latest review job blocked is eligible. Queued or active work, a worker holding the job or evidence lock, and conflicting review or shipping evidence prevent archival.
+
+The database archives the card, marks the job `historical-archived`, appends an `owner-history-archived` event and writes one immutable `review_owner_history_archives` receipt in a single transaction. The receipt identifies the owner, time, card, job, policy key, repository, PR, outcome, cutoff, reason and GitHub attestation. Both the event and receipt record `reviewed: false` and `deployed: false`. Only a merged PR records `merged: true` and a merge SHA. Dependants stay gated and the operation grants no health or reviewer verdict. Repeating the same request returns the existing receipt. A different PR, outcome, merge SHA, policy key, cutoff or reason conflicts with it.
+
 ## Telling the owner about a rejection or a block
 
 When the host policy has a `notify` program, the worker calls it once with one argument, a short plain-text line, when a review ends in `rejected` (changes requested, with the PR, the round, up to five findings and who holds the card) or enters `blocked` (with the error and whether the PR was already merged). A blocked job that is retried and blocks again on the same error sends nothing further; a different error sends a new line. Waiting for CI and a paused shipping switch are not blocks and send nothing.

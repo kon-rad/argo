@@ -63,7 +63,7 @@ describe('correction PR lookup outcomes', () => {
       {query} as never,
       {id:9,token:'lease-token',runId:'run-reserved',processId:'process-42',head:'b'.repeat(40)},
       lookup,
-      {attempts:3,delayMs:1,deadlineMs:20,sleep},
+      {attempts:3,delayMs:1,deadlineMs:20,now:()=>0,sleep},
     )).resolves.toEqual({state:'running'});
 
     expect(lookup).toHaveBeenCalledTimes(2);
@@ -86,7 +86,7 @@ describe('correction PR lookup outcomes', () => {
         {query} as never,
         {id:9,token:'lease-token',runId:'run-reserved',processId:'process-42',head:'b'.repeat(40)},
         lookup,
-        {attempts:3,delayMs:1,deadlineMs:20,sleep},
+        {attempts:3,delayMs:1,deadlineMs:20,now:()=>0,sleep},
       );
     }catch(error){failure=error;}
     expect(failure).toMatchObject({kind:'temporary'});
@@ -123,7 +123,7 @@ describe('correction PR lookup outcomes', () => {
   it.each(['authentication','identity','confirmed-stale'] as const)('does not retry %s acknowledgement failures', async kind => {
     const lookup=vi.fn().mockRejectedValue(new SafeProcessError(kind));
     const sleep=vi.fn();
-    await expect(retryCorrectionLookup(lookup,{attempts:3,delayMs:1,deadlineMs:20,sleep})).rejects.toMatchObject({kind});
+    await expect(retryCorrectionLookup(lookup,{attempts:3,delayMs:1,deadlineMs:20,now:()=>0,sleep})).rejects.toMatchObject({kind});
     expect(lookup).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
   });
