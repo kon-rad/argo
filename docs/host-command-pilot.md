@@ -52,8 +52,20 @@ secondbrain host-worker https://board.example --once
 
 Read the request again as the owner. A successful sample returns a count of three. Reusing its request key with identical input returns the existing ID, including after command removal. Reusing it with different input returns HTTP 409. Omitting `--once` keeps the worker polling. Stop the worker process to stop polling. Revoke the machine to invalidate its worker access.
 
+## Run a supervised worker
+
+Use a stable built engine installation on the machine. On macOS run these commands from the logged-in user account. On Linux use an account with a systemd user manager. A Linux host that must run between logins also needs its administrator to enable lingering for that account.
+
+1. Issue a one-use enrollment code for the enabled machine using the owner API above. Pipe that code from a private source to `secondbrain host enroll https://board.example` on the worker. Enrollment saves the machine identity, board origin and token in `~/.config/secondbrain/host-worker/enrollment.json` with mode 0600 in a 0700 directory. A second enrollment preserves the existing identity.
+2. Run `secondbrain host install` then `secondbrain host start`. The installation creates a per-user macOS LaunchAgent or Linux systemd unit that calls the built Node worker. The generated unit references the current engine and Node paths. Keep both available to the service.
+3. Run `secondbrain host status` for process state and `secondbrain host logs` for recent worker output. Use the board's request ID to retrieve the result.
+4. For maintenance, run `secondbrain host drain`. The service supervisor sends SIGTERM. The worker finishes any active command and its receipt, then exits. Both `drain` and `stop` disable automatic startup until `start`. Upgrade the engine, reinstall the service if its paths changed, and start again.
+5. For retirement, drain first. From a trusted owner session, pipe the session's private Cookie header value to `secondbrain host revoke https://board.example sample-host`. The API invalidates the machine credential. Once revocation is confirmed, the operator can remove the local enrollment file and generated service file. To enroll a replacement, issue a fresh one-use code. If the enrollment exchange was interrupted and its outcome is unknown, revoke the machine before repeating enrollment.
+
+A service uses the local enrollment file directly. The service definition contains the executable path and startup policy. Worker logs contain lifecycle messages and errors. A rejected credential stops the supervised worker; network failures use the supervisor's restart delay.
+
 ## Worker lifecycle and limitations
 
 The worker sends its bearer credential to `POST /poll`, `POST /start` and `POST /finish` under the same prefix. An enabled worker takes an eligible request when a slot is free. The server records a reservation, a start receipt and a terminal result. A lost or disconnected process can leave a reserved or running request that needs operator investigation.
 
-This pilot accepts owner-submitted inline text and returns a count. Ticket dispatch, arbitrary executable registration, file uploads, digest verification, agent permissions, OS service enrollment and a web history page belong to later milestones.
+This pilot accepts owner-submitted inline text and returns a count. Ticket dispatch, arbitrary executable registration, file uploads, digest verification, agent permissions and a web history page belong to later milestones.
