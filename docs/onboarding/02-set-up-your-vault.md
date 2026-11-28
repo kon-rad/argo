@@ -93,6 +93,8 @@ The app reads the active configuration at startup. After later edits, run `secon
 
 Two rules from here on. Never make the vault repo public. And never commit inside `.secondbrain/`; it is a pinned copy of the engine.
 
+To add optional host workers after the app build, generate your private machine and command definitions using the [host command setup guide](../host-command-pilot.md#configure-the-server).
+
 ## Step 3. Run the app
 
 ```bash
