@@ -4,7 +4,16 @@ Use the optional `host-pilot` module to send a word-count request from the board
 
 ## Configure the server
 
-Create these files in your private vault. Each filename must match its definition's ID. Both directories must exist. The worker supports the built-in `word-count` handler.
+After building the app, run the engine CLI for the vault you want to configure. Use the same commands for a fresh vault and when adding a host later. For a standalone engine checkout, set `VAULT_ROOT` to the existing vault directory.
+
+```sh
+secondbrain host-config machine sample-host
+secondbrain host-config command count-words --handler word-count
+```
+
+Each command prints the path it created in the vault. Running it again reports that the definition already exists and preserves owner edits. For another machine, supply its own ID. A vault with the legacy aggregate machine roster must migrate it before using this generator.
+
+The command definition generated for this example is shown below.
 
 `.agents/org/config/commands/count-words.yaml`
 
@@ -12,6 +21,8 @@ Create these files in your private vault. Each filename must match its definitio
 id: count-words
 handler: word-count
 ```
+
+The generated machine starts disabled, with one slot and an empty command list. To allow this host to count words, edit its file to the following values before previewing and applying.
 
 `.agents/org/config/machines/sample-host.yaml`
 
