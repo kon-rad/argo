@@ -26,6 +26,8 @@ Add `host-pilot` to the server's configured modules and apply the engine migrati
 
 A machine may declare `ramGiB`; a command may declare `minRamGiB`. An omitted minimum allows any otherwise eligible machine. A positive minimum requires a declared capacity that meets it. The machine's optional `allowAgentSessions` flag declares a separate permission for future session hosting; it grants zero command IDs. The module is disabled by default.
 
+Other vault tools can keep descriptive metadata in the same machine file under an optional `routing` mapping. It accepts three optional strings: `role` for a description, `ssh` for a host alias and `worktree_root` for the local worktree directory. The engine validates these fields and excludes them from the scheduler registry, revision digest and owner preview. Editing only this mapping preserves the active policy revision. Keep credential values in the host's credential store.
+
 ## Enroll and run the example
 
 Use the signed-in owner's session on the board server for the owner requests below. Send same-origin JSON requests with `Content-Type: application/json`. The endpoint prefix for every row is `/api/host-pilot`.

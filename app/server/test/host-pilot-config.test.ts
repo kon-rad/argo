@@ -44,3 +44,31 @@ it('rejects a linked registry directory', () => {
   symlinkSync(join(config, 'commands'), join(config, 'machines'));
   expect(() => readHostRegistry(root)).toThrow();
 });
+
+it('keeps machine routing details outside the scheduler registry', () => {
+  const policy = { id: 'sample', enabled: false, slots: 1, commands: [] };
+  const path = join(config, 'machines', 'sample.yaml');
+  writeFileSync(path, JSON.stringify(policy));
+  const original = readHostRegistry(root);
+  const routing = { role: 'test worker', ssh: 'sample-alias', worktree_root: '/example/work' };
+  writeFileSync(path, JSON.stringify({ ...policy, routing }));
+  expect(readHostRegistry(root)).toEqual(original);
+});
+
+it.each([
+  { routing: { role: true } },
+  { routing: { ssh: ['unexpected'] } },
+  { routing: { worktree_root: 5 } },
+  { routing: { commands: ['words'] } },
+  { routing: null },
+  { extra: 'unexpected' },
+])('rejects malformed machine metadata or policy %#', extra => {
+  writeFileSync(join(config, 'machines', 'sample.yaml'),
+    JSON.stringify({ id: 'sample', enabled: true, slots: 1, commands: [], ...extra }));
+  expect(() => readHostRegistry(root)).toThrow();
+});
+
+it('rejects routing fields on command definitions', () => {
+  writeFileSync(join(config, 'commands', 'words.yaml'), 'id: words\nhandler: word-count\nrouting: {}');
+  expect(() => readHostRegistry(root)).toThrow();
+});
