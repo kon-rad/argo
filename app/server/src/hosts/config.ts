@@ -1,7 +1,14 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import yaml from 'js-yaml';
+import { z } from 'zod';
 import { hostRegistry, type HostRegistry } from '@secondbrain/contracts/hosts';
+
+const routingMetadata = z.strictObject({
+  role: z.string().optional(),
+  ssh: z.string().optional(),
+  worktree_root: z.string().optional(),
+});
 
 function directory(parent: string, name: string): string {
   const path = join(parent, name);
@@ -20,6 +27,11 @@ function definitions(config: string, kind: 'machines' | 'commands'): unknown[] {
       const data = yaml.safeLoad(readFileSync(fd, 'utf8'));
       if (!data || typeof data !== 'object' || !('id' in data) || data.id !== name.slice(0, -5))
         throw new Error('ID must match filename');
+      if (kind === 'machines' && 'routing' in data) {
+        const { routing, ...policy } = data;
+        routingMetadata.parse(routing);
+        return policy;
+      }
       return data;
     } catch {
       // YAML diagnostics may quote private file contents.
