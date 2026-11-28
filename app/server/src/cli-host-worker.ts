@@ -1,17 +1,22 @@
+import { homedir } from 'node:os';
+import { readEnrollment } from './hosts/lifecycle.js';
 import { setTimeout as delay } from 'node:timers/promises';
-import { runHostCommandOnce } from './hosts/worker.js';
+import { HostCredentialRejected, runHostCommandOnce } from './hosts/worker.js';
 
 async function main() {
-  const [origin, mode, ...extra] = process.argv.slice(2);
-  if (!origin || (mode !== undefined && mode !== '--once') || extra.length) {
+  const [server, mode, ...extra] = process.argv.slice(2);
+  if (!server || (mode !== undefined && mode !== '--once') || extra.length) {
     throw new Error('Usage: cli-host-worker <server-origin> [--once]');
   }
-  const token = process.env.SECONDBRAIN_HOST_TOKEN;
+  const enrollment = server === '--enrolled' ? readEnrollment(homedir()) : undefined;
+  const origin = enrollment?.origin ?? server;
+  const token = enrollment?.token ?? process.env.SECONDBRAIN_HOST_TOKEN;
   if (!token) throw new Error('Set SECONDBRAIN_HOST_TOKEN to the enrolled machine token');
   const drain = new AbortController();
   const stop = () => drain.abort();
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
+  if (enrollment) console.log('Polling as ' + enrollment.machine);
   try {
     while (!drain.signal.aborted) {
       const worked = await runHostCommandOnce(origin, token);
@@ -22,6 +27,9 @@ async function main() {
         });
       }
     }
+  } catch (error) {
+    if (!enrollment || !(error instanceof HostCredentialRejected)) throw error;
+    console.error('Machine credential rejected. Worker stopped.');
   } finally {
     process.off('SIGINT', stop);
     process.off('SIGTERM', stop);
