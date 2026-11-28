@@ -32,6 +32,9 @@ const inputs = { text: z.string().max(65536).optional(), input: artifactRef.opti
 const oneInput = (data: { text?: string; input?: ArtifactRef }) => (data.text === undefined) !== (data.input === undefined);
 export const commandRequest = z.strictObject({ command: id, requestKey: id, ...inputs }).refine(oneInput, 'Expected one input');
 export const commandLease = z.strictObject({
+  commandRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  registryRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  runId: id.optional(), deadline: z.iso.datetime().optional(),
   attempt: id, generation: z.number().int().positive(), command: id, handler: z.literal('word-count'), ...inputs,
 }).refine(oneInput, 'Expected one input');
 export const launchReceipt = z.strictObject({
@@ -39,6 +42,7 @@ export const launchReceipt = z.strictObject({
 });
 export const commandResult = z.discriminatedUnion('outcome', [
   z.strictObject({ attempt: id, generation: z.number().int().positive(), outcome: z.literal('succeeded'), count: z.number().int().nonnegative(), output: artifactRef.optional() }),
+  z.strictObject({ attempt: id, generation: z.number().int().positive(), outcome: z.literal('unknown'), reason: z.string().min(1).max(512) }),
   z.strictObject({ attempt: id, generation: z.number().int().positive(), outcome: z.literal('failed'), reason: z.string().min(1).max(512) }),
 ]);
 export type HostRegistry = z.infer<typeof hostRegistry>;

@@ -74,7 +74,10 @@ export const routes: FeatureRoutes = ({ vaultRoot, sessionGate }) => {
       const token = hostToken(req);
       const response = await current(async service => {
         const machine = await service.authenticate(token);
-        if (action === 'poll') return { lease: await service.poll(machine) };
+        if (action === 'poll') {
+          const input = parseOr400(z.strictObject({ protocol: z.literal(2).optional() }), req.body);
+          return { lease: await service.poll(machine, input.protocol) };
+        }
         if (action === 'start') return service.start(machine, req.body);
         await service.finish(machine, req.body);
         return 'finished' as const;
@@ -119,6 +122,12 @@ export const routes: FeatureRoutes = ({ vaultRoot, sessionGate }) => {
     res.sendStatus(204);
   });
   owner.post('/requests', async (req, res) => { res.json(await current(service => service.submit(req.body))); });
+  // The pilot currently has one caller principal, the authenticated owner.
+  owner.get('/requests/by-key/:key', async (req, res) => {
+    const { rows } = await pool.query('SELECT id FROM hc_requests WHERE request_key=$1 AND caller_id=$2', [req.params.key, 'owner']);
+    if (!rows.length) throw new HttpError(404, 'Command run not found');
+    res.json(await hostCommandStatus(pool, rows[0].id));
+  });
   owner.get('/requests/:id', async (req, res) => { res.json(await hostCommandStatus(pool, req.params.id)); });
   owner.use(mapError);
   return [

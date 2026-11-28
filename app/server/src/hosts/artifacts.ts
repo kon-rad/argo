@@ -29,7 +29,7 @@ export async function requireInput(db: DB, input: ArtifactRef): Promise<void> {
 // These operations run under the registry transaction that authenticates the host.
 export async function leasedInputContent(db: DB, machine: string, attempt: string, generation: number) {
   const { rows } = await db.query(`SELECT a.content FROM hc_requests r JOIN hc_artifacts a
-    ON a.id::text=r.input_ref->>'id' WHERE r.id=$1 AND r.machine=$2 AND r.generation=$3
+    ON a.id::text=r.input_ref->>'id' WHERE r.attempt_id=$1 AND r.machine=$2 AND r.generation=$3
     AND r.state='reserved' AND a.expires_at > now() FOR SHARE OF r`, [attempt, machine, generation]);
   if (!rows[0]) throw new HostServiceError(404, 'Input unavailable for this lease');
   return rows[0].content as Buffer;
@@ -38,7 +38,7 @@ export async function leasedInputContent(db: DB, machine: string, attempt: strin
 export async function storeOutput(db: DB, machine: string, attempt: string, generation: number, content: Buffer, expected: string) {
   verifyArtifact(content, expected);
   const { rows } = await db.query(`INSERT INTO hc_artifacts(id,sha256,content,run_id,generation)
-    SELECT $1,$2,$3,r.id,r.generation FROM hc_requests r WHERE r.id=$4 AND r.generation=$5 AND r.machine=$6
+    SELECT $1,$2,$3,r.id,r.generation FROM hc_requests r WHERE r.attempt_id=$4 AND r.generation=$5 AND r.machine=$6
     AND r.state='running' AND r.input_ref IS NOT NULL FOR SHARE OF r
     ON CONFLICT(run_id,generation) DO UPDATE SET sha256=excluded.sha256 WHERE hc_artifacts.sha256=excluded.sha256
     RETURNING ${manifest}`, [randomUUID(), expected, content, attempt, generation, machine]);

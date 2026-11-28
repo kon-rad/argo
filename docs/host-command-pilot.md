@@ -56,7 +56,6 @@ Read the request again as the owner. A successful sample returns a count of thre
 
 The worker sends its bearer credential to `POST /poll`, `POST /start` and `POST /finish` under the same prefix. An enabled worker takes an eligible request when a slot is free. The server records a reservation, a start receipt and a terminal result. A lost or disconnected process can leave a reserved or running request that needs operator investigation.
 
-This pilot accepts owner-submitted inline text and returns a count. Ticket dispatch, arbitrary executable registration, file uploads, digest verification, agent permissions, OS service enrollment and a web history page belong to later milestones.
 
 ## Count a private text file
 
@@ -71,3 +70,25 @@ Use the same registered word-count command with either inline text or a file. Al
 The built-in handler takes data only. This pilot has no script-backed executor. A staging failure records a failed run before launch, and a delivery failure records a failed run after launch.
 
 Staged bytes are private to this pilot and expire after 24 hours. Later uploads reclaim expired rows. Run history retains the manifest beyond that window so the owner can match a previously saved output. The transfer endpoint rejects a request with a stale generation or a different machine credential.
+## Recovering a command run
+
+An owner can retrieve a previous submission with the same request key or with
+`GET /api/host-pilot/requests/by-key/<request-key>`. A different payload under
+the same key returns HTTP 409. Each new request pins the command and registry
+revisions that the server accepted. Check the run ID, machine, attempt and
+generation when reconciling a result.
+
+The worker CLI stores its receipt journal below `~/.secondbrain/host-receipts`.
+Set `SECONDBRAIN_HOST_STATE_DIR` to a private persistent directory to override
+that location. Each server and enrollment has its own journal and permits one
+active worker process. Keep that directory across restarts. A result stays on
+disk until the server acknowledges it. On restart, the worker delivers pending
+evidence before polling for another command.
+
+A poll using protocol 2 gets a distinct attempt ID and a five-minute execution
+deadline. Each HTTP request has a separate 30-second timeout. When execution
+may have started and the terminal receipt is missing, the run becomes
+`unknown` at reconciliation. The worker leaves it there unless it recovers
+matching terminal evidence. Inspect the effect at its destination before
+authorizing any fresh submission. Legacy workers retain their original lease
+format during rollout. Drain them before upgrading to durable recovery.

@@ -43,14 +43,15 @@ export async function stageHostInput(origin: URL, token: string, lease: CommandL
   } finally { await rm(folder, { recursive: true, force: true }); }
 }
 
-export async function executeHostInput(origin: URL, token: string, lease: CommandLease, text: string, send: typeof fetch): Promise<CommandResult> {
+export async function executeHostInput(origin: URL, token: string, lease: CommandLease, text: string, send: typeof fetch, executionSignal?: AbortSignal): Promise<CommandResult> {
   const count = text.match(/\S+/gu)?.length ?? 0;
   const result = { attempt: lease.attempt, generation: lease.generation, outcome: 'succeeded' as const, count };
   if (!lease.input) return result;
   const body = JSON.stringify({ count }) + '\n';
   const digest = createHash('sha256').update(body).digest('hex');
   const response = await send(transferUrl(origin, lease, 'output'), {
-    method: 'PUT', body, redirect: 'error', signal: AbortSignal.timeout(30_000),
+    method: 'PUT', body, redirect: 'error',
+    signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(executionSignal ? [executionSignal] : [])]),
     headers: { authorization: 'Bearer ' + token, 'content-type': 'application/octet-stream', 'x-content-sha256': digest },
   });
   if (!response.ok) {

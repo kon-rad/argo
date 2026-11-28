@@ -62,11 +62,14 @@ it('takes an authenticated owner request through an enrolled HTTP worker to a ve
       const url = 'http://127.0.0.1:' + address.port;
       const worker = fileURLToPath(new URL('../src/cli-host-worker.ts', import.meta.url));
       const child = promisify(execFile)(process.execPath, ['--import', 'tsx', worker, url, '--once'], {
-        env: { PATH: process.env.PATH, SECONDBRAIN_HOST_TOKEN: enrolled.body.token },
+        env: { PATH: process.env.PATH, SECONDBRAIN_HOST_STATE_DIR: join(vaultRoot, 'receipts'), SECONDBRAIN_HOST_TOKEN: enrolled.body.token },
         timeout: 15_000,
       });
       await child;
       const result = await owner.get(api + 'requests/' + queued.body.id).expect(200);
+      await request(app).get(api + 'requests/by-key/' + input.requestKey).expect(401);
+      const recovered = await owner.get(api + 'requests/by-key/' + input.requestKey).expect(200);
+      expect(recovered.body).toEqual(result.body);
       expect(result.body).toMatchObject({ machine, state: 'succeeded', pid: child.child.pid, result: { count: 3 } });
       const inputBytes = Buffer.from('one two three');
       const hash = (data: Buffer) => createHash('sha256').update(data).digest('hex');
