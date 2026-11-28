@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +12,7 @@ import { pool } from '../src/db.js';
 import { createApp } from '../src/app.js';
 import { hashPassword } from '../src/auth/password.js';
 import { codeAt, currentStep, generateSecret } from '../src/auth/totp.js';
+import { ReceiptJournal } from '../src/hosts/receiptJournal.js';
 import { runHostCommandOnce } from '../src/hosts/worker.js';
 
 it('takes an authenticated owner request through an enrolled HTTP worker to a verified result', async () => {
@@ -62,12 +63,81 @@ it('takes an authenticated owner request through an enrolled HTTP worker to a ve
       const url = 'http://127.0.0.1:' + address.port;
       const worker = fileURLToPath(new URL('../src/cli-host-worker.ts', import.meta.url));
       const child = promisify(execFile)(process.execPath, ['--import', 'tsx', worker, url, '--once'], {
-        env: { PATH: process.env.PATH, SECONDBRAIN_HOST_TOKEN: enrolled.body.token },
+        env: { PATH: process.env.PATH, SECONDBRAIN_HOST_STATE_DIR: join(vaultRoot, 'receipts'), SECONDBRAIN_HOST_TOKEN: enrolled.body.token },
         timeout: 15_000,
       });
       await child;
       const result = await owner.get(api + 'requests/' + queued.body.id).expect(200);
+      await request(app).get(api + 'requests/by-key/' + input.requestKey).expect(401);
+      const recovered = await owner.get(api + 'requests/by-key/' + input.requestKey).expect(200);
+      expect(recovered.body).toEqual(result.body);
       expect(result.body).toMatchObject({ machine, state: 'succeeded', pid: child.child.pid, result: { count: 3 } });
+      const inputBytes = Buffer.from('one two three');
+      const hash = (data: Buffer) => createHash('sha256').update(data).digest('hex');
+      const binary = 'application/octet-stream';
+      await owner.post(api + 'artifacts').set('Origin', origin).type(binary)
+        .set('x-content-sha256', '0'.repeat(64)).send(inputBytes).expect(422);
+      const object = await owner.post(api + 'artifacts').set('Origin', origin).type(binary)
+        .set('x-content-sha256', hash(inputBytes)).send(inputBytes).expect(200);
+      await request(app).post(api + 'artifacts').set('Origin', origin).type(binary)
+        .set('x-content-sha256', hash(inputBytes)).send(inputBytes).expect(401);
+      await owner.post(api + 'requests').set('Origin', origin)
+        .send({ command: 'count', requestKey: randomUUID(), input: { ...object.body, id: randomUUID() } }).expect(404);
+      const fileRequest = { command: 'count', requestKey: randomUUID(), input: object.body };
+      const fileRun = await owner.post(api + 'requests').set('Origin', origin).send(fileRequest).expect(200);
+      expect((await owner.post(api + 'requests').set('Origin', origin).send(fileRequest).expect(200)).body).toEqual(fileRun.body);
+      await request(app).get(api + 'requests/' + fileRun.body.id + '/output').expect(401);
+      // Drop completion acknowledgments after the real server has committed the
+      // output. Reopen the journal as a fresh worker and deliver the same manifest.
+      const receiptDir = join(vaultRoot, 'file-journal');
+      const first = new ReceiptJournal(receiptDir);
+      let uploads = 0;
+      const dropFinish: typeof fetch = async (target, init) => {
+        const response = await fetch(target, init);
+        if (init?.method === 'PUT') uploads++;
+        if (String(target).endsWith('/finish')) {
+          await response.body?.cancel();
+          throw new Error('lost acknowledgment');
+        }
+        return response;
+      };
+      try {
+        await expect(runHostCommandOnce(url, enrolled.body.token, dropFinish, { journal: first })).rejects.toThrow('confirm finish');
+        expect(uploads).toBe(1);
+      } finally { first.close(); }
+      const restored = new ReceiptJournal(receiptDir);
+      try {
+        const onlyFinish: typeof fetch = (target, init) => {
+          expect(String(target)).toMatch(/\/finish$/);
+          return fetch(target, init);
+        };
+        expect(await runHostCommandOnce(url, enrolled.body.token, onlyFinish, { journal: restored })).toBe(true);
+      } finally { restored.close(); }
+      const status = await owner.get(api + 'requests/' + fileRun.body.id).expect(200);
+      const downloaded = await owner.get(api + 'requests/' + fileRun.body.id + '/output').expect(200);
+      expect(JSON.parse(downloaded.body.toString())).toEqual({ count: 3 });
+      expect(status.body.result.output).toMatchObject({ sha256: hash(downloaded.body), bytes: downloaded.body.length });
+      await request(app).get(api + 'requests/' + fileRun.body.id + '/output')
+        .set('Authorization', 'Bearer ' + enrolled.body.token).expect(401);
+      const manual = await owner.post(api + 'requests').set('Origin', origin)
+        .send({ ...fileRequest, requestKey: randomUUID() }).expect(200);
+      const hostAuth = 'Bearer ' + enrolled.body.token;
+      const claimed = await request(app).post(api + 'poll').set('Authorization', hostAuth).send({}).expect(200);
+      const manualFence = { attempt: claimed.body.lease.attempt, generation: claimed.body.lease.generation };
+      const transfer = api + 'transfers/' + manualFence.attempt;
+      await request(app).get(transfer + '/2/input').set('Authorization', hostAuth).expect(404);
+      await request(app).get(transfer + '/1/input').expect(401);
+      await request(app).post(api + 'start').set('Authorization', hostAuth)
+        .send({ ...manualFence, pid: process.pid }).expect(204);
+      await request(app).post(api + 'finish').set('Authorization', hostAuth)
+        .send({ ...manualFence, outcome: 'succeeded', count: 3, output: status.body.result.output }).expect(409);
+      await request(app).put(transfer + '/1/output').set('Authorization', hostAuth).type(binary)
+        .set('x-content-sha256', '0'.repeat(64)).send(inputBytes).expect(422);
+      await request(app).post(api + 'finish').set('Authorization', hostAuth)
+        .send({ ...manualFence, outcome: 'failed', reason: 'Output delivery failed' }).expect(204);
+      await owner.get(api + 'requests/' + manual.body.id + '/output').expect(404);
+      await request(app).get(api + 'transfers/' + fileRun.body.id + '/1/input')
+        .set('authorization', 'Bearer ' + enrolled.body.token).expect(404);
       // A policy edit after the claim must take effect on another app instance before launch.
       const pending = await owner.post(api + 'requests').set('Origin', origin)
         .send({ ...input, requestKey: randomUUID() }).expect(200);

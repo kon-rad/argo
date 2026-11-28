@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { registrySnapshot } from './revisions.js';
 import { hostRegistry, type HostRegistry } from '@secondbrain/contracts/hosts';
 import type { Pool, PoolClient } from 'pg';
 import { HostServiceError } from './service.js';
@@ -14,21 +14,12 @@ type Change = {
   after: Definition | null;
 };
 
-function compareIds(a: {id: string}, b: {id: string}) {
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-}
-
 function compile(candidate: unknown): Snapshot {
   // Parsing also orders object keys according to the shared schema. PostgreSQL jsonb
   // can reorder those keys, so always parse stored snapshots before comparing.
   const result = hostRegistry.safeParse(candidate);
   if (!result.success) throw new HostServiceError(400, 'Invalid host registry');
-  const registry = result.data;
-  registry.commands.sort(compareIds);
-  registry.machines.sort(compareIds);
-  for (const machine of registry.machines) machine.commands.sort();
-  const revision = createHash('sha256').update(JSON.stringify(registry)).digest('hex');
-  return { registry, revision };
+  return registrySnapshot(result.data);
 }
 
 function diff(before: HostRegistry | undefined, after: HostRegistry): Change[] {

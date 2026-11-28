@@ -86,7 +86,7 @@ describe('host command service', () => {
     await service.finish(machine, finished);
     await service.finish(machine, finished);
     await expect(service.finish(machine, { ...finished, count: 3 })).rejects.toMatchObject({ status: 409 });
-    expect(await service.status(attempt)).toEqual({ id: attempt, command, machine, state: 'succeeded', pid: 123, generation, result: finished });
+    expect(await service.status(attempt)).toMatchObject({ id: attempt, command, machine, state: 'succeeded', pid: 123, generation, result: finished });
     const next = await service.poll(machine);
     expect(next).not.toBeNull();
     expect(next?.attempt).not.toBe(attempt);
@@ -176,4 +176,43 @@ describe('host command service', () => {
     await service.finish(winner, failure);
     await expect(service.start(winner, { attempt: id, generation: 1, pid: 12 })).rejects.toMatchObject({ status: 409 });
   });
+});
+
+it('keeps one fenced attempt, reports a missed deadline as unknown and accepts recovered evidence', async () => {
+  const { command, machine, second, service } = fixture();
+  const key = randomUUID();
+  const { id } = await service.submit({ command, requestKey: key, text: 'one' });
+  const lease = await service.poll(machine, 2);
+  expect(lease?.runId).toBe(id);
+  expect(lease?.attempt).not.toBe(id);
+  const fence = { attempt: lease!.attempt, generation: lease!.generation };
+  await service.start(machine, { ...fence, pid: 12 });
+  await pool.query("UPDATE hc_requests SET deadline_at=now()-interval '1 minute' WHERE id=$1", [id]);
+  expect(await service.status(id)).toMatchObject({ id, state: 'unknown' });
+  expect(await service.poll(second, 2)).toBeNull();
+  const result = { ...fence, outcome: 'succeeded', count: 1 };
+  await expect(service.finish(second, result)).rejects.toMatchObject({ status: 409 });
+  await expect(service.finish(machine, { ...result, generation: 99 })).rejects.toMatchObject({ status: 409 });
+  await service.finish(machine, result);
+  await service.finish(machine, result);
+  expect(await service.status(id)).toMatchObject({ id, state: 'succeeded', result });
+});
+
+it('binds idempotency to the caller and keeps the submitted revision after policy edits', async () => {
+  const { command, machine, service } = fixture();
+  const request = { command, requestKey: randomUUID(), text: 'sample' };
+  const owner = await service.submit(request);
+  const other = await service.submit(request, 'other');
+  expect(other.id).not.toBe(owner.id);
+  expect(await service.submit(request, 'other')).toEqual(other);
+  await expect(service.status(other.id)).rejects.toMatchObject({ status: 404 });
+  const newService = new HostService(pool, { commands: [{ id: command, handler: 'word-count', minRamGiB: 4 }],
+    machines: [{ id: machine, enabled: true, slots: 1, commands: [command], ramGiB: 8 }] });
+  const prior = await service.status(owner.id);
+  expect(prior.registryRevision).toMatch(/^[0-9a-f]{64}$/);
+  expect(prior.commandRevision).toMatch(/^[0-9a-f]{64}$/);
+  expect(await newService.submit(request)).toEqual(owner);
+  const claimed = await newService.poll(machine, 2);
+  expect(claimed?.commandRevision).toBe(prior.commandRevision);
+  await expect(newService.start(machine, { attempt: claimed!.attempt, generation: 1, pid: 77 })).resolves.toBe('policy-denied');
 });
